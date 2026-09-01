@@ -2,9 +2,20 @@ import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestF
 import { describe, it, expect } from "vitest";
 import { resolveByType, autoResolveCurrentInvestigation } from "./resolveByType";
 import { updateStoryMetrics } from "./updateStoryMetrics";
-import { createInitialWorldState, appendLocation, appendNpc, type LocationEntry, type NpcEntry, type WorldState } from "@/game/domain/worldState";
+import { type EnemyEntry, type LocationEntry, type ItemEntry, type NpcEntry, type PlayerState, type QuestEntry, type WorldFactEntry, type WorldState } from "@/game/domain/worldState";
 import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
-import { asLocationId, asNpcId, asItemId, asFactId, asGenerationId, asEnemyId, asQuestId } from "@/game/domain/worldEntity";
+import { asLocationId, asNpcId, asItemId, asFactId, asGenerationId, asEnemyId, asQuestId, type GenerationMetadata } from "@/game/domain/worldEntity";
+import {
+  createWorldStateFixture,
+  createWorldStateFixtureWith,
+  emptyProjection,
+  type WorldStateFixtureOverrides,
+} from "@/game/domain/testing/worldStateFixture.testutil";
+
+const GENERATION: GenerationMetadata = {
+  generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia",
+};
+const PLAYER: PlayerState = { name: "p", identity: "i", stats: { hp: 100, attack: 10, defense: 5 } };
 
 describe("resolveByType", () => {
   const loc1: LocationEntry = {
@@ -15,13 +26,8 @@ describe("resolveByType", () => {
     id: asLocationId("loc_2"), name: "街道", description: "t", kind: "main",
     connectedLocationIds: [asLocationId("loc_1")], npcIds: [], availableItemIds: [], tags: [],
   };
-  const baseWs = createInitialWorldState({
-    generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
-    player: { name: "p", identity: "i", stats: { hp: 100, attack: 10, defense: 5 } },
-    startingLocation: loc1,
-    startingItemIds: [],
-  });
-  const ws = appendLocation(baseWs, loc2);
+  const BASE = emptyProjection({ player: PLAYER, locations: [loc1, loc2], currentLocationId: loc1.id });
+  const ws = createWorldStateFixture({ generation: GENERATION, projection: BASE });
   const deps = { now: () => "2026-01-01", actionId: "act_x", turnNumber: 1 };
 
   it("move updates currentLocationId and adds event", () => {
@@ -49,7 +55,7 @@ describe("resolveByType", () => {
       locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
       memory: { npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
     };
-    const wsWithNpc = appendNpc(ws, npc);
+    const wsWithNpc = createWorldStateFixtureWith({ generation: GENERATION, base: BASE }, { npcs: [npc] });
     const result = resolveByType(wsWithNpc, { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" }, deps);
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -86,13 +92,8 @@ describe("resolveByType status and stateChanges", () => {
     id: asLocationId("loc_2"), name: "街道", description: "t", kind: "main",
     connectedLocationIds: [asLocationId("loc_1")], npcIds: [], availableItemIds: [], tags: [],
   };
-  const baseWs = createInitialWorldState({
-    generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
-    player: { name: "p", identity: "i", stats: { hp: 100, attack: 10, defense: 5 } },
-    startingLocation: loc1,
-    startingItemIds: [],
-  });
-  const ws = appendLocation(baseWs, loc2);
+  const BASE = emptyProjection({ player: PLAYER, locations: [loc1, loc2], currentLocationId: loc1.id });
+  const ws = createWorldStateFixture({ generation: GENERATION, projection: BASE });
   const deps = { now: () => "2026-01-01", actionId: "act_x", turnNumber: 1 };
   const npc1: NpcEntry = {
     id: asNpcId("npc_1"), name: "老板", role: "路人", description: "t",
@@ -117,7 +118,7 @@ describe("resolveByType status and stateChanges", () => {
       name: "卫兵",
       memory: { ...npc1.memory, npcId: asNpcId("npc_hostile"), relationship: { affinity: -70 } },
     };
-    const wsWithHostile = appendNpc(ws, hostileNpc);
+    const wsWithHostile = createWorldStateFixtureWith({ generation: GENERATION, base: BASE }, { npcs: [hostileNpc] });
     const result = resolveByType(wsWithHostile, { type: "talk", npcId: asNpcId("npc_hostile"), dialogueAct: "ask" }, deps);
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -126,7 +127,9 @@ describe("resolveByType status and stateChanges", () => {
   });
 
   it("investigate undiscovered fact returns success", () => {
-    const wsWithFact = { ...ws, worldFacts: [{ factId: asFactId("fact_1"), text: "墙上刻字", source: "generated" as const, discovered: false }] };
+    const wsWithFact = createWorldStateFixtureWith({ generation: GENERATION, base: BASE }, {
+      worldFacts: [{ factId: asFactId("fact_1"), text: "墙上刻字", source: "generated" as const, discovered: false }],
+    });
     const result = resolveByType(wsWithFact, { type: "investigate", factId: asFactId("fact_1") }, deps);
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -161,19 +164,18 @@ describe("resolveByType — attack", () => {
     id: asLocationId("loc_1"), name: "荒野", description: "test", kind: "main",
     connectedLocationIds: [], npcIds: [], availableItemIds: [], tags: [],
   };
-  function makeWorldWithEnemy() {
-    const baseWs = createInitialWorldState({
-      generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
-      player: { name: "侠客", identity: "剑客", stats: { hp: 30, attack: 6, defense: 4 } },
-      startingLocation,
-      startingItemIds: [],
-    });
-    const enemy: import("@/game/domain/worldState").EnemyEntry = {
+  const BASE = emptyProjection({
+    player: { name: "侠客", identity: "剑客", stats: { hp: 30, attack: 6, defense: 4 } },
+    locations: [startingLocation],
+    currentLocationId: startingLocation.id,
+  });
+  function makeWorldWithEnemy(): WorldState {
+    const enemy: EnemyEntry = {
       id: asEnemyId("enemy_1"), name: "山贼", tier: "normal",
       stats: { hp: 20, attack: 5, defense: 2 },
       locationId: asLocationId("loc_1"), tags: [],
     };
-    return { ...baseWs, enemies: [enemy] };
+    return createWorldStateFixtureWith({ generation: GENERATION, base: BASE }, { enemies: [enemy] });
   }
   const deps = { now: () => "2026-01-01", actionId: "act_x", turnNumber: 1 };
 
@@ -215,23 +217,18 @@ describe("resolveByType — attack", () => {
       id: asLocationId("loc_1"), name: "客栈", description: "t", kind: "main",
       connectedLocationIds: [], npcIds: [], availableItemIds: [], tags: [],
     };
-    const giveBase = createInitialWorldState({
-      generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
-      player: { name: "p", identity: "i", stats: { hp: 100, attack: 10, defense: 5 } },
-      startingLocation: giveLoc,
-      startingItemIds: [],
-    });
+    const GIVE_BASE = emptyProjection({ player: PLAYER, locations: [giveLoc], currentLocationId: giveLoc.id });
     const npc: NpcEntry = {
       id: asNpcId("npc_1"), name: "老板", role: "路人", description: "t",
       locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: true,
       memory: { npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 2 }, emotion: "neutral", goals: [] },
     };
-    const item = { id: asItemId("item_gift"), name: "铜钥匙", description: "旧钥匙", kind: "key", tags: [] } as const;
-    const wsWithGift = {
-      ...appendNpc(giveBase, npc),
-      items: [...giveBase.items, item],
-      inventory: [...giveBase.inventory, item.id],
-    };
+    const item: ItemEntry = { id: asItemId("item_gift"), name: "铜钥匙", description: "旧钥匙", kind: "key", tags: [] };
+    const wsWithGift = createWorldStateFixtureWith({ generation: GENERATION, base: GIVE_BASE }, {
+      npcs: [npc],
+      items: [item],
+      inventory: [item.id],
+    });
     const deps = { now: () => "2026-01-01", actionId: "act_give", turnNumber: 1 };
 
     it("移交背包物品：背包原子移除、item_given 落账、NPC 好感上升", () => {
@@ -266,16 +263,10 @@ describe("resolveByType — investigate approaches", () => {
     connectedLocationIds: [], npcIds: [], availableItemIds: [], tags: [],
   };
   const deps = { now: () => "2026-01-01", actionId: "act_x", turnNumber: 1 };
+  const APPROACH_BASE = emptyProjection({ player: PLAYER, locations: [approachLoc], currentLocationId: approachLoc.id });
 
   function worldWithApproaches(): WorldState {
-    const base = createInitialWorldState({
-      generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
-      player: { name: "p", identity: "i", stats: { hp: 100, attack: 10, defense: 5 } },
-      startingLocation: approachLoc,
-      startingItemIds: [],
-    });
-    return {
-      ...base,
+    return createWorldStateFixtureWith({ generation: GENERATION, base: APPROACH_BASE }, {
       worldFacts: [{
         factId: FACT_1_ID,
         text: "车轮印",
@@ -287,7 +278,7 @@ describe("resolveByType — investigate approaches", () => {
           { approachId: "risky", label: "翻查附近杂物", evidenceQuality: "noisy", tensionDelta: 12 },
         ],
       }],
-    };
+    });
   }
 
   function storyWithDiscoverFact(): StoryState {
@@ -330,40 +321,46 @@ describe("autoResolveCurrentInvestigation", () => {
     connectedLocationIds: [], npcIds: [], availableItemIds: [], tags: [],
   };
 
-  function worldWithApproaches(): WorldState {
-    const base = createInitialWorldState({
-      generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
-      player: { name: "p", identity: "i", stats: { hp: 100, attack: 10, defense: 5 } },
-      startingLocation: approachLoc,
-      startingItemIds: [],
+  const APPROACH_BASE = emptyProjection({ player: PLAYER, locations: [approachLoc], currentLocationId: approachLoc.id });
+  const FACT_WITH_APPROACHES: WorldFactEntry = {
+    factId: FACT_1_ID,
+    text: "车轮印",
+    source: "generated",
+    discovered: false,
+    locationId: asLocationId("loc_1"),
+    investigationApproaches: [
+      { approachId: "careful", label: "沿痕迹追查", evidenceQuality: "clean", tensionDelta: 4 },
+      { approachId: "risky", label: "翻查附近杂物", evidenceQuality: "noisy", tensionDelta: 12 },
+    ],
+  };
+  const FACT_APPROACHLESS: WorldFactEntry = {
+    factId: FACT_1_ID, text: "车轮印", source: "generated", discovered: false, locationId: asLocationId("loc_1"),
+  };
+  const QUEST_FACT: QuestEntry = {
+    id: asQuestId("quest_fact"), name: "追查线索", description: "查明车轮印的来路",
+    objectives: [{ kind: "discover_fact", factId: FACT_1_ID }],
+    onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
+    tags: [], kind: "main", stage: 1, status: "active",
+  };
+  const BOSS_NPC: NpcEntry = {
+    id: asNpcId("npc_1"), name: "老板", role: "路人", description: "t",
+    locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
+    memory: { npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+  };
+
+  function worldWithApproaches(overrides: WorldStateFixtureOverrides = {}): WorldState {
+    return createWorldStateFixtureWith({ generation: GENERATION, base: APPROACH_BASE }, {
+      worldFacts: [FACT_WITH_APPROACHES],
+      ...overrides,
     });
-    return {
-      ...base,
-      worldFacts: [{
-        factId: FACT_1_ID,
-        text: "车轮印",
-        source: "generated",
-        discovered: false,
-        locationId: asLocationId("loc_1"),
-        investigationApproaches: [
-          { approachId: "careful", label: "沿痕迹追查", evidenceQuality: "clean", tensionDelta: 4 },
-          { approachId: "risky", label: "翻查附近杂物", evidenceQuality: "noisy", tensionDelta: 12 },
-        ],
-      }],
-    };
   }
 
-  function worldWithApproachlessFact(): WorldState {
-    return {
-      ...worldWithApproaches(),
-      worldFacts: [{ factId: FACT_1_ID, text: "车轮印", source: "generated", discovered: false, locationId: asLocationId("loc_1") }],
-      quests: [{
-        id: asQuestId("quest_fact"), name: "追查线索", description: "查明车轮印的来路",
-        objectives: [{ kind: "discover_fact", factId: FACT_1_ID }],
-        onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
-        tags: [], kind: "main", stage: 1, status: "active",
-      }],
-    };
+  function worldWithApproachlessFact(overrides: WorldStateFixtureOverrides = {}): WorldState {
+    return createWorldStateFixtureWith({ generation: GENERATION, base: APPROACH_BASE }, {
+      worldFacts: [FACT_APPROACHLESS],
+      quests: [QUEST_FACT],
+      ...overrides,
+    });
   }
 
   function storyWithDiscoverFact(): StoryState {
@@ -389,39 +386,30 @@ describe("autoResolveCurrentInvestigation", () => {
   });
 
   it("returns no-op for a non-discover_fact current objective", () => {
-    const ws: WorldState = {
-      ...worldWithApproachlessFact(),
+    const ws = worldWithApproachlessFact({
+      npcs: [BOSS_NPC],
       quests: [{
         id: asQuestId("quest_talk"), name: "交谈", description: "与老板交谈",
         objectives: [{ kind: "talk_to_npc", npcId: asNpcId("npc_1") }],
         onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
         tags: [], kind: "main", stage: 1, status: "active",
       }],
-    };
+    });
     const result = autoResolveCurrentInvestigation(ws, storyWithDiscoverFact());
     expect(result.events).toEqual([]);
     expect(result.nextWorldState).toBe(ws);
   });
 
   it("returns no-op when the approach-less fact is already discovered", () => {
-    const ws: WorldState = {
-      ...worldWithApproachlessFact(),
-      worldFacts: [{ factId: FACT_1_ID, text: "车轮印", source: "generated", discovered: true, locationId: asLocationId("loc_1") }],
-    };
+    const ws = worldWithApproachlessFact({
+      worldFacts: [{ ...FACT_APPROACHLESS, discovered: true }],
+    });
     const result = autoResolveCurrentInvestigation(ws, storyWithDiscoverFact());
     expect(result.events).toEqual([]);
   });
 
   it("automatically discovers the current fact even when it has approved approaches", () => {
-    const ws: WorldState = {
-      ...worldWithApproaches(),
-      quests: [{
-        id: asQuestId("quest_fact"), name: "追查线索", description: "查明车轮印的来路",
-        objectives: [{ kind: "discover_fact", factId: FACT_1_ID }],
-        onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
-        tags: [], kind: "main", stage: 1, status: "active",
-      }],
-    };
+    const ws = worldWithApproaches({ quests: [QUEST_FACT] });
     const result = autoResolveCurrentInvestigation(ws, storyWithDiscoverFact());
     expect(result.events).toContainEqual(expect.objectContaining({ type: "fact_discovered", factId: FACT_1_ID }));
     expect(result.nextWorldState).not.toBe(ws);

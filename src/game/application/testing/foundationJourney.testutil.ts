@@ -231,8 +231,8 @@ function allIssuedChoices(view: GameSessionView): readonly PlayerChoiceView[] {
     ...view.obtainableItems.map((item) => item.choice),
     ...view.narrative.choices,
     ...view.narrative.npcDialogues.flatMap((dialogue) => dialogue.choices),
-    ...view.narrative.npcDialogues.flatMap((dialogue) =>
-      dialogue.startChoice === undefined ? [] : [dialogue.startChoice]),
+    // Task 9: startChoice removed; talkChoice is now the authoritative NPC talk trigger.
+    ...view.currentLocation.npcs.flatMap((npc) => npc.talkChoice === null ? [] : [npc.talkChoice]),
     ...(view.battle?.controls ?? []),
   ];
 }
@@ -254,11 +254,23 @@ export async function playIssuedChoice(
     : labelIncludes === "追问" || labelIncludes === "质疑"
       ? dialogueChoices[1]
       : undefined;
+  // Task 9: also check talkChoice for NPC names (replaces removed startChoice).
+  const namedNpcTalkChoice = view.currentLocation.npcs
+    .find((npc) => npc.name.includes(labelIncludes))
+    ?.talkChoice;
+  // Task 9: when no dialogue choices exist (e.g. new NPC needs first talk via talkChoice),
+  // fall back to the first available NPC talkChoice for generic labels like "回应".
+  const firstNpcTalkChoice = (labelIncludes === "回应" || labelIncludes === "追问")
+    && dialogueChoices.length === 0
+    ? view.currentLocation.npcs.flatMap((npc) => npc.talkChoice === null ? [] : [npc.talkChoice])[0]
+    : undefined;
   const namedNpcChoice = view.narrative.npcDialogues
     .find((dialogue) => dialogue.name.includes(labelIncludes))
     ?.choices[0];
   const choice = legacyDialogueChoice
     ?? namedNpcChoice
+    ?? namedNpcTalkChoice
+    ?? firstNpcTalkChoice
     ?? allIssuedChoices(view).find((entry) => entry.label.includes(labelIncludes));
   if (choice === undefined) {
     throw new Error(`找不到服务器选项：${labelIncludes}`);

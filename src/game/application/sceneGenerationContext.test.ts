@@ -6,12 +6,12 @@ import {
 } from "./sceneGenerationContext";
 import { buildStylePolicy } from "./stylePolicy";
 import {
-  createInitialWorldState,
-  appendNpc,
-  appendLocation,
+  type ItemEntry,
   type LocationEntry,
   type NpcEntry,
   type NpcInteraction,
+  type QuestEntry,
+  type WorldState,
 } from "@/game/domain/worldState";
 import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
 import {
@@ -19,8 +19,14 @@ import {
   asNpcId,
   asGenerationId,
   asFactId,
+  type GenerationMetadata,
 } from "@/game/domain/worldEntity";
-import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
+import { asNarrativeJobId, asTurnId, type GameEvent } from "@/game/domain/events";
+import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
+import {
+  createWorldStateFixtureWith,
+  type WorldStateFixtureOverrides,
+} from "@/game/domain/testing/worldStateFixture.testutil";
 import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { MandatoryNarrativeBeat, ObjectiveTransition } from "@/game/domain/narrativeBeat";
@@ -43,6 +49,35 @@ const npc1: NpcEntry = {
 };
 
 const IMPORTANT_ACTION_ID = "act_persist";
+
+const GENERATION: GenerationMetadata = {
+  generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia",
+};
+
+const BASE_PROJECTION: EntityCompatibilityProjection = {
+  player: { name: "侠客", identity: "剑客", stats: { hp: 100, attack: 10, defense: 5 } },
+  locations: [loc1, loc2],
+  currentLocationId: loc1.id,
+  unlockedLocationIds: [asLocationId("loc_1"), asLocationId("loc_2")],
+  visitedLocationIds: [asLocationId("loc_1")],
+  npcs: [npc1],
+  items: [],
+  inventory: [],
+  worldFacts: [],
+  quests: [],
+  enemies: [],
+  defeatedEnemyIds: [],
+  factions: [],
+};
+
+const INITIALIZED_LEDGER: readonly GameEvent[] = [{ type: "game_initialized", generation: GENERATION }];
+
+function makeWorld(overrides: WorldStateFixtureOverrides = {}): WorldState {
+  return createWorldStateFixtureWith(
+    { generation: GENERATION, base: BASE_PROJECTION },
+    { eventLedger: INITIALIZED_LEDGER, ...overrides },
+  );
+}
 
 function makeJob(overrides: {
   transition?: ObjectiveTransition;
@@ -83,18 +118,7 @@ function makeJob(overrides: {
   return result.job;
 }
 
-function makeWorld(): ReturnType<typeof createInitialWorldState> {
-  const base = createInitialWorldState({
-    generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
-    player: { name: "侠客", identity: "剑客", stats: { hp: 100, attack: 10, defense: 5 } },
-    startingLocation: loc1,
-    startingItemIds: [],
-  });
-  const withNpc = appendNpc(appendLocation(base, loc2), npc1);
-  return { ...withNpc, unlockedLocationIds: [asLocationId("loc_1"), asLocationId("loc_2")] };
-}
-
-function makeRecord(withJob = true, job?: PendingNarrativeJob, world?: ReturnType<typeof makeWorld>): GameRecord {
+function makeRecord(withJob = true, job?: PendingNarrativeJob, world?: WorldState): GameRecord {
   const ss = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 2, npcs: 1, quests: 0, events: 0 } });
   const storyState: StoryState = withJob
     ? {
@@ -117,28 +141,33 @@ function makeRecord(withJob = true, job?: PendingNarrativeJob, world?: ReturnTyp
 }
 
 /** 主线任务（已交谈后）：当前权威目标 = 获取盟誓印谱。 */
-function makeQuestWorld(met = true): ReturnType<typeof makeWorld> {
-  const base = makeWorld();
-  return {
-    ...base,
-    npcs: base.npcs.map((n) => (n.id === asNpcId("npc_1") ? { ...n, met } : n)),
-    quests: [{
-      id: asQuestId("quest_0"),
-      name: "查明真相",
-      description: "查清矿坑的真相",
-      objectives: [
-        { kind: "talk_to_npc", npcId: asNpcId("npc_1") },
-        { kind: "obtain_item", itemId: asItemId("item_seal") },
-      ],
-      onSuccess: { kind: "advance_story" },
-      onFailure: { kind: "closed" },
-      tags: [],
-      kind: "main",
-      stage: 1,
-      status: "active",
-    }],
-    items: [{ id: asItemId("item_seal"), name: "盟誓印谱", description: "刻着盟约的印谱", kind: "quest", tags: [] }],
-  };
+const QUEST_SEAL: QuestEntry = {
+  id: asQuestId("quest_0"),
+  name: "查明真相",
+  description: "查清矿坑的真相",
+  objectives: [
+    { kind: "talk_to_npc", npcId: asNpcId("npc_1") },
+    { kind: "obtain_item", itemId: asItemId("item_seal") },
+  ],
+  onSuccess: { kind: "advance_story" },
+  onFailure: { kind: "closed" },
+  tags: [],
+  kind: "main",
+  stage: 1,
+  status: "active",
+};
+
+const ITEM_SEAL: ItemEntry = {
+  id: asItemId("item_seal"), name: "盟誓印谱", description: "刻着盟约的印谱", kind: "quest", tags: [],
+};
+
+function makeQuestWorld(met = true, overrides: WorldStateFixtureOverrides = {}): WorldState {
+  return makeWorld({
+    npcs: [{ ...npc1, met }],
+    quests: [QUEST_SEAL],
+    items: [ITEM_SEAL],
+    ...overrides,
+  });
 }
 
 function acceptContext(_context: SceneGenerationContext): void {}
@@ -266,7 +295,6 @@ describe("buildSceneGenerationContext", () => {
   });
 
   it("NPC 最小权限：焦点 NPC context 不含其他 NPC 私密事实正文", () => {
-    const world = makeWorld();
     const secretA = { factId: asFactId("fact_secret_a"), text: "老板的秘密A", source: "generated" as const, discovered: false };
     const secretB = { factId: asFactId("fact_secret_b"), text: "客人的秘密B", source: "generated" as const, discovered: false };
     const npcA = { ...npc1, name: "老板", memory: { ...npc1.memory, hiddenFactIds: [asFactId("fact_secret_a")] } };
@@ -275,11 +303,11 @@ describe("buildSceneGenerationContext", () => {
       locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: true,
       memory: { npcId: asNpcId("npc_2"), knownFactIds: [], hiddenFactIds: [asFactId("fact_secret_b")], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
     };
-    const worldWithSecrets = {
-      ...world,
+    const worldWithSecrets = makeWorld({
+      locations: [{ ...loc1, npcIds: [asNpcId("npc_1"), asNpcId("npc_2")] }, loc2],
       npcs: [npcA, npcB],
       worldFacts: [secretA, secretB],
-    };
+    });
     const record = { ...makeRecord(), worldState: worldWithSecrets };
     const context = buildSceneGenerationContext(record);
     const npcAContext = context.presentNpcs.find((n) => String(n.id) === "npc_1")!;
@@ -370,7 +398,6 @@ describe("buildSceneGenerationContext", () => {
   // ── Task 4：调查方式投影（approach labels + 已结算结果）──────────────────
 
   function makeInvestigateRecord(): GameRecord {
-    const world = makeWorld();
     const fact = {
       factId: asFactId("fact_trace"),
       text: "泥地上有两行车辙",
@@ -395,15 +422,14 @@ describe("buildSceneGenerationContext", () => {
       stage: 1,
       status: "active" as const,
     };
-    const worldWithInvestigation = {
-      ...world,
+    const worldWithInvestigation = makeWorld({
       worldFacts: [fact],
       quests: [quest],
       eventLedger: [
-        ...world.eventLedger,
+        ...INITIALIZED_LEDGER,
         { type: "fact_discovered" as const, factId: fact.factId, occurredAt: "2026-01-02", approachId: "search", evidenceQuality: "noisy" as const, tensionDelta: 12 },
       ],
-    };
+    });
     const job = makeJob({
       summary: { kind: "investigate", factId: fact.factId },
       transition: { before: null, completed: [], after: { questId: quest.id, objectiveIndex: 0, label: "查明真相" }, mode: "unchanged" },
@@ -461,9 +487,11 @@ describe("buildSceneGenerationContext", () => {
       name: "传讯人",
       role: "信使",
       locationId: loc1.id,
+      // memory 属于该 NPC 自身：store 要求 npcState.memory.npcId 与 core.id 一致。
+      memory: { ...npc1.memory, npcId: asNpcId("npc_2") },
     };
-    const world = {
-      ...makeWorld(),
+    const world = makeWorld({
+      locations: [{ ...loc1, npcIds: [asNpcId("npc_1"), asNpcId("npc_2")] }, loc2],
       npcs: [npc1, secondNpc],
       quests: [{
         id: asQuestId("quest_handoff"),
@@ -477,7 +505,7 @@ describe("buildSceneGenerationContext", () => {
         stage: 1,
         status: "active" as const,
       }],
-    };
+    });
     const record = makeRecord(true, makeJob({
       summary: { kind: "move", locationId: loc1.id },
     }), world);
@@ -518,8 +546,8 @@ describe("buildSceneGenerationContext", () => {
       summary: "再次交谈，ask，氛围紧张，关系-2",
     };
     const boss = world.npcs.find((n) => n.id === asNpcId("npc_1"))!;
-    const worldWithNpcB = {
-      ...world,
+    const worldWithNpcB = makeQuestWorld(true, {
+      locations: [{ ...loc1, npcIds: [asNpcId("npc_1"), asNpcId("npc_2")] }, loc2],
       npcs: [
         { ...boss, memory: { ...boss.memory, interactionHistory: [bossHistory] } },
         npcB,
@@ -528,7 +556,7 @@ describe("buildSceneGenerationContext", () => {
         ...world.worldFacts,
         { factId: secretB, text: "客人暗藏私货", source: "generated" as const, discovered: false, locationId: asLocationId("loc_1") },
       ],
-    };
+    });
     const record = makeRecord(true, makeJob({
       summary: { kind: "talk", npcId: asNpcId("npc_1") },
       focusNpcId: "npc_1",
@@ -546,7 +574,6 @@ describe("buildSceneGenerationContext", () => {
   });
 
   it("把 provider job 的 generation/handoff 语义与完整 prepared graph 投影到 context", () => {
-    const base = makeWorld();
     const arrivalNpc: NpcEntry = {
       ...npc1,
       id: asNpcId("npc_beggar"),
@@ -556,11 +583,8 @@ describe("buildSceneGenerationContext", () => {
       locationId: loc2.id,
       memory: { ...npc1.memory, npcId: asNpcId("npc_beggar"), goals: ["确认来者是否可信"] },
     };
-    const world = {
-      ...base,
-      locations: base.locations.map((location) => location.id === loc2.id
-        ? { ...location, npcIds: [arrivalNpc.id] }
-        : location),
+    const world = makeWorld({
+      locations: [{ ...loc1, npcIds: [] }, { ...loc2, npcIds: [arrivalNpc.id] }],
       npcs: [arrivalNpc],
       quests: [{
         id: asQuestId("quest_prepared"),
@@ -577,7 +601,7 @@ describe("buildSceneGenerationContext", () => {
         stage: 1,
         status: "active" as const,
       }],
-    };
+    });
     const transition: ObjectiveTransition = {
       before: null,
       completed: [],

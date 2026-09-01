@@ -2,6 +2,7 @@ import type { StatBlock } from "./worldEntity";
 import type { StoryContract } from "./storyContract";
 import type { InvestigationApproach } from "./worldState";
 import { parseOpeningVariationProfile, type OpeningVariationProfile } from "./openingNovelty";
+import type { NarrativeEmotion } from "./narrative";
 
 // ---------------------------------------------------------------------------
 // Task 2：开局切片候选——AI/确定性 fallback 只产出这一份材料：
@@ -55,6 +56,19 @@ export type OpeningGenerationCandidate = {
       readonly description: string;
       readonly objective: { readonly kind: "talk_to_opening_npc" };
     };
+    /** Task 6：开局首个决策场景——AI 生成的一句焦点 NPC 台词、旁白与恰好两个候选选项。 */
+    readonly firstScene?: {
+      readonly narration: string;
+      readonly npcLine: {
+        readonly text: string;
+        readonly emotion: NarrativeEmotion;
+        readonly usedFactKeys: readonly string[];
+      };
+      readonly choices: readonly {
+        readonly candidateId: string;
+        readonly label: string;
+      }[];
+    };
   };
 };
 
@@ -78,6 +92,14 @@ function isStringArray(value: unknown): value is readonly string[] {
 function isNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+const NARRATIVE_EMOTIONS: readonly string[] = [
+  "neutral", "warm", "guarded", "afraid", "angry", "sad",
+];
 
 function isStatBlock(value: unknown): value is StatBlock {
   if (!isRecord(value)) return false;
@@ -203,6 +225,43 @@ export function parseOpeningGenerationCandidate(
   ) {
     return { ok: false, code: "INVALID_OPENING_QUEST" };
   }
+
+  // Task 6: parse optional firstScene
+  let firstScene: OpeningGenerationCandidate["opening"]["firstScene"] | undefined = undefined;
+  if (opening.firstScene !== undefined) {
+    if (!isRecord(opening.firstScene)) return { ok: false, code: "INVALID_OPENING_FIRST_SCENE" };
+    if (typeof opening.firstScene.narration !== "string" || !isNonEmptyString(opening.firstScene.narration)) {
+      return { ok: false, code: "INVALID_OPENING_FIRST_SCENE" };
+    }
+    if (!isRecord(opening.firstScene.npcLine)
+      || typeof opening.firstScene.npcLine.text !== "string"
+      || !isNonEmptyString(opening.firstScene.npcLine.text)
+      || !NARRATIVE_EMOTIONS.includes(opening.firstScene.npcLine.emotion as string)
+      || !isStringArray(opening.firstScene.npcLine.usedFactKeys)
+    ) {
+      return { ok: false, code: "INVALID_OPENING_FIRST_SCENE" };
+    }
+    if (!Array.isArray(opening.firstScene.choices)
+      || opening.firstScene.choices.length !== 2
+      || !opening.firstScene.choices.every((c: unknown) => isRecord(c)
+        && typeof c.candidateId === "string"
+        && isNonEmptyString(c.candidateId as string)
+        && typeof c.label === "string"
+        && isNonEmptyString(c.label as string),
+      )
+    ) {
+      return { ok: false, code: "INVALID_OPENING_FIRST_SCENE" };
+    }
+    firstScene = {
+      narration: opening.firstScene.narration as string,
+      npcLine: {
+        text: opening.firstScene.npcLine.text as string,
+        emotion: opening.firstScene.npcLine.emotion as NarrativeEmotion,
+        usedFactKeys: opening.firstScene.npcLine.usedFactKeys as readonly string[],
+      },
+      choices: (opening.firstScene.choices as readonly { candidateId: string; label: string }[]),
+    };
+  }
   const variationProfile = opening.variationProfile === undefined
     ? undefined
     : parseOpeningVariationProfile(opening.variationProfile);
@@ -258,6 +317,7 @@ export function parseOpeningGenerationCandidate(
         description: opening.quest.description as string,
         objective: { kind: "talk_to_opening_npc" },
       },
+      ...(firstScene === undefined ? {} : { firstScene }),
       ...(normalizedVariationProfile === undefined ? {} : { variationProfile: normalizedVariationProfile }),
     },
   };

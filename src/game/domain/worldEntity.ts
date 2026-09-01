@@ -17,6 +17,8 @@ export type ItemId = BrandedId<"ItemId">;
 export type EnemyId = BrandedId<"EnemyId">;
 export type EndingId = BrandedId<"EndingId">;
 export type FactId = BrandedId<"FactId">;
+export type PlayerEntityId = BrandedId<"PlayerEntityId">;
+export type FactionId = BrandedId<"FactionId">;
 
 // 供编译器（Task 5）和测试铸造 ID 的最小 helper；不做任何格式校验。
 export function asGenerationId(raw: string): GenerationId { return raw as GenerationId; }
@@ -27,6 +29,11 @@ export function asItemId(raw: string): ItemId { return raw as ItemId; }
 export function asEnemyId(raw: string): EnemyId { return raw as EnemyId; }
 export function asEndingId(raw: string): EndingId { return raw as EndingId; }
 export function asFactId(raw: string): FactId { return raw as FactId; }
+export function asPlayerEntityId(raw: string): PlayerEntityId { return raw as PlayerEntityId; }
+export function asFactionId(raw: string): FactionId { return raw as FactionId; }
+
+/** 每局恰有一名玩家角色，其 Entity ID 固定，供规则与投影直接引用。 */
+export const PLAYER_ENTITY_ID: PlayerEntityId = asPlayerEntityId("player_0");
 
 // ---------------------------------------------------------------------------
 // 领域枚举与展示元数据

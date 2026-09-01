@@ -2,7 +2,14 @@ import { describe, expect, it } from "vitest";
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { ObjectiveTransition } from "@/game/domain/narrativeBeat";
-import { createInitialWorldState, type WorldState } from "@/game/domain/worldState";
+import type { GameEvent } from "@/game/domain/events";
+import type { WorldState } from "@/game/domain/worldState";
+import type { GenerationMetadata } from "@/game/domain/worldEntity";
+import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
+import {
+  createWorldStateFixtureWith,
+  type WorldStateFixtureOverrides,
+} from "@/game/domain/testing/worldStateFixture.testutil";
 import {
   asEnemyId,
   asFactId,
@@ -33,17 +40,22 @@ function storyState() {
   });
 }
 
-function worldState(overrides: Partial<WorldState> = {}): WorldState {
-  const base = createInitialWorldState({
-    generation: {
-      generationId: asGenerationId("generation_1"),
-      seed: "seed",
-      templateVersion: "v1",
-      inputDigest: "digest",
-      gameType: "wuxia",
-    },
-    player: { name: "侠客", identity: "旅人", stats: { hp: 100, attack: 10, defense: 5 } },
-    startingLocation: {
+const GENERATION: GenerationMetadata = {
+  generationId: asGenerationId("generation_1"),
+  seed: "seed",
+  templateVersion: "v1",
+  inputDigest: "digest",
+  gameType: "wuxia",
+};
+
+/** 与 createInitialWorldState 一致：开局事件仍在账本里。 */
+const INITIALIZED_LEDGER: readonly GameEvent[] = [{ type: "game_initialized", generation: GENERATION }];
+
+// 起始投影一次给全：小镇的连接边指向镇外破庙，因此破庙、老乞丐名册与野狼同批具象化。
+const BASE_PROJECTION: EntityCompatibilityProjection = {
+  player: { name: "侠客", identity: "旅人", stats: { hp: 100, attack: 10, defense: 5 } },
+  locations: [
+    {
       id: locTown,
       name: "小镇",
       description: "山脚下的小镇。",
@@ -53,64 +65,71 @@ function worldState(overrides: Partial<WorldState> = {}): WorldState {
       availableItemIds: [],
       tags: [],
     },
-    startingItemIds: [],
-  });
-  return {
-    ...base,
-    locations: [
-      base.locations[0]!,
-      {
-        id: locTemple,
-        name: "镇外破庙",
-        description: "断墙后的破庙。",
-        kind: "main",
-        connectedLocationIds: [locTown],
-        npcIds: [npcBeggar],
-        availableItemIds: [],
-        tags: [],
-      },
+    {
+      id: locTemple,
+      name: "镇外破庙",
+      description: "断墙后的破庙。",
+      kind: "main",
+      connectedLocationIds: [locTown],
+      npcIds: [npcBeggar],
+      availableItemIds: [],
+      tags: [],
+    },
+  ],
+  currentLocationId: locTown,
+  unlockedLocationIds: [locTown],
+  visitedLocationIds: [locTown],
+  npcs: [{
+    id: npcBeggar,
+    name: "老乞丐",
+    role: "破庙守夜人",
+    description: "常年借宿镇外破庙",
+    locationId: locTemple,
+    isCompanion: false,
+    tags: [],
+    met: false,
+    memory: {
+      npcId: npcBeggar,
+      knownFactIds: [],
+      hiddenFactIds: [],
+      interactionHistory: [],
+      relationship: { affinity: 0 },
+      emotion: "neutral",
+      goals: ["确认来者是否可信"],
+    },
+  }],
+  items: [],
+  inventory: [],
+  worldFacts: [{
+    factId: factTracks,
+    text: "破庙后留有狼爪印。",
+    source: "generated",
+    discovered: false,
+    locationId: locTown,
+    investigationLabel: "查看山路旁的痕迹",
+    investigationApproaches: [
+      { approachId: "quiet", label: "安静观察", evidenceQuality: "clean", tensionDelta: 0 },
+      { approachId: "forceful", label: "翻找残迹", evidenceQuality: "noisy", tensionDelta: 3 },
     ],
-    npcs: [{
-      id: npcBeggar,
-      name: "老乞丐",
-      role: "破庙守夜人",
-      description: "常年借宿镇外破庙",
-      locationId: locTemple,
-      isCompanion: false,
-      tags: [],
-      met: false,
-      memory: {
-        npcId: npcBeggar,
-        knownFactIds: [],
-        hiddenFactIds: [],
-        interactionHistory: [],
-        relationship: { affinity: 0 },
-        emotion: "neutral",
-        goals: ["确认来者是否可信"],
-      },
-    }],
-    worldFacts: [{
-      factId: factTracks,
-      text: "破庙后留有狼爪印。",
-      source: "generated",
-      discovered: false,
-      locationId: locTown,
-      investigationLabel: "查看山路旁的痕迹",
-      investigationApproaches: [
-        { approachId: "quiet", label: "安静观察", evidenceQuality: "clean", tensionDelta: 0 },
-        { approachId: "forceful", label: "翻找残迹", evidenceQuality: "noisy", tensionDelta: 3 },
-      ],
-    }],
-    enemies: [{
-      id: enemyWolf,
-      name: "野狼",
-      tier: "normal",
-      stats: { hp: 30, attack: 6, defense: 2 },
-      locationId: locTemple,
-      tags: [],
-    }],
-    ...overrides,
-  };
+  }],
+  quests: [],
+  enemies: [{
+    id: enemyWolf,
+    name: "野狼",
+    tier: "normal",
+    stats: { hp: 30, attack: 6, defense: 2 },
+    locationId: locTemple,
+    tags: [],
+  }],
+  defeatedEnemyIds: [],
+  factions: [],
+};
+
+function worldState(overrides: WorldStateFixtureOverrides = {}): WorldState {
+  return createWorldStateFixtureWith(
+    { generation: GENERATION, base: BASE_PROJECTION },
+    { eventLedger: INITIALIZED_LEDGER, ...overrides },
+  );
 }
 
 function quest(objectives: WorldState["quests"][number]["objectives"]): WorldState["quests"][number] {
@@ -200,6 +219,15 @@ describe("prepared continuation candidate projection", () => {
     const nextItemId = asItemId("item_current_act");
     const base = worldState();
     const ws = worldState({
+      // 当前幕的 obtain_item 目标要求该物品已经具象化；仍无主（不在背包也不在任何地点），
+      // 与该用例原本“本幕物品尚未落到任何容器”的意图一致。
+      items: [{
+        id: nextItemId,
+        name: "本幕信物",
+        description: "追查破庙异状时拿到的信物。",
+        kind: "quest",
+        tags: [],
+      }],
       npcs: base.npcs.map((npc) => npc.id === npcBeggar
         ? { ...npc, memory: { ...npc.memory, knownFactIds: [factTracks] } }
         : npc),

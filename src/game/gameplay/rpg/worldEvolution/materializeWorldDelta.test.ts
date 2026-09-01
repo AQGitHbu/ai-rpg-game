@@ -1,31 +1,59 @@
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, it, expect } from "vitest";
 import { materializeWorldDelta } from "./materializeWorldDelta";
-import type { WorldState, NpcEntry } from "@/game/domain/worldState";
+import type { WorldState, LocationEntry, NpcEntry } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import { createInitialStoryState } from "@/game/domain/storyState";
-import { createInitialWorldState } from "@/game/domain/worldState";
+import type { GameEvent } from "@/game/domain/events";
+import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
+import {
+  createWorldStateFixtureWith,
+  type WorldStateFixtureOverrides,
+} from "@/game/domain/testing/worldStateFixture.testutil";
 import type { WorldDeltaProposal } from "@/game/domain/worldDelta";
-import { asLocationId, asNpcId, asGenerationId } from "@/game/domain/worldEntity";
+import { asLocationId, asNpcId, asGenerationId, type GenerationMetadata } from "@/game/domain/worldEntity";
 import { approveWorldDelta, type ApprovedWorldDeltaCore } from "./approveWorldDelta";
 import { createTownRuntime, bindNpcToTownSlot } from "@/game/gameplay/rpg/town";
 
-function makeWorld(): WorldState {
-  const base = createInitialWorldState({
-    generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
-    player: { name: "林惊羽", identity: "外门弟子", stats: { hp: 100, attack: 10, defense: 5 } },
-    startingLocation: {
-      id: asLocationId("loc_0"), name: "听雨客栈", description: "山脚小镇的客栈。", kind: "main",
-      connectedLocationIds: [], npcIds: [asNpcId("npc_0")], availableItemIds: [], tags: [],
-    },
-    startingItemIds: [],
-  });
-  const npc: NpcEntry = {
-    id: asNpcId("npc_0"), name: "韩征", role: "掌柜", description: "听雨客栈的掌柜。",
-    locationId: asLocationId("loc_0"), isCompanion: false, tags: [], met: false,
-    memory: { npcId: asNpcId("npc_0"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+// ---------------------------------------------------------------------------
+// Fixture：起始地点听雨客栈(loc_0) 与其名册内的掌柜韩征(npc_0) 一次给出完整合法
+// 兼容投影；v3 下 NPC 必须由 entityStore 派生，不能再 spread 单条 legacy 数组。
+// ---------------------------------------------------------------------------
+
+const LOC_0: LocationEntry = {
+  id: asLocationId("loc_0"), name: "听雨客栈", description: "山脚小镇的客栈。", kind: "main",
+  connectedLocationIds: [], npcIds: [asNpcId("npc_0")], availableItemIds: [], tags: [],
+};
+
+const NPC_0: NpcEntry = {
+  id: asNpcId("npc_0"), name: "韩征", role: "掌柜", description: "听雨客栈的掌柜。",
+  locationId: asLocationId("loc_0"), isCompanion: false, tags: [], met: false,
+  memory: { npcId: asNpcId("npc_0"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+};
+
+const BASE_PROJECTION: EntityCompatibilityProjection = {
+  player: { name: "林惊羽", identity: "外门弟子", stats: { hp: 100, attack: 10, defense: 5 } },
+  locations: [LOC_0],
+  currentLocationId: asLocationId("loc_0"),
+  unlockedLocationIds: [asLocationId("loc_0")],
+  visitedLocationIds: [asLocationId("loc_0")],
+  npcs: [NPC_0],
+  items: [],
+  inventory: [],
+  worldFacts: [],
+  quests: [],
+  enemies: [],
+  defeatedEnemyIds: [],
+  factions: [],
+};
+
+function makeWorld(overrides: WorldStateFixtureOverrides = {}): WorldState {
+  const generation: GenerationMetadata = {
+    generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia",
   };
-  return { ...base, npcs: [npc] };
+  // 与 createInitialWorldState 一致：账本首条为 game_initialized。
+  const eventLedger: readonly GameEvent[] = [{ type: "game_initialized", generation }];
+  return createWorldStateFixtureWith({ generation, base: BASE_PROJECTION }, { eventLedger, ...overrides });
 }
 
 function makeStory(overrides?: Partial<StoryState>): StoryState {
@@ -195,18 +223,12 @@ describe("materializeWorldDelta", () => {
   });
 
   it("materializes a town building without creating a world-map location", () => {
-    const base = makeWorld();
     let town = createTownRuntime({ locationId: asLocationId("loc_0"), seed: "s#town#loc_0" });
     town = bindNpcToTownSlot(town, asNpcId("npc_0")).town;
-    const ws: WorldState = {
-      ...base,
+    const ws = makeWorld({
       currentLocationId: asLocationId("loc_0"),
-      locations: base.locations.map((location) =>
-        location.id === asLocationId("loc_0")
-          ? { ...location, name: "青石镇", scale: "town" as const, town }
-          : location,
-      ),
-    };
+      locations: [{ ...LOC_0, name: "青石镇", scale: "town", town }],
+    });
     const ss = makeStory({ currentAct: 2, targetActs: 3 });
     const proposal: WorldDeltaProposal = {
       beatSummary: "城镇里出现新的茶馆线人",
@@ -232,17 +254,13 @@ describe("materializeWorldDelta", () => {
   });
 
   it("binds an NPC materialized into an existing town to the FIRST FREE slot (slot_0 stays bound)", () => {
-    const base = makeWorld();
     const town = bindNpcToTownSlot(
       createTownRuntime({ locationId: asLocationId("loc_0"), seed: "s#town#loc_0" }),
       asNpcId("npc_0"),
     ).town;
-    const ws: WorldState = {
-      ...base,
-      locations: base.locations.map((loc) =>
-        loc.id === asLocationId("loc_0") ? { ...loc, scale: "town" as const, town } : loc,
-      ),
-    };
+    const ws = makeWorld({
+      locations: [{ ...LOC_0, scale: "town", town }],
+    });
     const ss = makeStory({ currentAct: 2, targetActs: 3, tension: 10 });
     const proposal: WorldDeltaProposal = {
       beatSummary: "小镇里的新来客",

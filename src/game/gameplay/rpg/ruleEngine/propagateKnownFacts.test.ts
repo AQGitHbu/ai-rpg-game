@@ -6,6 +6,8 @@ import {
   type NpcEntry,
 } from "@/game/domain/worldState";
 import type { FactChange } from "@/game/domain/resolvedEvent";
+import { projectEntityStore } from "@/game/domain/entity";
+import { createWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 import {
   asNpcId,
   asLocationId,
@@ -54,14 +56,29 @@ function makeWs(overrides?: Partial<WorldState>): WorldState {
     },
     startingItemIds: [],
   });
-  const ws: WorldState = {
-    ...base,
+  const ws = createWorldStateFixture({
+    generation: base.generation,
+    projection: {
+      ...projectEntityStore(base.entityStore),
     npcs: [makeNpc("npc_1"), makeNpc("npc_2"), makeNpc("npc_3")],
     worldFacts: [
       { factId: asFactId("f_1"), text: "线索", source: "generated", discovered: false },
     ],
-  };
-  return { ...ws, ...overrides };
+    },
+    battle: base.battle,
+    endings: base.endings,
+    ending: base.ending,
+    eventLedger: base.eventLedger,
+  });
+  if (overrides === undefined) return ws;
+  return createWorldStateFixture({
+    generation: ws.generation,
+    projection: { ...projectEntityStore(ws.entityStore), ...overrides },
+    battle: overrides.battle ?? ws.battle,
+    endings: overrides.endings ?? ws.endings,
+    ending: overrides.ending ?? ws.ending,
+    eventLedger: overrides.eventLedger ?? ws.eventLedger,
+  });
 }
 
 describe("propagateKnownFacts", () => {

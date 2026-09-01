@@ -7,6 +7,7 @@ import type { ActiveBattleCombatState, BattleCombatant, CombatActionKind, Combat
 import { buildEncounter } from "./buildEncounter";
 import { advanceUntilPlayerDecision } from "./advanceBattle";
 import { createTurnOrder } from "./combatMath";
+import { applyEntityMutations } from "@/game/gameplay/rpg/entityWorld";
 
 // ---------------------------------------------------------------------------
 // 战斗纯函数：操作 WorldState，不依赖世界生成聚合。
@@ -105,12 +106,14 @@ function modernResult(
   for (const defeatedId of advanced.state.downedEnemyIds) {
     events.push({ type: "enemy_defeated", enemyId: defeatedId, occurredAt });
   }
-  const defeated = Array.from(new Set([...ws.defeatedEnemyIds, ...advanced.state.downedEnemyIds]));
+  // 现代遭遇可先击倒一个敌人再撤退；resolver 保留当下结算事实，应用层在
+  // withdraw/defeat 时用完整战前快照回滚，因此两层语义都保持一致。
+  const mutation = applyEntityMutations(ws, advanced.state.downedEnemyIds.map((enemyId) => ({ kind: "set_enemy_defeated" as const, enemyId, defeated: true })));
+  if (!mutation.ok) return { ok: false, feedback: "战斗世界状态不一致。" };
   const nextWs: WorldState = {
-    ...ws,
+    ...mutation.worldState,
     battle: { status: "resolved", enemyId: battle.enemyId, outcome, ...(battle.battleKey === undefined ? {} : { battleKey: battle.battleKey }) },
-    defeatedEnemyIds: defeated,
-    eventLedger: [...ws.eventLedger, ...events],
+    eventLedger: [...mutation.worldState.eventLedger, ...events],
   };
   const firstEnemy = ws.enemies.find((enemy) => enemy.id === battle.enemyId);
   const label = outcome === "victory" ? `你击败了${firstEnemy?.name ?? "敌人"}！`
@@ -203,8 +206,7 @@ export function startBattle(
     const occurredAt = deps.now();
     const event: GameEvent = { type: "battle_started", enemyId, enemyIds, occurredAt };
     const preBattleSnapshot: BattleStartSnapshot = {
-      playerStats: ws.player.stats,
-      defeatedEnemyIds: ws.defeatedEnemyIds,
+      entityStore: ws.entityStore,
       eventLedger: ws.eventLedger,
     };
     const nextWs: WorldState = {
@@ -226,8 +228,7 @@ export function startBattle(
   const occurredAt = deps.now();
   const event: GameEvent = { type: "battle_started", enemyId, occurredAt };
   const preBattleSnapshot: BattleStartSnapshot = {
-    playerStats: ws.player.stats,
-    defeatedEnemyIds: ws.defeatedEnemyIds,
+    entityStore: ws.entityStore,
     eventLedger: ws.eventLedger,
   };
 
@@ -342,11 +343,12 @@ export function battleAction(
       occurredAt,
     });
 
+    const mutation = applyEntityMutations(ws, [{ kind: "set_enemy_defeated", enemyId: battle.enemyId, defeated: true }]);
+    if (!mutation.ok) return { ok: false, feedback: "战斗世界状态不一致。" };
     const nextWs: WorldState = {
-      ...ws,
+      ...mutation.worldState,
       battle: { status: "resolved", enemyId: battle.enemyId, outcome: "victory" },
-      defeatedEnemyIds: [...ws.defeatedEnemyIds, battle.enemyId],
-      eventLedger: [...ws.eventLedger, ...events],
+      eventLedger: [...mutation.worldState.eventLedger, ...events],
     };
 
     return {

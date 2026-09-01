@@ -7,11 +7,11 @@ import {
   asLocationId,
   asNpcId,
   asQuestId,
+  type GenerationMetadata,
 } from "@/game/domain/worldEntity";
-import {
-  createInitialWorldState,
-  type WorldState,
-} from "@/game/domain/worldState";
+import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
+import { createWorldStateFixtureWith } from "@/game/domain/testing/worldStateFixture.testutil";
+import type { WorldState } from "@/game/domain/worldState";
 import type { ResolvedEvent } from "@/game/domain/resolvedEvent";
 import type {
   PreparedContinuationState,
@@ -27,21 +27,23 @@ const locTemple = asLocationId("loc_temple");
 const npcBeggar = asNpcId("npc_beggar");
 const questId = asQuestId("quest_prepared");
 
-function worldState(): WorldState {
-  const base = createInitialWorldState({
-    generation: {
-      generationId: asGenerationId("generation_prepared"),
-      seed: "prepared-seed",
-      templateVersion: "v1",
-      inputDigest: "prepared-digest",
-      gameType: "wuxia",
-    },
-    player: {
-      name: "侠客",
-      identity: "旅人",
-      stats: { hp: 100, attack: 10, defense: 5 },
-    },
-    startingLocation: {
+const GENERATION: GenerationMetadata = {
+  generationId: asGenerationId("generation_prepared"),
+  seed: "prepared-seed",
+  templateVersion: "v1",
+  inputDigest: "prepared-digest",
+  gameType: "wuxia",
+};
+
+/** 与 createInitialWorldState 一致：开局事件仍在账本里。 */
+const INITIALIZED_LEDGER: readonly GameEvent[] = [{ type: "game_initialized", generation: GENERATION }];
+
+// 起始投影一次给全：小镇的连接边指向镇外破庙，因此破庙同批具象化。
+// 名册留空——本夹具不具象化任何 NPC；说台词的老乞丐只存在于 prepared step 的 scene 里。
+const BASE_PROJECTION: EntityCompatibilityProjection = {
+  player: { name: "侠客", identity: "旅人", stats: { hp: 100, attack: 10, defense: 5 } },
+  locations: [
+    {
       id: locTown,
       name: "小镇",
       description: "山脚下的小镇。",
@@ -51,26 +53,35 @@ function worldState(): WorldState {
       availableItemIds: [],
       tags: [],
     },
-    startingItemIds: [],
-  });
+    {
+      id: locTemple,
+      name: "镇外破庙",
+      description: "断墙后的破庙。",
+      kind: "main",
+      connectedLocationIds: [locTown],
+      npcIds: [],
+      availableItemIds: [],
+      tags: [],
+    },
+  ],
+  currentLocationId: locTown,
+  unlockedLocationIds: [locTown, locTemple],
+  visitedLocationIds: [locTown],
+  npcs: [],
+  items: [],
+  inventory: [],
+  worldFacts: [],
+  quests: [],
+  enemies: [],
+  defeatedEnemyIds: [],
+  factions: [],
+};
 
-  return {
-    ...base,
-    locations: [
-      ...base.locations,
-      {
-        id: locTemple,
-        name: "镇外破庙",
-        description: "断墙后的破庙。",
-        kind: "main",
-        connectedLocationIds: [locTown],
-        npcIds: [npcBeggar],
-        availableItemIds: [],
-        tags: [],
-      },
-    ],
-    unlockedLocationIds: [locTown, locTemple],
-  };
+function worldState(): WorldState {
+  return createWorldStateFixtureWith(
+    { generation: GENERATION, base: BASE_PROJECTION },
+    { eventLedger: INITIALIZED_LEDGER },
+  );
 }
 
 function preparedStep(
@@ -158,11 +169,14 @@ function consume(
   overrides: Partial<Parameters<typeof consumePreparedContinuation>[0]> = {},
 ): ConsumePreparedContinuationResult {
   const beforeWorldState = worldState();
-  const resolvedWorldState: WorldState = {
-    ...beforeWorldState,
-    currentLocationId: locTemple,
-    visitedLocationIds: [locTown, locTemple],
-  };
+  const resolvedWorldState = createWorldStateFixtureWith(
+    { generation: GENERATION, base: BASE_PROJECTION },
+    {
+      eventLedger: INITIALIZED_LEDGER,
+      currentLocationId: locTemple,
+      visitedLocationIds: [locTown, locTemple],
+    },
+  );
   const beforeStoryState = storyState(preparedContinuation());
   return consumePreparedContinuation({
     beforeWorldState,

@@ -8,7 +8,11 @@ import type { ActionChoiceMap } from "./actionConverter";
 import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
 import { SKILL_ENERGY_COST } from "@/game/domain/combat";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
-import { isObjectiveEntityReleased } from "@/game/gameplay/rpg/worldEvolution";
+import {
+  endingDecisionStances,
+  isEndingDecisionDue,
+} from "@/game/gameplay/rpg/narrativeBundle";
+import { isObjectiveEntityReleased, isTakeItemPrepared } from "@/game/gameplay/rpg/worldEvolution";
 
 // ---------------------------------------------------------------------------
 // 服务端 choiceMap 构建器：从当前 WorldState + StoryState 派生所有合法行动的
@@ -109,6 +113,7 @@ export function buildChoiceMap(
       for (const itemId of currentLoc.availableItemIds) {
         if (
           !worldState.inventory.includes(itemId)
+          && isTakeItemPrepared(storyState, itemId)
           && isObjectiveEntityReleased(worldState, storyState, (objective) =>
             objective.kind === "obtain_item" && String(objective.itemId) === String(itemId))
         ) {
@@ -139,10 +144,22 @@ export function buildChoiceMap(
 
     // 探索：仅当前地点有可探索内容（未发现线索/未拾取物品或敌人/未满足目标/候选事件）
     // 时才作为合法世界行动（方案 1：无剧情钩子不显示探索）。
-    const endingDecisionReady = storyState.endingAllowed
-      && worldState.ending === null
-      && worldState.endings.length >= 2;
-    if (hasExplorableContent(worldState, storyState) || needsWorldBoundaryPreparation(storyState) || endingDecisionReady) {
+    // 结局立场由服务端铸造：结局包的 terminal 是 "ending"，契约禁止 provider
+    // 提交 currentScene choices，因此两个终幕 talk 是唯一能推进故事的形式决策。
+    // 结局束内没有任何可消费步骤，探索回合必然零写入失败，只能作为无人在场
+    // 时的兜底投影保留。
+    const endingStances = endingDecisionStances(worldState, storyState);
+    for (const stance of endingStances) {
+      addRuntimeAction(stance.action);
+    }
+    const endingDecisionDue = isEndingDecisionDue(worldState, storyState);
+    // 已有可提交的终幕立场时，普通探索即使仍侦测到旧线索/残留内容也
+    // 没有可消费的叙事步骤；不能把它作为死路 token 下发。
+    if (
+      (!endingDecisionDue
+        && (hasExplorableContent(worldState, storyState) || needsWorldBoundaryPreparation(storyState)))
+      || (endingDecisionDue && endingStances.length === 0)
+    ) {
       addRuntimeAction({ type: "explore" });
     }
   }

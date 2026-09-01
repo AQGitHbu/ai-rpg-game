@@ -13,6 +13,7 @@ import type { NarrativeEmotion } from "@/game/domain/narrative";
 import type { RecentBeat } from "@/game/domain/materializedView";
 import type { MandatoryNarrativeBeat, ObjectiveRef, ObjectiveTransition } from "@/game/domain/narrativeBeat";
 import type { WorldState } from "@/game/domain/worldState";
+import { projectEntityStore } from "@/game/domain/entity";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 import {
   buildPreparedStepDescriptors,
@@ -453,7 +454,11 @@ function buildUpcomingLinearObjectives(
 
 /** 从持久化 record 投影最小权限上下文（唯一构造入口）。 */
 export function buildSceneGenerationContext(record: GameRecord): SceneGenerationContext {
-  const ws = record.worldState;
+  const projected = projectEntityStore(record.worldState.entityStore);
+  const ws = {
+    ...record.worldState,
+    ...projected,
+  };
   const ss = record.storyState;
 
   const narrative = ss.narrative;
@@ -468,7 +473,7 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
   // 而场景装配的预览状态里下一幕任务已具象化，故在此修正投影）。
   const transition: ObjectiveTransition = {
     ...job.objectiveTransition,
-    after: currentObjectiveOf(record.worldState, record.storyState),
+    after: currentObjectiveOf(ws, record.storyState),
   };
   const activeQuest = transition.after === null
     ? undefined

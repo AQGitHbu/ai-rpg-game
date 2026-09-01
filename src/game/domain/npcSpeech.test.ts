@@ -28,6 +28,34 @@ describe("NPC direct speech", () => {
       .toBe("你给的腰牌，是镖队的东西。镖队不是遇袭失散。");
   });
 
+  it("strips a leading stage direction and a whole-line single curly quote wrapper", () => {
+    expect(normalizeNpcSpeech(
+      "（哑巴猎户用炭笔在树皮上写下几个字，推到你面前）‘铁旗会总舵，铁面人。这铜牌，是我从火场里捡回来的。’",
+      "哑巴猎户",
+    )).toBe("铁旗会总舵，铁面人。这铜牌，是我从火场里捡回来的。");
+    expect(normalizeNpcSpeech("（摇了摇头）这件事我不能说。", "邵叔")).toBe("这件事我不能说。");
+    // 句中的单弯引号是引用，不是整段包装。
+    expect(normalizeNpcSpeech("他说过‘小心’，可我没能及时躲开。", "邵叔"))
+      .toBe("他说过‘小心’，可我没能及时躲开。");
+    // 只剩舞台说明时不产出台词正文。
+    expect(normalizeNpcSpeech("（他转身离去）", "邵叔")).toBe("");
+    expect(normalizeNpcSpeech(
+      "……（哑巴张沉默地看着你，指了指地上的铁莲花镖囊，喉咙里发出含混的啊啊声。）",
+      "哑巴张",
+    )).toBe("");
+  });
+
+  it("分页留下的单侧弯引号也不残留在气泡里", () => {
+    // 真机台词被按句号拆成两页后，整段 ‘…’ 包装会各自剩下一侧。
+    expect(normalizeNpcSpeech("（哑巴猎户用炭笔在树皮上写下几个字，推到你面前）‘铁旗会总舵，铁面人。", "哑巴猎户"))
+      .toBe("铁旗会总舵，铁面人。");
+    expect(normalizeNpcSpeech("当年长风镖局押送的官银，就是被他调包的。你……要小心。’", "哑巴猎户"))
+      .toBe("当年长风镖局押送的官银，就是被他调包的。你……要小心。");
+    // 成对的句内引用不受影响。
+    expect(normalizeNpcSpeech("我只听人提过 ‘铁旗会’ 这个名字。", "哑巴猎户"))
+      .toBe("我只听人提过 ‘铁旗会’ 这个名字。");
+  });
+
   it("recognizes context-free acknowledgements", () => {
     expect(isGenericNpcAcknowledgement('"我知道了。"')).toBe(true);
     expect(isGenericNpcAcknowledgement("关于商队失踪的事，我先说我确定的部分。")).toBe(false);

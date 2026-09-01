@@ -1,27 +1,46 @@
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, it, expect } from "vitest";
 import { ruleEngine, resolveTurn } from "./index";
-import { createInitialWorldState, appendNpc, appendLocation, type LocationEntry, type NpcEntry, type EnemyEntry, type WorldState } from "@/game/domain/worldState";
+import {
+  type EnemyEntry, type LocationEntry, type NpcEntry,
+  type PlayerState, type WorldState,
+} from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
-import { asLocationId, asNpcId, asGenerationId, asEnemyId, asQuestId, asFactId, type QuestId, type EndingId, type FactId } from "@/game/domain/worldEntity";
-import { asTurnId } from "@/game/domain/events";
+import { asLocationId, asNpcId, asGenerationId, asEnemyId, asQuestId, asFactId, type GenerationMetadata, type QuestId, type EndingId, type FactId } from "@/game/domain/worldEntity";
+import { asTurnId, type GameEvent } from "@/game/domain/events";
+import {
+  createWorldStateFixtureWith,
+  emptyProjection,
+  type WorldStateFixtureOverrides,
+} from "@/game/domain/testing/worldStateFixture.testutil";
+
+const GENERATION: GenerationMetadata = {
+  generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia",
+};
+const PLAYER: PlayerState = { name: "p", identity: "i", stats: { hp: 100, attack: 10, defense: 5 } };
+const LOC_1: LocationEntry = {
+  id: asLocationId("loc_1"), name: "客栈", description: "t", kind: "main",
+  connectedLocationIds: [asLocationId("loc_2")], npcIds: [], availableItemIds: [], tags: [],
+};
+const LOC_2: LocationEntry = {
+  id: asLocationId("loc_2"), name: "街道", description: "t", kind: "main",
+  connectedLocationIds: [asLocationId("loc_1")], npcIds: [], availableItemIds: [], tags: [],
+};
+const BASE = emptyProjection({
+  player: PLAYER,
+  locations: [LOC_1, LOC_2],
+  currentLocationId: LOC_1.id,
+  unlockedLocationIds: [LOC_1.id, LOC_2.id],
+});
+const INITIALIZED_LEDGER: readonly GameEvent[] = [{ type: "game_initialized", generation: GENERATION }];
+
+/** 一次传入完整兼容投影：覆盖项与 entityStore 由同一组装点重建。 */
+function makeWorld(overrides: WorldStateFixtureOverrides = {}): WorldState {
+  return createWorldStateFixtureWith({ generation: GENERATION, base: BASE }, { eventLedger: INITIALIZED_LEDGER, ...overrides });
+}
 
 describe("ruleEngine facade", () => {
-  const loc1: LocationEntry = {
-    id: asLocationId("loc_1"), name: "客栈", description: "t", kind: "main",
-    connectedLocationIds: [asLocationId("loc_2")], npcIds: [], availableItemIds: [], tags: [],
-  };
-  const loc2: LocationEntry = {
-    id: asLocationId("loc_2"), name: "街道", description: "t", kind: "main",
-    connectedLocationIds: [asLocationId("loc_1")], npcIds: [], availableItemIds: [], tags: [],
-  };
-  const baseWs = createInitialWorldState({
-    generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
-    player: { name: "p", identity: "i", stats: { hp: 100, attack: 10, defense: 5 } },
-    startingLocation: loc1,
-    startingItemIds: [],
-  });
-  const ws = { ...appendLocation(baseWs, loc2), unlockedLocationIds: [asLocationId("loc_1"), asLocationId("loc_2")] };
+  const ws = makeWorld();
   const ss = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 2, npcs: 0, quests: 0, events: 0 } });
   const deps = { now: () => "2026-01-01" };
 
@@ -49,7 +68,7 @@ describe("ruleEngine facade", () => {
       locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
       memory: { npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
     };
-    const wsWithNpc = appendNpc(ws, npc);
+    const wsWithNpc = makeWorld({ npcs: [npc] });
     const result = ruleEngine(wsWithNpc, ss, { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" }, "act_3", deps);
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -63,15 +82,15 @@ describe("ruleEngine facade", () => {
       locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
       memory: { npcId: asNpcId("npc_dialogue"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
     };
-    const dialogueWs = {
-      ...appendNpc(ws, npc),
+    const dialogueWs = makeWorld({
+      npcs: [npc],
       quests: [{
         id: asQuestId("quest_dialogue"), name: "查清口供", description: "把口供问完整",
-        objectives: [{ kind: "talk_to_npc" as const, npcId: npc.id }],
-        onSuccess: { kind: "advance_story" as const }, onFailure: { kind: "closed" as const },
-        tags: [], kind: "main" as const, stage: 1, status: "active" as const,
+        objectives: [{ kind: "talk_to_npc", npcId: npc.id }],
+        onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
+        tags: [], kind: "main", stage: 1, status: "active",
       }],
-    };
+    });
     const dialogueState = {
       ...ss,
       narrative: {
@@ -128,15 +147,15 @@ describe("ruleEngine facade", () => {
       locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
       memory: { npcId: asNpcId("npc_next"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
     };
-    const handoffWorld = {
-      ...appendNpc(appendNpc(ws, oldNpc), nextNpc),
+    const handoffWorld = makeWorld({
+      npcs: [oldNpc, nextNpc],
       quests: [{
         id: asQuestId("quest_next"), name: "新目标", description: "与新 NPC 交谈",
-        objectives: [{ kind: "talk_to_npc" as const, npcId: nextNpc.id }],
-        onSuccess: { kind: "advance_story" as const }, onFailure: { kind: "closed" as const },
-        tags: [], kind: "main" as const, stage: 1, status: "active" as const,
+        objectives: [{ kind: "talk_to_npc", npcId: nextNpc.id }],
+        onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
+        tags: [], kind: "main", stage: 1, status: "active",
       }],
-    };
+    });
     const handoffStory = {
       ...ss,
       narrative: {
@@ -177,15 +196,15 @@ describe("ruleEngine facade", () => {
       locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
       memory: { npcId: asNpcId("npc_next_ask"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
     };
-    const handoffWorld = {
-      ...appendNpc(appendNpc(ws, oldNpc), nextNpc),
+    const handoffWorld = makeWorld({
+      npcs: [oldNpc, nextNpc],
       quests: [{
         id: asQuestId("quest_next_ask"), name: "当铺暗影", description: "与赵文远交谈",
-        objectives: [{ kind: "talk_to_npc" as const, npcId: nextNpc.id }],
-        onSuccess: { kind: "advance_story" as const }, onFailure: { kind: "closed" as const },
-        tags: [], kind: "main" as const, stage: 2, status: "active" as const,
+        objectives: [{ kind: "talk_to_npc", npcId: nextNpc.id }],
+        onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
+        tags: [], kind: "main", stage: 2, status: "active",
       }],
-    };
+    });
     const handoffStory = {
       ...ss,
       narrative: {
@@ -219,21 +238,7 @@ describe("ruleEngine facade", () => {
 });
 
 describe("ruleEngine status passthrough", () => {
-  const loc1: LocationEntry = {
-    id: asLocationId("loc_1"), name: "客栈", description: "t", kind: "main",
-    connectedLocationIds: [asLocationId("loc_2")], npcIds: [], availableItemIds: [], tags: [],
-  };
-  const loc2: LocationEntry = {
-    id: asLocationId("loc_2"), name: "街道", description: "t", kind: "main",
-    connectedLocationIds: [asLocationId("loc_1")], npcIds: [], availableItemIds: [], tags: [],
-  };
-  const baseWs = createInitialWorldState({
-    generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
-    player: { name: "p", identity: "i", stats: { hp: 100, attack: 10, defense: 5 } },
-    startingLocation: loc1,
-    startingItemIds: [],
-  });
-  const ws = { ...appendLocation(baseWs, loc2), unlockedLocationIds: [asLocationId("loc_1"), asLocationId("loc_2")] };
+  const ws = makeWorld();
   const ss = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 2, npcs: 0, quests: 0, events: 0 } });
   const deps = { now: () => "2026-01-01" };
 
@@ -243,7 +248,7 @@ describe("ruleEngine status passthrough", () => {
       locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
       memory: { npcId: asNpcId("npc_hostile"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: -70 }, emotion: "angry", goals: [] },
     };
-    const wsWithHostile = appendNpc(ws, hostileNpc);
+    const wsWithHostile = makeWorld({ npcs: [hostileNpc] });
     const result = ruleEngine(wsWithHostile, ss, { type: "talk", npcId: asNpcId("npc_hostile"), dialogueAct: "ask" }, "act_1", deps);
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -252,7 +257,7 @@ describe("ruleEngine status passthrough", () => {
   });
 
   it("passes blocked status for move during battle", () => {
-    const wsInBattle = { ...ws, battle: { status: "active" as const, enemyId: asEnemyId("e1"), playerHp: 50, enemyHp: 30, round: 1 } };
+    const wsInBattle = makeWorld({ battle: { status: "active", enemyId: asEnemyId("e1"), playerHp: 50, enemyHp: 30, round: 1 } });
     const result = ruleEngine(wsInBattle, ss, { type: "move", locationId: asLocationId("loc_2") }, "act_1", deps);
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -272,21 +277,7 @@ describe("ruleEngine status passthrough", () => {
 });
 
 describe("resolveTurn facade", () => {
-  const loc1: LocationEntry = {
-    id: asLocationId("loc_1"), name: "客栈", description: "t", kind: "main",
-    connectedLocationIds: [asLocationId("loc_2")], npcIds: [], availableItemIds: [], tags: [],
-  };
-  const loc2: LocationEntry = {
-    id: asLocationId("loc_2"), name: "街道", description: "t", kind: "main",
-    connectedLocationIds: [asLocationId("loc_1")], npcIds: [], availableItemIds: [], tags: [],
-  };
-  const baseWs = createInitialWorldState({
-    generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
-    player: { name: "p", identity: "i", stats: { hp: 100, attack: 10, defense: 5 } },
-    startingLocation: loc1,
-    startingItemIds: [],
-  });
-  const ws = { ...appendLocation(baseWs, loc2), unlockedLocationIds: [asLocationId("loc_1"), asLocationId("loc_2")] };
+  const ws = makeWorld();
   const ss = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 2, npcs: 0, quests: 0, events: 0 } });
   const deps = { now: () => "2026-01-01" };
   const baseRevision = 7;
@@ -337,7 +328,7 @@ describe("resolveTurn facade", () => {
       locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
       memory: { npcId: asNpcId("npc_hostile"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: -70 }, emotion: "angry", goals: [] },
     };
-    const wsWithHostile = appendNpc(ws, hostileNpc);
+    const wsWithHostile = makeWorld({ npcs: [hostileNpc] });
     const result = resolveTurn(wsWithHostile, ss, { type: "talk", npcId: asNpcId("npc_hostile"), dialogueAct: "ask" }, "act_3", baseRevision, turnId, "fixed_choice", deps);
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error(`unexpected rejection: ${result.code}`);
@@ -350,8 +341,7 @@ describe("resolveTurn facade", () => {
 
   it("a non-dialogue action can finish the final quest without prematurely resolving an ending", () => {
     const questId = "quest_1" as QuestId;
-    const questWs: typeof ws = {
-      ...ws,
+    const questWs = makeWorld({
       quests: [{
         id: questId, name: "q", description: "d",
         objectives: [{ kind: "visit_location", locationId: asLocationId("loc_2") }],
@@ -362,7 +352,7 @@ describe("resolveTurn facade", () => {
         id: "ending_1" as EndingId, name: "终局", description: "d",
         requirements: [{ kind: "quest_completed", questId }],
       }],
-    };
+    });
     // 最终幕 + 无未决主线 thread 会推导 endingAllowed=true，但玩家仍须在
     // 结局对中明确选择 support/challenge；移动本身不应跳过这一步。
     const ssFinalAct = {
@@ -401,8 +391,8 @@ describe("resolveTurn facade", () => {
       locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: true,
       memory: { npcId: asNpcId("npc_final"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
     };
-    const finalWs = appendNpc({
-      ...ws,
+    const finalWs = makeWorld({
+      npcs: [finalNpc],
       quests: [{
         id: questId, name: "终幕主线", description: "d",
         objectives: [{ kind: "visit_location", locationId: asLocationId("loc_1") }],
@@ -413,7 +403,7 @@ describe("resolveTurn facade", () => {
         { id: "ending_trust" as EndingId, name: "共担真相", description: "d", requirements: [{ kind: "npc_affinity_at_least", npcId: finalNpc.id, value: 1 }] },
         { id: "ending_doubt" as EndingId, name: "独自揭露", description: "d", requirements: [{ kind: "npc_affinity_at_most", npcId: finalNpc.id, value: 0 }] },
       ],
-    }, finalNpc);
+    });
     const ssFinalAct = {
       ...ss,
       currentAct: 3,
@@ -440,7 +430,7 @@ describe("resolveTurn facade", () => {
   });
 
   it("blocked action keeps state and produces no commit payload", () => {
-    const wsInBattle = { ...ws, battle: { status: "active" as const, enemyId: asEnemyId("e1"), playerHp: 50, enemyHp: 30, round: 1 } };
+    const wsInBattle = makeWorld({ battle: { status: "active", enemyId: asEnemyId("e1"), playerHp: 50, enemyHp: 30, round: 1 } });
     const result = resolveTurn(wsInBattle, ss, { type: "move", locationId: asLocationId("loc_2") }, "act_4", baseRevision, turnId, "fixed_choice", deps);
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unexpected failure");
@@ -468,19 +458,21 @@ describe("resolveTurn facade", () => {
       id: asLocationId("loc_1"), name: "荒野", description: "t", kind: "main",
       connectedLocationIds: [], npcIds: [], availableItemIds: [], tags: [],
     };
-    const attackWs = {
-      ...createInitialWorldState({
-        generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
+    const attackWs = createWorldStateFixtureWith({
+      generation: GENERATION,
+      base: emptyProjection({
         player: { name: "侠客", identity: "剑客", stats: { hp: 30, attack: 6, defense: 4 } },
-        startingLocation: startLoc,
-        startingItemIds: [],
+        locations: [startLoc],
+        currentLocationId: startLoc.id,
       }),
+    }, {
+      eventLedger: INITIALIZED_LEDGER,
       enemies: [{
         id: asEnemyId("enemy_1"), name: "山贼", tier: "normal" as const,
         stats: { hp: 1, attack: 5, defense: 2 },
         locationId: asLocationId("loc_1"), tags: [],
       }],
-    };
+    });
     const battleTurnId = asTurnId("turn_20");
     const first = resolveTurn(attackWs, ss, { type: "attack", enemyId: asEnemyId("enemy_1") }, "act_6", baseRevision, battleTurnId, "fixed_choice", deps);
     expect(first.ok).toBe(true);
@@ -517,30 +509,12 @@ describe("resolveTurn facade", () => {
 });
 
 describe("candidate reaction events integrate after player action (Task 20)", () => {
-  const loc1: LocationEntry = {
-    id: asLocationId("loc_1"), name: "客栈", description: "t", kind: "main",
-    connectedLocationIds: [asLocationId("loc_2")], npcIds: [], availableItemIds: [], tags: [],
-  };
-  const loc2: LocationEntry = {
-    id: asLocationId("loc_2"), name: "街道", description: "t", kind: "main",
-    connectedLocationIds: [asLocationId("loc_1")], npcIds: [], availableItemIds: [], tags: [],
-  };
-  const baseWs = createInitialWorldState({
-    generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
-    player: { name: "p", identity: "i", stats: { hp: 100, attack: 10, defense: 5 } },
-    startingLocation: loc1,
-    startingItemIds: [],
-  });
   const enemy: EnemyEntry = {
     id: asEnemyId("enemy_1"), name: "山贼", tier: "normal" as const,
     stats: { hp: 10, attack: 5, defense: 2 },
     locationId: asLocationId("loc_1"), tags: [],
   };
-  const ws = {
-    ...appendLocation(baseWs, loc2),
-    enemies: [enemy],
-    unlockedLocationIds: [asLocationId("loc_1"), asLocationId("loc_2")],
-  };
+  const ws = makeWorld({ enemies: [enemy] });
   const deps = { now: () => "2026-01-01" };
   const baseRevision = 7;
   const turnId = asTurnId("turn_9");
@@ -615,25 +589,15 @@ describe("candidate reaction events integrate after player action (Task 20)", ()
 });
 
 describe("resolveTurn — 自动揭示无 approach 的必经事实 (Task 3)", () => {
-  const loc1: LocationEntry = {
-    id: asLocationId("loc_1"), name: "客栈", description: "t", kind: "main",
-    connectedLocationIds: [asLocationId("loc_2")], npcIds: [], availableItemIds: [], tags: [],
-  };
-  const loc2: LocationEntry = {
-    id: asLocationId("loc_2"), name: "街道", description: "t", kind: "main",
-    connectedLocationIds: [asLocationId("loc_1")], npcIds: [], availableItemIds: [], tags: [],
-  };
-  const baseWs = createInitialWorldState({
-    generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
-    player: { name: "p", identity: "i", stats: { hp: 100, attack: 10, defense: 5 } },
-    startingLocation: loc1,
-    startingItemIds: [],
-  });
-  const ws = { ...appendLocation(baseWs, loc2), unlockedLocationIds: [asLocationId("loc_1"), asLocationId("loc_2")] };
   const ss = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 2, npcs: 0, quests: 0, events: 0 } });
   const deps = { now: () => "2026-01-01" };
   const FACT_1_ID = asFactId("fact_1");
   const FACT_2_ID = asFactId("fact_2");
+  const BOSS_NPC: NpcEntry = {
+    id: asNpcId("npc_1"), name: "老板", role: "路人", description: "t",
+    locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
+    memory: { npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+  };
 
   function discoverFactQuest(questId: string, factIds: readonly FactId[]): WorldState["quests"][number] {
     return {
@@ -645,11 +609,10 @@ describe("resolveTurn — 自动揭示无 approach 的必经事实 (Task 3)", ()
   }
 
   it("任意成功行动后，同回合自动揭示当前地点无 approach 事实并完成其目标", () => {
-    const autoWs: WorldState = {
-      ...ws,
+    const autoWs = makeWorld({
       worldFacts: [{ factId: FACT_1_ID, text: "车轮印", source: "generated", discovered: false, locationId: asLocationId("loc_1") }],
       quests: [discoverFactQuest("quest_auto", [FACT_1_ID])],
-    };
+    });
     const result = resolveTurn(autoWs, ss, { type: "explore" }, "act_auto", 0, asTurnId("turn_auto"), "fixed_choice", deps);
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("explore should succeed");
@@ -665,14 +628,13 @@ describe("resolveTurn — 自动揭示无 approach 的必经事实 (Task 3)", ()
   });
 
   it("同一回合最多自动揭示一个事实目标", () => {
-    const autoWs: WorldState = {
-      ...ws,
+    const autoWs = makeWorld({
       worldFacts: [
         { factId: FACT_1_ID, text: "车轮印", source: "generated", discovered: false, locationId: asLocationId("loc_1") },
         { factId: FACT_2_ID, text: "脚印", source: "generated", discovered: false, locationId: asLocationId("loc_1") },
       ],
       quests: [discoverFactQuest("quest_auto", [FACT_1_ID, FACT_2_ID])],
-    };
+    });
     const result = resolveTurn(autoWs, ss, { type: "explore" }, "act_auto2", 0, asTurnId("turn_auto2"), "fixed_choice", deps);
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("explore should succeed");
@@ -683,8 +645,7 @@ describe("resolveTurn — 自动揭示无 approach 的必经事实 (Task 3)", ()
   });
 
   it("有已审批 approach 的事实也自动揭示，不再留待玩家调查", () => {
-    const autoWs: WorldState = {
-      ...ws,
+    const autoWs = makeWorld({
       worldFacts: [{
         factId: FACT_1_ID, text: "车轮印", source: "generated", discovered: false, locationId: asLocationId("loc_1"),
         investigationApproaches: [
@@ -693,7 +654,7 @@ describe("resolveTurn — 自动揭示无 approach 的必经事实 (Task 3)", ()
         ],
       }],
       quests: [discoverFactQuest("quest_auto", [FACT_1_ID])],
-    };
+    });
     const result = resolveTurn(autoWs, ss, { type: "explore" }, "act_auto3", 0, asTurnId("turn_auto3"), "fixed_choice", deps);
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("explore should succeed");
@@ -704,8 +665,7 @@ describe("resolveTurn — 自动揭示无 approach 的必经事实 (Task 3)", ()
   });
 
   it("移动完成 visit_location 后，同回合推进游标并自动揭示下一事实", () => {
-    const autoWs: WorldState = {
-      ...ws,
+    const autoWs = makeWorld({
       worldFacts: [{
         factId: FACT_1_ID,
         text: "车轮印",
@@ -733,7 +693,7 @@ describe("resolveTurn — 自动揭示无 approach 的必经事实 (Task 3)", ()
         status: "active",
       }],
       visitedLocationIds: [asLocationId("loc_1")],
-    };
+    });
     const revealedStory = {
       ...ss,
       reveal: { questId: asQuestId("quest_move_fact"), visibleObjectiveIndex: 0 },
@@ -750,8 +710,8 @@ describe("resolveTurn — 自动揭示无 approach 的必经事实 (Task 3)", ()
   });
 
   it("当前目标不是 discover_fact 时不自动揭示", () => {
-    const autoWs: WorldState = {
-      ...ws,
+    const autoWs = makeWorld({
+      npcs: [BOSS_NPC],
       worldFacts: [{ factId: FACT_1_ID, text: "车轮印", source: "generated", discovered: false, locationId: asLocationId("loc_1") }],
       quests: [{
         id: asQuestId("quest_talk"), name: "交谈", description: "与老板交谈",
@@ -759,7 +719,7 @@ describe("resolveTurn — 自动揭示无 approach 的必经事实 (Task 3)", ()
         onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
         tags: [], kind: "main", stage: 1, status: "active",
       }],
-    };
+    });
     const result = resolveTurn(autoWs, ss, { type: "explore" }, "act_auto4", 0, asTurnId("turn_auto4"), "fixed_choice", deps);
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("explore should succeed");
@@ -767,11 +727,10 @@ describe("resolveTurn — 自动揭示无 approach 的必经事实 (Task 3)", ()
   });
 
   it("其它地点的事实不自动揭示", () => {
-    const autoWs: WorldState = {
-      ...ws,
+    const autoWs = makeWorld({
       worldFacts: [{ factId: FACT_1_ID, text: "车轮印", source: "generated", discovered: false, locationId: asLocationId("loc_2") }],
       quests: [discoverFactQuest("quest_auto", [FACT_1_ID])],
-    };
+    });
     const result = resolveTurn(autoWs, ss, { type: "explore" }, "act_auto5", 0, asTurnId("turn_auto5"), "fixed_choice", deps);
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("explore should succeed");

@@ -7,6 +7,8 @@ import {
   createInitialWorldState,
   type WorldState,
 } from "@/game/domain/worldState";
+import { projectEntityStore, type EntityCompatibilityProjection } from "@/game/domain/entity";
+import { createWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 import {
   asEnemyId,
   asFactId,
@@ -20,6 +22,17 @@ import {
   advanceStoryReveal,
   isActionReleased,
 } from "./storyReveal";
+
+function withProjection(worldState: WorldState, overrides: Partial<EntityCompatibilityProjection>): WorldState {
+  return createWorldStateFixture({
+    generation: worldState.generation,
+    projection: { ...projectEntityStore(worldState.entityStore), ...overrides },
+    battle: worldState.battle,
+    endings: worldState.endings,
+    ending: worldState.ending,
+    eventLedger: worldState.eventLedger,
+  });
+}
 
 function stagedState(): { worldState: WorldState; storyState: ReturnType<typeof createInitialStoryState> } {
   const loc0 = asLocationId("loc_0");
@@ -55,8 +68,10 @@ function stagedState(): { worldState: WorldState; storyState: ReturnType<typeof 
     },
     startingItemIds: [],
   });
-  const worldState: WorldState = {
-    ...base,
+  const worldState = createWorldStateFixture({
+    generation: base.generation,
+    projection: {
+    ...projectEntityStore(base.entityStore),
     locations: [
       { ...base.locations[0]!, connectedLocationIds: [loc1] },
       {
@@ -134,7 +149,12 @@ function stagedState(): { worldState: WorldState; storyState: ReturnType<typeof 
       status: "active",
     }],
     unlockedLocationIds: [loc0],
-  };
+    },
+    battle: base.battle,
+    endings: base.endings,
+    ending: base.ending,
+    eventLedger: base.eventLedger,
+  });
   const storyState = {
     ...createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(),
       gameLength: "medium",
@@ -159,10 +179,9 @@ describe("story reveal cursor", () => {
     expect(view.obtainableItems).toEqual([]);
     expect([...buildChoiceMap(worldState, storyState, revision).values()].some((action) => action.type === "attack")).toBe(false);
 
-    worldState = {
-      ...worldState,
+    worldState = withProjection(worldState, {
       worldFacts: worldState.worldFacts.map((fact) => ({ ...fact, discovered: fact.factId === "fact_dyn_0" })),
-    };
+    });
     ({ worldState, storyState } = advanceStoryReveal({ worldState, storyState }));
     expect(worldState.unlockedLocationIds).toContain("loc_dyn_1");
     expect(storyState.reveal?.visibleObjectiveIndex).toBe(1);
@@ -171,11 +190,10 @@ describe("story reveal cursor", () => {
     expect(view.worldMap.locations.map((location) => location.name)).toEqual(["青石镇", "北巷旧道"]);
     expect(view.currentLocation.npcs).toEqual([]);
 
-    worldState = {
-      ...worldState,
+    worldState = withProjection(worldState, {
       currentLocationId: asLocationId("loc_dyn_1"),
       visitedLocationIds: [...worldState.visitedLocationIds, asLocationId("loc_dyn_1")],
-    };
+    });
     ({ worldState, storyState } = advanceStoryReveal({ worldState, storyState }));
     view = projectGameSessionView(worldState, storyState, revision, "ending-session");
     expect(view.story.currentObjectiveLabel).toBe("与顾砚交谈");
@@ -184,10 +202,9 @@ describe("story reveal cursor", () => {
     expect(view.currentLocation.actions.some((action) => action.label.includes("黑衣追兵"))).toBe(false);
     expect(isActionReleased(worldState, storyState, { type: "take_item", itemId: asItemId("item_dyn_0") })).toBe(false);
 
-    worldState = {
-      ...worldState,
+    worldState = withProjection(worldState, {
       npcs: worldState.npcs.map((npc) => ({ ...npc, met: true })),
-    };
+    });
     storyState = {
       ...storyState,
       narrative: {
@@ -215,10 +232,13 @@ describe("story reveal cursor", () => {
     expect(view.obtainableItems.map((item) => item.name)).toEqual(["染血腰牌"]);
     expect(view.currentLocation.actions.some((action) => action.label.includes("黑衣追兵"))).toBe(false);
 
-    worldState = {
-      ...worldState,
+    worldState = withProjection(worldState, {
       inventory: [asItemId("item_dyn_0")],
-    };
+      locations: worldState.locations.map((location) => ({
+        ...location,
+        availableItemIds: location.availableItemIds.filter((itemId) => itemId !== asItemId("item_dyn_0")),
+      })),
+    });
     ({ worldState, storyState } = advanceStoryReveal({ worldState, storyState }));
     expect(storyState.reveal?.visibleObjectiveIndex).toBe(4);
     view = projectGameSessionView(worldState, storyState, revision, "ending-session");
@@ -226,7 +246,7 @@ describe("story reveal cursor", () => {
     expect(view.currentLocation.actions.some((action) => action.label.includes("黑衣追兵"))).toBe(true);
     expect(isActionReleased(worldState, storyState, { type: "attack", enemyId: asEnemyId("enemy_dyn_0") })).toBe(true);
 
-    worldState = { ...worldState, defeatedEnemyIds: [asEnemyId("enemy_dyn_0")] };
+    worldState = withProjection(worldState, { defeatedEnemyIds: [asEnemyId("enemy_dyn_0")] });
     ({ storyState } = advanceStoryReveal({ worldState, storyState }));
     expect(storyState.reveal).toBeNull();
   });

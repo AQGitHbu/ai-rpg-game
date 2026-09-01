@@ -5,6 +5,18 @@
 
 /** 句读切分：每段以 。！？…!? 连续串结尾（或到文末），保留标点不丢字。 */
 const SENTENCE_SEGMENT = /[^。！？…!?]+[。！？…!?]*|[。！？…!?]+/g;
+const SOFT_BREAK = /[，、；：,;:]\s*/g;
+
+function preferredSplitIndex(text: string, maxCharsPerPage: number): number {
+  const window = text.slice(0, maxCharsPerPage);
+  const minimumUsefulPageLength = Math.floor(maxCharsPerPage / 2);
+  let splitIndex = -1;
+  for (const match of window.matchAll(SOFT_BREAK)) {
+    const candidate = (match.index ?? 0) + match[0].length;
+    if (candidate >= minimumUsefulPageLength) splitIndex = candidate;
+  }
+  return splitIndex > 0 ? splitIndex : maxCharsPerPage;
+}
 
 /**
  * 按每页字符预算把对白切成多页：优先在句读后断页，能装下的相邻句子
@@ -26,11 +38,13 @@ export function paginateSpeechText(text: string, maxCharsPerPage: number): reado
       current = "";
     }
     if (segment.length > maxCharsPerPage) {
-      // 单句超预算：按预算硬切，剩余尾段留作当前页继续聚合。
+      // 单句超预算：优先在逗号、分号等自然停顿后切分；确实没有
+      // 可用停顿时才按预算硬切，剩余尾段留作当前页继续聚合。
       let rest = segment;
       while (rest.length > maxCharsPerPage) {
-        pages.push(rest.slice(0, maxCharsPerPage));
-        rest = rest.slice(maxCharsPerPage);
+        const splitIndex = preferredSplitIndex(rest, maxCharsPerPage);
+        pages.push(rest.slice(0, splitIndex));
+        rest = rest.slice(splitIndex);
       }
       current = rest;
     } else {

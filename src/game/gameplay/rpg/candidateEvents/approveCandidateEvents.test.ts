@@ -4,62 +4,73 @@ import { approveCandidateEvents } from "./approveCandidateEvents";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { EventCandidate } from "@/game/domain/candidateEvent";
 import { asNpcId, asFactId, asEnemyId, asLocationId } from "@/game/domain/worldEntity";
-import { createInitialWorldState, appendNpc, appendEnemy } from "@/game/domain/worldState";
-import type { NpcEntry, EnemyEntry } from "@/game/domain/worldState";
-import { asGenerationId } from "@/game/domain/worldEntity";
+import {
+  type EnemyEntry, type LocationEntry, type NpcEntry,
+  type PlayerState, type WorldFactEntry, type WorldState,
+} from "@/game/domain/worldState";
+import { asGenerationId, type GenerationMetadata } from "@/game/domain/worldEntity";
+import { createWorldStateFixture, emptyProjection } from "@/game/domain/testing/worldStateFixture.testutil";
 
 const NOW = () => "2026-08-09T00:00:00.000Z";
 
-function makeWorldState(): ReturnType<typeof createInitialWorldState> {
-  const ws = createInitialWorldState({
-    generation: {
-      generationId: asGenerationId("gen-1"),
-      seed: "seed-1",
-      templateVersion: "tpl-1",
-      inputDigest: "digest",
-      gameType: "wuxia",
+const GENERATION: GenerationMetadata = {
+  generationId: asGenerationId("gen-1"),
+  seed: "seed-1",
+  templateVersion: "tpl-1",
+  inputDigest: "digest",
+  gameType: "wuxia",
+};
+const PLAYER: PlayerState = { name: "P", identity: "hero", stats: { hp: 30, attack: 10, defense: 5 } };
+const LOC_1: LocationEntry = {
+  id: asLocationId("loc_1"),
+  name: "起点",
+  description: "",
+  kind: "main",
+  connectedLocationIds: [],
+  npcIds: [],
+  availableItemIds: [],
+  tags: [],
+};
+const NPC_1: NpcEntry = {
+  id: asNpcId("npc_1"),
+  name: "老者",
+  role: "导师",
+  description: "",
+  locationId: asLocationId("loc_1"),
+  isCompanion: false,
+  tags: [],
+  met: true,
+  memory: {
+    npcId: asNpcId("npc_1"),
+    knownFactIds: [asFactId("fact_1")],
+    hiddenFactIds: [],
+    interactionHistory: [],
+    relationship: { affinity: 0 },
+    emotion: "neutral",
+    goals: [],
+  },
+};
+const ENEMY_1: EnemyEntry = {
+  id: asEnemyId("enemy_1"),
+  name: "山贼",
+  tier: "normal",
+  stats: { hp: 10, attack: 5, defense: 2 },
+  locationId: asLocationId("loc_1"),
+  tags: [],
+};
+// 老者已知的事实必须真实存在：v3 会在编译期拒绝悬空的 NPC 事实引用。
+const FACT_1: WorldFactEntry = { factId: asFactId("fact_1"), text: "山口旧事", source: "generated", discovered: false, locationId: asLocationId("loc_1") };
+
+function makeWorldState(): WorldState {
+  return createWorldStateFixture({
+    generation: GENERATION,
+    projection: {
+      ...emptyProjection({ player: PLAYER, locations: [LOC_1], currentLocationId: LOC_1.id }),
+      npcs: [NPC_1],
+      enemies: [ENEMY_1],
+      worldFacts: [FACT_1],
     },
-    player: { name: "P", identity: "hero", stats: { hp: 30, attack: 10, defense: 5 } },
-    startingLocation: {
-      id: asLocationId("loc_1"),
-      name: "起点",
-      description: "",
-      kind: "main",
-      connectedLocationIds: [],
-      npcIds: [],
-      availableItemIds: [],
-      tags: [],
-    },
-    startingItemIds: [],
   });
-  const npc: NpcEntry = {
-    id: asNpcId("npc_1"),
-    name: "老者",
-    role: "导师",
-    description: "",
-    locationId: asLocationId("loc_1"),
-    isCompanion: false,
-    tags: [],
-    met: true,
-    memory: {
-      npcId: asNpcId("npc_1"),
-      knownFactIds: [asFactId("fact_1")],
-      hiddenFactIds: [],
-      interactionHistory: [],
-      relationship: { affinity: 0 },
-      emotion: "neutral",
-      goals: [],
-    },
-  };
-  const enemy: EnemyEntry = {
-    id: asEnemyId("enemy_1"),
-    name: "山贼",
-    tier: "normal",
-    stats: { hp: 10, attack: 5, defense: 2 },
-    locationId: asLocationId("loc_1"),
-    tags: [],
-  };
-  return appendEnemy(appendNpc(ws, npc), enemy);
 }
 
 function makeSs(): ReturnType<typeof createInitialStoryState> {

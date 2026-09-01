@@ -1,0 +1,112 @@
+import type { GenerationMetadata, LocationId } from "../worldEntity";
+import type { LocationEntry, PlayerState } from "../worldEntries";
+import type { GameEvent } from "../events";
+import type { EntityCompatibilityProjection } from "../entity/entityProjection";
+import { projectEntityStore } from "../entity/entityProjection";
+import {
+  createWorldStateFromProjection,
+  type BattleState,
+  type EndingEntry,
+  type EndingState,
+  type WorldState,
+} from "../worldState";
+
+// ---------------------------------------------------------------------------
+// 仅供 *.test.ts / *.testutil.ts 使用的 WorldState 构造器：一次传入完整兼容投影，
+// 由生产组装点编译 store 再投影，禁止在测试里 spread legacy 数组绕过 entityStore。
+// 需要损坏存档的测试必须从本 helper 的返回值深拷贝后再篡改，并标注 corruption case。
+// ---------------------------------------------------------------------------
+
+export type WorldStateFixtureInput = Readonly<{
+  generation: GenerationMetadata;
+  projection: EntityCompatibilityProjection;
+  createdAtTurn?: number;
+  battle?: BattleState;
+  endings?: readonly EndingEntry[];
+  ending?: EndingState;
+  eventLedger?: readonly GameEvent[];
+}>;
+
+/** 只填玩家与地点的最小投影骨架；其余实体集合为空，unlocked/visited 缺省同 createInitialWorldState。 */
+export function emptyProjection(input: Readonly<{
+  player: PlayerState;
+  locations: readonly LocationEntry[];
+  currentLocationId: LocationId;
+  unlockedLocationIds?: readonly LocationId[];
+  visitedLocationIds?: readonly LocationId[];
+}>): EntityCompatibilityProjection {
+  return {
+    player: input.player,
+    locations: input.locations,
+    currentLocationId: input.currentLocationId,
+    unlockedLocationIds: input.unlockedLocationIds ?? [input.currentLocationId],
+    visitedLocationIds: input.visitedLocationIds ?? [input.currentLocationId],
+    npcs: [],
+    items: [],
+    inventory: [],
+    worldFacts: [],
+    quests: [],
+    enemies: [],
+    defeatedEnemyIds: [],
+    factions: [],
+  };
+}
+
+/** 缺省值固定：createdAtTurn=0、battle={status:"idle"}、endings=[]、ending=null、eventLedger=[]。 */
+export function createWorldStateFixture(input: WorldStateFixtureInput): WorldState {
+  return createWorldStateFromProjection({
+    generation: input.generation,
+    projection: input.projection,
+    createdAtTurn: input.createdAtTurn ?? 0,
+    battle: input.battle ?? { status: "idle" },
+    endings: input.endings ?? [],
+    ending: input.ending ?? null,
+    eventLedger: input.eventLedger ?? [],
+  });
+}
+
+// 覆盖项只能是完整数组：兼容字段与 entityStore 必须一起重建，禁止 spread 单条 legacy 数组。
+export type WorldStateFixtureOverrides = Partial<EntityCompatibilityProjection> & Readonly<{
+  createdAtTurn?: number;
+  battle?: BattleState;
+  endings?: readonly EndingEntry[];
+  ending?: EndingState;
+  eventLedger?: readonly GameEvent[];
+}>;
+
+/** 以合法基投影 + 覆盖项合成 fixture：覆盖经同一组装点重建 store，再投影回兼容字段。 */
+export function createWorldStateFixtureWith(
+  input: Readonly<{ generation: GenerationMetadata; base: EntityCompatibilityProjection }>,
+  overrides: WorldStateFixtureOverrides = {},
+): WorldState {
+  const { createdAtTurn, battle, endings, ending, eventLedger, ...projection } = overrides;
+  return createWorldStateFixture({
+    generation: input.generation,
+    projection: { ...input.base, ...projection },
+    ...(createdAtTurn === undefined ? {} : { createdAtTurn }),
+    ...(battle === undefined ? {} : { battle }),
+    ...(endings === undefined ? {} : { endings }),
+    ...(ending === undefined ? {} : { ending }),
+    ...(eventLedger === undefined ? {} : { eventLedger }),
+  });
+}
+
+/**
+ * 在已有合法 fixture 上替换完整兼容投影字段。
+ * 测试不得 spread WorldState 后单改 legacy 数组；本入口会重新编译 store 并投影。
+ */
+export function updateWorldStateFixture(
+  worldState: WorldState,
+  overrides: WorldStateFixtureOverrides,
+): WorldState {
+  return createWorldStateFixtureWith(
+    { generation: worldState.generation, base: projectEntityStore(worldState.entityStore) },
+    {
+      battle: worldState.battle,
+      endings: worldState.endings,
+      ending: worldState.ending,
+      eventLedger: worldState.eventLedger,
+      ...overrides,
+    },
+  );
+}

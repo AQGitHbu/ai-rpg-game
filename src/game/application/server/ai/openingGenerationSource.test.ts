@@ -3,7 +3,7 @@ import { repairOpeningGenerationCandidate, createOpeningGenerationSource, saniti
 import type { OpeningGenerationCandidate } from "@/game/domain/openingGenerationCandidate";
 import type { AiTransport } from "@ai-game/ai-transport";
 import { buildStylePolicy } from "../../stylePolicy";
-import { createFixtureOpeningSource } from "../../createGame";
+import { createFixtureOpeningCandidateSource } from "../../createGame";
 
 function validCandidate(): OpeningGenerationCandidate {
   return {
@@ -350,8 +350,8 @@ describe("createOpeningGenerationSource", () => {
   });
 
   it("显式 fixture source 同 seed 可重放（replay 字节相等）", async () => {
-    const first = await createFixtureOpeningSource().generate({ gameType: "wuxia", seed: "replay-seed", gameLength: "short" });
-    const replay = await createFixtureOpeningSource().generate({ gameType: "wuxia", seed: "replay-seed", gameLength: "short" });
+    const first = await createFixtureOpeningCandidateSource().generate({ gameType: "wuxia", seed: "replay-seed", gameLength: "short" });
+    const replay = await createFixtureOpeningCandidateSource().generate({ gameType: "wuxia", seed: "replay-seed", gameLength: "short" });
     expect(replay).toEqual(first);
   });
 

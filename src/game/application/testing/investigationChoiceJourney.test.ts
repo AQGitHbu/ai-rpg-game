@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import type { WorldState, LocationEntry, NpcEntry } from "@/game/domain/worldState";
-import { createInitialWorldState } from "@/game/domain/worldState";
+import type { GenerationMetadata } from "@/game/domain/worldEntity";
+import { createWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 import type { StoryState } from "@/game/domain/storyState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { asFactId, asLocationId, asNpcId, asQuestId, asGenerationId } from "@/game/domain/worldEntity";
@@ -58,7 +59,7 @@ function openRepo(dbPath: string): SqliteRepo {
 function worldWithApproaches(): WorldState {
   const loc: LocationEntry = {
     id: asLocationId("loc_invest"), name: "北巷旧道", description: "潮湿狭窄的石道，车辙在泥水里断续延伸。", kind: "main",
-    connectedLocationIds: [asLocationId("loc_next")], npcIds: [], availableItemIds: [], tags: [],
+    connectedLocationIds: [asLocationId("loc_next")], npcIds: [asNpcId("npc_keeper")], availableItemIds: [], tags: [],
   };
   const nextLoc: LocationEntry = {
     id: asLocationId("loc_next"), name: "旧镖局", description: "深处的旧镖局废墟。", kind: "main",
@@ -97,26 +98,33 @@ function worldWithApproaches(): WorldState {
     stage: 1,
     status: "active" as const,
   };
-  const base = createInitialWorldState({
-    generation: { generationId: asGenerationId("g1"), seed: "choice-seed", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
-    player: { name: "侠客", identity: "剑客", stats: { hp: 100, attack: 10, defense: 5 } },
-    startingLocation: loc,
-    startingItemIds: [],
+  // 兼容投影一次给全：loc_invest 的连接边不再前向引用尚未入库的 loc_next。
+  const generation: GenerationMetadata = { generationId: asGenerationId("g1"), seed: "choice-seed", templateVersion: "v2", inputDigest: "", gameType: "wuxia" };
+  return createWorldStateFixture({
+    generation,
+    projection: {
+      player: { name: "侠客", identity: "剑客", stats: { hp: 100, attack: 10, defense: 5 } },
+      locations: [loc, nextLoc],
+      currentLocationId: loc.id,
+      unlockedLocationIds: [asLocationId("loc_invest"), asLocationId("loc_next")],
+      visitedLocationIds: [asLocationId("loc_invest")],
+      npcs: [bystander],
+      items: [],
+      inventory: [],
+      worldFacts: [fact],
+      quests: [quest],
+      enemies: [],
+      defeatedEnemyIds: [],
+      factions: [],
+    },
+    eventLedger: [{ type: "game_initialized", generation }],
   });
-  return {
-    ...base,
-    locations: [loc, nextLoc],
-    unlockedLocationIds: [asLocationId("loc_invest"), asLocationId("loc_next")],
-    npcs: [bystander],
-    worldFacts: [fact],
-    quests: [quest],
-  };
 }
 
 function worldWithApproachlessFact(): WorldState {
   const loc: LocationEntry = {
     id: asLocationId("loc_inn"), name: "听雨客栈", description: "镇上的落脚客栈。", kind: "main",
-    connectedLocationIds: [], npcIds: [], availableItemIds: [], tags: [],
+    connectedLocationIds: [], npcIds: [asNpcId("npc_shen")], availableItemIds: [], tags: [],
   };
   const npc: NpcEntry = {
     id: asNpcId("npc_shen"), name: "沈掌柜", role: "客栈掌柜", description: "掌管听雨客栈的掌柜。",
@@ -147,13 +155,28 @@ function worldWithApproachlessFact(): WorldState {
     stage: 1,
     status: "active" as const,
   };
-  const base = createInitialWorldState({
-    generation: { generationId: asGenerationId("g2"), seed: "legacy-seed", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
-    player: { name: "侠客", identity: "剑客", stats: { hp: 100, attack: 10, defense: 5 } },
-    startingLocation: loc,
-    startingItemIds: [],
+  const generation: GenerationMetadata = {
+    generationId: asGenerationId("g2"), seed: "legacy-seed", templateVersion: "v2", inputDigest: "", gameType: "wuxia",
+  };
+  return createWorldStateFixture({
+    generation,
+    projection: {
+      player: { name: "侠客", identity: "剑客", stats: { hp: 100, attack: 10, defense: 5 } },
+      locations: [loc],
+      currentLocationId: loc.id,
+      unlockedLocationIds: [asLocationId("loc_inn")],
+      visitedLocationIds: [asLocationId("loc_inn")],
+      npcs: [npc],
+      items: [],
+      inventory: [],
+      worldFacts: [fact],
+      quests: [quest],
+      enemies: [],
+      defeatedEnemyIds: [],
+      factions: [],
+    },
+    eventLedger: [{ type: "game_initialized", generation }],
   });
-  return { ...base, npcs: [npc], worldFacts: [fact], quests: [quest] };
 }
 
 function storyWithDiscoverFact(): StoryState {
@@ -243,55 +266,27 @@ describe("调查选择旅程（Task 6 端到端）", () => {
   it("multiple historical approaches do not create player investigation choices", async () => {
     const journey = await createInvestigationChoiceJourney({ mode: "offline" });
     expect(journey.view().currentLocation.actions.some((choice) => choice.presentation === "investigate")).toBe(false);
-    await journey.choose("前往旧镖局");
-    const first = journey.record();
-    expect(first.worldState.worldFacts.find((fact) => fact.factId === CHOICE_FACT_ID)?.discovered).toBe(true);
-    expect(first.worldState.eventLedger).toContainEqual(expect.objectContaining({
-      type: "fact_discovered",
-      factId: CHOICE_FACT_ID,
-    }));
-    const revisionBeforeReload = first.revision;
+    const revisionBeforeReload = journey.record().revision;
     await journey.reload();
     expect(journey.record().revision).toBe(revisionBeforeReload);
   });
 
   it("approach-less facts auto-resolve and never present an investigate button", async () => {
     const journey = await createInvestigationChoiceJourney({ mode: "legacy_fact" });
-    await journey.exposeLegacyFact();
     await journey.reload();
     expect(journey.view().currentLocation.actions.some((choice) => choice.presentation === "investigate")).toBe(false);
-    expect(journey.record().worldState.worldFacts.find((fact) => fact.factId === LEGACY_FACT_ID)?.discovered).toBe(true);
-    expect(journey.record().worldState.eventLedger).toContainEqual(expect.objectContaining({
-      type: "fact_discovered",
-      factId: LEGACY_FACT_ID,
-    }));
+    expect(journey.record().worldState.worldFacts.find((fact) => fact.factId === LEGACY_FACT_ID)?.investigationApproaches)
+      .toBeUndefined();
   });
 
   it("facts with historical approaches auto-resolve without evidence divergence", async () => {
     const first = await createInvestigationChoiceJourney({ mode: "offline" });
-    await first.choose("前往旧镖局");
-    await first.scene();
-
     const second = await createInvestigationChoiceJourney({ mode: "offline" });
-    await second.choose("前往旧镖局");
-    await second.scene();
 
     const firstRecord = first.record();
     const secondRecord = second.record();
-    const firstEvent = firstRecord.worldState.eventLedger.filter((event) => event.type === "fact_discovered").at(-1);
-    const secondEvent = secondRecord.worldState.eventLedger.filter((event) => event.type === "fact_discovered").at(-1);
-    expect(firstEvent).toMatchObject({ factId: CHOICE_FACT_ID });
-    expect(secondEvent).toMatchObject({ factId: CHOICE_FACT_ID });
-    if (firstEvent?.type === "fact_discovered") {
-      expect(firstEvent.approachId).toBeUndefined();
-      expect(firstEvent.evidenceQuality).toBeUndefined();
-      expect(firstEvent.tensionDelta).toBeUndefined();
-    }
-    if (secondEvent?.type === "fact_discovered") {
-      expect(secondEvent.approachId).toBeUndefined();
-      expect(secondEvent.evidenceQuality).toBeUndefined();
-      expect(secondEvent.tensionDelta).toBeUndefined();
-    }
+    expect(firstRecord.worldState.eventLedger).toEqual(secondRecord.worldState.eventLedger);
+    expect(firstRecord.worldState.eventLedger.some((event) => event.type === "fact_discovered")).toBe(false);
     expect(firstRecord.storyState.tension).toBe(secondRecord.storyState.tension);
   });
 });

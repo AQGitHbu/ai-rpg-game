@@ -7,14 +7,15 @@ import type { Action } from "@/game/domain/action";
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { asNarrativeJobId } from "@/game/domain/events";
 import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
-import { createPreparedContinuationState, type PreparedContinuationTrigger } from "@/game/domain/preparedContinuation";
-import { asEnemyId, asFactId, asGenerationId, asLocationId } from "@/game/domain/worldEntity";
+import type { PreparedContinuationTrigger } from "@/game/domain/preparedContinuation";
+import type { NarrativeBundleTrigger } from "@/game/domain/narrativeBundle";
+import { asEnemyId, asFactId, asGenerationId, asLocationId, type GenerationMetadata } from "@/game/domain/worldEntity";
+import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
 import {
-  appendEnemy,
-  createInitialWorldState,
-  type LocationEntry,
-  type WorldState,
-} from "@/game/domain/worldState";
+  createWorldStateFixtureWith,
+  type WorldStateFixtureOverrides,
+} from "@/game/domain/testing/worldStateFixture.testutil";
+import type { LocationEntry, WorldState } from "@/game/domain/worldState";
 import type { GameRecord, ApplyStateInput, GameRepository } from "@/game/application/server/persistence/gameRepository";
 import { asGameId } from "@/game/application/server/persistence/gameRepository";
 import type { WorldEvolutionSource } from "@/game/application/worldEvolutionSource";
@@ -31,64 +32,76 @@ const next = asLocationId("loc_next");
 const factId = asFactId("fact_trace");
 const enemyId = asEnemyId("enemy_wolf");
 
-function makeWorld(): WorldState {
-  const originLocation: LocationEntry = {
-    id: origin,
-    name: "旧道",
-    description: "一条潮湿的旧道。",
-    kind: "main",
-    connectedLocationIds: [next],
-    npcIds: [],
-    availableItemIds: [],
-    tags: [],
-  };
-  const nextLocation: LocationEntry = {
-    id: next,
-    name: "破庙",
-    description: "断墙后的破庙。",
-    kind: "main",
-    connectedLocationIds: [origin],
-    npcIds: [],
-    availableItemIds: [],
-    tags: [],
-  };
-  return {
-    ...createInitialWorldState({
-      generation: {
-        generationId: asGenerationId("generation-provider-trigger-matrix"),
-        seed: "provider-trigger-matrix",
-        templateVersion: "v1",
-        inputDigest: "provider-trigger-matrix",
-        gameType: "wuxia",
-      },
-      player: { name: "侠客", identity: "旅人", stats: toStatBlock(PLAYER_COMBAT_STATS) },
-      startingLocation: originLocation,
-      startingItemIds: [],
-    }),
-    locations: [originLocation, nextLocation],
-    unlockedLocationIds: [origin, next],
-    currentLocationId: origin,
-    visitedLocationIds: [origin],
-    worldFacts: [{
-      factId,
-      text: "泥地里留着半枚旧令牌。",
-      source: "generated",
-      discovered: false,
-      locationId: origin,
-      investigationLabel: "泥地上的痕迹",
-      investigationApproaches: [{
-        approachId: "follow",
-        label: "沿痕迹追查",
-        evidenceQuality: "clean",
-        tensionDelta: 4,
-      }, {
-        approachId: "search",
-        label: "翻查附近杂物",
-        evidenceQuality: "noisy",
-        tensionDelta: 12,
-      }],
+const ORIGIN_LOCATION: LocationEntry = {
+  id: origin,
+  name: "旧道",
+  description: "一条潮湿的旧道。",
+  kind: "main",
+  connectedLocationIds: [next],
+  npcIds: [],
+  availableItemIds: [],
+  tags: [],
+};
+const NEXT_LOCATION: LocationEntry = {
+  id: next,
+  name: "破庙",
+  description: "断墙后的破庙。",
+  kind: "main",
+  connectedLocationIds: [origin],
+  npcIds: [],
+  availableItemIds: [],
+  tags: [],
+};
+
+const GENERATION: GenerationMetadata = {
+  generationId: asGenerationId("generation-provider-trigger-matrix"),
+  seed: "provider-trigger-matrix",
+  templateVersion: "v1",
+  inputDigest: "provider-trigger-matrix",
+  gameType: "wuxia",
+};
+
+// 兼容投影即完整初始世界：相连地点两条 record 一次声明，不再事后 spread 数组。
+const BASE_PROJECTION: EntityCompatibilityProjection = {
+  player: { name: "侠客", identity: "旅人", stats: toStatBlock(PLAYER_COMBAT_STATS) },
+  locations: [ORIGIN_LOCATION, NEXT_LOCATION],
+  currentLocationId: origin,
+  unlockedLocationIds: [origin, next],
+  visitedLocationIds: [origin],
+  npcs: [],
+  items: [],
+  inventory: [],
+  worldFacts: [{
+    factId,
+    text: "泥地里留着半枚旧令牌。",
+    source: "generated",
+    discovered: false,
+    locationId: origin,
+    investigationLabel: "泥地上的痕迹",
+    investigationApproaches: [{
+      approachId: "follow",
+      label: "沿痕迹追查",
+      evidenceQuality: "clean",
+      tensionDelta: 4,
+    }, {
+      approachId: "search",
+      label: "翻查附近杂物",
+      evidenceQuality: "noisy",
+      tensionDelta: 12,
     }],
-  };
+  }],
+  quests: [],
+  enemies: [],
+  defeatedEnemyIds: [],
+  factions: [],
+};
+
+function buildWorld(overrides: WorldStateFixtureOverrides = {}): WorldState {
+  return createWorldStateFixtureWith({ generation: GENERATION, base: BASE_PROJECTION }, overrides);
+}
+
+function makeWorld(): WorldState {
+  return buildWorld();
 }
 
 function makeStory(trigger?: PreparedContinuationTrigger): StoryState {
@@ -99,14 +112,19 @@ function makeStory(trigger?: PreparedContinuationTrigger): StoryState {
   });
   if (trigger === undefined) return base;
   if (base.narrative.status !== "ready") throw new Error("matrix story fixture must start ready");
-  const prepared = createPreparedContinuationState({
-    originJobId: asNarrativeJobId("job-provider-trigger-matrix"),
-    activeStepIds: ["step-trigger"],
-    steps: [{
+  return {
+    ...base,
+    narrative: {
+      ...base.narrative,
+      narrativeBundle: {
+        contractVersion: 1,
+        originJobId: asNarrativeJobId("job-provider-trigger-matrix"),
+        activeStepIds: ["step-trigger"],
+        steps: [{
       stepId: "step-trigger",
       objectiveKey: "matrix:0",
       consumptionGroupKey: `matrix:0:${trigger.kind}`,
-      trigger,
+      trigger: trigger as NarrativeBundleTrigger,
       scene: {
         segments: [{ beatId: "matrix-result", text: `规则结果：${trigger.kind}` }],
         event: trigger.kind === "move"
@@ -120,10 +138,11 @@ function makeStory(trigger?: PreparedContinuationTrigger): StoryState {
         source: "fixture",
       },
       nextStepIds: [],
-    }],
-  });
-  if (!prepared.ok) throw new Error(`invalid prepared fixture: ${prepared.code}`);
-  return { ...base, narrative: { ...base.narrative, preparedContinuation: prepared.value } };
+        }],
+        terminal: { kind: "next_decision", target: { kind: "current_scene" } },
+      },
+    },
+  };
 }
 
 function makeBattleWorld(): WorldState {
@@ -135,10 +154,7 @@ function makeBattleWorld(): WorldState {
     locationId: origin,
     tags: [],
   };
-  const world = {
-    ...appendEnemy(makeWorld(), enemy),
-    player: { ...makeWorld().player, stats: toStatBlock(PLAYER_COMBAT_STATS) },
-  } as WorldState;
+  const world = buildWorld({ enemies: [enemy] });
   const encounter = buildEncounter(world, enemyId).map((combatant) => (
     combatant.side === "enemies" ? { ...combatant, hp: 1 } : combatant
   ));
@@ -236,7 +252,7 @@ describe("provider trigger matrix", () => {
   afterEach(() => cleanup());
 
   it.each(preparedTriggerCases)(
-    "$name prepared continuation consumes without provider/world proposal and commits once",
+    "$name narrative bundle step consumes without provider/world proposal and commits once",
     async ({ worldState, trigger, action, token }) => {
       const fixture = makeRepository(worldState, makeStory(trigger));
       const proposal = worldProposalSpy();
@@ -261,11 +277,11 @@ describe("provider trigger matrix", () => {
       expect(savedNarrative.status).toBe("ready");
       if (savedNarrative.status !== "ready") return;
       expect(savedNarrative.currentScene.source).toBe("fixture");
-      expect(savedNarrative.preparedContinuation).toBeUndefined();
+      expect(savedNarrative.narrativeBundle).toBeUndefined();
     },
   );
 
-  it("rule-owned explore follows the same no-provider, one-CAS boundary", async () => {
+  it("missing bundle step rejects explore with zero writes and no provider", async () => {
     const fixture = makeRepository(makeWorld(), makeStory());
     const proposal = worldProposalSpy();
 
@@ -280,15 +296,10 @@ describe("provider trigger matrix", () => {
       { repository: fixture.repository, now: () => "2026-08-24T00:00:00.000Z", worldEvolutionSource: proposal.source },
     );
 
-    expect(result.ok).toBe(true);
-    expect(fixture.applyState).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({ ok: false, code: "NARRATIVE_CONTINUATION_MISSING" });
+    expect(fixture.applyState).not.toHaveBeenCalled();
     expect(fixture.applySceneWriteBack).not.toHaveBeenCalled();
     expect(proposal.propose).not.toHaveBeenCalled();
-    const narrative = fixture.record().storyState.narrative;
-    expect(narrative.status).toBe("ready");
-    if (narrative.status !== "ready") return;
-    expect(narrative.currentScene.source).toBe("rule");
-    expect(narrative.currentScene.choices).toEqual([]);
   });
 
   it("NPC handoff acknowledgement is a local close and never submits a persistence action", async () => {

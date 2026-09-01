@@ -2,9 +2,9 @@ import type { Action } from "@/game/domain/action";
 import type { ApprovedChoice } from "@/game/domain/approvedChoice";
 import {
   NPC_SCENE_PAGE_CHAR_BUDGET,
-  composeDeterministicNpcLine,
 } from "@/game/domain/narrative";
 import type { DialogueResumeState, NarrativeSceneState } from "@/game/domain/narrative";
+import { narrativeBundleTriggerKey } from "@/game/domain/narrativeBundle";
 import { paginateSpeechText } from "@/game/domain/speechPagination";
 import { locationScaleOf } from "@/game/domain/worldEntity";
 import type { ItemCategory, ItemRarity, ItemStatLine } from "@/game/domain/worldEntity";
@@ -20,11 +20,15 @@ import {
 } from "./buildChoiceMap";
 import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
+import {
+  endingDecisionStances,
+  isEndingDecisionDue,
+} from "@/game/gameplay/rpg/narrativeBundle";
 import { isObjectiveSatisfied } from "@/game/gameplay/rpg/narrativeContext/objectiveRules";
 import { buildTownView, type TownView } from "./townView";
 import { projectCombatView, type BattleView } from "./combatView";
-import { composeDirectNpcGreeting, composeIdleNpcLine, normalizeNpcSpeech } from "@/game/domain/npcSpeech";
-import { isObjectiveEntityReleased, isQuestObjectiveReleased } from "@/game/gameplay/rpg/worldEvolution";
+import { normalizeNpcSpeech } from "@/game/domain/npcSpeech";
+import { isObjectiveEntityReleased, isQuestObjectiveReleased, isTakeItemPrepared } from "@/game/gameplay/rpg/worldEvolution";
 import { formatSceneChoiceLabel } from "./deterministicSceneSource";
 import { decorateNarrativePages, decorateNarrativeText } from "./narrativeText";
 
@@ -42,11 +46,9 @@ export type NpcDialogueView = {
   readonly speechPages: readonly string[];
   /** 正式对白收尾的本地确认句；不携带 choice token、action 或 revision。 */
   readonly handoffAcknowledgement?: { readonly label: string };
-  /** 旧存档缺少已准备抵达对白时，用当前权威 talk action 触发一次补生成。 */
-  readonly startChoice?: PlayerChoiceView;
   readonly choices: readonly PlayerChoiceView[];
   readonly freeInputEnabled: boolean;
-  /** 给予道具入口：焦点 NPC 可接收背包内任意物品（走正式 give_item 回合）。 */
+  /** 给予道具入口：仅当叙事束持有该 NPC 的可消费 give_item 步骤时投影（走正式 give_item 回合）。 */
   readonly giveChoices: readonly { readonly itemName: string; readonly choice: PlayerChoiceView }[];
 };
 
@@ -351,6 +353,56 @@ function currentObjectiveChoiceToken(
   }
 }
 
+type BridgeObjective = {
+  readonly label: string;
+  readonly choiceToken: string;
+  readonly npcId: string | null;
+};
+
+/**
+ * 幕内动态任务链空窗：上一任务刚被结算、AI 尚未在后续叙事束中铸造后继
+ * 任务时，会出现短暂的“无 active 任务”状态。此时向读模型投影一个权威桥
+ * 接目标（在场 NPC → 未到访地点 → 可探索内容），保证指引不断档；后继任务
+ * 一旦铸造，currentObjectiveOf 重新取得权威地位，桥接自动让位。
+ */
+function deriveBridgeObjective(
+  worldState: WorldState,
+  storyState: StoryState,
+  revision: number,
+): BridgeObjective | null {
+  const npc = worldState.npcs.find((entry) => entry.locationId === worldState.currentLocationId);
+  if (npc !== undefined) {
+    return {
+      label: `与${npc.name}交谈`,
+      choiceToken: choice({ type: "talk", npcId: npc.id, dialogueAct: "ask" }, revision, "与目标人物交谈", "dialogue").choiceToken,
+      npcId: String(npc.id),
+    };
+  }
+  const destination = worldState.locations.find((location) =>
+    worldState.unlockedLocationIds.includes(location.id)
+    && location.id !== worldState.currentLocationId
+    && !worldState.visitedLocationIds.includes(location.id)
+    && isTravelTarget(worldState, location.id));
+  if (destination !== undefined) {
+    return {
+      label: `前往${destination.name}`,
+      choiceToken: choice({ type: "move", locationId: destination.id }, revision, "前往目标地点", "travel").choiceToken,
+      npcId: null,
+    };
+  }
+  if (needsWorldBoundaryPreparation(storyState) || hasExplorableContent(worldState, storyState)) {
+    const label = needsWorldBoundaryPreparation(storyState)
+      ? "继续追查下一幕线索"
+      : `探索${worldState.locations.find((entry) => entry.id === worldState.currentLocationId)?.name ?? "此地"}`;
+    return {
+      label,
+      choiceToken: choice({ type: "explore" }, revision, "探索当前地点", "explore").choiceToken,
+      npcId: null,
+    };
+  }
+  return null;
+}
+
 export function projectGameSessionView(
   worldState: WorldState,
   storyState: StoryState,
@@ -374,15 +426,26 @@ export function projectGameSessionView(
   // 终幕结局对已经物化、且玩家尚未作出最后立场时，任务链本身没有未完成
   // objective。仍需向 HUD 投影一个权威目标，避免玩家看到“暂无线索”后
   // 只能靠点击 NPC 试探性地触发下一段对白。
-  const endingDecisionReady = storyState.endingAllowed
+  const endingDecisionReady = isEndingDecisionDue(worldState, storyState);
+  const endingStances = endingDecisionStances(worldState, storyState);
+  // 任务链空窗（上一任务已结算、后继任务未铸造）时投影桥接目标，避免
+  // HUD 指引断档；战斗中被战斗面板接管，结局抉择有专属标签，任务链尚未
+  // 开启（零任务）时也没有可衔接的前驱，均不桥接。
+  const bridgedObjective = currentObjectiveRef === null
+    && worldState.quests.length > 0
     && worldState.ending === null
-    && worldState.endings.length >= 2;
-  const currentObjectiveToken = currentObjectiveChoiceToken(worldState, storyState, currentObjective, revision);
+    && activeBattle === null
+    && !endingDecisionReady
+    ? deriveBridgeObjective(worldState, storyState, revision)
+    : null;
+  const currentObjectiveToken = currentObjectiveChoiceToken(worldState, storyState, currentObjective, revision)
+    ?? bridgedObjective?.choiceToken
+    ?? null;
   // discover_fact 由规则边界自动确认；其余目标保持单一兼容 token。
   const currentObjectiveTokens = currentObjectiveToken === null ? [] : [currentObjectiveToken];
   const currentObjectiveNpcId = currentObjective?.kind === "talk_to_npc"
     ? String(currentObjective.npcId)
-    : null;
+    : bridgedObjective?.npcId ?? null;
   const townView = currentLocation === undefined
     ? null
     : buildTownView(worldState, currentLocation.id, currentObjectiveNpcId);
@@ -417,9 +480,13 @@ export function projectGameSessionView(
   if (activeBattle === null) {
     // 探索：仅当前地点有可探索内容（未发现线索/未处理物品或敌人/未满足目标/候选事件）
     // 时显示，避免无剧情钩子地点的空转选项（方案 1）。
-    if (hasExplorableContent(worldState, storyState)
-      || needsWorldBoundaryPreparation(storyState)
-      || endingDecisionReady) {
+    // 结局立场已可提交时，不能再投影普通探索：旧线索或残余世界内容
+    // 在结局束中没有对应的可消费步骤，继续显示会产生零写入死按钮。
+    if (
+      (!endingDecisionReady
+        && (hasExplorableContent(worldState, storyState) || needsWorldBoundaryPreparation(storyState)))
+      || (endingDecisionReady && endingStances.length === 0)
+    ) {
       const label = endingDecisionReady
         ? "面对最终抉择"
         : needsWorldBoundaryPreparation(storyState)
@@ -440,6 +507,16 @@ export function projectGameSessionView(
         `与${objectiveNpc.name}交谈`,
         "dialogue",
       ));
+    } else if (bridgedObjective?.npcId !== null && bridgedObjective?.npcId !== undefined) {
+      const bridgedNpc = presentNpcs.find((npc) => String(npc.id) === bridgedObjective.npcId);
+      if (bridgedNpc !== undefined) {
+        locationActions.push(choice(
+          { type: "talk", npcId: bridgedNpc.id, dialogueAct: "ask" },
+          revision,
+          `与${bridgedNpc.name}交谈`,
+          "dialogue",
+        ));
+      }
     }
     for (const enemy of worldState.enemies) {
       if (enemy.locationId === worldState.currentLocationId && !worldState.defeatedEnemyIds.includes(enemy.id)) {
@@ -455,6 +532,7 @@ export function projectGameSessionView(
       .filter((itemId) => !worldState.inventory.includes(itemId))
       .filter((itemId) => isObjectiveEntityReleased(worldState, storyState, (objective) =>
         objective.kind === "obtain_item" && String(objective.itemId) === String(itemId)))
+      .filter((itemId) => isTakeItemPrepared(storyState, itemId))
       .map((itemId, index) => {
         const item = worldState.items.find((entry) => entry.id === itemId);
         const townBuildings = projectedTownView?.interactiveBuildings ?? [];
@@ -653,22 +731,60 @@ export function projectGameSessionView(
     : scene?.choices
       .map(projectSceneChoice)
       .filter((entry): entry is PlayerChoiceView => entry !== null) ?? [];
+  // 结局立场由服务端直接投影：结局包的 terminal 是 "ending"，契约禁止 provider
+  // 提交 currentScene choices，所以这两个 talk token 是终幕唯一可提交的形式决策。
+  const endingStanceChoices: PlayerChoiceView[] = projectedSceneChoices.length >= 2
+    ? []
+    : endingStances.map((stance) => choice(
+        stance.action,
+        revision,
+        stance.label,
+        presentationForAction(stance.action),
+      ));
+  const endingStanceNpcId = endingStances.length === 2 ? String(endingStances[0].action.npcId) : null;
   const endingChoiceNpcId = storyState.endingAllowed && projectedSceneChoices.length === 2
     ? (() => {
         const action = registry.find((entry) => entry.choiceToken === projectedSceneChoices[0]?.choiceToken)?.action;
         return action?.type === "talk" ? String(action.npcId) : null;
       })()
-    : null;
+    : endingStanceChoices.length === 2
+      ? endingStanceNpcId
+      : null;
   const isDialogueScene = focusNpcId !== null || endingChoiceNpcId !== null;
   const isSingleChoiceHandoff = singleChoiceDialogueHandoff && sceneLineNpcId !== null;
   const projectedHandoffAcknowledgement = scene?.handoffAcknowledgement?.trim() === undefined
     || scene.handoffAcknowledgement.trim() === ""
     ? null
     : { label: scene.handoffAcknowledgement };
+  // 收场兜底：旧焦点 NPC 在幕切换时会随着旧 dialogueSession 一起被清理。
+  // 因此不能以 dialogueSession.completed 作为唯一判断；只要当前场景仍保留
+  // 该 NPC 的焦点台词、没有可提交选择且已有权威下一目标，就必须投影引导性
+  // 收尾，绝不让真实玩家界面退化为「知道了」纯确认。
+  const isConversationClosingScene = projectedHandoffAcknowledgement === null
+    && sceneLineNpcId !== null
+    && projectedSceneChoices.length === 0
+    && currentObjectiveRef !== null;
+  const effectiveHandoffAcknowledgement = projectedHandoffAcknowledgement !== null
+    ? projectedHandoffAcknowledgement
+    : isConversationClosingScene
+      ? { label: `告辞，${currentObjectiveRef!.label}` }
+      : null;
   const dialogueChoices: NpcDialogueView["choices"] = isDialogueScene && projectedSceneChoices.length === 2
       ? [projectedSceneChoices[0]!, projectedSceneChoices[1]!]
-      : [];
+      : isDialogueScene && endingStanceChoices.length === 2
+        ? [...endingStanceChoices]
+        : [];
   const sceneDialogues = new Map((scene?.npcDialogues ?? []).map((entry) => [String(entry.npcId), entry]));
+  // give_item 是必须消费叙事束权威步骤的剧情动作：缺步时服务端零写入失败。
+  // 只有当前束真正持有活跃的 give_item 步骤时，才允许投影对应的给予按钮。
+  const bundle = readyNarrative?.narrativeBundle;
+  const activeGiveStepKeys = new Set(
+    bundle === undefined
+      ? []
+      : bundle.steps
+        .filter((step) => step.trigger.kind === "give_item" && bundle.activeStepIds.includes(step.stepId))
+        .map((step) => narrativeBundleTriggerKey(step.trigger)),
+  );
   const npcDialogues: readonly NpcDialogueView[] = presentNpcs.map((npc) => {
     const isFocus = focusNpcId === String(npc.id) || endingChoiceNpcId === String(npc.id);
     const supplied = sceneDialogues.get(String(npc.id));
@@ -679,13 +795,17 @@ export function projectGameSessionView(
       ? normalizeNpcSpeech(scene.npcLine.text, npc.name)
       : null;
     const focusLine = normalizedFocusLine === "" ? null : normalizedFocusLine;
-    const suppliedSpeechPages = supplied?.speechPages
-      .map((page) => normalizeNpcSpeech(page, npc.name))
-      .filter((page) => page !== "") ?? [];
-    // 旧场景“欢迎光临”类通用问候没有剧情上下文，读取时重建
-    const onlyLegacyGenericGreeting = suppliedSpeechPages.length > 0
-      && suppliedSpeechPages.every((page) => page === composeDirectNpcGreeting());
-    const usableSupplied = suppliedSpeechPages.length > 0 && !onlyLegacyGenericGreeting
+    const suppliedSpeechText = supplied === undefined
+      ? ""
+      : normalizeNpcSpeech(supplied.speechPages.join(""), npc.name);
+    // Old saves persist their original page boundaries. Rebuild them from the
+    // complete approved line so improved punctuation-aware pagination also
+    // fixes existing scenes instead of preserving a mid-word hard split.
+    const suppliedSpeechPages = suppliedSpeechText === ""
+      ? []
+      : paginateSpeechText(suppliedSpeechText, NPC_SCENE_PAGE_CHAR_BUDGET);
+    // Task 9: Remove synthetic NPC starts — only generated/fixture speech is displayable.
+    const usableSupplied = suppliedSpeechPages.length > 0
       ? suppliedSpeechPages
       : null;
     const inferredSpeechSource = scene !== null && sceneLineNpcId === String(npc.id)
@@ -698,32 +818,12 @@ export function projectGameSessionView(
       ? "focus"
       : supplied?.speechPurpose
       ?? (sceneLineNpcId === String(npc.id) ? "focus" : "ambient");
+    // Task 9: No synthetic NPC start. Only generated/fixture speech is displayable.
     const hasFormalFocusSpeech = speechPurpose === "focus"
       && (usableSupplied !== null || focusLine !== null);
-    const allowOfflineSynthesis = storyState.narrative.mode === "offline";
-    // 新目标 NPC 尚未拥有可消费的正式场景 registry 时，统一进入 start
-    // 状态：NPC 卡点击提交一次 ask，由 provider 生成真正的首句和两项批准
-    // 回应。环境闲聊、deterministic fallback 和自由输入都不能伪装 ready。
-    const isAuthoritativeTalkTarget = isFocus
-      && currentObjectiveNpcId === String(npc.id);
-    const requiresFormalDialogueStart = isFocus && (
-      (handoffFocusNpc !== undefined && String(handoffFocusNpc.id) === String(npc.id))
-      || (isAuthoritativeTalkTarget && !hasFormalFocusSpeech && !allowOfflineSynthesis)
-    );
-    const interactionCount = npc.memory.interactionHistory.length;
-    const offlineIdleLine = allowOfflineSynthesis
-      ? composeIdleNpcLine({
-          currentObjectiveLabel: currentObjectiveRef?.label ?? null,
-          hasInteractionHistory: interactionCount > 0,
-          variantIndex: storyState.turnNumber + storyState.currentAct + interactionCount,
-        })
-      : null;
     const hasDisplayableSpeech = usableSupplied !== null
-      || focusLine !== null
-      || allowOfflineSynthesis;
-    const speechPages = requiresFormalDialogueStart && !hasFormalFocusSpeech
-      ? []
-      : usableSupplied !== null
+      || focusLine !== null;
+    const speechPages = usableSupplied !== null
       ? decorateNarrativePages(usableSupplied, speechSource)
       : focusLine !== null
       ? decorateNarrativePages(
@@ -733,29 +833,17 @@ export function projectGameSessionView(
           ),
           speechSource,
         )
-      : allowOfflineSynthesis
-      ? decorateNarrativePages(
-          paginateSpeechText(
-            isFocus
-              ? composeDeterministicNpcLine(npc.name, npc.role)
-              : offlineIdleLine ?? "",
-            NPC_SCENE_PAGE_CHAR_BUDGET,
-          ),
-          speechSource,
-        )
       : [];
-    const startChoice = requiresFormalDialogueStart
-      ? choice(
-          { type: "talk", npcId: npc.id, dialogueAct: "ask" },
-          revision,
-          `与${npc.name}交谈`,
-          "dialogue",
-        )
-      : undefined;
+    // Task 9: No startChoice — NPC card click only opens metadata/dialogue panel.
+    // A provider may deliberately use pure narration for the decision beat
+    // and omit npcLine while still returning the two server-authorized talk
+    // choices.  The choices themselves establish the formal dialogue
+    // boundary; rendering them does not synthesize any NPC text.
     const formalDialogueReady = isFocus
-      && (hasFormalFocusSpeech || allowOfflineSynthesis)
-      && hasDisplayableSpeech
-      && !requiresFormalDialogueStart;
+      && (
+        (hasFormalFocusSpeech && hasDisplayableSpeech)
+        || dialogueChoices.length === 2
+      );
     return {
       npcId: String(npc.id),
       name: npc.name,
@@ -764,13 +852,19 @@ export function projectGameSessionView(
       // 非焦点 NPC 是零回合闲聊：不提供任何可提交选项；正式对话只能经
       // 当前权威 talk 目标入口（NPC 卡片/交接双选项）开启。
       choices: formalDialogueReady ? dialogueChoices : [],
-      ...(projectedHandoffAcknowledgement !== null && String(npc.id) === sceneLineNpcId
-        ? { handoffAcknowledgement: projectedHandoffAcknowledgement }
+      ...(effectiveHandoffAcknowledgement !== null && String(npc.id) === sceneLineNpcId
+        ? { handoffAcknowledgement: effectiveHandoffAcknowledgement }
         : {}),
-      ...(startChoice === undefined ? {} : { startChoice }),
-      freeInputEnabled: formalDialogueReady,
+      freeInputEnabled: formalDialogueReady
+        // 结局立场只有两条已批准的 talk 行动：结局束没有任何步骤可供自由输入
+        // 消费，开放输入框只会换来一次零写入失败。
+        && !(endingStanceNpcId !== null && String(npc.id) === endingStanceNpcId && dialogueChoices.length === 2),
       giveChoices: formalDialogueReady
-        ? worldState.inventory.map((itemId) => {
+        ? worldState.inventory
+          .filter((itemId) => activeGiveStepKeys.has(
+            narrativeBundleTriggerKey({ kind: "give_item", itemId, npcId: npc.id }),
+          ))
+          .map((itemId) => {
             const item = worldState.items.find((entry) => entry.id === itemId);
             const itemName = item?.name ?? "未知物品";
             return {
@@ -862,7 +956,7 @@ export function projectGameSessionView(
       tension: storyState.tension,
       pacingNeed: storyState.nextPacingNeed,
       storyProgress: storyState.storyProgress,
-      currentObjectiveLabel: currentObjectiveRef?.label ?? (endingDecisionReady ? "选择结局方向" : null),
+      currentObjectiveLabel: currentObjectiveRef?.label ?? bridgedObjective?.label ?? (endingDecisionReady ? "选择结局方向" : null),
       currentObjectiveChoiceToken: currentObjectiveToken,
       currentObjectiveChoiceTokens: currentObjectiveTokens,
     },
@@ -873,7 +967,7 @@ export function projectGameSessionView(
         eventKind: scene.event?.kind,
         narration: decorateNarrativeText(scene.narration, scene.source),
       }),
-      choices: isDialogueScene || isSingleChoiceHandoff ? [] : projectedSceneChoices,
+      choices: isDialogueScene || isSingleChoiceHandoff ? [] : [...projectedSceneChoices, ...endingStanceChoices],
       npcLine: projectedNpcLine,
       npcDialogues,
     },

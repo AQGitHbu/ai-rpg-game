@@ -50,6 +50,16 @@ describe("paginateSpeechText", () => {
     expect(pages.join("")).toBe(text);
   });
 
+  it("长句优先在逗号或分号后软切，不把中文词切成两页", () => {
+    const text = "老汉眯着眼，语气带着几分警惕：“我姓赵，就住在前头坳里。这几日山里不太平，来了些生面孔，鬼鬼祟祟的。你要是跟他们一伙的，我劝你趁早回头；若不是，倒可以跟我说说，你一个镖师打扮的人，去那荒山野岭做什么？”";
+    const pages = paginateSpeechText(text, 48);
+
+    expect(pages.join("")).toBe(text);
+    expect(pages).not.toContain("么？”");
+    expect(pages.some((page) => page.endsWith("什"))).toBe(false);
+    expect(pages.some((page) => page.length > 48)).toBe(false);
+  });
+
   it("所有页顺序拼接 === trim 后原文（零丢失）", () => {
     const text = "  暮色四合！你背着旧刀走进青石镇……镇口贴着一张字迹潦草的缉凶告示。要去看看吗？ ";
     expect(paginateSpeechText(text, 12).join("")).toBe(text.trim());

@@ -9,7 +9,8 @@ import { postAction, type ActionOutcome } from "./gameActionRequest";
 import { buildTownView } from "@/game/application/townView";
 import { createTownRuntime, bindNpcToTownSlot } from "@/game/gameplay/rpg/town";
 import { asLocationId, asNpcId, asGenerationId } from "@/game/domain/worldEntity";
-import { createInitialWorldState, type WorldState } from "@/game/domain/worldState";
+import type { WorldState } from "@/game/domain/worldState";
+import { createWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 
 vi.mock("./gameActionRequest", () => ({
   postAction: vi.fn(async () => ({ kind: "rejected", message: "stop" })),
@@ -30,27 +31,38 @@ function choice(choiceToken: string, label: string, presentation: "dialogue" | "
 
 /** 构建合法的 TownView fixture：稳定几何 + npc_1 绑定一个剧情建筑。 */
 function townViewFixture(): NonNullable<GameSessionView["currentLocation"]["town"]> {
+  const locationId = asLocationId("loc_0");
+  const npcId = asNpcId("npc_1");
   const town = bindNpcToTownSlot(
-    createTownRuntime({ locationId: asLocationId("loc_0"), seed: "shell-town-fixture" }),
-    asNpcId("npc_1"),
+    createTownRuntime({ locationId, seed: "shell-town-fixture" }),
+    npcId,
   ).town;
-  const ws: WorldState = {
-    ...createInitialWorldState({
-      generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
+  const ws: WorldState = createWorldStateFixture({
+    generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
+    projection: {
       player: { name: "侠客", identity: "剑客", stats: { hp: 100, attack: 10, defense: 5 } },
-      startingLocation: {
-        id: asLocationId("loc_0"), name: "客栈", description: "一间客栈", kind: "main",
-        connectedLocationIds: [], npcIds: [asNpcId("npc_1")], availableItemIds: [], tags: [],
+      locations: [{
+        id: locationId, name: "客栈", description: "一间客栈", kind: "main",
+        connectedLocationIds: [], npcIds: [npcId], availableItemIds: [], tags: [],
         scale: "town", town,
-      },
-      startingItemIds: [],
-    }),
-    npcs: [{
-      id: asNpcId("npc_1"), name: "老板", role: "路人", description: "客栈老板。",
-      locationId: asLocationId("loc_0"), isCompanion: false, tags: [], met: true,
-      memory: { npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
-    }],
-  };
+      }],
+      currentLocationId: locationId,
+      unlockedLocationIds: [locationId],
+      visitedLocationIds: [locationId],
+      npcs: [{
+        id: npcId, name: "老板", role: "路人", description: "客栈老板。",
+        locationId, isCompanion: false, tags: [], met: true,
+        memory: { npcId, knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+      }],
+      items: [],
+      inventory: [],
+      worldFacts: [],
+      quests: [],
+      enemies: [],
+      defeatedEnemyIds: [],
+      factions: [],
+    },
+  });
   return buildTownView(ws, "loc_0")!;
 }
 
@@ -1526,7 +1538,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
     );
   });
 
-  it("starts the authoritative provider talk on NPC click without showing ambient or fallback speech", async () => {
+  it("opens dialogue panel on NPC click without auto-submitting or showing ambient speech", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();
     const base = buildView();
@@ -1545,7 +1557,6 @@ describe("AdventureGameShell canonical opaque choices", () => {
           speechPages: [],
           choices: [],
           freeInputEnabled: false,
-          startChoice: choice(TOKENS.dialogueOne, "与老板交谈", "dialogue"),
         }],
       },
     };
@@ -1559,12 +1570,8 @@ describe("AdventureGameShell canonical opaque choices", () => {
 
     expect(screen.queryByText(/欢迎光临|晚风还要凉/u)).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /老板.*路人/ }));
-    expect(onSubmit).toHaveBeenCalledWith(
-      { kind: "fixed_choice", choiceToken: TOKENS.dialogueOne },
-      "npc-dialogue",
-    );
-    expect(onSubmit).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("status")).toHaveTextContent("正在等待老板回应");
+    // Task 9: NPC card click only opens dialogue panel; no auto-submit.
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   it("keeps battle sides explicit and shows the attack feedback before the next snapshot", async () => {

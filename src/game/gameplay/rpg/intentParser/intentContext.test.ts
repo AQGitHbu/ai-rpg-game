@@ -1,7 +1,13 @@
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, it, expect } from "vitest";
 import { buildIntentContext } from "./intentContext";
-import { createInitialWorldState, appendLocation, appendNpc, appendItem, type LocationEntry, type NpcEntry, type ItemEntry } from "@/game/domain/worldState";
+import type { LocationEntry, NpcEntry, ItemEntry, WorldState } from "@/game/domain/worldState";
+import type { GenerationMetadata } from "@/game/domain/worldEntity";
+import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
+import {
+  createWorldStateFixtureWith,
+  type WorldStateFixtureOverrides,
+} from "@/game/domain/testing/worldStateFixture.testutil";
 import { asLocationId, asNpcId, asItemId, asGenerationId, asFactId, asQuestId } from "@/game/domain/worldEntity";
 import { createInitialStoryState } from "@/game/domain/storyState";
 
@@ -18,18 +24,33 @@ describe("buildIntentContext", () => {
   const item1: ItemEntry = {
     id: asItemId("item_1"), name: "钥匙", description: "t", kind: "key", tags: [],
   };
-  const baseWs = createInitialWorldState({
-    generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
-    player: { name: "p", identity: "i", stats: { hp: 100, attack: 10, defense: 5 } },
-    startingLocation: loc1,
-    startingItemIds: [],
-  });
   const npc1: NpcEntry = {
     id: asNpcId("npc_1"), name: "老板", role: "路人", description: "t",
     locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
     memory: { npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
   };
-  const ws = appendItem(appendLocation(appendNpc(baseWs, npc1), loc2), item1);
+  const GENERATION: GenerationMetadata = {
+    generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia",
+  };
+  const BASE_PROJECTION: EntityCompatibilityProjection = {
+    player: { name: "p", identity: "i", stats: { hp: 100, attack: 10, defense: 5 } },
+    locations: [loc1, loc2],
+    currentLocationId: loc1.id,
+    unlockedLocationIds: [loc1.id],
+    visitedLocationIds: [loc1.id],
+    npcs: [npc1],
+    items: [item1],
+    inventory: [],
+    worldFacts: [],
+    quests: [],
+    enemies: [],
+    defeatedEnemyIds: [],
+    factions: [],
+  };
+  function buildWorld(overrides: WorldStateFixtureOverrides = {}): WorldState {
+    return createWorldStateFixtureWith({ generation: GENERATION, base: BASE_PROJECTION }, overrides);
+  }
+  const ws = buildWorld();
   const ss = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 2, npcs: 1, quests: 0, events: 0 } });
 
   it("includes current location name and connected locations", () => {
@@ -64,19 +85,18 @@ describe("buildIntentContext", () => {
   // ── Task 5 Step 3：topicRefs ──────────────────────────────────────────────
 
   it("topicRefs 包含已发现事实 / 活跃任务 / 未解决线程（仅 ID 列表）", () => {
-    const wsWithFacts = {
-      ...ws,
+    const wsWithFacts = buildWorld({
       worldFacts: [
-        { factId: asFactId("fact_0"), text: "矿坑密道", source: "generated" as const, discovered: true },
-        { factId: asFactId("fact_1"), text: "隐藏的宝藏", source: "generated" as const, discovered: false },
+        { factId: asFactId("fact_0"), text: "矿坑密道", source: "generated", discovered: true },
+        { factId: asFactId("fact_1"), text: "隐藏的宝藏", source: "generated", discovered: false },
       ],
       quests: [{
         id: asQuestId("quest_0"), name: "查明真相", description: "d", objectives: [],
-        onSuccess: { kind: "advance_story" } as const,
-        onFailure: { kind: "closed" } as const,
-        tags: [], kind: "main" as const, stage: 1, status: "active" as const,
+        onSuccess: { kind: "advance_story" },
+        onFailure: { kind: "closed" },
+        tags: [], kind: "main", stage: 1, status: "active",
       }],
-    };
+    });
     const ssWithThreads = { ...ss, unresolvedThreads: ["thread_1"] };
     const ctx = buildIntentContext(wsWithFacts, ssWithThreads);
     expect(ctx.topicRefs).toContainEqual({ kind: "fact", id: "fact_0" });

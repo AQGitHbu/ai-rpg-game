@@ -4,7 +4,7 @@ import { useState, useEffect, useReducer, useRef, type FormEvent } from "react";
 import { type GameSessionView, type NewGameInput } from "@/game/application";
 import type { PlayerInteraction } from "./gameActionRequest";
 import { AdventureVisual } from "./adventureVisuals";
-import { normalizeDisplayText } from "./displayText";
+import { normalizeDisplayText, removeCoveredClauses } from "./displayText";
 
 type LocationSceneScreenProps = {
   readonly view: GameSessionView;
@@ -91,24 +91,6 @@ function cleanLocationSideNote(text: string): string {
     .trim();
 }
 
-/** 城镇建筑是独立的可游玩场景，不能把镇口/街道的公共说明搬进室内。 */
-function describeBuildingScene(buildingType: string | undefined, buildingName: string, npcName: string | null | undefined): string {
-  const npcClause = npcName ? `${npcName}就在近处，留意着你的来意。` : "屋内有人留意着门口的动静。";
-  // 剧情建筑名称由 AI 生成；当名称已经明确说明它不是室内业态时，名称语义必须优先于
-  // 运行时为剧情槽位保留的 tavern/house 类型，避免把告示栏渲染成酒楼。
-  if (/告示(?:栏|牌)?|榜/gu.test(buildingName)) {
-    return `${buildingName}前的新旧纸张层层叠压，风一过便露出被雨水晕开的墨迹。${npcClause}`;
-  }
-  switch (buildingType) {
-    case "tavern": return `${buildingName}里酒气、炭火和低声交谈混在一起，靠窗的木桌还留着湿漉漉的斗笠。${npcClause}`;
-    case "blacksmith": return `${buildingName}的炉火映红铁砧，锤声一停，空气里只剩铁屑和焦炭的味道。${npcClause}`;
-    case "guild": return `${buildingName}的告示板贴满旧纸条，来往的人压低嗓音交换消息。${npcClause}`;
-    case "clinic": return `${buildingName}里药草微苦，帘后偶尔传来瓷碗相碰的轻响。${npcClause}`;
-    case "market": return `${buildingName}外的叫卖声被门帘隔开，柜台上散着刚换手的货单。${npcClause}`;
-    default: return `${buildingName}与镇上的街巷隔出一层安静，眼前的陈设暗示着这里惯常发生的营生。${npcClause}`;
-  }
-}
-
 function BattleScene({
   view,
   battle,
@@ -144,7 +126,7 @@ function BattleScene({
         disabled={busy || pending || choice.enabled === false || choice.choiceToken === null}
         onClick={() => {
           if (choice.choiceToken === null) return;
-          onBattleFeedback(`你${choice.label}！`);
+          if (choice.label === "攻击") onBattleFeedback("你攻击！");
           onSubmit({ kind: "fixed_choice", choiceToken: choice.choiceToken });
         }}
       >
@@ -290,7 +272,6 @@ function NpcDialogueModal({
   const waitingChoices = [
     ...dialogue.choices,
     ...dialogue.giveChoices.map((entry) => entry.choice),
-    ...(dialogue.startChoice === undefined ? [] : [dialogue.startChoice]),
   ];
 
   return (
@@ -353,17 +334,6 @@ function NpcDialogueModal({
             </div>
             <p className="npc-dialogue-status" role="status" aria-live="polite">正在等待{dialogue.name}回应……</p>
           </>
-        ) : dialogue.startChoice !== undefined ? (
-          <div className="npc-dialogue-choices" role="group" aria-label="对话选项">
-            <button
-              type="button"
-              className="npc-dialogue-talk-cta"
-              disabled={busy}
-              onClick={() => onSubmit({ kind: "fixed_choice", choiceToken: dialogue.startChoice!.choiceToken }, dialogue.startChoice!.label)}
-            >
-              {dialogue.startChoice.label}
-            </button>
-          </div>
         ) : hasFocusInteraction ? (
           /* 焦点 NPC：显示固定选项 + 给予道具 + 自由输入 */
           <>
@@ -497,9 +467,7 @@ export function LocationSceneScreen({
   const activeBuilding = hasBuildingSceneContext
     ? view.currentLocation.town?.interactiveBuildings.find((building) => building.buildingId === sceneBuildingId)
     : undefined;
-  const buildingSideNote = activeBuilding === undefined
-    ? ""
-    : describeBuildingScene(activeBuilding.buildingType, activeBuilding.displayName, sceneNpcName);
+  const buildingSideNote = "";
   const selectedNpcChoiceToken = currentSceneNpcName === null
     ? null
     : locationNpcs[0]?.talkChoice?.choiceToken ?? null;
@@ -545,10 +513,9 @@ export function LocationSceneScreen({
     ? dynamicNarration
     : (buildingSideNote || dynamicNarration);
   const displayLocationDescription = activeBuilding === undefined
-    ? normalizeDisplayText(view.currentLocation.description)
+    ? removeCoveredClauses(normalizeDisplayText(view.currentLocation.description), displayNarration)
     : "";
-  const shouldShowLocationDescription = displayLocationDescription !== ""
-    && (displayNarration === "" || !displayNarration.includes(displayLocationDescription));
+  const shouldShowLocationDescription = displayLocationDescription !== "";
   // 已准备好的焦点对白代表当前主线的唯一入口。两个 support/challenge 是
   // 对话框内的回答，不应和探索、战斗等地点通用动作并排在底栏；否则一次
   // 主线场景会被误读成多条可同时推进的任务。
@@ -574,6 +541,19 @@ export function LocationSceneScreen({
     action.presentation === "explore"
       && (action.label === "继续追查下一幕线索" || action.label === "面对最终抉择"),
   );
+  const hasFormalDialogueBoundary = (view.narrative.npcDialogues ?? []).some((dialogue) =>
+    dialogue.choices.length === 2 && dialogue.freeInputEnabled,
+  );
+  // 敌人没有 NPC 卡片或物品热点可承载入口；必须在场景内显式投影唯一的
+  // 规则开战动作。进入战斗后每一回合仍由 BattleScene 的规则按钮控制，
+  // 此处不触发 AI。
+  const sceneActionRail = [
+    ...(boundaryPreparationAction === undefined || hasFormalDialogueBoundary ? [] : [boundaryPreparationAction]),
+    ...view.currentLocation.actions.filter((action) =>
+      action.presentation === "battle"
+      && action.choiceToken === view.story.currentObjectiveChoiceToken,
+    ),
+  ];
   // 统一构建所有 NPC 的 Dialogue 数据（读模型已为在场全部 NPC 投影对话，
   // 含非焦点 NPC 的零回合闲聊；此处不再用问候语合成缺省条目）。
   const allDialoguesMap = new Map<string, Dialogue>();
@@ -647,7 +627,7 @@ export function LocationSceneScreen({
     }
 
     if (previous !== null && current === null) {
-      window.setTimeout(() => setBattleFeedback({ kind: "resolved", message: "战斗结算完成" }), 0);
+      window.setTimeout(() => setBattleFeedback({ kind: "resolved", message: "战斗状态已更新" }), 0);
       const timer = window.setTimeout(() => setBattleFeedback(null), 1800);
       return () => window.clearTimeout(timer);
     }
@@ -736,7 +716,7 @@ export function LocationSceneScreen({
     view.revision,
   ]);
 
-  // 普通 NPC 点击只打开对话弹窗；旧存档的兼容 startChoice 会在同一次点击中补发 ask 回合。
+  // Task 9: NPC card click only opens the dialogue panel; no auto-submit.
   function submitDialogueInteractionFor(
     dialogue: Dialogue,
     interaction: PlayerInteraction,
@@ -752,22 +732,11 @@ export function LocationSceneScreen({
     onSubmit(interaction, "npc-dialogue");
   }
 
+  // Task 9: NPC card click only opens the dialogue panel; no auto-submit.
   function handleNpcCardClick(npc: typeof sidebarNpcs[number]) {
-    const dialogue = allDialoguesMap.get(npc.dialogueId);
     setOpenDialogueNpcId(npc.dialogueId);
     setDialoguePhase("choice");
     submittedDialogueRef.current = null;
-    // 旧存档可能已经消费了抵达 prepared step，只留下当前目标 NPC 和一个
-    // rule-owned travel scene。此时 read model 明确下发 startChoice；点击 NPC
-    // 直接补发一次权威 ask 回合，让 provider 生成真正的开场对白，不展示伪造
-    // 的默认 support/challenge 选项。
-    if (dialogue?.startChoice !== undefined) {
-      submitDialogueInteractionFor(
-        dialogue,
-        { kind: "fixed_choice", choiceToken: dialogue.startChoice.choiceToken },
-        dialogue.startChoice.label,
-      );
-    }
   }
 
   function submitDialogueInteraction(interaction: PlayerInteraction, playerResponse: string): void {
@@ -886,15 +855,18 @@ export function LocationSceneScreen({
           <p className="location-scene-caption">{displayLocationDescription}</p>
         ) : null}
 
-        {boundaryPreparationAction === undefined ? null : (
+        {sceneActionRail.length === 0 ? null : (
           <nav className="scene-action-rail--bottom" aria-label="行动栏">
-            <button
-              type="button"
-              disabled={busy || pending}
-              onClick={() => onSubmit({ kind: "fixed_choice", choiceToken: boundaryPreparationAction.choiceToken })}
-            >
-              {boundaryPreparationAction.label}
-            </button>
+            {sceneActionRail.map((action) => (
+              <button
+                key={action.choiceToken}
+                type="button"
+                disabled={busy || pending}
+                onClick={() => onSubmit({ kind: "fixed_choice", choiceToken: action.choiceToken })}
+              >
+                {action.label}
+              </button>
+            ))}
           </nav>
         )}
       </div>

@@ -7,6 +7,11 @@ import {
   type ProviderGenerationKind,
   type NarrativeSceneRequestKind,
 } from "@/game/gameplay/rpg/narrativeExecution";
+import {
+  DECISION_BOUNDARY_KINDS,
+  classifyProviderDecisionBoundary,
+  type DecisionBoundaryKind,
+} from "@/game/domain/pendingNarrativeJob";
 
 describe("narrative execution provider whitelist", () => {
   it.each([
@@ -115,5 +120,45 @@ describe("narrative execution provider whitelist", () => {
       interaction: { kind: "free_text", text: "昨夜发生了什么？", targetNpcId: "npc_2" as never },
       focusedNpcId: npcId,
     })).toBe(false);
+  });
+});
+
+describe("semantic decision boundary classification", () => {
+  it("DECISION_BOUNDARY_KINDS is the additive semantic whitelist", () => {
+    expect(DECISION_BOUNDARY_KINDS).toEqual([
+      "initialization",
+      "narrative_choice",
+      "npc_free_text",
+    ]);
+  });
+
+  it("formal fixed choice classifies as narrative_choice", () => {
+    const kind: DecisionBoundaryKind | null = classifyProviderDecisionBoundary({
+      action: { type: "talk", npcId: "npc_1" as never, dialogueAct: "support" },
+      interactionKind: "fixed_choice",
+      fixedChoiceIsCurrentFormalDecision: true,
+      focusedNpcId: "npc_1" as never,
+    });
+    expect(kind).toBe("narrative_choice");
+  });
+
+  it("focus NPC free text classifies as npc_free_text", () => {
+    const kind: DecisionBoundaryKind | null = classifyProviderDecisionBoundary({
+      action: { type: "talk", npcId: "npc_1" as never, dialogueAct: "ask" },
+      interactionKind: "free_text",
+      fixedChoiceIsCurrentFormalDecision: false,
+      focusedNpcId: "npc_1" as never,
+    });
+    expect(kind).toBe("npc_free_text");
+  });
+
+  it("non-dialogue boundary returns null", () => {
+    const kind: DecisionBoundaryKind | null = classifyProviderDecisionBoundary({
+      action: { type: "move", locationId: "loc_2" as never },
+      interactionKind: null,
+      fixedChoiceIsCurrentFormalDecision: false,
+      focusedNpcId: null,
+    });
+    expect(kind).toBeNull();
   });
 });

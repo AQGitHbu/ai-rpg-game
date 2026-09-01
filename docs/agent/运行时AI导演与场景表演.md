@@ -23,21 +23,19 @@
 ```text
 成功玩家回合
   → PendingNarrativeJob（含 ObjectiveTransition + 强制节拍 ≤8）
-  → generatePendingScene
-  →（可选）world-evolution：EvolutionNeed → proposal → 审批 → 铸 ID → 预览状态
-  → SceneGenerationContext（最小权限、当前合法候选、焦点 NPC 隔离上下文）
-  → SceneSource proposal（live；显式 offline fixture 才是 deterministic）
-  → approveScenePerformance
-  → 单次 scene CAS 原子写回：已批准世界演化 + ready scene + choice registry + candidate events
+  → generatePendingNarrativeBundle
+  → NarrativeBundleSource proposal（可选 world delta + current scene + continuation graph）
+  → approveNarrativeBundle
+  → 单次 scene CAS 原子写回：已批准世界演化 + ready scene + choice registry + narrative bundle
   → GameSessionView
 ```
 
-## Scene Prompt 编译器（2026-08-23）
+## Narrative Prompt 编译器（2026-08-23，2026-08-30 更新）
 
-- `liveScenePerformanceSource` 现在只通过 `compileSceneNarrativeContext(context, selectable)` 生成 Prompt；scene Prompt 的唯一 schema/块定义来源是 `src/game/application/server/ai/narrativeContext/contextBlock.ts`、`sceneNarrativeContext.ts` 与 `renderNarrativeContext.ts`，不再在 source 内额外拼接第二份 schema。
-- scene 编译块会投影：规则与题材约束、故事契约、当前剧情状态、玩家安全事实卡、当前可见事实、已结算强制节拍与 `objectiveLink`、当前位置、焦点 NPC 隔离上下文、最近 beats、风格策略、当前回合输入、合法候选动作、上一轮对话、prepared continuation descriptors 和 repair 指令。
-- scene 编译块明确不投影：完整 `GameRecord`、完整 `eventLedger`、其他 NPC 的私密记忆、焦点 NPC 的私密事实正文、玩家长期自由文本历史、隐藏 registry/effect/debug 结构，以及任何未在 `narrativeReferenceIds`/allowlist 中批准的实体 ID。
-- 编译产物的 manifest 只进入审计上下文 `context.narrativeContext` 作为元数据；source 不保存第二份 Prompt 副本，也不把渲染后的 Prompt 文本写入存档或 manifest。
+- v7 生产决策路径中，`liveNarrativeBundleSource` 只通过 `compileDecisionNarrativeContext` 生成 Prompt；规则、上下文和完整 narrative bundle schema 的唯一定义在 `narrativeBundleContext.ts` 中，source 不再手工维护第二份决策 Prompt。
+- 决策编译块会投影：题材与规则约束、Story Contract、当前幕/张力/节奏/预算、玩家安全事实、公开事实、强制节拍与 `objectiveLink`、当前位置、焦点 NPC 最近五条结构化交互与响应政策、最近 beats、本回合输入、已占用实体名与物品持有状态、权威 descriptor graph、world delta 约束、上一场景和 repair 指令。
+- 决策编译块明确不投影：完整 `GameRecord`、完整 `eventLedger`、其他 NPC 的交互历史、任何 NPC 的私密事实正文、玩家长期自由文本历史、隐藏 registry/effect/debug 结构。
+- 编译产物的 manifest 只进入审计上下文 `context.narrativeContext` 作为元数据；source 不保存第二份 Prompt 副本，也不把渲染后的 Prompt 文本写入存档或 manifest。初始化 opening 分支仍使用现有专用 Prompt，没有 manifest。
 
 ## 已冻结约束
 
@@ -76,15 +74,26 @@
 
 ## 叙事边界编排（2026-08-25）
 
-- 非对白行动完成当前幕最后一个主线目标后，若 `evolution.status=needs_next_act` 或 `needs_ending_pair`，read model 会投影一次“继续追查下一幕线索”探索入口；该入口只负责提交边界编排请求，不把无目标地点伪装成普通探索。结局对物化且 `endingAllowed=true` 后，read model 继续投影“选择结局方向”目标和“面对最终抉择”入口，直到玩家提交最后的 support/challenge 立场。
+- 非对白行动完成当前幕最后一个主线目标后，若 `evolution.status=needs_next_act` 或 `needs_ending_pair`，read model 会投影一次“继续追查下一幕线索”探索入口；该入口只负责提交边界编排请求，不把无目标地点伪装成普通探索。结局对物化且 `endingAllowed=true` 后，read model 投影“选择结局方向”目标与两条服务端铸造的 support/challenge 立场（见 `战斗与结局.md`）；2026-08-25 曾使用的“面对最终抉择”探索入口在 v7 下已无对应可消费步骤，只在铸不出立场（无人在场）时保留为兜底。
 - `performTurn` 对边界请求复用已批准的 provider 世界/场景编排链；新幕或结局写回前保持 pending 锁定。终幕最后一轮 `talk_to_npc` 即使目标转换模式为 `ready_for_ending`，也必须依据匹配且已完成的 `dialogueSession` 选择 `npc_handoff`，不能退回普通双选项场景。最终 support/challenge 一旦由规则层写入 `ending`，直接 CAS 保存结局并停止 provider scene job，避免后台失败遮蔽结局页。
+
+## v7 决策边界叙事捆绑包（2026-08-29 真机中篇回归收口）
+
+- 生产续接图**唯一**由 `storyState.narrative.narrativeBundle` 承载（`schemaVersion 7`）。上文 2026-08-24 与 2026-08-26 两节描述的 `PreparedContinuationState` 自 v7 起只保留给显式离线 fixture，不是生产路径。
+- 消费语义：行动按 `narrativeBundleTriggerKey` 匹配 bundle 的 active step；命中才在同一次 CAS 内物化场景、铸造 token、裁剪消费组。缺步返回 `NARRATIVE_CONTINUATION_MISSING` 并零写入，不在动作路径转 live source。
+- Provider 契约边界：`terminal.kind === "ending"` 要求 `continuationScenes` 为空**且** `currentScene.choices` 为空；`next_decision` 的终点步骤必须有恰好两个不同选项，非终点步骤 `choices` 必须为空；最多 12 步、`stepKey` 唯一。终幕立场因此不能由 provider 提交，见 `战斗与结局.md`。live source 对终幕 provider 常见的冗余 terminal target、choices 与 continuation 做窄幅 canonicalization，仍由审批层验证 worldDelta 与结局对。
+- 拒因回传：`parseNarrativeBundleProposal` 失败携带细分 `reason`（`NarrativeBundleProposalRejectionReason`）与可选 `stepKey`；`approveNarrativeBundle` 的 `world_delta_rejected` 携带规则引擎 `detail`。同一 proposal 的既有世界实体撞名会合并为 `duplicate_name:npc:…|item:…`，使一次修复可改完全部冲突；`generatePendingNarrativeBundle` 最多 4 次尝试，后续修复把上一轮真实拒因写进 prompt，不再笼统报 `approval_rejected`。
+- Prompt 侧预防措施：下发「已占用实体名称」清单（地点/NPC/物品/敌人/任务）和规则拥有的物品状态（已持有 / 未拾取且所在地点），要求新实体名称避开且不能把未拾取物品写成已持有；要求 `continuationScenes` 与服务端投影步骤在数量、`stepKey`、顺序上完全一致，选项只写在 terminal 指向的那一步，禁止在投影之外自行规划未来步骤。兼容 provider 把新地点名称而非 ID 填入 `connectFromLocationId` 的形状，仅在名称唯一时解析回当前世界 ID。
+- 观测入口：`logs/ai-text-audit/<runId>/events.jsonl` 与 `data/logs.db` 中的 `narrative_bundle_json_fence_normalized`、`narrative_bundle_invalid_schema`、`narrative_bundle_generation_failed`、`narrative_bundle_source_unavailable`。
+- 真机回合情境投影与内容闸门（2026-08-30 浏览器中篇回归收口）：`compileDecisionNarrativeContext` 除世界快照外还投影玩家当前位置、焦点 NPC、上一场景旁白/台词、固定选项原文（`selectedDialogue.label`）或自由输入、本回合强制节拍清单与逐字给出的 `objectiveLink` 期望值；下一幕回合另给出带真实 `stepKey`/candidateId/npcId 的抵达场景骨架，防止 provider 漏写终点两选项。`approveNarrativeBundle` 新增当前场景内容审批：强制节拍逐一覆盖（顺序不限）、禁止自创节拍、至多一个置尾 `atmosphere`；`player_utterance` 必须由焦点 NPC 台词应答；当前场景决策点或终点抵达步骤缺焦点/抵达 NPC 台词（`dialogue_focus_line_missing`）、`objectiveLink` 与权威转换不一致（`objective_link_mismatch`）均拒包并回传细分原因。纯舞台说明被重分类为旁白不算缺台词。节拍顺序不再作为拒因，避免消耗修复预算。
+- 对话收场引导（2026-08-30）：焦点 NPC 对话完成后的收场必须是一个引导下一动作的单选项（`handoffAcknowledgement`，本地关闭语义、不提交回合），禁止「知道了」式纯确认。read model 在收场场景（最后台词 NPC、`dialogueSession.completed`、无可提交选项）缺少显式致意语时，确定性地以权威当前目标投影「告辞，{下一目标}」兜底，保证任何存档都不再渲染「知道了」。该规则**不做成审批硬门**：真机验证 provider 会把该字段放到 JSON 根级（`unknown_keys`）或省略，硬门会耗尽 4 次尝试把玩家回合卡成 `provider_failed`；呈现层字段一律由确定性兜底保障，不阻塞主线。
 
 ## 强制节拍与目标链接
 
 - 每个 ready 场景以**分段旁白**呈现；每一段必须对应服务端下发的强制节拍 ID（`player_utterance` / `item_obtained` / `fact_discovered` / `quest_progress` / `quest_advanced` / `battle_started` / `battle_round` / `battle_resolved` / `entity_introduced`），数量 ≤8，可另附一个 `atmosphere` 段且必须置于最后。
 - `objectiveLink` 必须与权威 `ObjectiveTransition.after` 一致（无 after 目标时为 null）；目标在本回合推进时，必须产出 `quest_advanced` 段命名新目标相关的已批准实体。
 - 当玩家对焦点 NPC 提交话语（`job.utterance`）时，表演契约必须返回该 NPC 的台词并列出它应答的 `player_utterance` 节拍；缺失应答使提案进入一次内容修复，修复仍缺失就返回 `AI_RESPONSE_INVALID`，不写 deterministic scene。玩家界面保留该 NPC 的会话焦点：pending 时短暂遮蔽，ready 后先显示这句回应，failed 时显示重试提示。
-- `npcLine.text` 的输出边界是 NPC 第一人称直接台词：不得带 NPC 名称、动作或“说道/答道”等叙述性包装。审批写回和 read model 会再次归一化，以兼容历史场景。
+- `npcLine.text` 的输出边界是 NPC 第一人称直接台词：不得带 NPC 名称、动作或“说道/答道”等叙述性包装。审批写回和 read model 会再次归一化，以兼容历史场景。归一化同样剥掉真机出现过的另外三种包装：台词前的整段括号舞台说明（`（哑巴猎户用炭笔写下几个字，推到你面前）…`）、整段 `‘…’` 单弯引号，以及对话分页把该包装拆到页首页尾后残留的单侧引号；两侧数量相等的句内引用（`我只听人提过 ‘铁旗会’ 这个名字。`）保持原样。
 - 对话上下文、选项和直接台词都由 live source 生成并经结构化审批；失败只返回 stable failure。显式 offline fixture 才可读取 `job.utterance`、关系档位和当前目标生成可重放回应。
 - 承接玩家原话时，NPC 以自己的口吻概括并回答，不得把整段玩家输入包进“你刚才问的‘……’”再反问。该质量门槛不通过时归类为 `AI_RESPONSE_INVALID`，不改写为生产 deterministic 成功。
 - 焦点 NPC 的开场、正式回应与终局追问至少两句：第一句回应，第二句补充线索、保留或下一步。质量门槛失败经过一次内容修复仍不通过时，场景进入 failed；live prompt 同时禁止把系统元话术写进玩家可见旁白。
@@ -106,6 +115,11 @@
 
 ## 主要文件
 
+- `src/game/application/narrativeBundleSource.ts` — v7 `NarrativeBundleSource` 与 `NarrativeBundleRepair` 契约。
+- `src/game/application/server/ai/liveNarrativeBundleSource.ts` — 决策/开局 prompt 编译、投影图 reconcile、拒因回传。
+- `src/game/application/approveNarrativeBundle.ts` — worldDelta + 场景 + registry + bundle 的原子审批。
+- `src/game/application/generatePendingNarrativeBundle.ts` — pending job 原子编排与 `runBoundedAttempts` 修复重试。
+- `src/game/gameplay/rpg/narrativeBundle/` — 描述符图、消费、`endingDecision` 终幕立场派生。
 - `src/game/application/sceneSource.ts` — scene-performance proposal 契约。
 - `src/game/application/sceneGenerationContext.ts` — 最小权限上下文、合法候选、强制节拍、目标链接实体和 prepared continuation descriptors 投影。
 - `src/game/application/deterministicEvolutionBeats.ts` — 离线 fixture 节拍与"线索→新地点"动线因果。
@@ -113,13 +127,13 @@
 - `src/game/application/deterministicSceneSource.ts` — 显式离线 fixture proposal。
 - `src/game/application/gameSessionView.ts` — 投影焦点能力，并修复旧存档中与权威目标冲突的过期焦点；调查/移动/取物/战斗目标出现时会关闭上一轮 NPC 的双选项焦点；新 talk 目标在 scene 未 ready 前不投影 fallback 台词或自由输入；终幕结局对就绪后投影稳定的结局决策目标。
 - `src/game/application/approveAndWriteScene.ts` — 场景表演审批与写回。
-- `src/game/application/generatePendingScene.ts` — 生成编排与原子 write-back。
+- `src/game/application/generatePendingScene.ts` — 历史 scene/fixture 编排与对应测试链；v7 生产入口是 `generatePendingNarrativeBundle.ts`。
 - `src/game/application/markNarrativeGenerationFailed.ts` / `retryNarrativeGeneration.ts` — failed 持久化与同 job CAS 手动重试。
 - `src/game/application/evolveWorld.ts` / `worldEvolutionSource.ts` — 可选世界演化编排与 port。
 - `src/game/gameplay/rpg/narrativeContext/` — `buildOutcomeBeats` / `deriveObjectiveTransition` / `npcResponsePolicy`。
 - `src/game/application/server/ai/liveScenePerformanceSource.ts` / `liveWorldEvolutionSource.ts` / `sourceFactory.ts`。
 - `src/game/application/server/ai/narrativeContext/contextBlock.ts` / `compileNarrativeContext.ts` / `sceneNarrativeContext.ts` / `renderNarrativeContext.ts`。
-- `src/game/application/server/ai/rpgAiClient.ts` — 唯一 server-side transport facade；按 `intent/opening/scene/world` 独立控制 thinking、预算、超时、JSON mode 和 transient retry。
+- `src/game/application/server/ai/rpgAiClient.ts` — 唯一 server-side transport facade；按 `intent/opening/scene/world/narrative_bundle` 独立控制 thinking、预算、超时、JSON mode 和 transient retry。
 
 ## 验收重点
 
@@ -134,3 +148,7 @@
 ## 历史说明
 
 早期 dated 文档中的三角色 pipeline、版本化接口名和旧 scene adapter 只作历史记录。当前生产事实以本页列出的 neutral application/server 文件为准。
+
+## Entity Store 上下文边界
+
+场景、世界演化和叙事 bundle 的实体摘要从 v3 `entityStore` 的规则投影生成；mandatory closure、有限 optional 邻接和五类撞名索引不改变既有 block 顺序、预算或单次 provider 调用。Entity command parser/approver 尚未接入 provider 输出。

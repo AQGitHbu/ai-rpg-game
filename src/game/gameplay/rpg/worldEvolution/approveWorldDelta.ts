@@ -421,6 +421,18 @@ export function deriveActObjectives(
   if (p.newLocation?.placement === "world" && ids.locationId && !chain.some((objective) => objective.kind === "visit_location")) {
     chain = [{ kind: "visit_location", locationId: ids.locationId }, ...chain];
   }
+  // 一次正式选择生成的叙事包必须以另一处正式二选一收束。规则动作
+  // （拾取或战斗）之后不能再触发 AI；若本幕有 NPC，则把该 NPC 的正式
+  // 对话边界作为规则动作的预生成终点，由对应 continuation step 消费。
+  if (
+    p.newNpc !== null
+    && ids.npcId !== null
+    && ids.npcId !== undefined
+    && (chain[chain.length - 1]?.kind === "obtain_item"
+      || chain[chain.length - 1]?.kind === "defeat_enemy")
+  ) {
+    chain = [...chain, { kind: "talk_to_npc", npcId: ids.npcId }];
+  }
   return chain;
 }
 

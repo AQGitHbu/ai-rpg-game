@@ -7,31 +7,68 @@ import {
   REJECT_REASON_NPC_NOT_AT_NEW_LOCATION,
   REJECT_REASON_LOCATION_NOT_FROM_CURRENT,
 } from "./approveWorldDelta";
-import type { WorldState, NpcEntry, InvestigationApproach } from "@/game/domain/worldState";
+import type { WorldState, LocationEntry, NpcEntry, InvestigationApproach } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import { createInitialStoryState } from "@/game/domain/storyState";
-import { createInitialWorldState } from "@/game/domain/worldState";
+import type { GameEvent } from "@/game/domain/events";
+import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
+import {
+  createWorldStateFixtureWith,
+  type WorldStateFixtureOverrides,
+} from "@/game/domain/testing/worldStateFixture.testutil";
 import type { WorldDeltaProposal } from "@/game/domain/worldDelta";
-import { asLocationId, asNpcId, asEnemyId, asGenerationId, asQuestId } from "@/game/domain/worldEntity";
+import { asLocationId, asNpcId, asEnemyId, asGenerationId, asQuestId, type GenerationMetadata } from "@/game/domain/worldEntity";
 import { bindNpcToTownSlot, createTownRuntime } from "@/game/gameplay/rpg/town";
 import { TRUST_ENDING_MIN_AFFINITY, DOUBT_ENDING_MAX_AFFINITY } from "@/game/application/deterministicEvolutionSource";
 
-function makeWorld(seed = "seed-a"): WorldState {
-  const base = createInitialWorldState({
-    generation: { generationId: asGenerationId("g1"), seed, templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
-    player: { name: "林惊羽", identity: "外门弟子", stats: { hp: 100, attack: 10, defense: 5 } },
-    startingLocation: {
-      id: asLocationId("loc_0"), name: "听雨客栈", description: "山脚小镇的客栈。", kind: "main",
-      connectedLocationIds: [], npcIds: [asNpcId("npc_0")], availableItemIds: [], tags: [],
-    },
-    startingItemIds: [],
-  });
-  const npc: NpcEntry = {
-    id: asNpcId("npc_0"), name: "韩征", role: "掌柜", description: "听雨客栈的掌柜。",
-    locationId: asLocationId("loc_0"), isCompanion: false, tags: [], met: false,
-    memory: { npcId: asNpcId("npc_0"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+// ---------------------------------------------------------------------------
+// Fixture：起始地点听雨客栈(loc_0) 与其名册内的掌柜韩征(npc_0) 一次给出完整合法
+// 兼容投影；v3 下 NPC 必须由 entityStore 派生，不能再 spread 单条 legacy 数组。
+// ---------------------------------------------------------------------------
+
+const LOC_0: LocationEntry = {
+  id: asLocationId("loc_0"), name: "听雨客栈", description: "山脚小镇的客栈。", kind: "main",
+  connectedLocationIds: [], npcIds: [asNpcId("npc_0")], availableItemIds: [], tags: [],
+};
+
+const NPC_0: NpcEntry = {
+  id: asNpcId("npc_0"), name: "韩征", role: "掌柜", description: "听雨客栈的掌柜。",
+  locationId: asLocationId("loc_0"), isCompanion: false, tags: [], met: false,
+  memory: { npcId: asNpcId("npc_0"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+};
+
+// 结局要求由 stage 最大的主线任务的 talk_to_npc 目标派生：该目标 NPC 必须是世界里
+// 真实存在的实体（v3 投影不变量下 quest 目标引用未知 NPC 直接非法），所以把它
+// 补进投影；断言仍只关心派生出的 npcId 是否为 npc_9。
+const KEY_ENDING_NPC: NpcEntry = {
+  id: asNpcId("npc_9"), name: "密信送信人", role: "信使", description: "掌握盟约裂痕证据的信使。",
+  locationId: asLocationId("loc_0"), isCompanion: false, tags: [], met: true,
+  memory: { npcId: asNpcId("npc_9"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+};
+
+const BASE_PROJECTION: EntityCompatibilityProjection = {
+  player: { name: "林惊羽", identity: "外门弟子", stats: { hp: 100, attack: 10, defense: 5 } },
+  locations: [LOC_0],
+  currentLocationId: asLocationId("loc_0"),
+  unlockedLocationIds: [asLocationId("loc_0")],
+  visitedLocationIds: [asLocationId("loc_0")],
+  npcs: [NPC_0],
+  items: [],
+  inventory: [],
+  worldFacts: [],
+  quests: [],
+  enemies: [],
+  defeatedEnemyIds: [],
+  factions: [],
+};
+
+function makeWorld(overrides: WorldStateFixtureOverrides = {}, seed = "seed-a"): WorldState {
+  const generation: GenerationMetadata = {
+    generationId: asGenerationId("g1"), seed, templateVersion: "v2", inputDigest: "", gameType: "wuxia",
   };
-  return { ...base, npcs: [npc] };
+  // 与 createInitialWorldState 一致：账本首条为 game_initialized。
+  const eventLedger: readonly GameEvent[] = [{ type: "game_initialized", generation }];
+  return createWorldStateFixtureWith({ generation, base: BASE_PROJECTION }, { eventLedger, ...overrides });
 }
 
 function makeStory(overrides?: Partial<StoryState>): StoryState {
@@ -77,6 +114,18 @@ function nextActProposal(): WorldDeltaProposal {
   };
 }
 
+function makeWorldWithFinalMainQuestTalk(): WorldState {
+  return makeWorld({
+    quests: [{
+      id: asQuestId("quest_final"), name: "终局", description: "d",
+      objectives: [{ kind: "talk_to_npc", npcId: KEY_ENDING_NPC.id }],
+      onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
+      tags: [], kind: "main", stage: 9, status: "active",
+    }],
+    npcs: [NPC_0, KEY_ENDING_NPC],
+  });
+}
+
 describe("approveWorldDelta", () => {
   it("approves a valid next_act proposal and mints sequential server ids", () => {
     const ws = makeWorld();
@@ -107,7 +156,7 @@ describe("approveWorldDelta", () => {
     const result = approveWorldDelta({
       proposal: nextActProposal(),
       need: { kind: "next_act", act: 2 },
-      ws: makeWorld("seed-f"),
+      ws: makeWorld({}, "seed-f"),
       ss: makeStory({ currentAct: 2 }),
     });
 
@@ -138,14 +187,12 @@ describe("approveWorldDelta", () => {
   it("accepts a roaming story NPC when every town building slot is occupied", () => {
     let town = createTownRuntime({ locationId: asLocationId("loc_0"), seed: "s#town#loc_0" });
     for (let i = 0; i < town.slots.length; i += 1) {
-      town = bindNpcToTownSlot(town, asNpcId(`npc_slot_${i}`)).town;
+      // 容量测试只关心 slot 是否为空；绑定 ID 仍必须指向 store 中真实 NPC。
+      town = bindNpcToTownSlot(town, NPC_0.id).town;
     }
-    const ws = {
-      ...makeWorld(),
-      locations: makeWorld().locations.map((location) =>
-        location.id === asLocationId("loc_0") ? { ...location, scale: "town" as const, town } : location,
-      ),
-    };
+    const ws = makeWorld({
+      locations: [{ ...LOC_0, scale: "town", town }],
+    });
     const result = approveWorldDelta({
       proposal: {
         beatSummary: "满槽小镇仍试图塞入新人物",
@@ -168,13 +215,9 @@ describe("approveWorldDelta", () => {
   it("keeps a town building out of the world map and binds its NPC to the current town", () => {
     let town = createTownRuntime({ locationId: asLocationId("loc_0"), seed: "s#town#loc_0" });
     town = bindNpcToTownSlot(town, asNpcId("npc_0")).town;
-    const base = makeWorld();
-    const ws = {
-      ...base,
-      locations: base.locations.map((location) =>
-        location.id === asLocationId("loc_0") ? { ...location, name: "青石镇", scale: "town" as const, town } : location,
-      ),
-    };
+    const ws = makeWorld({
+      locations: [{ ...LOC_0, name: "青石镇", scale: "town", town }],
+    });
     const result = approveWorldDelta({
       proposal: {
         beatSummary: "城镇里出现新的茶馆线人",
@@ -204,14 +247,13 @@ describe("approveWorldDelta", () => {
   });
 
   it("rejects a second main quest for the same act", () => {
-    const ws: WorldState = {
-      ...makeWorld(),
+    const ws = makeWorld({
       quests: [{
-        id: "quest_existing" as never, name: "已有主线", description: "t", objectives: [],
+        id: asQuestId("quest_existing"), name: "已有主线", description: "t", objectives: [],
         onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
         tags: [], kind: "main", stage: 2, status: "active",
       }],
-    };
+    });
     const result = approveWorldDelta({ proposal: nextActProposal(), need: { kind: "next_act", act: 2 }, ws, ss: makeStory({ currentAct: 2 }) });
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -269,25 +311,21 @@ describe("approveWorldDelta", () => {
   });
 
   it("rejects a next_act main location that is not connected from the current location", () => {
-    const base = makeWorld();
-    const ws: WorldState = {
-      ...base,
-      locations: [
-        ...base.locations,
-        {
-          id: asLocationId("loc_other"),
-          name: "旧驿道",
-          description: "一条通往远方的旧路。",
-          kind: "main",
-          connectedLocationIds: [],
-          npcIds: [],
-          availableItemIds: [],
-          tags: [],
-          scale: "scene",
-        },
-      ],
-      currentLocationId: asLocationId("loc_other"),
+    const locOther: LocationEntry = {
+      id: asLocationId("loc_other"),
+      name: "旧驿道",
+      description: "一条通往远方的旧路。",
+      kind: "main",
+      connectedLocationIds: [],
+      npcIds: [],
+      availableItemIds: [],
+      tags: [],
+      scale: "scene",
     };
+    const ws = makeWorld({
+      locations: [LOC_0, locOther],
+      currentLocationId: asLocationId("loc_other"),
+    });
     const result = approveWorldDelta({
       proposal: nextActProposal(),
       need: { kind: "next_act", act: 2 },
@@ -342,13 +380,12 @@ describe("approveWorldDelta", () => {
   });
 
   it("rejects a duplicate name against an existing enemy", () => {
-    const ws: WorldState = {
-      ...makeWorld(),
+    const ws = makeWorld({
       enemies: [{
         id: asEnemyId("enemy_0"), name: "拦路山贼", tier: "normal", stats: { hp: 60, attack: 8, defense: 3 },
         locationId: asLocationId("loc_0"), tags: [],
       }],
-    };
+    });
     const proposal: WorldDeltaProposal = {
       ...nextActProposal(),
       newEnemy: {
@@ -363,14 +400,13 @@ describe("approveWorldDelta", () => {
   });
 
   it("rejects a next main quest whose name collides with a quest from another act", () => {
-    const ws: WorldState = {
-      ...makeWorld(),
+    const ws = makeWorld({
       quests: [{
-        id: "quest_other_act" as never, name: "追查密信", description: "旧剧本里的同名线索。", objectives: [],
+        id: asQuestId("quest_other_act"), name: "追查密信", description: "旧剧本里的同名线索。", objectives: [],
         onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
         tags: [], kind: "main", stage: 3, status: "active",
       }],
-    };
+    });
     const result = approveWorldDelta({ proposal: nextActProposal(), need: { kind: "next_act", act: 2 }, ws, ss: makeStory({ currentAct: 2 }) });
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -447,15 +483,7 @@ describe("approveWorldDelta", () => {
   });
 
   it("derives rule-owned ending requirements instead of trusting proposal values", () => {
-    const ws: WorldState = {
-      ...makeWorld(),
-      quests: [{
-        id: asQuestId("quest_final"), name: "终局", description: "d",
-        objectives: [{ kind: "talk_to_npc", npcId: asNpcId("npc_9") }],
-        onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
-        tags: [], kind: "main", stage: 9, status: "active",
-      }],
-    };
+    const ws = makeWorldWithFinalMainQuestTalk();
     const ss = makeStory({ currentAct: 3, targetActs: 3, evolution: { ...makeStory().evolution, status: "needs_ending_pair" } });
     const proposal: WorldDeltaProposal = {
       beatSummary: "终幕两种走向",
@@ -479,15 +507,7 @@ describe("approveWorldDelta", () => {
   });
 
   it("still derives requirements when proposal omits them", () => {
-    const ws: WorldState = {
-      ...makeWorld(),
-      quests: [{
-        id: asQuestId("quest_final"), name: "终局", description: "d",
-        objectives: [{ kind: "talk_to_npc", npcId: asNpcId("npc_9") }],
-        onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
-        tags: [], kind: "main", stage: 9, status: "active",
-      }],
-    };
+    const ws = makeWorldWithFinalMainQuestTalk();
     const ss = makeStory({ currentAct: 3, targetActs: 3, evolution: { ...makeStory().evolution, status: "needs_ending_pair" } });
     const proposal: WorldDeltaProposal = {
       beatSummary: "终幕两种走向",
@@ -724,19 +744,19 @@ describe("act objective shape variants", () => {
 
   it("full_chain 保留全部五类目标且先抵达新地点", () => {
     const kinds = deriveActObjectives(FULL_PROPOSAL, FULL_IDS, "full_chain")!.map((objective) => objective.kind);
-    expect(kinds).toEqual(["visit_location", "discover_fact", "talk_to_npc", "obtain_item", "defeat_enemy"]);
+    expect(kinds).toEqual(["visit_location", "discover_fact", "talk_to_npc", "obtain_item", "defeat_enemy", "talk_to_npc"]);
   });
 
-  it("investigation_focus 去掉移动与战斗，保留调查-交谈-取证；物化新地点时链首强制保留抵达", () => {
+  it("investigation_focus 去掉移动与战斗，取证后接正式对话；物化新地点时链首强制保留抵达", () => {
     const kinds = deriveActObjectives(FULL_PROPOSAL, FULL_IDS, "investigation_focus")!.map((objective) => objective.kind);
-    expect(kinds).toEqual(["visit_location", "discover_fact", "talk_to_npc", "obtain_item"]);
+    expect(kinds).toEqual(["visit_location", "discover_fact", "talk_to_npc", "obtain_item", "talk_to_npc"]);
   });
 
   it("confrontation_focus 保留调查-交谈-对峙；errand_focus 保留移动-交谈-取证", () => {
     expect(deriveActObjectives(FULL_PROPOSAL, FULL_IDS, "confrontation_focus")!.map((o) => o.kind))
-      .toEqual(["visit_location", "discover_fact", "talk_to_npc", "defeat_enemy"]);
+      .toEqual(["visit_location", "discover_fact", "talk_to_npc", "defeat_enemy", "talk_to_npc"]);
     expect(deriveActObjectives(FULL_PROPOSAL, FULL_IDS, "errand_focus")!.map((o) => o.kind))
-      .toEqual(["visit_location", "talk_to_npc", "obtain_item"]);
+      .toEqual(["visit_location", "talk_to_npc", "obtain_item", "talk_to_npc"]);
   });
 
   it("变体过滤后为空时回退全程链（提案只有 newLocation+newItem 时 confrontation_focus 无可保留项）", () => {

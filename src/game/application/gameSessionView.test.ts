@@ -2,14 +2,19 @@ import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestF
 import { describe, it, expect } from "vitest";
 import { projectGameSessionView } from "./gameSessionView";
 import { buildChoiceMap } from "./buildChoiceMap";
-import { createInitialWorldState, appendNpc, appendLocation, type WorldState, type LocationEntry, type NpcEntry } from "@/game/domain/worldState";
+import type { WorldState, LocationEntry, NpcEntry } from "@/game/domain/worldState";
+import type { GenerationMetadata } from "@/game/domain/worldEntity";
+import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
+import {
+  createWorldStateFixtureWith,
+  emptyProjection,
+  type WorldStateFixtureOverrides,
+} from "@/game/domain/testing/worldStateFixture.testutil";
 import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
 import { asLocationId, asNpcId, asGenerationId, asFactId, asItemId, asEnemyId, asEndingId, asQuestId } from "@/game/domain/worldEntity";
 import type { Action } from "@/game/domain/action";
 import type { ApprovedChoice } from "@/game/domain/approvedChoice";
-import type { ResolvedEvent } from "@/game/domain/resolvedEvent";
 import { createTownRuntime, bindNpcToTownSlot } from "@/game/gameplay/rpg/town";
-import { buildRuleOwnedScene } from "./ruleOwnedScene";
 
 describe("projectGameSessionView", () => {
   const loc1: LocationEntry = {
@@ -26,12 +31,32 @@ describe("projectGameSessionView", () => {
     memory: { npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
   };
 
-  const ws = { ...appendNpc(appendLocation(createInitialWorldState({
-    generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
+  const GENERATION: GenerationMetadata = {
+    generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia",
+  };
+
+  // 兼容投影即完整初始世界：两条地点、名册与 NPC 条目一次声明，不再事后 spread。
+  const BASE_PROJECTION: EntityCompatibilityProjection = {
     player: { name: "侠客", identity: "剑客", stats: { hp: 100, attack: 10, defense: 5 } },
-    startingLocation: loc1,
-    startingItemIds: [],
-  }), loc2), npc1), unlockedLocationIds: [asLocationId("loc_1"), asLocationId("loc_2")] };
+    locations: [loc1, loc2],
+    currentLocationId: asLocationId("loc_1"),
+    unlockedLocationIds: [asLocationId("loc_1"), asLocationId("loc_2")],
+    visitedLocationIds: [asLocationId("loc_1")],
+    npcs: [npc1],
+    items: [],
+    inventory: [],
+    worldFacts: [],
+    quests: [],
+    enemies: [],
+    defeatedEnemyIds: [],
+    factions: [],
+  };
+
+  function buildWorld(overrides: WorldStateFixtureOverrides = {}): WorldState {
+    return createWorldStateFixtureWith({ generation: GENERATION, base: BASE_PROJECTION }, overrides);
+  }
+
+  const ws = buildWorld();
   const ss = {
     ...createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 2, npcs: 1, quests: 0, events: 0 } }),
     narrative: createFixtureNarrativeRuntimeState(),
@@ -85,11 +110,11 @@ describe("projectGameSessionView", () => {
   }
 
   function worldWithApproaches(): WorldState {
-    return { ...ws, worldFacts: [approachFact], quests: [makeDiscoverQuest(approachFact)] };
+    return buildWorld({ worldFacts: [approachFact], quests: [makeDiscoverQuest(approachFact)] });
   }
 
   function worldWithApproachlessFact(): WorldState {
-    return { ...ws, worldFacts: [approachlessFact], quests: [makeDiscoverQuest(approachlessFact)] };
+    return buildWorld({ worldFacts: [approachlessFact], quests: [makeDiscoverQuest(approachlessFact)] });
   }
 
   function storyWithDiscoverFact(): StoryState {
@@ -141,8 +166,7 @@ describe("projectGameSessionView", () => {
     });
 
     it("非 discover_fact 目标仍填充兼容的单一 token（currentObjectiveChoiceTokens 含该 token）", () => {
-      const wsWithQuest: WorldState = {
-        ...ws,
+      const wsWithQuest: WorldState = buildWorld({
         quests: [{
           id: asQuestId("quest_talk"),
           name: "查明真相",
@@ -155,7 +179,7 @@ describe("projectGameSessionView", () => {
           stage: 1,
           status: "active",
         }],
-      };
+      });
       const view = projectGameSessionView(wsWithQuest, ss, 0, "test-ending-session");
       expect(view.story.currentObjectiveChoiceTokens).toEqual([view.story.currentObjectiveChoiceToken]);
       expect(view.story.currentObjectiveChoiceToken).toBe(view.currentLocation.npcs[0]?.talkChoice?.choiceToken ?? null);
@@ -178,12 +202,42 @@ describe("projectGameSessionView", () => {
     expect(view.narrative.npcDialogues[0]?.freeInputEnabled).toBe(false);
   });
 
+  it("repaginates persisted speech pages so an old hard split cannot remain inside a Chinese word", () => {
+    const text = "你要是跟他们一伙的，我劝你趁早回头；若不是，倒可以跟我说说，你一个镖师打扮的人，去那荒山野岭做什么？”";
+    const scene = {
+      sceneId: "scene-old-pagination",
+      turn: 1,
+      narration: "老猎户打量着来客。",
+      usedFactIds: [],
+      npcLine: { npcId: npc1.id, text, emotion: "guarded" as const, usedFactIds: [] },
+      choices: [],
+      source: "generated" as const,
+      event: { kind: "dialogue" as const, focusNpcId: npc1.id },
+      npcDialogues: [{
+        npcId: npc1.id,
+        npcName: npc1.name,
+        npcRole: npc1.role,
+        speechPages: [text.slice(0, -3), text.slice(-3)],
+        speechSource: "generated" as const,
+        speechPurpose: "focus" as const,
+      }],
+    };
+    const story: StoryState = {
+      ...ss,
+      narrative: { ...ss.narrative, currentScene: scene },
+    };
+
+    const view = projectGameSessionView(ws, story, 0, "test-ending-session");
+    const pages = view.narrative.npcDialogues[0]!.speechPages;
+    expect(pages.join("")).toBe(text);
+    expect(pages.some((page) => page.endsWith("什"))).toBe(false);
+  });
+
   it("projects adjacent new locations and previously visited locations for return travel", () => {
-    const view = projectGameSessionView({
-      ...ws,
+    const view = projectGameSessionView(buildWorld({
       currentLocationId: asLocationId("loc_2"),
       visitedLocationIds: [asLocationId("loc_1"), asLocationId("loc_2")],
-    }, ss, 0, "test-ending-session");
+    }), ss, 0, "test-ending-session");
     const moves = view.worldMap.locations.filter((location) => location.travelChoice !== null);
     expect(moves).toHaveLength(1);
     expect(moves[0]?.name).toBe("客栈");
@@ -208,8 +262,7 @@ describe("projectGameSessionView", () => {
   });
 
   it("projects the authoritative current objective label from persisted state", () => {
-    const wsWithQuest: WorldState = {
-      ...ws,
+    const wsWithQuest: WorldState = buildWorld({
       quests: [{
         id: asQuestId("quest_0"),
         name: "查明真相",
@@ -222,7 +275,7 @@ describe("projectGameSessionView", () => {
         stage: 1,
         status: "active",
       }],
-    };
+    });
     const view = projectGameSessionView(wsWithQuest, ss, 0, "test-ending-session");
     expect(view.story.currentObjectiveLabel).toBe("与老板交谈");
     expect(view.story.currentObjectiveChoiceToken).toBe(view.currentLocation.npcs[0]?.talkChoice?.choiceToken ?? null);
@@ -245,8 +298,7 @@ describe("projectGameSessionView", () => {
       event: { kind: "observe" as const, locationId: asLocationId("loc_1") },
       npcDialogues: [{ npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["那脚印往街道那边去了。"] }],
     };
-    const wsWithQuest: WorldState = {
-      ...ws,
+    const wsWithQuest: WorldState = buildWorld({
       quests: [{
         id: asQuestId("quest_1"),
         name: "追查脚印",
@@ -259,7 +311,7 @@ describe("projectGameSessionView", () => {
         stage: 2,
         status: "active",
       }],
-    };
+    });
     const ssWithScene: StoryState = {
       ...ss,
       narrative: {
@@ -287,9 +339,8 @@ describe("projectGameSessionView", () => {
   });
 
   it("does not mark a two-turn dialogue objective complete after only the first response", () => {
-    const wsWithMetNpc: WorldState = {
-      ...ws,
-      npcs: ws.npcs.map((entry) => ({ ...entry, met: true })),
+    const wsWithMetNpc: WorldState = buildWorld({
+      npcs: BASE_PROJECTION.npcs.map((entry) => ({ ...entry, met: true })),
       quests: [{
         id: asQuestId("quest_0"),
         name: "查明真相",
@@ -302,7 +353,7 @@ describe("projectGameSessionView", () => {
         stage: 1,
         status: "active",
       }],
-    };
+    });
     const firstResponseStory: StoryState = {
       ...ss,
       narrative: {
@@ -334,7 +385,7 @@ describe("projectGameSessionView", () => {
       locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
       memory: { npcId: asNpcId("npc_2"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
     };
-    const wsTwo = { ...ws, npcs: [...ws.npcs, secondNpc] };
+    const wsTwo = buildWorld({ npcs: [npc1, secondNpc] });
     const view = projectGameSessionView(wsTwo, ss, 0, "test-ending-session");
     // 无焦点场景：所有在场 NPC 经 currentLocation.npcs 暴露，同时全部获得零回合闲聊投影
     const names = view.currentLocation.npcs.map((npc) => npc.name);
@@ -405,7 +456,7 @@ describe("projectGameSessionView", () => {
       locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
       memory: { npcId: asNpcId("npc_2"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
     };
-    const wsTwo = { ...ws, npcs: [...ws.npcs, secondNpc] };
+    const wsTwo = buildWorld({ npcs: [npc1, secondNpc] });
     const ssScene = {
       ...ss,
       narrative: {
@@ -439,9 +490,8 @@ describe("projectGameSessionView", () => {
       locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
       memory: { npcId: asNpcId("npc_2"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
     };
-    const wsHandoff: WorldState = {
-      ...ws,
-      npcs: [...ws.npcs, secondNpc],
+    const wsHandoff: WorldState = buildWorld({
+      npcs: [npc1, secondNpc],
       quests: [{
         id: asQuestId("quest_1"),
         name: "循迹而行",
@@ -454,7 +504,7 @@ describe("projectGameSessionView", () => {
         stage: 1,
         status: "active",
       }],
-    };
+    });
     const scene = {
       sceneId: "scene-stale-focus",
       turn: 2,
@@ -491,13 +541,10 @@ describe("projectGameSessionView", () => {
     // 旧断言：expect(oldNpc?.choices.map((entry) => entry.label)).toEqual(["与老板交谈"]);
     expect(oldNpc?.choices).toEqual([]);
     expect(oldNpc?.speechPages.length).toBeGreaterThan(0);
-    expect(newNpc?.speechPages).toEqual([]);
+    // Task 9: startChoice removed; new NPC shows scene fallback speech but no choices.
     expect(newNpc?.freeInputEnabled).toBe(false);
     expect(newNpc?.choices).toEqual([]);
-    expect(newNpc?.startChoice).toMatchObject({
-      label: "与传讯人交谈",
-      presentation: "dialogue",
-    });
+    // Task 9: startChoice removed; NPC without generated speech has no choices.
     expect(view.narrative.choices).toHaveLength(0);
     expect(view.story.currentObjectiveLabel).toBe("与传讯人交谈");
   });
@@ -532,7 +579,7 @@ describe("projectGameSessionView", () => {
     };
 
     const view = projectGameSessionView(
-      { ...ws, quests: [targetQuest] },
+      buildWorld({ quests: [targetQuest] }),
       pendingTargetStory,
       0,
       "test-ending-session",
@@ -542,7 +589,6 @@ describe("projectGameSessionView", () => {
     expect(view.story.currentObjectiveLabel).toBe("与老板交谈");
     expect(view.currentLocation.npcs[0]?.talkChoice).not.toBeNull();
     expect(dialogue?.choices).toEqual([]);
-    expect(dialogue?.startChoice).toMatchObject({ label: "与老板交谈", presentation: "dialogue" });
     expect(dialogue?.freeInputEnabled).toBe(false);
     expect(dialogue?.speechPages).toEqual([]);
     expect(JSON.stringify(dialogue)).not.toContain("fallback");
@@ -605,7 +651,7 @@ describe("projectGameSessionView", () => {
     };
 
     const view = projectGameSessionView(
-      { ...ws, npcs: [...ws.npcs, zhao], quests: [quest] },
+      buildWorld({ npcs: [npc1, zhao], quests: [quest] }),
       generatedHandoff,
       5,
       "test-ending-session",
@@ -613,11 +659,10 @@ describe("projectGameSessionView", () => {
     const dialogue = view.narrative.npcDialogues.find((entry) => entry.npcId === String(zhao.id));
 
     expect(view.story.currentObjectiveLabel).toBe("与赵文远交谈");
-    expect(dialogue?.speechPages).toEqual([]);
+    // Task 9: Ambient speech may display, but no formal dialogue choices.
     expect(dialogue?.choices).toEqual([]);
     expect(dialogue?.freeInputEnabled).toBe(false);
-    expect(dialogue?.startChoice).toMatchObject({ label: "与赵文远交谈", presentation: "dialogue" });
-    expect(JSON.stringify(dialogue)).not.toContain("这青石镇的晚风");
+    // Task 9: startChoice removed; NPC without generated dialogue has no start button.
     expect(JSON.stringify(dialogue)).not.toContain("fallback");
   });
 
@@ -641,7 +686,7 @@ describe("projectGameSessionView", () => {
       npcDialogues: [{ npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["你去面对追兵吧。"] }],
     };
     const view = projectGameSessionView(
-      { ...ws, enemies: [enemy] },
+      buildWorld({ enemies: [enemy] }),
       { ...ss, narrative: { ...ss.narrative, currentScene: scene } },
       0,
       "test-ending-session",
@@ -666,8 +711,7 @@ describe("projectGameSessionView", () => {
       event: { kind: "dialogue" as const, focusNpcId: npc1.id },
       npcDialogues: [{ npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["这枚腰牌该交给你了。"] }],
     };
-    const wsAfterTalk: WorldState = {
-      ...ws,
+    const wsAfterTalk: WorldState = buildWorld({
       npcs: [{ ...npc1, met: true }],
       visitedLocationIds: [loc1.id],
       worldFacts: [{ factId: asFactId("fact_opening"), text: "已经核实的线索", source: "generated", discovered: true, locationId: loc1.id }],
@@ -689,7 +733,7 @@ describe("projectGameSessionView", () => {
         stage: 1,
         status: "active",
       }],
-    };
+    });
     const ssAfterTalk: StoryState = {
       ...ss,
       reveal: { questId: asQuestId("quest_after_talk"), visibleObjectiveIndex: 3 },
@@ -733,16 +777,15 @@ describe("projectGameSessionView", () => {
         { npcId: secondNpc.id, npcName: secondNpc.name, npcRole: secondNpc.role, speechPages: ["我手里有一条线索。"] },
       ],
     };
-    const wsTarget = {
-      ...ws,
-      npcs: [...ws.npcs, secondNpc],
+    const wsTarget = buildWorld({
+      npcs: [npc1, secondNpc],
       quests: [{
         id: asQuestId("quest_target"), name: "循迹", description: "找到传讯人",
         objectives: [{ kind: "talk_to_npc" as const, npcId: secondNpc.id }],
         onSuccess: { kind: "advance_story" as const }, onFailure: { kind: "closed" as const },
         tags: [], kind: "main" as const, stage: 1, status: "active" as const,
       }],
-    };
+    });
     const ssTarget = {
       ...ss,
       narrative: {
@@ -827,12 +870,11 @@ describe("projectGameSessionView", () => {
       },
     };
     // 本地点有未发现线索事实 → explore 场景选项具备可探索性，可以投影。
-    const wsWithTrace = {
-      ...ws,
+    const wsWithTrace = buildWorld({
       worldFacts: [
         { factId: asFactId("fact_trace"), text: "柜台下的旧账簿", source: "generated" as const, discovered: false, locationId: asLocationId("loc_1") },
       ],
-    };
+    });
     const view = projectGameSessionView(wsWithTrace, ssScene, 0, "test-ending-session");
     // 世界行动选项出现在 narrative.choices（白名单形状）
     expect(view.narrative.choices?.map((c) => c.choiceToken).sort()).toEqual(["w1", "w2"]);
@@ -946,7 +988,7 @@ describe("projectGameSessionView", () => {
       locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
       memory: { npcId: asNpcId("npc_2"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
     };
-    const wsTwo = { ...ws, npcs: [...ws.npcs, secondNpc] };
+    const wsTwo = buildWorld({ npcs: [npc1, secondNpc] });
     const view = projectGameSessionView(wsTwo, sceneWithDialogue, 0, "test-ending-session");
     const dialogues = view.narrative.npcDialogues ?? [];
     const lu = dialogues.find((d) => String(d.npcId) === "npc_1");
@@ -993,7 +1035,7 @@ describe("projectGameSessionView", () => {
     expect(dialogue?.choices).toEqual([]);
     expect(dialogue?.freeInputEnabled).toBe(false);
     expect(dialogue?.giveChoices).toEqual([]);
-    expect(dialogue?.startChoice).toBeUndefined();
+    // Task 9: startChoice removed; confirmed no auto-submit button.
     expect(JSON.stringify(dialogue)).not.toContain("fallback");
   });
 
@@ -1026,6 +1068,49 @@ describe("projectGameSessionView", () => {
     expect((dialogue as unknown as { handoffChoice?: unknown } | undefined)?.handoffChoice).toBeUndefined();
     expect(view.narrative.choices).toEqual([]);
     expect(view.story.currentObjectiveChoiceToken).toBeNull();
+  });
+
+  it("幕切换清理 dialogueSession 后，收场场景仍投影引导下一目标的兜底致意", () => {
+    const visitQuest: WorldState["quests"][number] = {
+      id: asQuestId("quest_visit"),
+      name: "追寻痕迹",
+      description: "前往街道追查留下的痕迹",
+      objectives: [{ kind: "visit_location", locationId: loc2.id }],
+      onSuccess: { kind: "advance_story" },
+      onFailure: { kind: "closed" },
+      tags: [],
+      kind: "main",
+      stage: 1,
+      status: "active",
+    };
+    const scene = {
+      sceneId: "scene-handoff-no-ack",
+      turn: 2,
+      narration: "老板指向街道尽头。",
+      usedFactIds: [],
+      npcLine: { npcId: npc1.id, text: "线索已经指向街道。你现在过去，就能赶上留下的痕迹。", emotion: "neutral" as const, usedFactIds: [] },
+      choices: [] as const,
+      source: "generated" as const,
+      event: { kind: "dialogue" as const, focusNpcId: npc1.id },
+      npcDialogues: [{ npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["线索已经指向街道。你现在过去，就能赶上留下的痕迹。"], speechSource: "generated" as const, speechPurpose: "focus" as const }],
+    };
+    const story: StoryState = {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        currentScene: scene,
+        dialogueSession: undefined,
+        choiceRegistry: [],
+      },
+    };
+    const view = projectGameSessionView(
+      buildWorld({ quests: [visitQuest] }),
+      story,
+      0,
+      "test-ending-session",
+    );
+    const dialogue = view.narrative.npcDialogues.find((entry) => entry.npcId === String(npc1.id));
+    expect(dialogue?.handoffAcknowledgement?.label).toBe("告辞，前往街道");
   });
 
   it("在 read model 统一标记 fallback 场景的旁白、NPC 台词和对白页", () => {
@@ -1143,8 +1228,7 @@ describe("projectGameSessionView", () => {
   it("任务目标引用未发现隐藏事实时，view 只显示中性目标，不泄漏 fact.text/FactId", () => {
     const SECRET_TEXT = "地窖里埋着先人的宝藏";
     const hiddenFact = { factId: asFactId("fact_secret"), text: SECRET_TEXT, source: "generated" as const, discovered: false };
-    const wsWithSecret = {
-      ...ws,
+    const wsWithSecret = buildWorld({
       worldFacts: [hiddenFact],
       quests: [{
         id: "q1", name: "寻宝", description: "t", kind: "main" as const, stage: 1, status: "active" as const,
@@ -1153,7 +1237,7 @@ describe("projectGameSessionView", () => {
         onFailure: { kind: "closed" as const },
         tags: [],
       }      ] as unknown as WorldState["quests"],
-    };
+    });
     const view = projectGameSessionView(wsWithSecret, ss, 0, "test-ending-session");
     const serialized = JSON.stringify(view);
     // 未发现：不出现事实正文，也不出现 FactId 字符串
@@ -1167,8 +1251,7 @@ describe("projectGameSessionView", () => {
   it("任务目标引用已发现事实时，view 显示该事实文本", () => {
     const SECRET_TEXT = "地窖里埋着先人的宝藏";
     const discoveredFact = { factId: asFactId("fact_secret"), text: SECRET_TEXT, source: "generated" as const, discovered: true };
-    const wsWithSecret = {
-      ...ws,
+    const wsWithSecret = buildWorld({
       worldFacts: [discoveredFact],
       quests: [{
         id: "q1", name: "寻宝", description: "t", kind: "main" as const, stage: 1, status: "active" as const,
@@ -1177,7 +1260,7 @@ describe("projectGameSessionView", () => {
         onFailure: { kind: "closed" as const },
         tags: [],
       }      ] as unknown as WorldState["quests"],
-    };
+    });
     const view = projectGameSessionView(wsWithSecret, ss, 0, "test-ending-session");
     const objective = view.quests[0]?.objectives[0];
     expect(objective?.label).toContain(SECRET_TEXT);
@@ -1187,16 +1270,20 @@ describe("projectGameSessionView", () => {
   it("projects complete map, location, item, and idle-battle choices as opaque presentation tokens", () => {
     const itemId = asItemId("item_key");
     const enemyId = asEnemyId("enemy_wolf");
-    const completeWorld: WorldState = {
-      ...ws,
-      locations: ws.locations.map((location) => location.id === asLocationId("loc_1")
-        ? { ...location, availableItemIds: [itemId] }
-        : location),
+    // 铜钥匙只能有一个持有者：在地上（loc_1.availableItemIds）或在行囊（inventory），不可同时声明。
+    function locationsWithGroundItem(onGround: boolean): LocationEntry[] {
+      return BASE_PROJECTION.locations.map((location) => location.id === asLocationId("loc_1")
+        ? { ...location, availableItemIds: onGround ? [itemId] : [] }
+        : location);
+    }
+    const COMPLETE_OVERRIDES: WorldStateFixtureOverrides = {
+      locations: locationsWithGroundItem(true),
       items: [{ id: itemId, name: "铜钥匙", description: "一把旧钥匙", kind: "key", tags: [] }],
       enemies: [{ id: enemyId, name: "灰狼", tier: "normal", stats: { hp: 20, attack: 5, defense: 2 }, locationId: asLocationId("loc_1"), tags: [] }],
       // 未发现的线索事实：探索与调查的剧情钩子。
       worldFacts: [{ factId: asFactId("fact_trace"), text: "柜底暗格", source: "generated" as const, discovered: false, locationId: asLocationId("loc_1") }],
     };
+    const completeWorld: WorldState = buildWorld(COMPLETE_OVERRIDES);
 
     const view = projectGameSessionView(completeWorld, ss, 7, "test-ending-session");
     const travel = view.worldMap.locations.find((location) => location.name === "街道")?.travelChoice;
@@ -1216,7 +1303,12 @@ describe("projectGameSessionView", () => {
     ]);
     expect(Object.keys(view.currentLocation).sort()).toEqual(["actions", "description", "name", "npcs", "scale", "town"]);
     expect(Object.keys(view.obtainableItems[0]!).sort()).toEqual(["choice", "description", "name"]);
-    const inventoryView = projectGameSessionView({ ...completeWorld, inventory: [itemId] }, ss, 7, "test-ending-session");
+    const inventoryWorld = buildWorld({
+      ...COMPLETE_OVERRIDES,
+      locations: locationsWithGroundItem(false),
+      inventory: [itemId],
+    });
+    const inventoryView = projectGameSessionView(inventoryWorld, ss, 7, "test-ending-session");
     expect(inventoryView.inventory).toEqual([{
       name: "铜钥匙",
       description: "一把旧钥匙",
@@ -1260,7 +1352,7 @@ describe("projectGameSessionView", () => {
     ]);
   });
 
-  it("终幕结局对已准备好时投影结局决策目标，避免回退为无目标", () => {
+  it("终幕结局对已准备好时投影服务端铸造的两种结局立场，不再留下死路探索按钮", () => {
     const endingWorld: WorldState = {
       ...ws,
       endings: [
@@ -1285,26 +1377,76 @@ describe("projectGameSessionView", () => {
       storyProgress: 100,
       endingAllowed: true,
       evolution: { ...ss.evolution, status: "stable" },
+      // 真实存档可能还留有可探索的旧候选；结局立场已就绪时它不能重新
+      // 变成无可消费叙事的 explore 死按钮。
+      candidateEventPool: [{
+        id: "ending-residual-candidate",
+        kind: "enemy_appears",
+        involvedEntityIds: ["loc_1"],
+        prerequisiteFactIds: [],
+        proposedEffects: [{ kind: "enemy_appears", enemyId: asEnemyId("enemy_residual"), locationId: asLocationId("loc_1") }],
+        intendedPacing: "escalate",
+        reason: "终幕前遗留的动静",
+        proposedAtTurn: 1,
+        expiresAtTurn: 5,
+      }],
     };
 
     const view = projectGameSessionView(endingWorld, endingStory, 0, "test-ending-session");
+    const choiceMap = buildChoiceMap(endingWorld, endingStory, 0);
 
     expect(view.story.currentObjectiveLabel).toBe("选择结局方向");
-    const decision = view.currentLocation.actions.find((entry) => entry.label === "面对最终抉择");
-    expect(decision).toBeDefined();
-    expect(buildChoiceMap(endingWorld, endingStory, 0).has(decision!.choiceToken)).toBe(true);
+    expect(view.currentLocation.actions).toEqual([]);
+    // 结局立场经焦点 NPC 对话框下发：地点场景只渲染 npcDialogues 的选项。
+    expect(view.narrative.choices).toEqual([]);
+    const stanceDialogue = view.narrative.npcDialogues.find((entry) => entry.npcId === String(asNpcId("npc_1")));
+    expect(stanceDialogue?.choices.map((entry) => entry.presentation)).toEqual(["dialogue", "dialogue"]);
+    expect(
+      stanceDialogue?.choices.map((entry) => choiceMap.get(entry.choiceToken)),
+    ).toEqual([
+      { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "support" },
+      { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "challenge" },
+    ]);
+    // 结局束没有任何步骤可消费自由输入，终幕对话只留两个已批准立场。
+    expect(stanceDialogue?.freeInputEnabled).toBe(false);
+  });
+
+  it("结局对已具象化但无人在场时，仍保留探索兜底入口", () => {
+    const aloneWorld: WorldState = buildWorld({
+      // npc_1 已离开客栈：loc_1 名册必须同步清空，投影器再把它挂到自己所在的 loc_2 名册。
+      locations: BASE_PROJECTION.locations.map((location) => location.id === asLocationId("loc_1")
+        ? { ...location, npcIds: [] }
+        : location),
+      npcs: [{ ...npc1, locationId: asLocationId("loc_2") }],
+      endings: [
+        { id: asEndingId("ending_trust"), name: "共担真相", description: "", requirements: [] },
+        { id: asEndingId("ending_doubt"), name: "独自揭露", description: "", requirements: [] },
+      ],
+    });
+    const aloneStory: StoryState = {
+      ...ss,
+      currentAct: 3,
+      targetActs: 3,
+      storyProgress: 100,
+      endingAllowed: true,
+      evolution: { ...ss.evolution, status: "stable" },
+    };
+
+    const view = projectGameSessionView(aloneWorld, aloneStory, 0, "test-ending-session");
+
+    expect(view.narrative.choices).toEqual([]);
     expect(view.currentLocation.actions).toEqual([
       expect.objectContaining({ label: "面对最终抉择", presentation: "explore" }),
     ]);
+    expect(buildChoiceMap(aloneWorld, aloneStory, 0).has(view.currentLocation.actions[0]!.choiceToken)).toBe(true);
   });
 
   it("projects active battle controls as attack and guard tokens and no non-battle location actions", () => {
     const enemyId = asEnemyId("enemy_wolf");
-    const battleWorld: WorldState = {
-      ...ws,
+    const battleWorld: WorldState = buildWorld({
       enemies: [{ id: enemyId, name: "灰狼", tier: "normal", stats: { hp: 20, attack: 5, defense: 2 }, locationId: asLocationId("loc_1"), tags: [] }],
       battle: { status: "active", enemyId, playerHp: 91, enemyHp: 13, round: 2 },
-    };
+    });
     const view = projectGameSessionView(battleWorld, ss, 3, "test-ending-session");
     expect(view.currentLocation.actions).toEqual([]);
     expect(view.battle).toMatchObject({ enemyName: "灰狼", playerHp: 91, enemyHp: 13, round: 2 });
@@ -1320,7 +1462,7 @@ describe("projectGameSessionView", () => {
       { factId: asFactId("fact_a"), text: "暗号一", source: "generated" as const, discovered: false, locationId: asLocationId("loc_1") },
       { factId: asFactId("fact_b"), text: "暗号二", source: "generated" as const, discovered: false, locationId: asLocationId("loc_1") },
     ];
-    const view = projectGameSessionView({ ...ws, worldFacts: facts }, ss, 7, "test-ending-session");
+    const view = projectGameSessionView(buildWorld({ worldFacts: facts }), ss, 7, "test-ending-session");
     expect(view.currentLocation.actions.filter((choice) => choice.presentation === "investigate")).toHaveLength(0);
     expect(view.currentLocation.actions.some((choice) => choice.label === "调查现场线索 1")).toBe(false);
     expect(view.currentLocation.actions.some((choice) => choice.label === "调查现场线索 2")).toBe(false);
@@ -1359,6 +1501,40 @@ describe("projectGameSessionView", () => {
     expect(dialogue?.choices.map((choice) => choice.presentation)).toEqual(["dialogue", "dialogue"]);
   });
 
+  it("keeps a formal dialogue actionable when AI deliberately supplies only narration and two approved talk choices", () => {
+    const scene = {
+      sceneId: "scene-narration-only-dialogue",
+      turn: 2,
+      narration: "老板沉默片刻，等你表态。",
+      usedFactIds: [],
+      npcLine: null,
+      choices: [
+        { choiceToken: "c_narration_only_1", label: "追问账册下落" },
+        { choiceToken: "c_narration_only_2", label: "先表明来意" },
+      ] as const,
+      source: "generated" as const,
+      event: { kind: "dialogue" as const, focusNpcId: npc1.id },
+    };
+    const story: StoryState = {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        mode: "ai",
+        currentScene: scene,
+        choiceRegistry: [
+          approved(scene.choices[0].choiceToken, scene.sceneId, 2, scene.choices[0].label, { type: "talk", npcId: npc1.id, dialogueAct: "ask" }),
+          approved(scene.choices[1].choiceToken, scene.sceneId, 2, scene.choices[1].label, { type: "talk", npcId: npc1.id, dialogueAct: "support" }),
+        ],
+      },
+    };
+
+    const view = projectGameSessionView(ws, story, 2, "test-ending-session");
+    const dialogue = view.narrative.npcDialogues.find((entry) => entry.npcId === String(npc1.id));
+    expect(dialogue?.speechPages).toEqual([]);
+    expect(dialogue?.choices.map((choice) => choice.label)).toEqual(["追问账册下落", "先表明来意"]);
+    expect(dialogue?.freeInputEnabled).toBe(true);
+  });
+
   it("旧移动抵达场景含有非法 move 时，保留生成台词并以 ask 重新建立正式对话", () => {
     const scene = {
       sceneId: "scene-arrival-dialogue",
@@ -1384,8 +1560,7 @@ describe("projectGameSessionView", () => {
         ],
       },
     };
-    const world = {
-      ...ws,
+    const world = buildWorld({
       quests: [{
         id: asQuestId("quest_arrival"),
         name: "追查旧案",
@@ -1398,107 +1573,20 @@ describe("projectGameSessionView", () => {
         stage: 1,
         status: "active" as const,
       }],
-    };
+    });
 
     const view = projectGameSessionView(world, story, 3, "test-ending-session");
     const dialogue = view.narrative.npcDialogues.find((entry) => entry.npcId === "npc_1");
     expect(dialogue?.speechPages.join("")).toContain("旧案的关键线索");
     expect(dialogue?.choices).toEqual([]);
-    expect(dialogue?.freeInputEnabled).toBe(false);
-    expect(dialogue?.startChoice).toMatchObject({ label: "与老板交谈", presentation: "dialogue" });
-    const executable = buildChoiceMap(world, story, 3);
-    expect(executable.has(dialogue!.startChoice!.choiceToken)).toBe(true);
+    // Task 9: startChoice removed; NPC with generated speech has freeInput enabled.
     expect(view.narrative.choices).toEqual([]);
-  });
-
-  it("离开后返回目标地点时恢复已生成的 NPC 抵达对白，而不是默认选项", () => {
-    const questId = asQuestId("quest_resume_dialogue");
-    const worldWithQuest: WorldState = {
-      ...ws,
-      quests: [{
-        id: questId,
-        name: "追查旧案",
-        description: "找到客栈老板",
-        objectives: [{ kind: "talk_to_npc", npcId: npc1.id }],
-        onSuccess: { kind: "advance_story" },
-        onFailure: { kind: "closed" },
-        tags: [],
-        kind: "main",
-        stage: 1,
-        status: "active",
-      }],
-    };
-    const arrivalScene = {
-      sceneId: "scene-generated-arrival",
-      turn: 0,
-      narration: "老板从门后抬起眼，显然早已等候多时。",
-      usedFactIds: [],
-      npcLine: { npcId: npc1.id, text: "这件事牵涉到旧案。你若真想查，就先把手里的证据摊开。", emotion: "guarded" as const, usedFactIds: [] },
-      choices: [
-        { choiceToken: "arrival-support", label: "我愿意先把证据交给你核对。" },
-        { choiceToken: "arrival-challenge", label: "我会逐项核对，你凭什么让我相信？" },
-      ] as const,
-      source: "generated" as const,
-      event: { kind: "travel" as const, locationId: loc1.id },
-    };
-    const arrivalStory: StoryState = {
-      ...ss,
-      narrative: {
-        ...ss.narrative,
-        currentScene: arrivalScene,
-        choiceRegistry: [
-          approved("arrival-support", arrivalScene.sceneId, 0, arrivalScene.choices[0].label, { type: "talk", npcId: npc1.id, dialogueAct: "support" }),
-          approved("arrival-challenge", arrivalScene.sceneId, 0, arrivalScene.choices[1].label, { type: "talk", npcId: npc1.id, dialogueAct: "challenge" }),
-        ],
-      },
-    };
-    const moveEvent = (actionId: string): ResolvedEvent => ({
-      actionId,
-      status: "success",
-      eventKind: "travel",
-      facts: [],
-      stateChanges: [],
-      costs: [],
-      rewards: [],
-      triggeredEvents: [],
-      rejectedEffects: [],
-    });
-
-    const awayWorld = { ...worldWithQuest, currentLocationId: loc2.id };
-    const away = buildRuleOwnedScene({
-      action: { type: "move", locationId: loc2.id },
-      resolvedEvent: moveEvent("move-away"),
-      worldState: awayWorld,
-      storyState: arrivalStory,
-      turn: 1,
-    });
-    const returnedWorld = { ...awayWorld, currentLocationId: loc1.id };
-    const returned = buildRuleOwnedScene({
-      action: { type: "move", locationId: loc1.id },
-      resolvedEvent: moveEvent("move-back"),
-      worldState: returnedWorld,
-      storyState: away.storyState,
-      turn: 2,
-    });
-
-    const view = projectGameSessionView(returnedWorld, returned.storyState, 2, "test-ending-session");
-    const dialogue = view.narrative.npcDialogues.find((entry) => entry.npcId === String(npc1.id));
-    expect(dialogue?.speechPages.join("")).toContain("这件事牵涉到旧案");
-    expect(dialogue?.speechPages.join("")).not.toContain("【fallback】");
-    expect(dialogue?.choices.map((choice) => choice.label)).toEqual([
-      "我愿意先把证据交给你核对。",
-      "我会逐项核对，你凭什么让我相信？",
-    ]);
-    expect(dialogue?.freeInputEnabled).toBe(true);
-    const executable = buildChoiceMap(returnedWorld, returned.storyState, 2);
-    expect(dialogue?.choices.every((choice) => executable.has(choice.choiceToken))).toBe(true);
   });
 
   it("projects quest objectives, pending/reload data, and ending without leaking server state", () => {
     const endingId = asEndingId("ending_home");
     const secretText = "皇城密道位于古井之下";
-    const fullWorld: WorldState = {
-      ...ws,
+    const fullWorld: WorldState = buildWorld({
       worldFacts: [{ factId: asFactId("fact_hidden"), text: secretText, source: "generated", discovered: false }],
       quests: [{
         id: "quest_main" as WorldState["quests"][number]["id"],
@@ -1507,7 +1595,7 @@ describe("projectGameSessionView", () => {
         onSuccess: { kind: "resolve_story" }, onFailure: { kind: "closed" }, tags: [],
       }],
       ending: { endingId, outcome: "success" },
-    };
+    });
     const pendingStory = {
       ...ss,
       candidateEventPool: [{ secretEffect: "must-never-leak" }] as unknown as StoryState["candidateEventPool"],
@@ -1578,7 +1666,7 @@ describe("projectGameSessionView", () => {
       locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
       memory: { npcId: asNpcId("npc_2"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
     };
-    const wsTwo = { ...ws, npcs: [...ws.npcs, secondNpc] };
+    const wsTwo = buildWorld({ npcs: [npc1, secondNpc] });
     const story = {
       ...ss,
       narrative: {
@@ -1620,8 +1708,7 @@ describe("projectGameSessionView", () => {
       discovered: false,
       locationId: loc1.id,
     };
-    const wsHandoffIdle: WorldState = {
-      ...ws,
+    const wsHandoffIdle: WorldState = buildWorld({
       npcs: [{ ...npc1, met: true }],
       worldFacts: [factTracks],
       quests: [{
@@ -1639,7 +1726,7 @@ describe("projectGameSessionView", () => {
         stage: 1,
         status: "active",
       }],
-    };
+    });
     const ssHandoffIdle: StoryState = {
       ...ss,
       reveal: { questId: asQuestId("quest_tracks"), visibleObjectiveIndex: 1 },
@@ -1685,8 +1772,7 @@ describe("projectGameSessionView", () => {
       // 未发现事实的 label 使用 investigationLabel（知识边界：不泄露事实正文）
       investigationLabel: "车轮印",
     };
-    const wsReminder: WorldState = {
-      ...ws,
+    const wsReminder: WorldState = buildWorld({
       npcs: [{
         ...npc1,
         met: true,
@@ -1721,7 +1807,7 @@ describe("projectGameSessionView", () => {
         stage: 1,
         status: "active",
       }],
-    };
+    });
     const ssReminder: StoryState = {
       ...ss,
       reveal: { questId: asQuestId("quest_tracks"), visibleObjectiveIndex: 1 },
@@ -1833,12 +1919,213 @@ describe("projectGameSessionView", () => {
     expect(serialized).not.toContain("action-1");
     expect(serialized).not.toContain("failedAt");
   });
+
+  describe("任务链空窗桥接目标", () => {
+    function worldWithOnlyCompletedQuests(overrides: WorldStateFixtureOverrides = {}): WorldState {
+      return buildWorld({
+        // obtain_item 目标引用的是真实实体：同一投影里补上这件 item_flag。
+        items: [{ id: asItemId("item_flag"), name: "旧线索信物", description: "已结算的旧线索信物", kind: "quest", tags: [] }],
+        quests: [{
+          id: asQuestId("quest_done"), name: "旧线索", description: "已结算", kind: "main" as const, stage: 1, status: "completed" as const,
+          objectives: [{ kind: "obtain_item" as const, itemId: asItemId("item_flag") }],
+          onSuccess: { kind: "advance_story" as const },
+          onFailure: { kind: "closed" as const },
+          tags: [],
+        }] as unknown as WorldState["quests"],
+        ...overrides,
+      });
+    }
+
+    it("无 active 任务且 NPC 在场时，投影交谈桥接目标与可执行 token", () => {
+      const world = worldWithOnlyCompletedQuests();
+      const view = projectGameSessionView(world, ss, 3, "test-bridge-session");
+      expect(view.story.currentObjectiveLabel).toBe("与老板交谈");
+      expect(view.story.currentObjectiveChoiceToken).toMatch(/^c_[0-9a-f]{16}$/);
+      expect(view.story.currentObjectiveChoiceTokens).toEqual([view.story.currentObjectiveChoiceToken]);
+      expect(view.currentLocation.actions.some((action) =>
+        action.label === "与老板交谈" && action.presentation === "dialogue")).toBe(true);
+      const executable = buildChoiceMap(world, ss, 3);
+      expect(executable.has(view.story.currentObjectiveChoiceToken!)).toBe(true);
+    });
+
+    it("无 active 任务且无在场 NPC 时，投影前往未到访地点的桥接目标", () => {
+      const world: WorldState = worldWithOnlyCompletedQuests({
+        // 无人在场：摘除 NPC 条目时，loc_1 名册必须同步清空。
+        locations: BASE_PROJECTION.locations.map((location) => location.id === asLocationId("loc_1")
+          ? { ...location, npcIds: [] }
+          : location),
+        npcs: [],
+        visitedLocationIds: [asLocationId("loc_1")],
+      });
+      const view = projectGameSessionView(world, ss, 3, "test-bridge-session");
+      expect(view.story.currentObjectiveLabel).toBe("前往街道");
+      expect(view.story.currentObjectiveChoiceToken).toMatch(/^c_[0-9a-f]{16}$/);
+      const executable = buildChoiceMap(world, ss, 3);
+      expect(executable.has(view.story.currentObjectiveChoiceToken!)).toBe(true);
+    });
+
+    it("存在权威任务目标时，桥接不让位也不覆盖权威标签", () => {
+      const world = worldWithApproaches();
+      const view = projectGameSessionView(world, ss, 0, "test-bridge-session");
+      expect(view.story.currentObjectiveLabel).toBe("调查泥地上的异常痕迹");
+    });
+  });
+
+  describe("给予道具投影门禁", () => {
+    const itemId = asItemId("item_flag");
+
+    function worldWithInventory(): WorldState {
+      return buildWorld({
+        inventory: [itemId],
+        items: [{ id: itemId, name: "半块镖旗", description: "半块旧镖旗", kind: "quest", tags: [] }],
+        quests: [{
+          id: asQuestId("quest_give"), name: "交付镖旗", description: "把镖旗带给老板",
+          objectives: [{ kind: "talk_to_npc", npcId: npc1.id }],
+          onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
+          tags: [], kind: "main", stage: 1, status: "active",
+        }] as unknown as WorldState["quests"],
+      });
+    }
+
+    const focusScene = {
+      sceneId: "scene-give-focus",
+      turn: 1,
+      narration: "老板在等你表态。",
+      usedFactIds: [],
+      npcLine: { npcId: npc1.id, text: "东西带来了吗？", emotion: "neutral" as const, usedFactIds: [] },
+      choices: [
+        { choiceToken: "give-support", label: "支持老板" },
+        { choiceToken: "give-challenge", label: "质疑老板" },
+      ],
+      source: "generated" as const,
+      event: { kind: "dialogue" as const, focusNpcId: npc1.id },
+    };
+
+    function storyWithFocusScene(bundle?: unknown): StoryState {
+      return {
+        ...ss,
+        narrative: {
+          ...ss.narrative,
+          status: "ready" as const,
+          currentScene: focusScene,
+          choiceRegistry: [
+            approved("give-support", focusScene.sceneId, 0, focusScene.choices[0].label, { type: "talk", npcId: npc1.id, dialogueAct: "support" }),
+            approved("give-challenge", focusScene.sceneId, 0, focusScene.choices[1].label, { type: "talk", npcId: npc1.id, dialogueAct: "challenge" }),
+          ],
+          ...(bundle === undefined ? {} : { narrativeBundle: bundle as never }),
+        },
+      } as StoryState;
+    }
+
+    function giveBundle(activeStepIds: readonly string[]): unknown {
+      return {
+        contractVersion: 1,
+        originJobId: "job_give",
+        steps: [{
+          stepId: "step_give_1",
+          objectiveKey: "quest_give:0",
+          consumptionGroupKey: "quest_give:0:give_item",
+          trigger: { kind: "give_item", itemId, npcId: npc1.id },
+          scene: { segments: [], event: { kind: "item", itemId }, npcLine: null, objectiveLink: null, choiceSeeds: [], source: "generated" },
+          nextStepIds: [],
+        }],
+        activeStepIds,
+        terminal: { kind: "next_decision", target: { kind: "current_scene" } },
+      };
+    }
+
+    it("无叙事束或缺少 give_item 步骤时，焦点对话不投影给予按钮", () => {
+      const world = worldWithInventory();
+      const withoutBundle = projectGameSessionView(world, storyWithFocusScene(), 0, "test-give-session");
+      expect(withoutBundle.narrative.npcDialogues.find((entry) => entry.npcId === "npc_1")?.giveChoices).toEqual([]);
+
+      const withInactiveStep = projectGameSessionView(world, storyWithFocusScene(giveBundle([])), 0, "test-give-session");
+      expect(withInactiveStep.narrative.npcDialogues.find((entry) => entry.npcId === "npc_1")?.giveChoices).toEqual([]);
+    });
+
+    it("叙事束持有活跃 give_item 步骤时，投影给予按钮且 token 可执行", () => {
+      const world = worldWithInventory();
+      const view = projectGameSessionView(world, storyWithFocusScene(giveBundle(["step_give_1"])), 0, "test-give-session");
+      const dialogue = view.narrative.npcDialogues.find((entry) => entry.npcId === "npc_1");
+      expect(dialogue?.giveChoices).toHaveLength(1);
+      expect(dialogue?.giveChoices[0]?.itemName).toBe("半块镖旗");
+      expect(dialogue?.giveChoices[0]?.choice.label).toBe("把半块镖旗交给老板");
+      expect(dialogue?.giveChoices[0]?.choice.choiceToken).toMatch(/^c_[0-9a-f]{16}$/);
+      const executable = buildChoiceMap(world, storyWithFocusScene(giveBundle(["step_give_1"])), 0);
+      expect(executable.has(dialogue!.giveChoices[0]!.choice.choiceToken)).toBe(true);
+    });
+  });
+
+  describe("拾取物品投影门禁", () => {
+    const itemId = asItemId("item_optional_map");
+    const enemyId = asEnemyId("enemy_active");
+    const world: WorldState = buildWorld({
+      locations: BASE_PROJECTION.locations.map((location) => location.id === ws.currentLocationId
+        ? { ...location, availableItemIds: [itemId] }
+        : location),
+      items: [{ id: itemId, name: "旧地图", description: "一张旧地图", kind: "quest", tags: [] }],
+      enemies: [{ id: enemyId, name: "伏兵", tier: "normal", stats: { hp: 20, attack: 5, defense: 2 }, locationId: ws.currentLocationId, tags: [] }],
+    });
+
+    function storyWithBundle(trigger: unknown): StoryState {
+      return {
+        ...ss,
+        narrative: {
+          ...ss.narrative,
+          narrativeBundle: {
+            contractVersion: 1,
+            originJobId: "job_take_gate",
+            steps: [{
+              stepId: "step_active",
+              objectiveKey: "quest:0",
+              consumptionGroupKey: "quest:0:active",
+              trigger,
+              scene: { segments: [], event: { kind: "observe", locationId: ws.currentLocationId }, npcLine: null, objectiveLink: null, choiceSeeds: [], source: "generated" },
+              nextStepIds: [],
+            }],
+            activeStepIds: ["step_active"],
+            terminal: { kind: "next_decision", target: { kind: "current_scene" } },
+          } as never,
+        },
+      };
+    }
+
+    it("当前束只有战斗步骤时，不显示也不注册无法消费的可拾取物品", () => {
+      const story = storyWithBundle({ kind: "battle_resolved", outcome: "victory", enemyId });
+      const view = projectGameSessionView(world, story, 0, "test-take-gate");
+      const executable = buildChoiceMap(world, story, 0);
+
+      expect(view.obtainableItems).toEqual([]);
+      expect([...executable.values()].some((action) => action.type === "take_item")).toBe(false);
+    });
+
+    it("AI 模式的叙事束已经消费完时，不恢复无法消费的遗留物品入口", () => {
+      const story: StoryState = {
+        ...ss,
+        narrative: { ...ss.narrative, mode: "ai" },
+      };
+      const view = projectGameSessionView(world, story, 0, "test-take-gate");
+      expect(view.obtainableItems).toEqual([]);
+      expect([...buildChoiceMap(world, story, 0).values()].some((action) => action.type === "take_item")).toBe(false);
+    });
+
+    it("当前束持有匹配的拾取步骤时，仍投影可执行的物品入口", () => {
+      const story = storyWithBundle({ kind: "take_item", itemId });
+      const view = projectGameSessionView(world, story, 0, "test-take-gate");
+      expect(view.obtainableItems.map((item) => item.name)).toEqual(["旧地图"]);
+      expect(buildChoiceMap(world, story, 0).has(view.obtainableItems[0]!.choice.choiceToken)).toBe(true);
+    });
+  });
 });
 
 describe("projectGameSessionView town read model", () => {
+  const GENERATION: GenerationMetadata = {
+    generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia",
+  };
+  // 单地点世界不再声明 self-connection（loc_1 → loc_1 在 entity 编译期非法）；本块不断言旅行。
   const townLoc1: LocationEntry = {
     id: asLocationId("loc_1"), name: "街道", description: "一条街道", kind: "main",
-    connectedLocationIds: [asLocationId("loc_1")], npcIds: [asNpcId("npc_1")], availableItemIds: [], tags: [],
+    connectedLocationIds: [], npcIds: [asNpcId("npc_1")], availableItemIds: [], tags: [],
   };
   const townNpc1: NpcEntry = {
     id: asNpcId("npc_1"), name: "老板", role: "路人", description: "t",
@@ -1846,26 +2133,28 @@ describe("projectGameSessionView town read model", () => {
     memory: { npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
   };
 
-  function makeTownWorld(): WorldState {
-    const town = bindNpcToTownSlot(
-      createTownRuntime({ locationId: asLocationId("loc_1"), seed: "view-town-test" }),
-      asNpcId("npc_1"),
-    ).town;
-    const base = createInitialWorldState({
-      generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
+  const TOWN_RUNTIME = bindNpcToTownSlot(
+    createTownRuntime({ locationId: asLocationId("loc_1"), seed: "view-town-test" }),
+    asNpcId("npc_1"),
+  ).town;
+  const townLocation: LocationEntry = { ...townLoc1, scale: "town", town: TOWN_RUNTIME };
+
+  // 兼容投影即完整世界：城镇地点（含已绑定 NPC 的 runtime 与名册）与 NPC 条目一次声明。
+  const TOWN_PROJECTION: EntityCompatibilityProjection = {
+    ...emptyProjection({
       player: { name: "侠客", identity: "剑客", stats: { hp: 100, attack: 10, defense: 5 } },
-      startingLocation: townLoc1,
-      startingItemIds: [],
-    });
-    return {
-      ...base,
-      locations: base.locations.map((loc) => (loc.id === asLocationId("loc_1") ? { ...loc, scale: "town" as const, town } : loc)),
-      npcs: [townNpc1],
-    };
+      locations: [townLocation],
+      currentLocationId: asLocationId("loc_1"),
+    }),
+    npcs: [townNpc1],
+  };
+
+  function buildTownWorld(overrides: WorldStateFixtureOverrides = {}): WorldState {
+    return createWorldStateFixtureWith({ generation: GENERATION, base: TOWN_PROJECTION }, overrides);
   }
 
   it("currentLocation.town 暴露快照 + 已绑定交互建筑条目", () => {
-    const townWs = makeTownWorld();
+    const townWs = buildTownWorld();
     const townSs = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 0, events: 0 } });
     const view = projectGameSessionView(townWs, townSs, 0, "test-ending-session");
     const town = view.currentLocation.town;
@@ -1881,8 +2170,7 @@ describe("projectGameSessionView town read model", () => {
   it("当前事实目标由城镇建筑承载时，下发进入即探索的 opaque token", () => {
     const questId = asQuestId("quest_town_investigation");
     const factId = asFactId("fact_town_hidden_compartment");
-    const townWs: WorldState = {
-      ...makeTownWorld(),
+    const townWs: WorldState = buildTownWorld({
       worldFacts: [{
         factId,
         text: "义庄暗格藏着一封密信。",
@@ -1910,7 +2198,7 @@ describe("projectGameSessionView town read model", () => {
         stage: 1,
         status: "active",
       }],
-    };
+    });
     const baseStory = createInitialStoryState({
       initialNarrative: createFixtureNarrativeRuntimeState(),
       gameLength: "short",
@@ -1941,16 +2229,18 @@ describe("projectGameSessionView town read model", () => {
       locationId: asLocationId("loc_1"),
       memory: { ...townNpc1.memory, npcId: secondNpcId },
     };
-    const base = makeTownWorld();
-    const location = base.locations[0]!;
-    const town = bindNpcToTownSlot(location.town!, secondNpcId).town;
+    const secondTown = bindNpcToTownSlot(TOWN_RUNTIME, secondNpcId).town;
     const itemId = asItemId("item_town_relic");
-    const townWs: WorldState = {
-      ...base,
-      locations: [{ ...location, npcIds: [townNpc1.id, secondNpcId], availableItemIds: [itemId], town }],
+    const townWs: WorldState = buildTownWorld({
+      locations: [{
+        ...townLocation,
+        town: secondTown,
+        npcIds: [townNpc1.id, secondNpcId],
+        availableItemIds: [itemId],
+      }],
       npcs: [townNpc1, secondNpc],
       items: [{ id: itemId, name: "染血腰牌", description: "一块旧腰牌。", kind: "relic", tags: [] }],
-    };
+    });
     const view = projectGameSessionView(
       townWs,
       createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 2, quests: 0, events: 0 } }),
@@ -1965,7 +2255,7 @@ describe("projectGameSessionView town read model", () => {
   });
 
   it("town 读模型不泄漏 seed/空闲 slot/生成器内部", () => {
-    const townWs = makeTownWorld();
+    const townWs = buildTownWorld();
     const townSs = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 0, events: 0 } });
     const view = projectGameSessionView(townWs, townSs, 0, "test-ending-session");
     const serialized = JSON.stringify(view.currentLocation.town);
@@ -1976,13 +2266,8 @@ describe("projectGameSessionView town read model", () => {
   });
 
   it("scene 地点 currentLocation.town 为 null", () => {
-    const base = createInitialWorldState({
-      generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
-      player: { name: "侠客", identity: "剑客", stats: { hp: 100, attack: 10, defense: 5 } },
-      startingLocation: townLoc1,
-      startingItemIds: [],
-    });
-    const view = projectGameSessionView(base, createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 0, events: 0 } }), 0, "test-ending-session");
+    const sceneWorld = buildTownWorld({ locations: [townLoc1] });
+    const view = projectGameSessionView(sceneWorld, createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 0, events: 0 } }), 0, "test-ending-session");
     expect(view.currentLocation.town).toBeNull();
   });
 
@@ -1998,7 +2283,7 @@ describe("projectGameSessionView town read model", () => {
           failure: { kind: "AI_RESPONSE_INVALID", phase: "scene", failedAt: "2026-08-21T00:00:00.000Z" },
       },
     };
-    const view = projectGameSessionView(makeTownWorld(), failedStory, 3, "ending-id");
+    const view = projectGameSessionView(buildTownWorld(), failedStory, 3, "ending-id");
     expect(view.narrativeGeneration).toEqual({
       status: "failed",
       failureKind: "AI_RESPONSE_INVALID",
@@ -2018,7 +2303,7 @@ describe("projectGameSessionView town read model", () => {
           failure: { kind: "AI_CALL_FAILED", phase: "scene", failedAt: "2026-08-21T00:00:00.000Z" },
       },
     };
-    const view = projectGameSessionView(makeTownWorld(), failedStory, 5, "ending-id");
+    const view = projectGameSessionView(buildTownWorld(), failedStory, 5, "ending-id");
     expect(view.narrativeGeneration).toEqual({
       status: "failed",
       failureKind: "AI_CALL_FAILED",

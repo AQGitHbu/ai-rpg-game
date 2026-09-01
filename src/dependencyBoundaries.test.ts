@@ -62,7 +62,9 @@ const FACADES: readonly FacadeSpec[] = [
   { name: "dialogue", path: "@/game/gameplay/rpg/dialogue", anchors: ["dialogueResolution"] },
   { name: "candidateEvents", path: "@/game/gameplay/rpg/candidateEvents", anchors: ["approveCandidateEvents", "compileCandidateEvent"] },
   { name: "narrativeExecution", path: "@/game/gameplay/rpg/narrativeExecution", anchors: ["narrativeExecutionPolicy"] },
-  { name: "preparedContinuation", path: "@/game/gameplay/rpg/preparedContinuation", anchors: ["candidates"] }
+  { name: "preparedContinuation", path: "@/game/gameplay/rpg/preparedContinuation", anchors: ["candidates"] },
+  { name: "narrativeBundle", path: "@/game/gameplay/rpg/narrativeBundle", anchors: ["descriptors", "coverage"] },
+  { name: "entityWorld", path: "@/game/gameplay/rpg/entityWorld", anchors: ["entityMutation", "proposedEntityCommand"] }
 ] as const satisfies readonly FacadeSpec[];
 
 /** 由 facade 清单生成 deep-import 规则：只许门面本体，禁止任何内部文件。 */
@@ -585,12 +587,12 @@ describe("canonical AI sources stay server-only and layered", () => {
       readFileSync(resolve(sourceRoot, "game/application/server/compositionRoot.ts"), "utf8")
     );
     expect(rootSpecifiers).toContain("../server/ai/sourceFactory");
-    expect(rootSpecifiers).toContain("../server/ai/intentParserSourceFactory");
+    expect(rootSpecifiers).not.toContain("../server/ai/intentParserSourceFactory");
     const factorySpecifiers = extractSpecifiers(
       readFileSync(resolve(sourceRoot, "game/application/server/ai/sourceFactory.ts"), "utf8")
     );
     expect(factorySpecifiers).toContain("./rpgAiClient");
-    expect(factorySpecifiers).toContain("./openingGenerationSource");
+    expect(factorySpecifiers).toContain("./liveNarrativeBundleSource");
 
     const clientSpecifiers = extractSpecifiers(
       readFileSync(resolve(sourceRoot, "game/application/server/ai/rpgAiClient.ts"), "utf8")

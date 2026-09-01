@@ -1,4 +1,5 @@
 import type { EnemyId, FactId, ItemId, LocationId, NpcId } from "./worldEntity";
+import type { StoryState } from "./storyState";
 import { paginateSpeechText } from "./speechPagination";
 import {
   parsePendingNarrativeJob,
@@ -16,6 +17,10 @@ import {
   parsePreparedContinuationState,
   type PreparedContinuationState,
 } from "./preparedContinuation";
+import {
+  parseNarrativeBundleState,
+  type NarrativeBundleState,
+} from "./narrativeBundle";
 
 export const NARRATIVE_EMOTIONS = [
   "neutral", "warm", "guarded", "afraid", "angry", "sad"
@@ -121,6 +126,15 @@ export type DialogueResumeState = {
   readonly choiceRegistry: readonly ApprovedChoice[];
 };
 
+/** 战斗开始时捕获的叙事侧检查点；失败/撤退只恢复该已批准状态。 */
+export type BattleNarrativeCheckpointState = {
+  readonly storySnapshot: Omit<StoryState, "narrative">;
+  readonly currentScene: NarrativeSceneState;
+  readonly choiceRegistry: readonly ApprovedChoice[];
+  readonly bundle?: NarrativeBundleState;
+  readonly dialogueSession?: DialogueSessionState;
+};
+
 /** Runtime AI is opt-in per save. Offline development presets never call it. */
 export type NarrativeMode = "ai" | "offline";
 
@@ -130,9 +144,12 @@ export type NarrativeRuntimeState =
       readonly mode: NarrativeMode;
       readonly currentScene: NarrativeSceneState;
       readonly choiceRegistry: readonly ApprovedChoice[];
+      /** v7 唯一生产续接图。旧 preparedContinuation 仅保留给离线 fixture。 */
+      readonly narrativeBundle?: NarrativeBundleState;
       readonly preparedContinuation?: PreparedContinuationState;
       readonly dialogueSession?: DialogueSessionState;
       readonly dialogueResume?: DialogueResumeState;
+      readonly battleCheckpoint?: BattleNarrativeCheckpointState;
     }
   | {
       readonly status: "provider_pending";
@@ -281,6 +298,17 @@ function isDialogueResume(value: unknown): value is DialogueResumeState {
     && value.choiceRegistry.every(isApprovedChoice);
 }
 
+function isBattleCheckpoint(value: unknown): value is BattleNarrativeCheckpointState {
+  return isRecord(value)
+    && hasOnlyKeys(value, ["storySnapshot", "currentScene", "choiceRegistry", "bundle", "dialogueSession"])
+    && isRecord(value.storySnapshot)
+    && isNarrativeScene(value.currentScene)
+    && Array.isArray(value.choiceRegistry)
+    && value.choiceRegistry.every(isApprovedChoice)
+    && (value.bundle === undefined || parseNarrativeBundleState(value.bundle).ok)
+    && (value.dialogueSession === undefined || isDialogueSession(value.dialogueSession));
+}
+
 function isApprovedChoice(value: unknown): value is ApprovedChoice {
   if (!isRecord(value) || !hasOnlyKeys(value, [
     "choiceToken", "sceneId", "basedOnRevision", "label", "action", "semanticSummary",
@@ -348,7 +376,7 @@ export function parseNarrativeRuntimeState(value: unknown): ParseNarrativeRuntim
 
   if (value.status === "ready") {
     if (!hasOnlyKeys(value, [
-      "status", "mode", "currentScene", "choiceRegistry", "preparedContinuation", "dialogueSession", "dialogueResume",
+      "status", "mode", "currentScene", "choiceRegistry", "narrativeBundle", "preparedContinuation", "dialogueSession", "dialogueResume", "battleCheckpoint",
     ])) return INVALID_NARRATIVE_RUNTIME;
     if (!isNarrativeScene(value.currentScene)
       || !Array.isArray(value.choiceRegistry)
@@ -357,7 +385,13 @@ export function parseNarrativeRuntimeState(value: unknown): ParseNarrativeRuntim
       && !parsePreparedContinuationState(value.preparedContinuation).ok) {
       return INVALID_NARRATIVE_RUNTIME;
     }
+    if (value.narrativeBundle !== undefined && !parseNarrativeBundleState(value.narrativeBundle).ok) {
+      return INVALID_NARRATIVE_RUNTIME;
+    }
     if (value.dialogueResume !== undefined && !isDialogueResume(value.dialogueResume)) {
+      return INVALID_NARRATIVE_RUNTIME;
+    }
+    if (value.battleCheckpoint !== undefined && !isBattleCheckpoint(value.battleCheckpoint)) {
       return INVALID_NARRATIVE_RUNTIME;
     }
     return { ok: true, value: value as NarrativeRuntimeState };

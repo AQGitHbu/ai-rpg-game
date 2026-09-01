@@ -1,10 +1,29 @@
 import type { SceneGenerationContext } from "./sceneGenerationContext";
-import type { NarrativeEmotion } from "@/game/domain/narrative";
 import type { EventCandidate } from "@/game/domain/candidateEvent";
 import type {
   AiGenerationFailure,
   NarrativeGenerationRepairReason,
 } from "@/game/domain/narrativeGenerationFailure";
+
+// Re-export pure value types that were moved to domain/narrativeBundle.ts.
+// These re-exports are temporary — Task 10 deletes this file after all
+// consumers import from domain/narrativeBundle.ts directly.
+export type {
+  ScenePerformanceSegment,
+  ScenePerformanceNpcLine,
+  ScenePerformanceNpcDialogue,
+  ScenePerformanceObjectiveLink,
+} from "@/game/domain/narrativeBundle";
+
+import type {
+  ScenePerformanceSegment,
+  ScenePerformanceNpcLine,
+  ScenePerformanceNpcDialogue,
+  ScenePerformanceObjectiveLink,
+} from "@/game/domain/narrativeBundle";
+
+// Re-export for backwards compatibility of type references in this file
+// (the types below use them in their own definitions).
 
 /**
  * SceneGenerator 的事件提议（spec §7.4 newEvents）。
@@ -12,43 +31,6 @@ import type {
  * Task 6：事件提议不再随场景表演契约传递；场景只负责表现层。
  */
 export type EventProposal = EventCandidate;
-
-/** 场景表演的一段旁白：必须对应服务端提供的强制节拍 ID（atmosphere 可选且最后）。 */
-export type ScenePerformanceSegment = {
-  readonly beatId: string;
-  readonly text: string;
-  /**
-   * 可选的结构化叙事引用。它只用于 grounding 质量诊断，不能替代
-   * mandatory beat/objectiveLink，也不能由客户端消费或执行。
-   */
-  readonly referencedEntityIds?: readonly string[];
-};
-
-/** 焦点 NPC 的台词：所有引用（事实/交互）必须归属该 NPC 的允许集合。 */
-export type ScenePerformanceNpcLine = {
-  readonly npcId: string;
-  readonly text: string;
-  readonly emotion: NarrativeEmotion;
-  /** Task 5：该台词应答的强制节拍 ID（player_utterance 必须命中）。 */
-  readonly answeredBeatIds: readonly string[];
-  /** 仅允许该 NPC known ∪ scene-visible 的事实；私密/未知事实 → 整场拒绝。 */
-  readonly usedFactIds: readonly string[];
-  /** 仅允许该 NPC 自己最近的交互 actionId；引用他人交互 → 整场拒绝。 */
-  readonly usedInteractionActionIds: readonly string[];
-};
-
-/** 同一场景 API 为非焦点 NPC 生成的零回合闲聊台词。 */
-export type ScenePerformanceNpcDialogue = {
-  readonly npcId: string;
-  readonly text: string;
-};
-
-/** objectiveLink 必须与 ObjectiveTransition.after 一致（无 after 时必须为 null）。 */
-export type ScenePerformanceObjectiveLink = {
-  readonly questId: string;
-  readonly objectiveIndex: number;
-  readonly mode: "hint" | "progress" | "handoff";
-};
 
 /** One provider-authored scene seed; graph identity and actions remain server-owned. */
 export type PreparedContinuationProposal = {

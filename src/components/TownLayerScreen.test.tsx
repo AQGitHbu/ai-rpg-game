@@ -6,30 +6,42 @@ import { TownLayerScreen } from "./TownLayerScreen";
 import { buildTownView } from "@/game/application/townView";
 import { createTownRuntime, bindNpcToTownSlot } from "@/game/gameplay/rpg/town";
 import { asLocationId, asNpcId, asGenerationId } from "@/game/domain/worldEntity";
-import { createInitialWorldState, type WorldState } from "@/game/domain/worldState";
+import type { WorldState } from "@/game/domain/worldState";
+import { createWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 
 function townFixture(): TownView {
+  const locationId = asLocationId("loc_0");
+  const npcId = asNpcId("npc_1");
   const town = bindNpcToTownSlot(
-    createTownRuntime({ locationId: asLocationId("loc_0"), seed: "town-layer-fixture" }),
-    asNpcId("npc_1"),
+    createTownRuntime({ locationId, seed: "town-layer-fixture" }),
+    npcId,
   ).town;
-  const ws: WorldState = {
-    ...createInitialWorldState({
-      generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
+  const ws: WorldState = createWorldStateFixture({
+    generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
+    projection: {
       player: { name: "侠客", identity: "剑客", stats: { hp: 100, attack: 10, defense: 5 } },
-      startingLocation: {
-        id: asLocationId("loc_0"), name: "边陲小镇", description: "一座边陲小镇。", kind: "main",
-        connectedLocationIds: [], npcIds: [asNpcId("npc_1")], availableItemIds: [], tags: [],
+      locations: [{
+        id: locationId, name: "边陲小镇", description: "一座边陲小镇。", kind: "main",
+        connectedLocationIds: [], npcIds: [npcId], availableItemIds: [], tags: [],
         scale: "town", town,
-      },
-      startingItemIds: [],
-    }),
-    npcs: [{
-      id: asNpcId("npc_1"), name: "沈掌柜", role: "关键线人", description: "掌握消息。",
-      locationId: asLocationId("loc_0"), isCompanion: false, tags: [], met: true,
-      memory: { npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
-    }],
-  };
+      }],
+      currentLocationId: locationId,
+      unlockedLocationIds: [locationId],
+      visitedLocationIds: [locationId],
+      npcs: [{
+        id: npcId, name: "沈掌柜", role: "关键线人", description: "掌握消息。",
+        locationId, isCompanion: false, tags: [], met: true,
+        memory: { npcId, knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+      }],
+      items: [],
+      inventory: [],
+      worldFacts: [],
+      quests: [],
+      enemies: [],
+      defeatedEnemyIds: [],
+      factions: [],
+    },
+  });
   return buildTownView(ws, "loc_0")!;
 }
 

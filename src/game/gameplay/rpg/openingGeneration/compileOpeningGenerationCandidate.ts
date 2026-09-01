@@ -3,7 +3,10 @@ import type { OpeningGenerationCandidate } from "@/game/domain/openingGeneration
 import type { GenerationMetadata } from "@/game/domain/worldEntity";
 import { asLocationId, asNpcId, asQuestId, asFactId } from "@/game/domain/worldEntity";
 import type { WorldState } from "@/game/domain/worldState";
-import { createInitialWorldState } from "@/game/domain/worldState";
+import { createWorldStateFromProjection } from "@/game/domain/worldState";
+import type {
+  LocationEntry, NpcEntry, QuestEntry, WorldFactEntry,
+} from "@/game/domain/worldEntries";
 import type { StoryState } from "@/game/domain/storyState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { NarrativeRuntimeState } from "@/game/domain/narrative";
@@ -66,71 +69,88 @@ export function compileOpeningGenerationCandidate(
       ).town
     : undefined;
 
-  const worldState: WorldState = {
-    ...createInitialWorldState({
-      generation,
+  const startingLocation: LocationEntry = {
+    id: locationId,
+    name: candidate.opening.location.name,
+    description: candidate.opening.location.description,
+    kind: "main",
+    connectedLocationIds: [],
+    npcIds: [npcId],
+    availableItemIds: [],
+    tags: [],
+    scale: candidate.opening.location.scale,
+    town: openingTown,
+  };
+
+  const openingNpc: NpcEntry = {
+    id: npcId,
+    name: candidate.opening.npc.name,
+    role: candidate.opening.npc.role,
+    description: candidate.opening.npc.description,
+    locationId,
+    isCompanion: false,
+    tags: [],
+    met: false,
+    memory: {
+      npcId,
+      knownFactIds,
+      hiddenFactIds: privateFactIds,
+      interactionHistory: [],
+      relationship: { affinity: 0 },
+      emotion: "neutral",
+      goals: candidate.opening.npc.goals,
+    },
+  };
+
+  const openingFacts: readonly WorldFactEntry[] = factIds.map((fact) => ({
+    factId: fact.factId,
+    text: fact.text,
+    source: "generated",
+    discovered: knownFactIds.includes(fact.factId),
+    // 只复制已审批（validated）候选携带的方式；缺省/空保持自动揭示。
+    ...(fact.investigationApproaches === undefined || fact.investigationApproaches.length === 0
+      ? {}
+      : { investigationApproaches: fact.investigationApproaches }),
+  }));
+
+  const openingQuest: QuestEntry = {
+    id: questId,
+    name: candidate.opening.quest.name,
+    description: candidate.opening.quest.description,
+    objectives: [{ kind: "talk_to_npc", npcId }],
+    onSuccess: { kind: "advance_story" },
+    onFailure: { kind: "closed" },
+    tags: [],
+    kind: "main",
+    stage: 1,
+    status: "active",
+  };
+
+  // 开局一次编译：全部通过 approval 的实体先进入同一投影，不留前向引用缺口。
+  const worldState: WorldState = createWorldStateFromProjection({
+    generation,
+    projection: {
       player: {
         name: candidate.player.name,
         identity: candidate.player.identity,
         // 规则拥有玩家战斗属性；旧候选中的 baseStats 只为历史 fixture 保留，不能越权落库。
         stats: toStatBlock(PLAYER_COMBAT_STATS),
       },
-      startingLocation: {
-        id: locationId,
-        name: candidate.opening.location.name,
-        description: candidate.opening.location.description,
-        kind: "main",
-        connectedLocationIds: [],
-        npcIds: [npcId],
-        availableItemIds: [],
-        tags: [],
-        scale: candidate.opening.location.scale,
-        town: openingTown,
-      },
-      startingItemIds: [],
-    }),
-    npcs: [{
-      id: npcId,
-      name: candidate.opening.npc.name,
-      role: candidate.opening.npc.role,
-      description: candidate.opening.npc.description,
-      locationId,
-      isCompanion: false,
-      tags: [],
-      met: false,
-      memory: {
-        npcId,
-        knownFactIds,
-        hiddenFactIds: privateFactIds,
-        interactionHistory: [],
-        relationship: { affinity: 0 },
-        emotion: "neutral",
-        goals: candidate.opening.npc.goals,
-      },
-    }],
-    worldFacts: factIds.map((fact) => ({
-      factId: fact.factId,
-      text: fact.text,
-      source: "generated",
-      discovered: knownFactIds.includes(fact.factId),
-      // 只复制已审批（validated）候选携带的方式；缺省/空保持自动揭示。
-      ...(fact.investigationApproaches === undefined || fact.investigationApproaches.length === 0
-        ? {}
-        : { investigationApproaches: fact.investigationApproaches }),
-    })),
-    quests: [{
-      id: questId,
-      name: candidate.opening.quest.name,
-      description: candidate.opening.quest.description,
-      objectives: [{ kind: "talk_to_npc", npcId }],
-      onSuccess: { kind: "advance_story" },
-      onFailure: { kind: "closed" },
-      tags: [],
-      kind: "main",
-      stage: 1,
-      status: "active",
-    }],
-  };
+      locations: [startingLocation],
+      currentLocationId: locationId,
+      unlockedLocationIds: [locationId],
+      visitedLocationIds: [locationId],
+      npcs: [openingNpc],
+      items: [],
+      inventory: [],
+      worldFacts: openingFacts,
+      quests: [openingQuest],
+      enemies: [],
+      defeatedEnemyIds: [],
+      factions: [],
+    },
+    eventLedger: [{ type: "game_initialized", generation }],
+  });
 
   const baseStoryState = createInitialStoryState({
     gameLength,

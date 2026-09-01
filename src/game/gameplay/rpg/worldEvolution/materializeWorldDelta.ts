@@ -6,6 +6,12 @@ import type { BlueprintExpandedEvent } from "@/game/domain/events";
 import type { LocationId, NpcId, ItemId } from "@/game/domain/worldEntity";
 import type { TownRuntimeState } from "@/game/domain/townState";
 import { createTownRuntime, townSeedFor, bindNpcToTownSlot } from "@/game/gameplay/rpg/town";
+import {
+  compileEntityStoreFromCompatibilityProjection,
+  entitiesOfKind,
+  projectEntityStore,
+} from "@/game/domain/entity";
+import { applyEntityMutations, EntityMutationInvariantError, type EntityMutation } from "@/game/gameplay/rpg/entityWorld";
 
 // ---------------------------------------------------------------------------
 // Task 3：把已审批的世界演化装配为预览状态并落账。
@@ -137,19 +143,39 @@ export function materializeWorldDelta(input: MaterializeWorldDeltaInput): Approv
     occurredAt: now(),
   };
 
+  // 先用唯一 projection compiler 在局部构造所需 EntityRecord；再只将新 records、
+  // 已有地点组件和解锁索引作为一批规则可信 mutation 应用到原 store。
+  const desiredStore = compileEntityStoreFromCompatibilityProjection({
+    projection: {
+      ...projectEntityStore(ws.entityStore),
+      locations,
+      npcs: [...ws.npcs, ...approved.newNpcs],
+      items: [...ws.items, ...approved.newItems],
+      enemies: [...ws.enemies, ...approved.newEnemies],
+      worldFacts: [...ws.worldFacts, ...approved.newFacts],
+      quests: [...ws.quests, ...approved.newQuests],
+    },
+    createdAtTurn: ss.turnNumber,
+    previousStore: ws.entityStore,
+  });
+  const existingIds = new Set(ws.entityStore.records.map((record) => record.core.id));
+  const mutations: EntityMutation[] = [];
+  const createdRecords = desiredStore.records.filter((record) => !existingIds.has(record.core.id));
+  if (createdRecords.length > 0) mutations.push({ kind: "create_entities", records: createdRecords });
+  for (const location of entitiesOfKind(desiredStore, "location")) {
+    if (existingIds.has(location.core.id)) {
+      mutations.push({ kind: "replace_location_component", locationId: location.core.id, location: location.location });
+    }
+  }
+  for (const locationId of locationsReleasedImmediately) {
+    mutations.push({ kind: "set_location_unlocked", locationId, unlocked: true });
+  }
+  const applied = applyEntityMutations(ws, mutations);
+  if (!applied.ok) throw new EntityMutationInvariantError(applied);
   const previewWorldState: WorldState = {
-    ...ws,
-    locations,
-    npcs: [...ws.npcs, ...approved.newNpcs],
-    items: [...ws.items, ...approved.newItems],
-    enemies: [...ws.enemies, ...approved.newEnemies],
-    worldFacts: [...ws.worldFacts, ...approved.newFacts],
-    quests: [...ws.quests, ...approved.newQuests],
-    endings: [...ws.endings, ...approved.newEndings],
-    unlockedLocationIds: locationsReleasedImmediately.length > 0
-      ? [...new Set([...ws.unlockedLocationIds, ...locationsReleasedImmediately])]
-      : ws.unlockedLocationIds,
-    eventLedger: [...ws.eventLedger, event],
+    ...applied.worldState,
+    endings: [...applied.worldState.endings, ...approved.newEndings],
+    eventLedger: [...applied.worldState.eventLedger, event],
   };
 
   const previewStoryState: StoryState = {

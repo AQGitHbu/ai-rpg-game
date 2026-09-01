@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createInitialWorldState, appendEnemy, type EnemyEntry, type LocationEntry, type WorldState } from "@/game/domain/worldState";
+import { createInitialWorldState, type EnemyEntry, type LocationEntry, type WorldState } from "@/game/domain/worldState";
+import { updateWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 import { ENEMY_COMBAT_STATS, PLAYER_COMBAT_STATS, toStatBlock } from "@/game/domain/combat";
 import { asEnemyId, asGenerationId, asLocationId } from "@/game/domain/worldEntity";
 import { battleAction, startBattle } from "./battleResolver";
@@ -19,7 +20,7 @@ function makeModernWorld(): WorldState {
   const enemy = (id: string): EnemyEntry => ({
     id: asEnemyId(id), name: id, tier: "normal", stats: toStatBlock(ENEMY_COMBAT_STATS.normal), locationId: location.id, tags: [],
   });
-  return { ...appendEnemy(appendEnemy(base, enemy("enemy_a")), enemy("enemy_b")), defeatedEnemyIds: [] };
+  return updateWorldStateFixture(base, { enemies: [enemy("enemy_a"), enemy("enemy_b")], defeatedEnemyIds: [] });
 }
 
 describe("modern turn-based battle resolver", () => {

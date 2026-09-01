@@ -2,33 +2,44 @@ import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestF
 import { describe, it, expect } from "vitest";
 import { advanceStoryProgression } from "./advanceStoryProgression";
 import { createInitialStoryState } from "@/game/domain/storyState";
+import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
+import { createWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 import type { WorldState } from "@/game/domain/worldState";
 import type { GameEvent } from "@/game/domain/events";
 import { asQuestId, asLocationId, asGenerationId } from "@/game/domain/worldEntity";
 
-function makeWorld(overrides?: Partial<WorldState>): WorldState {
-  return {
-    version: 2,
+const LOC_1 = asLocationId("loc_1");
+
+const BASE_PROJECTION: EntityCompatibilityProjection = {
+  player: { name: "侠客", identity: "剑客", stats: { hp: 100, attack: 10, defense: 5 } },
+  locations: [{
+    id: LOC_1,
+    name: "山道",
+    description: "测试",
+    kind: "main",
+    connectedLocationIds: [],
+    npcIds: [],
+    availableItemIds: [],
+    tags: [],
+  }],
+  currentLocationId: LOC_1,
+  unlockedLocationIds: [LOC_1],
+  visitedLocationIds: [LOC_1],
+  npcs: [],
+  items: [],
+  inventory: [],
+  worldFacts: [],
+  quests: [],
+  enemies: [],
+  defeatedEnemyIds: [],
+  factions: [],
+};
+
+function makeWorld(overrides?: Partial<EntityCompatibilityProjection>): WorldState {
+  return createWorldStateFixture({
     generation: { generationId: asGenerationId("test"), seed: "test", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
-    player: { name: "侠客", identity: "剑客", stats: { hp: 100, attack: 10, defense: 5 } },
-    locations: [],
-    currentLocationId: asLocationId("loc_1"),
-    unlockedLocationIds: [],
-    visitedLocationIds: [],
-    npcs: [],
-    items: [],
-    inventory: [],
-    worldFacts: [],
-    quests: [],
-    enemies: [],
-    defeatedEnemyIds: [],
-    battle: { status: "idle" },
-    endings: [],
-    ending: null,
-    factions: [],
-    eventLedger: [],
-    ...overrides,
-  };
+    projection: { ...BASE_PROJECTION, ...overrides },
+  });
 }
 
 describe("advanceStoryProgression", () => {

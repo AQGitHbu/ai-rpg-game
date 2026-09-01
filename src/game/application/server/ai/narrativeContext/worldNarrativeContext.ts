@@ -1,6 +1,7 @@
 import type { Action } from "@/game/domain/action";
 import type { EvolutionNeed } from "@/game/domain/worldDelta";
 import type { QuestObjective, WorldState } from "@/game/domain/worldState";
+import { projectEntityStore } from "@/game/domain/entity";
 import type { WorldEvolutionSourceContext } from "@/game/application/worldEvolutionSource";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 import { compileNarrativeContext } from "./compileNarrativeContext";
@@ -140,7 +141,12 @@ function detailPriority(input: {
 export function buildWorldNarrativeContextBlocks(
   context: WorldEvolutionSourceContext,
 ): readonly NarrativeContextBlock[] {
-  const { worldState: world, storyState: story } = context;
+  const { storyState: story } = context;
+  const projected = projectEntityStore(context.worldState.entityStore);
+  const world = {
+    ...context.worldState,
+    ...projected,
+  };
   const setup = world.generation.setup;
   const currentLocation = world.locations.find((location) => location.id === world.currentLocationId);
   const currentObjective = currentObjectiveOf(world, story);

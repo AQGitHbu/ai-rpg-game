@@ -2,14 +2,14 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-// 钉死 generatePendingScene（coordinator 的执行体）：在不依赖真实 AI/source 与
+// 钉死 generatePendingNarrativeBundle（coordinator 的执行体）：在不依赖真实 AI/source 与
 // 复杂合法 state 的前提下，直接观测 coordinator 是否被调用、以什么 origin 调用。
-const { mockedGeneratePendingScene } = vi.hoisted(() => ({
-  mockedGeneratePendingScene: vi.fn().mockResolvedValue("saved"),
+const { mockedGeneratePendingNarrativeBundle } = vi.hoisted(() => ({
+  mockedGeneratePendingNarrativeBundle: vi.fn().mockResolvedValue("saved"),
 }));
 
-vi.mock("../generatePendingScene", () => ({
-  generatePendingScene: mockedGeneratePendingScene,
+vi.mock("../generatePendingNarrativeBundle", () => ({
+  generatePendingNarrativeBundle: mockedGeneratePendingNarrativeBundle,
 }));
 
 import { createServerGameEntryPoints, getServerGameEntryPoints } from "./compositionRoot";
@@ -115,8 +115,8 @@ describe("ensureNarrativeScene retry 组合断言（发现#1）", () => {
     expect(repoStatus()).toBe("pending");
 
     // coordinator 恰被调用一次，且 origin=manual_failed_job（mechanism=initial, attempt=0）。
-    expect(mockedGeneratePendingScene).toHaveBeenCalledTimes(1);
-    const runDeps = mockedGeneratePendingScene.mock.calls[0][0] as {
+    expect(mockedGeneratePendingNarrativeBundle).toHaveBeenCalledTimes(1);
+    const runDeps = mockedGeneratePendingNarrativeBundle.mock.calls[0][0] as {
       auditLink?: { retry?: { origin?: string; mechanism?: string; attempt?: number } };
     };
     expect(runDeps?.auditLink?.retry).toEqual({ origin: "manual_failed_job", mechanism: "initial", attempt: 0 });

@@ -4,7 +4,8 @@ import { approveCandidateEvents } from "./approveCandidateEvents";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { EventCandidate } from "@/game/domain/storyState";
 import { asNpcId, asEnemyId, asLocationId, asGenerationId } from "@/game/domain/worldEntity";
-import { createInitialWorldState, appendNpc, appendEnemy } from "@/game/domain/worldState";
+import { createInitialWorldState } from "@/game/domain/worldState";
+import { updateWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 import type { NpcEntry, EnemyEntry } from "@/game/domain/worldState";
 
 const NOW = () => "2026-08-09T00:00:00.000Z";
@@ -58,7 +59,7 @@ function makeWorldState(): ReturnType<typeof createInitialWorldState> {
     locationId: asLocationId("loc_1"),
     tags: [],
   };
-  return appendEnemy(appendNpc(ws, npc), enemy);
+  return updateWorldStateFixture(ws, { npcs: [npc], enemies: [enemy] });
 }
 
 function candidate(overrides?: Partial<EventCandidate>): EventCandidate {

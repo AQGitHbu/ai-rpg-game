@@ -10,8 +10,7 @@ import { createSqliteGameRepository } from "./persistence/sqliteGameRepository";
 import { createGame } from "../createGame";
 import { performTurn } from "../performTurn";
 import { projectGameSessionView } from "../gameSessionView";
-import { createOpeningGenerationSource, createSceneSource, createWorldEvolutionSource } from "../server/ai/sourceFactory";
-import { createServerIntentParserSource } from "../server/ai/intentParserSourceFactory";
+import { createNarrativeBundleSourceFactory } from "../server/ai/sourceFactory";
 import { createServerRpgAiClient } from "../server/ai/rpgAiClient";
 import { parseAiRuntimeConfig } from "../server/ai/aiRuntimeConfig";
 import { createTextAuditRecorder } from "../server/ai/textAuditRecorder";
@@ -20,7 +19,7 @@ import type {
   AiTextAuditContext,
   GameApiAuditMode,
 } from "../server/ai/textAuditTypes";
-import { generatePendingScene } from "../generatePendingScene";
+import { generatePendingNarrativeBundle } from "../generatePendingNarrativeBundle";
 import { commitState } from "../stateCommit";
 import { buildChoiceMap } from "../buildChoiceMap";
 import type { StoryState } from "@/game/domain/storyState";
@@ -238,14 +237,8 @@ export function createServerGameEntryPoints(
   // One provider transport/client per server composition root. Role policy,
   // thinking mode, budgets, and transient retries are centralized there.
   const aiClient = createServerRpgAiClient(env, logger, auditRecorder);
-  const source = createOpeningGenerationSource(env, logger, aiClient);
-  // Task 3：AI 可用注入 live 世界演化源，否则 unavailable source；deterministic
-  // source 只由显式 offline fixture composition 注入。
-  const worldEvolutionSource = createWorldEvolutionSource(env, logger, aiClient);
-  const sceneSource = createSceneSource(env, logger, aiClient);
-  // Task 9：对话自由输入统一走 performTurn 回合入口，AI 可用时注入 live 意图源，否则规则源。
-  // transport 构建收敛在 server/ai 工厂内（@ai-game/ai-transport 边界守卫）。
-  const intentParserSource = createServerIntentParserSource(env, aiClient);
+  // Unified source is the only runtime AI entry point for opening and decisions.
+  const narrativeBundleSource = createNarrativeBundleSourceFactory(env, logger, aiClient);
   const narrativeCoordinator = new BackgroundEnsureCoordinator({
     loadPending: async () => {
       const current = await repository.getCurrentGame();
@@ -259,19 +252,22 @@ export function createServerGameEntryPoints(
         key: `${current.record.gameId}:${generation.job.jobId}`,
       };
     },
-    run: (traceId?: string, origin: AiRetryOrigin = "normal") => generatePendingScene({
+    run: (traceId?: string, origin: AiRetryOrigin = "normal") => generatePendingNarrativeBundle({
       repository,
-      sceneSource,
-      worldEvolutionSource,
-      logger,
+      source: narrativeBundleSource,
       now,
-      textAuditRecorder: auditRecorder,
-      // Task 5：把 retry 来源写进 generatePendingScene 的审计关联 link。
-      // 首次普通/手动调用均为 mechanism=initial、attempt=0，仅 origin 区分来源。
+      logger,
       auditLink: {
         ...(traceId !== undefined ? { traceId } : {}),
         retry: { origin, mechanism: "initial", attempt: 0 },
       },
+    }).then((result) => {
+      if (result.ok) return;
+      // Best-effort: log failure but don't throw to avoid coordinator crash
+      logger?.warn("narrative_bundle_generation_failed", {
+        code: result.code,
+        ...(result.failureKind === undefined ? {} : { failureKind: result.failureKind }),
+      });
     }),
     logKey: "runtime_narrative_task",
     logger,
@@ -453,15 +449,14 @@ export function createServerGameEntryPoints(
         },
         {
           repository,
-          source,
+          source: narrativeBundleSource,
           now,
           aiEnabled,
           ...(traceId === undefined ? {} : { auditLink: { traceId } }),
         },
       );
       if (result.ok) {
-        // 开局存档已经包含首场景 pending job；立即排队，让序幕阅读时间覆盖生成延迟。
-        await narrativeCoordinator.ensure(traceId);
+        // Task 6: 开局存档已包含 ready 叙事 bundle，不再需要 ensure 排队。
         return {
           ok: true,
           revision: result.revision,
@@ -484,8 +479,6 @@ export function createServerGameEntryPoints(
         {
           repository,
           now,
-          worldEvolutionSource,
-          intentParserSource,
           auditLink: { gameId: String(current.record.gameId), traceId },
         },
       );

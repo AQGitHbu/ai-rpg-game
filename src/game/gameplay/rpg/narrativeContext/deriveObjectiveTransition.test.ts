@@ -3,12 +3,13 @@ import { describe, expect, it } from "vitest";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { asQuestId } from "@/game/domain/worldEntity";
 import {
-  baseWorld, quest, withQuest, withMet, LOC_1_ID, NPC_1_ID, NPC_2_ID, ITEM_SEAL_ID, ENEMY_WOLF_ID, withNextAct,
-  makeNpc, withAddedNpc,
+  baseWorld, quest, withQuest, withMet, LOC_1_ID, LOC_2_ID, NPC_1_ID, NPC_2_ID, ITEM_SEAL_ID, ENEMY_WOLF_ID, withNextAct,
+  makeNpc, withAddedNpc, withEntityProjection,
 } from "./narrativeContext.testutil";
+import type { LocationEntry, WorldState } from "@/game/domain/worldState";
 import { deriveObjectiveTransition, currentObjectiveOf } from "./deriveObjectiveTransition";
 import { objectiveLabel } from "./objectiveRules";
-import { asLocationId } from "@/game/domain/worldEntity";
+import { asItemId } from "@/game/domain/worldEntity";
 
 function story() {
   return createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(),
@@ -38,14 +39,16 @@ describe("deriveObjectiveTransition（Task 4）", () => {
 
   it("目标 NPC 不在当前地点时，交谈目标不再吞掉独立的前往步骤", () => {
     const initial = baseWorld();
-    const ws = withQuest(withAddedNpc({
-      ...initial,
-      locations: [...initial.locations, {
-        id: asLocationId("loc_2"), name: "断碑谷", description: "荒碑夹着一线山谷。", kind: "main",
-        connectedLocationIds: [LOC_1_ID], npcIds: [NPC_2_ID], availableItemIds: [], tags: [],
-      }],
-    }, { ...makeNpc(NPC_2_ID, "苏绾", "失踪镖队幸存者"), locationId: asLocationId("loc_2") }),
-      quest([{ kind: "talk_to_npc", npcId: NPC_2_ID }]));
+    // 断碑谷就是起始投影里的 loc_2：改写同一条地点条目，而不是再追加一个同 id 地点；
+    // 名册与 npc.locationId 必须同批出现，否则投影校验判定 membership mismatch。
+    const valley: LocationEntry = {
+      id: LOC_2_ID, name: "断碑谷", description: "荒碑夹着一线山谷。", kind: "main",
+      connectedLocationIds: [LOC_1_ID], npcIds: [NPC_2_ID], availableItemIds: [], tags: [],
+    };
+    const ws = withQuest(withEntityProjection(initial, {
+      locations: initial.locations.map((loc) => (loc.id === LOC_2_ID ? valley : loc)),
+      npcs: [...initial.npcs, { ...makeNpc(NPC_2_ID, "苏绾", "失踪镖队幸存者"), locationId: LOC_2_ID }],
+    }), quest([{ kind: "talk_to_npc", npcId: NPC_2_ID }]));
     expect(objectiveLabel(ws, ws.quests[0]?.objectives[0])).toBe("与苏绾交谈");
     expect(currentObjectiveOf(ws, story())?.label).toBe("与苏绾交谈");
   });
@@ -221,7 +224,17 @@ describe("deriveObjectiveTransition（Task 4）", () => {
   });
 
   it("lookup 未命中实体时标签安全降级（不炸、不含未知实体名）", () => {
-    const ws = withQuest(baseWorld(), quest([{ kind: "obtain_item", itemId: asQuestId("missing_x") as never }]));
-    expect(currentObjectiveOf(ws, story())?.label).toBe("获取某物");
+    // corruption case：目标指向未具象化的物品已经无法合法构造
+    // （unknown_quest_objective_ref 在组装期即拒），只能深拷贝 helper 返回值后篡改兼容投影，
+    // 复现旧存档里悬空的 obtain_item 目标。
+    const legal = withQuest(baseWorld(), quest([{ kind: "obtain_item", itemId: ITEM_SEAL_ID }]));
+    const corrupted: WorldState = structuredClone({
+      ...legal,
+      quests: legal.quests.map((entry) => ({
+        ...entry,
+        objectives: [{ kind: "obtain_item" as const, itemId: asItemId("missing_x") }],
+      })),
+    });
+    expect(currentObjectiveOf(corrupted, story())?.label).toBe("获取某物");
   });
 });
