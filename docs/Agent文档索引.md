@@ -12,8 +12,8 @@
 |---|---|---|---|
 | 共享基础设施 | `共同规范/共享模块开发流程.md` | `共同规范/共享模块目录.json` | 仅按触发条件读取 |
 | 项目脚手架 | `agent/项目脚手架.md` | — | 已建立；提供 `branch:finish` 合并后 worktree/分支收尾入口；SQLite 仓储测试使用每进程独占的 OS 临时目录，兼容 Windows/Git Bash 管道运行 |
-| 当前开发阶段 | `agent/当前开发阶段.md` | `agent/current-phase.json` | 「NPC 人格、知识与关系图」（Plan 3）待验收：已在 `codex/npc-personality-knowledge-relationship-graph` 实现 `WorldState v4` / `EntityStore v2`、NPC 五层组件、知识/关系规则、统一 speech authority 和跨玩法 continuity journey；机器状态为 `implemented / implemented`，尚未合并 main。明确排除 Plan 4 的 Event/Episode 与稳定 `eventId`、Plan 5 的 Living Outline/Arc、长篇分段存储、Identity Anchors 运行期更新与新增 provider 调用。Plan 见 `superpowers/plans/2026-08-31-npc-personality-knowledge-relationship-graph.md` |
-| NPC 人格、知识与关系图 | `agent/NPC人格知识与关系图.md` | `策划文档/AI生成RPG_MVP.md` §7 | 待验收：NPC identity/dynamicState/knowledge/relationships/history 作为唯一组件；对话、事实、赠物、明确 NPC 任务和共同战斗共享同一投影；四条台词引用审批路径共用 `NpcSpeechAuthority`；离线五幕连续性旅程已通过 |
+| 当前开发阶段 | `agent/当前开发阶段.md` | `agent/current-phase.json` | 「NPC 人格、知识与关系图」（Plan 3）已完成离线与 Chrome 真实 API 中篇验收，待合并 main：已在 `codex/npc-personality-knowledge-relationship-graph` 实现 `WorldState v4` / `EntityStore v2`、NPC 五层组件、知识/关系规则、统一 speech authority 和跨玩法 continuity journey；机器状态为 `implemented / implemented`。明确排除 Plan 4 的 Event/Episode 与稳定 `eventId`、Plan 5 的 Living Outline/Arc、长篇分段存储、Identity Anchors 运行期更新与新增 provider 调用。Plan 见 `superpowers/plans/2026-08-31-npc-personality-knowledge-relationship-graph.md` |
+| NPC 人格、知识与关系图 | `agent/NPC人格知识与关系图.md` | `策划文档/AI生成RPG_MVP.md` §7 | Plan 3 已完成真实 API 中篇验收：NPC identity/dynamicState/knowledge/relationships/history 作为唯一组件；对话、事实、赠物、明确 NPC 任务和共同战斗共享同一投影；四条台词引用审批路径共用 `NpcSpeechAuthority`；离线五幕连续性旅程已通过 |
 | 生产链边界 | `agent/当前开发阶段.md` | — | 只允许无版本后缀的生产命名；旧 route、旧 application/UI 链、兼容 facade、类型隔离和旧存档迁移均不存在。历史文档只作决策记录 |
 | MVP 核心闭环 | `agent/MVP核心闭环.md` | `策划文档/AI生成RPG_MVP.md` | 创建/恢复、选择驱动推进、探索、物品、战斗、分支和多结局可由显式 offline fixture 完整游玩；生产 AI 失败显示 stable failure 并手动重试 |
 | 行动裁决 | `agent/行动裁决.md` | `策划文档/AI生成RPG_MVP.md` | 固定 choiceToken 与 NPC 自定义输入统一进入 `performTurn`；Action union 只保留有规则实现的 action，已移除无推进作用的 rest，成功回合单次 StateCommit/CAS |
@@ -101,8 +101,14 @@
 - 实现事实变化时同步更新 agent 文档和本索引。
 - 新系统先从 `agent/template.md` 创建最小文档。
 
-## 2026-09-01 Plan 3 NPC 连续性图实现（待验收）
+## 2026-09-01 Plan 3 NPC 连续性图实现（已验收，待合并 main）
 
 - `agent/NPC人格知识与关系图.md` 是本阶段新增 canonical 实现事实入口；`agent/实体与组件世界状态.md`、`剧情连续性与结构化记忆.md`、`运行时AI导演与场景表演.md`、`世界动态具象化.md`、`行动裁决.md`、`探索与任务推进.md`、`战斗与结局.md` 已同步组件、规则、隐私、回滚和测试边界。
 - 当前分支已通过 Plan 3 的定向 journey、全量测试、类型检查、lint、边界检查和 build；阶段机器状态暂为 `implemented / implemented`，人读状态为“待验收”。
 - `docs/游戏设计原则.md` 的规则原则未改变；RPG 开发规范已补充 v4/v2 Entity Store 与 Plan 3 分层边界。未触发共享基础设施流程。
+
+## 2026-09-02 Plan 3 真实 API 中篇验收
+
+- 真实 Chrome 链路从新游戏完整走完五幕、战斗和终幕立场，结局「托付官府」在刷新后仍可恢复；审计 run 的最终提案均完成解析/审批。
+- 真机发现并修复：决策焦点上下文改用 canonical Entity Store + `NpcSpeechAuthority`，下一幕终点强制抵达 NPC 直接台词；可选 `newFact` 的坏调查方式不再阻塞必需 world delta；`needs_ending_pair` 不再丢失 provider `endingPair`。
+- 验收命令：`npm test`（173 个文件、2317 项）通过，`npm run typecheck`、`npm run lint` 与 `git diff --check` 通过。

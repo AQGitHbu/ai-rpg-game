@@ -790,7 +790,19 @@ describe("createNarrativeBundleSource", () => {
     const complete = vi.fn().mockResolvedValue({
       ok: true,
       content: JSON.stringify({
-        worldDelta: { endingPair: [] },
+        worldDelta: {
+          beatSummary: "旧案终有了结。",
+          newLocation: null,
+          newNpc: null,
+          newItem: null,
+          newEnemy: null,
+          newFact: null,
+          nextMainQuest: null,
+          endingPair: [
+            { themeKey: "trust", name: "共担真相", description: "与可信之人公开证据。" },
+            { themeKey: "doubt", name: "独行求证", description: "只凭自己的判断追查到底。" },
+          ],
+        },
         currentScene: {
           segments: [{ beatId: "closing", text: "旧案终有了结。" }],
           npcLine: null,
@@ -819,6 +831,73 @@ describe("createNarrativeBundleSource", () => {
     expect(result.proposal.terminal).toEqual({ kind: "ending" });
     expect(result.proposal.currentScene.choices).toEqual([]);
     expect(result.proposal.continuationScenes).toEqual([]);
+    expect(result.proposal.worldDelta).toMatchObject({ endingPair: [{ themeKey: "trust" }, { themeKey: "doubt" }] });
+  });
+
+  it("drops only a malformed optional investigation list while keeping a valid next-act delta", async () => {
+    const stepKey = `move:loc_dyn_${makeNextActStoryState().evolution.nextLocationOrdinal}`;
+    const complete = vi.fn().mockResolvedValue({
+      ok: true,
+      content: JSON.stringify({
+        worldDelta: {
+          beatSummary: "旧案线索指向枯柳驿。",
+          newLocation: { name: "枯柳驿", description: "荒废的驿站。", scale: "scene", placement: "world", connectFromLocationId: "小镇" },
+          newNpc: {
+            name: "老驼子", role: "守夜人", description: "警惕的守夜人。", locationRef: { kind: "new_location" },
+            anchors: { selfConcept: "守着旧案秘密的老人", values: ["守诺"], speechStyle: "低声而谨慎", capabilityBoundaries: ["只知道亲身见闻"], taboos: [] },
+            goals: [{ horizon: "short", description: "守住秘密", priority: 3, reason: "旧案仍不能落入旁人之手" }],
+            relationshipSeeds: [],
+          },
+          newItem: null,
+          newEnemy: null,
+          newFact: {
+            text: "驿站后墙留有不属于当地镖师的车辙。",
+            visibility: "public",
+            investigationApproaches: [
+              { approachId: "single_approach", label: "查看车辙方向", evidenceQuality: "clean", tensionDelta: 4 },
+            ],
+          },
+          nextMainQuest: { name: "枯柳驿线索", description: "前往荒废驿站。", objectiveText: "调查枯柳驿" },
+          endingPair: null,
+        },
+        currentScene: {
+          segments: [{ beatId: "closing", text: "线索指向枯柳驿。" }],
+          npcLine: { npcId: "npc_1", text: "去枯柳驿看看。", emotion: "warm", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [] },
+          objectiveLink: null,
+          choices: [],
+        },
+        continuationScenes: [{
+          stepKey,
+          scene: {
+            segments: [{ beatId: "arrival", text: "你抵达枯柳驿。" }],
+            npcLine: { npcId: "npc_dyn_1", text: "来者何人？", emotion: "guarded", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [] },
+            objectiveLink: null,
+            choices: [
+              { candidateId: `${stepKey}_choice_1`, label: "表明身份" },
+              { candidateId: `${stepKey}_choice_2`, label: "先行试探" },
+            ],
+          },
+        }],
+        terminal: { kind: "next_decision", target: { kind: "continuation_step", stepKey } },
+      }),
+    });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+
+    const result = await source.generate({
+      kind: "decision",
+      worldState: makeWorldState(),
+      storyState: makeNextActStoryState(),
+      job: makeJob(),
+    });
+
+    expect(result).toMatchObject({ ok: true, kind: "decision" });
+    if (!result.ok || result.kind !== "decision") return;
+    expect(result.proposal.worldDelta).toMatchObject({
+      newLocation: { name: "枯柳驿" },
+      newNpc: { name: "老驼子" },
+      nextMainQuest: { name: "枯柳驿线索" },
+      newFact: null,
+    });
   });
 
   it("丢弃投影之外的过度规划步骤，只保留服务端投影的到达步骤", async () => {

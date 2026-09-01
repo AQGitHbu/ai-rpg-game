@@ -493,12 +493,36 @@ export function createNarrativeBundleSource(
             context.job,
           );
           const normalizedRecord = asRecord(normalizedBundle);
-          const rawWorldDelta = context.storyState.evolution.status === "needs_ending_pair"
-            ? null
-            : normalizedRecord?.worldDelta;
+          // 终幕包仍需携带 provider 生成的 endingPair；normalizeDecisionBundleShape
+          // 只负责把终幕的 currentScene/continuationScenes/terminal 归一化，不能
+          // 在 needs_ending_pair 时静默丢弃 worldDelta，否则结局永远无法物化，
+          // endingAllowed 会与 worldState.endings 脱节并把界面卡在上一目标。
+          const rawWorldDelta = normalizedRecord?.worldDelta;
           const parsedWorldDelta = rawWorldDelta === null || rawWorldDelta === undefined
             ? null
-            : parseWorldDeltaProposal(rawWorldDelta, context.worldState.generation.gameType);
+            : (() => {
+                const parsed = parseWorldDeltaProposal(rawWorldDelta, context.worldState.generation.gameType);
+                if (parsed !== null) return parsed;
+
+                // newFact.investigationApproaches is an optional enrichment of a
+                // next-act bundle. Compatible providers occasionally emit a
+                // single approach even though the standalone fact contract
+                // requires exactly 2–3. Do not let that optional malformed
+                // enrichment block the required location/NPC/item/enemy/quest
+                // package; retry the same raw proposal with only newFact
+                // removed. All required fields still pass the strict parser.
+                const rawRecord = asRecord(rawWorldDelta);
+                if (rawRecord === null || rawRecord.newFact === null || rawRecord.newFact === undefined) return null;
+                const withoutFact = parseWorldDeltaProposal(
+                  { ...rawRecord, newFact: null },
+                  context.worldState.generation.gameType,
+                );
+                if (withoutFact !== null) {
+                  logger?.warn("narrative_bundle_invalid_optional_world_fact_dropped");
+                  return withoutFact;
+                }
+                return null;
+              })();
           if (rawWorldDelta !== null && rawWorldDelta !== undefined && parsedWorldDelta === null) {
             logger?.warn("narrative_bundle_invalid_world_delta");
             return failBundle("invalid_schema", "invalid_schema", "world_delta_invalid");

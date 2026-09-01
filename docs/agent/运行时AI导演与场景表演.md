@@ -95,6 +95,13 @@
 - 真机回合情境投影与内容闸门（2026-08-30 浏览器中篇回归收口）：`compileDecisionNarrativeContext` 除世界快照外还投影玩家当前位置、焦点 NPC、上一场景旁白/台词、固定选项原文（`selectedDialogue.label`）或自由输入、本回合强制节拍清单与逐字给出的 `objectiveLink` 期望值；下一幕回合另给出带真实 `stepKey`/candidateId/npcId 的抵达场景骨架，防止 provider 漏写终点两选项。`approveNarrativeBundle` 新增当前场景内容审批：强制节拍逐一覆盖（顺序不限）、禁止自创节拍、至多一个置尾 `atmosphere`；`player_utterance` 必须由焦点 NPC 台词应答；当前场景决策点或终点抵达步骤缺焦点/抵达 NPC 台词（`dialogue_focus_line_missing`）、`objectiveLink` 与权威转换不一致（`objective_link_mismatch`）均拒包并回传细分原因。纯舞台说明被重分类为旁白不算缺台词。节拍顺序不再作为拒因，避免消耗修复预算。
 - 对话收场引导（2026-08-30）：焦点 NPC 对话完成后的收场必须是一个引导下一动作的单选项（`handoffAcknowledgement`，本地关闭语义、不提交回合），禁止「知道了」式纯确认。read model 在收场场景（最后台词 NPC、`dialogueSession.completed`、无可提交选项）缺少显式致意语时，确定性地以权威当前目标投影「告辞，{下一目标}」兜底，保证任何存档都不再渲染「知道了」。该规则**不做成审批硬门**：真机验证 provider 会把该字段放到 JSON 根级（`unknown_keys`）或省略，硬门会耗尽 4 次尝试把玩家回合卡成 `provider_failed`；呈现层字段一律由确定性兜底保障，不阻塞主线。
 
+## 2026-09-02 Plan 3 真实 API 中篇验收
+
+- 决策上下文的焦点 NPC 已统一从 `EntityStore` 经过 `NpcSpeechAuthority` 投影，不再读取旧 `NpcMemory` 兼容数组；Prompt 只携带当前 speaker 可披露事实、近五条结构化交互和关系档位。
+- 下一幕 continuation 的终点步骤在 Prompt 中明确要求抵达 NPC 的第一人称直接开场台词，并在内容修复时展开 `invented_beat_id` 与事实调查方式数量等细分拒因，减少 provider 合法 JSON 但无法审批的回合。
+- `liveNarrativeBundleSource` 不再在 `needs_ending_pair` 时丢弃 `worldDelta`；终幕 provider 的 `endingPair` 会继续经过审批并物化。若可选 `newFact.investigationApproaches` 只有一条或字段非法，仅丢弃该可选事实并记录告警，地点/NPC/物品/敌人/任务等必需增量仍严格校验。
+- Chrome 真实 API（`ai-slg-game-model`）从新开中篇存档完成五幕、战斗与终幕立场选择，结局为「托付官府」；刷新后结局仍可恢复。对应审计 run 的最终 AI 提案均完成解析/审批，`npm test` 173 个文件/2317 项通过，`npm run typecheck` 与 `npm run lint` 通过。
+
 ## 强制节拍与目标链接
 
 - 每个 ready 场景以**分段旁白**呈现；每一段必须对应服务端下发的强制节拍 ID（`player_utterance` / `item_obtained` / `fact_discovered` / `quest_progress` / `quest_advanced` / `battle_started` / `battle_round` / `battle_resolved` / `entity_introduced`），数量 ≤8，可另附一个 `atmosphere` 段且必须置于最后。
