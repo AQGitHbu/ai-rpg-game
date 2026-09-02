@@ -4,7 +4,8 @@ import { createInitialWorldState, type EnemyEntry, type NpcEntry, type LocationE
 import { entitiesOfKind, projectEntityStore, type EntityCompatibilityProjection } from "@/game/domain/entity";
 import { createWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 import { asLocationId, asNpcId, asQuestId, asGenerationId, asItemId, asFactId, asEnemyId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
-import type { CommittedNarrativeEvent } from "@/game/domain/events";
+import type { NarrativeEventDraft, CommittedNarrativeEvent, NarrativeEventPayload } from "@/game/domain/events";
+import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
 import type { WorldState } from "@/game/domain/worldState";
 
 function withProjection(
@@ -50,7 +51,7 @@ describe("reconcileQuests", () => {
       }],
     });
     const result = reconcileQuests(ws, deps);
-    expect(result.drafts[0]?.type).toBe("quest_completed");
+    expect(result.drafts[0]?.payload.type).toBe("quest_completed");
     expect(result.nextWorldState.quests[0]?.status).toBe("completed");
   });
 
@@ -83,9 +84,9 @@ describe("reconcileQuests", () => {
         onSuccess: { kind: "closed" }, onFailure: { kind: "closed" },
         tags: [], kind: "side", status: "active",
       }],
-    }, [{ type: "item_obtained", itemId, locationId: asLocationId("loc_1"), occurredAt: "2026-01-01" }]);
+    }, [makeCommittedEvent({ type: "item_obtained", itemId, locationId: asLocationId("loc_1") } as unknown as NarrativeEventPayload)]);
     const result = reconcileQuests(ws, deps);
-    expect(result.drafts[0]?.type).toBe("quest_completed");
+    expect(result.drafts[0]?.payload.type).toBe("quest_completed");
     expect(result.nextWorldState.quests[0]?.status).toBe("completed");
   });
 
@@ -139,7 +140,7 @@ describe("reconcileQuests", () => {
       talkToNpcSession: { npcId: npc.id, completed: true },
       actionContext: { participantNpcId: npc.id, actionId: "neutral_action", turnNumber: 5 },
     });
-    expect(result.drafts.filter((event) => event.kind === "quest_completed")).toHaveLength(4);
+    expect(result.drafts.filter((event) => event.payload.type === "quest_completed")).toHaveLength(4);
     const npcRecord = entitiesOfKind(result.nextWorldState.entityStore, "npc").find((record) => record.core.id === npc.id);
     expect(npcRecord?.relationships.outgoing.flatMap((edge) => edge.evidence)).toEqual([]);
   });
@@ -187,9 +188,10 @@ describe("reconcileQuests", () => {
         relationship: { affinity: 0 }, emotion: "neutral", goals: [],
       },
     };
-    const replayEvidence: CommittedNarrativeEvent = {
-      type: "npc_dialogue_completed", npcId: npc.id, actionId, occurredAt: "2026-01-01",
-    };
+    const replayEvidence: CommittedNarrativeEvent = makeCommittedEvent(
+      { type: "npc_dialogue_completed", npcId: npc.id } as unknown as NarrativeEventPayload,
+      { actionId } as Partial<CommittedNarrativeEvent>,
+    );
     const ws = withProjection(withProjection(baseWs, { npcs: [npc] }), {
       quests: [{
         id: asQuestId("q_replay_ledger"), name: "npc quest", description: "t",

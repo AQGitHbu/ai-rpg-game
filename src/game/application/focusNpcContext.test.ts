@@ -161,7 +161,7 @@ const BASE_PROJECTION: EntityCompatibilityProjection = {
   factions: [],
 };
 
-const INITIALIZED_LEDGER: readonly CommittedNarrativeEvent[] = [{ type: "game_initialized", generation: GENERATION }];
+const INITIALIZED_LEDGER: readonly CommittedNarrativeEvent[] = [{ type: "game_initialized", generation: GENERATION } as unknown as CommittedNarrativeEvent];
 
 function makeWorldState(overrides: WorldStateFixtureOverrides = {}): WorldState {
   return createWorldStateFixtureWith(

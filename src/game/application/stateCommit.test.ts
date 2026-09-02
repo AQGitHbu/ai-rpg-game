@@ -6,7 +6,7 @@ import { asGameId } from "./server/persistence/gameRepository";
 import { createInitialWorldState, type LocationEntry } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { asLocationId, asNpcId, asGenerationId, asQuestId } from "@/game/domain/worldEntity";
-import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
+import { asNarrativeJobId, asTurnId, CommittedNarrativeEvent, type NarrativeEventPayload } from "@/game/domain/events";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
@@ -94,7 +94,7 @@ describe("commitState", () => {
       ...worldState,
       eventLedger: [
         ...worldState.eventLedger,
-        { type: "quest_completed", questId: asQuestId("q1"), occurredAt: "2026-01-02" },
+        { type: "quest_completed", questId: asQuestId("q1"), occurredAt: "2026-01-02" } as unknown as CommittedNarrativeEvent,
       ],
     };
 

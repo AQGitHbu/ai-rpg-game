@@ -14,7 +14,7 @@ import { createWorldStateFixtureWith, emptyProjection, type WorldStateFixtureOve
 import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { asLocationId, asGenerationId, asFactId, type GenerationMetadata } from "@/game/domain/worldEntity";
-import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
+import { asNarrativeJobId, asTurnId, CommittedNarrativeEvent } from "@/game/domain/events";
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import { createApprovedChoice } from "@/game/domain/approvedChoice";
@@ -777,7 +777,7 @@ describe("sqliteGameRepository：stale 后旧值保留", () => {
       // 每回合：世界累积一条事件、张力累进、turnNumber 递增，模拟真实增长
       nextWorld = {
         ...nextWorld,
-        eventLedger: [...nextWorld.eventLedger, { type: "player_intent_expressed", intent: `turn_${i}`, occurredAt: `2026-01-01T00:00:${String(i).padStart(2, "0")}Z` }],
+        eventLedger: [...nextWorld.eventLedger, { type: "player_intent_expressed", intent: `turn_${i}`, occurredAt: `2026-01-01T00:00:${String(i).padStart(2, "0")}Z` } as unknown as CommittedNarrativeEvent],
       };
       nextStory = { ...nextStory, turnNumber: i, tension: Math.max(0, 100 - i) };
       const r = await repo.applyState({

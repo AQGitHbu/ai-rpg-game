@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { CommittedNarrativeEvent, NarrativeEventPayload } from "@/game/domain/events";
 import { createWorldStateFixtureWith, emptyProjection, updateWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 import { WORLD_STATE_SCHEMA_VERSION } from "@/game/domain/worldState";
 import { asEnemyId, asGenerationId, asLocationId } from "@/game/domain/worldEntity";
@@ -226,11 +227,11 @@ describe("validatePersistableWorldState", () => {
     const valid = state();
     expect(validatePersistableWorldState({
       ...valid,
-      eventLedger: [{ type: "invented_event", occurredAt: "now" }],
+      eventLedger: [{ type: "invented_event", occurredAt: "now" } as unknown as CommittedNarrativeEvent],
     })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
     expect(validatePersistableWorldState({
       ...valid,
-      eventLedger: [{ type: "location_visited", locationId: "loc", occurredAt: "now", payload: "extra" }],
+      eventLedger: [{ type: "location_visited", locationId: "loc", occurredAt: "now", payload: "extra" } as unknown as CommittedNarrativeEvent],
     })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
     expect(validatePersistableWorldState({
       ...valid,
@@ -243,9 +244,9 @@ describe("validatePersistableWorldState", () => {
     const result = validatePersistableWorldState({
       ...valid,
       eventLedger: [
-        { type: "npc_dialogue_completed", npcId: "npc_1", occurredAt: "now" },
-        { type: "npc_dialogue_completed", npcId: "npc_1", actionId: "dialogue_action", occurredAt: "now" },
-        { type: "item_given", itemId: "item_1", npcId: "npc_1", locationId: "loc", actionId: "give_action", occurredAt: "now" },
+        { type: "npc_dialogue_completed", npcId: "npc_1", occurredAt: "now" } as unknown as CommittedNarrativeEvent,
+        { type: "npc_dialogue_completed", npcId: "npc_1", actionId: "dialogue_action", occurredAt: "now" } as unknown as CommittedNarrativeEvent,
+        { type: "item_given", itemId: "item_1", npcId: "npc_1", locationId: "loc", actionId: "give_action", occurredAt: "now" } as unknown as CommittedNarrativeEvent,
       ],
     });
     expect(result).toMatchObject({ ok: true });
@@ -255,7 +256,7 @@ describe("validatePersistableWorldState", () => {
     const valid = state();
     expect(validatePersistableWorldState({
       ...valid,
-      eventLedger: [{ type: "npc_dialogue_completed", npcId: "npc_1", actionId: 42, occurredAt: "now" }],
+      eventLedger: [{ type: "npc_dialogue_completed", npcId: "npc_1", actionId: 42, occurredAt: "now" } as unknown as CommittedNarrativeEvent],
     })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
   });
 });

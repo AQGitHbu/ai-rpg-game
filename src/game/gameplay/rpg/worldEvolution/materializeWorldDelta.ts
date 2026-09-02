@@ -2,8 +2,11 @@ import type { ApprovedWorldDeltaCore } from "./approveWorldDelta";
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { EvolutionNeed, ApprovedWorldDelta } from "@/game/domain/worldDelta";
-import type { BlueprintExpandedEvent } from "@/game/domain/events";
-import type { LocationId, NpcId, ItemId } from "@/game/domain/worldEntity";
+import type { BlueprintExpandedPayload, NarrativeEventDraft, TurnId } from "@/game/domain/events";
+import { commitEventDrafts, type EventCommitSource } from "@/game/domain/eventLedger";
+import { asTurnId } from "@/game/domain/events";
+import type { LocationId, NpcId, ItemId, PlayerEntityId } from "@/game/domain/worldEntity";
+import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import type { TownRuntimeState } from "@/game/domain/townState";
 import { createTownRuntime, townSeedFor, bindNpcToTownSlot } from "@/game/gameplay/rpg/town";
 import {
@@ -131,16 +134,27 @@ export function materializeWorldDelta(input: MaterializeWorldDeltaInput): Approv
     }),
   ];
 
-  const event: BlueprintExpandedEvent = {
-    type: "blueprint_expanded",
-    newLocationIds: approved.mintedLocationIds,
-    newNpcIds: approved.mintedNpcIds,
-    newFactIds: approved.mintedFactIds,
-    newItemIds: approved.mintedItemIds,
-    newEnemyIds: approved.mintedEnemyIds,
-    newQuestIds: approved.mintedQuestIds,
-    newEndingIds: approved.mintedEndingIds,
-    occurredAt: now(),
+  const draft: NarrativeEventDraft<BlueprintExpandedPayload> = {
+    eventKey: `blueprint_expanded:${approved.mintedLocationIds.join(',')}`,
+    episodeKey: "normal",
+    actorIds: [PLAYER_ENTITY_ID],
+    targetIds: [PLAYER_ENTITY_ID],
+    locationId: ws.currentLocationId,
+    causeKeys: [],
+    factIds: approved.mintedFactIds ?? [],
+    questIds: approved.mintedQuestIds ?? [],
+    outcome: "success",
+    salience: 50,
+    payload: {
+      type: "blueprint_expanded",
+      newLocationIds: approved.mintedLocationIds,
+      newNpcIds: approved.mintedNpcIds,
+      newFactIds: approved.mintedFactIds,
+      newItemIds: approved.mintedItemIds,
+      newEnemyIds: approved.mintedEnemyIds,
+      newQuestIds: approved.mintedQuestIds,
+      newEndingIds: approved.mintedEndingIds,
+    },
   };
 
   // 先用唯一 projection compiler 在局部构造所需 EntityRecord；再只将新 records、
@@ -173,10 +187,23 @@ export function materializeWorldDelta(input: MaterializeWorldDeltaInput): Approv
   }
   const applied = applyEntityMutations(ws, mutations);
   if (!applied.ok) throw new EntityMutationInvariantError(applied);
+  // world expansion 事件由 commitEventDrafts 铸造 ID 并校验引用后再追加。
+  const commitSource: EventCommitSource = {
+    turnId: asTurnId(`world-expansion:${ss.turnNumber}:${approved.mintedLocationIds.join(',')}`) as TurnId,
+    turnNumber: ss.turnNumber,
+    committedAt: now(),
+  };
+  const commitResult = commitEventDrafts({
+    ledger: applied.worldState.eventLedger,
+    drafts: [draft],
+    source: commitSource,
+    entityStore: applied.worldState.entityStore,
+  });
+  if (!commitResult.ok) throw new Error("blueprint_expanded commit failed");
   const previewWorldState: WorldState = {
     ...applied.worldState,
     endings: [...applied.worldState.endings, ...approved.newEndings],
-    eventLedger: [...applied.worldState.eventLedger, event],
+    eventLedger: commitResult.ledger,
   };
 
   const previewStoryState: StoryState = {

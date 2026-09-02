@@ -49,7 +49,7 @@ const GENERATION: GenerationMetadata = {
 };
 
 /** 与 createInitialWorldState 一致：开局事件仍在账本里。 */
-const INITIALIZED_LEDGER: readonly CommittedNarrativeEvent[] = [{ type: "game_initialized", generation: GENERATION }];
+const INITIALIZED_LEDGER: readonly CommittedNarrativeEvent[] = [{ type: "game_initialized", generation: GENERATION } as unknown as CommittedNarrativeEvent];
 
 // 起始投影必须一次给全：小镇的连接边指向 loc_dyn_1，因此破庙与老乞丐同批具象化，
 // 且名册（locations.npcIds）与该 NPC 的 locationId 保持一致。

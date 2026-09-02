@@ -70,7 +70,7 @@ const BASE_PROJECTION: EntityCompatibilityProjection = {
   factions: [],
 };
 
-const INITIALIZED_LEDGER: readonly CommittedNarrativeEvent[] = [{ type: "game_initialized", generation: GENERATION }];
+const INITIALIZED_LEDGER: readonly CommittedNarrativeEvent[] = [{ type: "game_initialized", generation: GENERATION } as unknown as CommittedNarrativeEvent];
 
 function makeWorld(overrides: WorldStateFixtureOverrides = {}): WorldState {
   return createWorldStateFixtureWith(
@@ -440,7 +440,7 @@ describe("buildSceneGenerationContext", () => {
       quests: [quest],
       eventLedger: [
         ...INITIALIZED_LEDGER,
-        { type: "fact_discovered" as const, factId: fact.factId, occurredAt: "2026-01-02", approachId: "search", evidenceQuality: "noisy" as const, tensionDelta: 12 },
+        { type: "fact_discovered" as const, factId: fact.factId, occurredAt: "2026-01-02", approachId: "search", evidenceQuality: "noisy" as const, tensionDelta: 12  as unknown as CommittedNarrativeEvent} as unknown as CommittedNarrativeEvent,
       ],
     });
     const job = makeJob({

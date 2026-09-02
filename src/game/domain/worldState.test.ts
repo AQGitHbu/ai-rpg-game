@@ -64,12 +64,12 @@ describe("WorldState", () => {
 
   it("createInitialWorldState 编译 v4 世界与 store v2，兼容数组只是投影结果", () => {
     const ws = createInitialWorldState(baseInput);
-    expect(ws.version).toBe(4);
+    expect(ws.version).toBe(5);
     expect(ws.entityStore.version).toBe(2);
     expect(ws.player.name).toBe("测试侠客");
     expect(ws.currentLocationId).toBe(asLocationId("loc_1"));
     expect(ws.locations).toHaveLength(1); // 起始地点必须在 locations 内，currentLocationId 不指向不存在的地点
-    expect(ws.eventLedger[0]?.type).toBe("game_initialized");
+    expect(ws.eventLedger[0]?.kind).toBe("game_initialized");
     // 开局 store 只有玩家 + 起始地点两条 record。
     expect(ws.entityStore.records).toHaveLength(2);
     expect(entitiesOfKind(ws.entityStore, "location").map((record) => record.core.id)).toEqual([asLocationId("loc_1")]);

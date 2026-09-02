@@ -25,7 +25,7 @@ function makeModernWorld(): WorldState {
 
 describe("modern turn-based battle resolver", () => {
   it("starts a multi-enemy encounter with a persisted turn queue", () => {
-    const result = startBattle(makeModernWorld(), asEnemyId("enemy_b"), deps);
+    const result = startBattle(makeModernWorld(), asEnemyId("enemy_b"));
     expect(result.ok).toBe(true);
     if (!result.ok || result.nextWorldState.battle.status !== "active") return;
     expect(result.nextWorldState.battle.enemyIds).toEqual([asEnemyId("enemy_a"), asEnemyId("enemy_b")]);
@@ -36,18 +36,18 @@ describe("modern turn-based battle resolver", () => {
   });
 
   it("resolves one player action and the queued enemy actions as one atomic command", () => {
-    const started = startBattle(makeModernWorld(), asEnemyId("enemy_b"), deps);
+    const started = startBattle(makeModernWorld(), asEnemyId("enemy_b"));
     if (!started.ok || started.nextWorldState.battle.status !== "active") throw new Error("setup failed");
-    const result = battleAction(started.nextWorldState, "attack", deps);
+    const result = battleAction(started.nextWorldState, "attack");
     expect(result.ok).toBe(true);
     if (!result.ok || result.nextWorldState.battle.status !== "active") return;
-    expect(result.drafts.some((event) => event.kind === "battle_round_resolved")).toBe(true);
+    expect(result.drafts.some((event) => event.payload.type === "battle_round_resolved")).toBe(true);
     expect(result.nextWorldState.battle.combatants?.find((unit) => unit.combatantId === "ally:protagonist")?.hp).toBeLessThan(100);
     expect(result.nextWorldState.battle.round).toBe(2);
   });
 
   it("keeps a downed enemy defeated when the player withdraws from the remaining encounter", () => {
-    const started = startBattle(makeModernWorld(), asEnemyId("enemy_b"), deps);
+    const started = startBattle(makeModernWorld(), asEnemyId("enemy_b"));
     if (!started.ok || started.nextWorldState.battle.status !== "active") throw new Error("setup failed");
     const battle = started.nextWorldState.battle;
     const weakened: WorldState = {
@@ -57,17 +57,17 @@ describe("modern turn-based battle resolver", () => {
         combatants: battle.combatants!.map((unit) => unit.combatantId === "enemy:enemy_a" ? { ...unit, hp: 14 } : unit),
       },
     };
-    const hit = battleAction(weakened, "attack", deps);
+    const hit = battleAction(weakened, "attack");
     if (!hit.ok || hit.nextWorldState.battle.status !== "active") throw new Error("expected remaining enemy");
-    const withdrawn = battleAction(hit.nextWorldState, "flee", deps);
+    const withdrawn = battleAction(hit.nextWorldState, "flee");
     expect(withdrawn.ok).toBe(true);
     if (!withdrawn.ok) return;
     expect(withdrawn.nextWorldState.defeatedEnemyIds).toContain(asEnemyId("enemy_a"));
-    expect(withdrawn.events.filter((event) => event.kind === "enemy_defeated").map((event) => event.enemyId)).toEqual([asEnemyId("enemy_a")]);
+    expect(withdrawn.drafts.filter((event) => event.payload.type === "enemy_defeated").map((event) => (event.payload as { enemyId: string }).enemyId)).toEqual([asEnemyId("enemy_a")]);
   });
 
   it("batches all encounter IDs while emitting one defeated event per enemy", () => {
-    const started = startBattle(makeModernWorld(), asEnemyId("enemy_b"), deps);
+    const started = startBattle(makeModernWorld(), asEnemyId("enemy_b"));
     if (!started.ok || started.nextWorldState.battle.status !== "active") throw new Error("setup failed");
     const current: WorldState = {
       ...started.nextWorldState,
@@ -76,22 +76,22 @@ describe("modern turn-based battle resolver", () => {
         combatants: started.nextWorldState.battle.combatants!.map((unit) => unit.side === "enemies" ? { ...unit, hp: 14 } : unit),
       },
     };
-    const first = battleAction(current, "attack", deps);
+    const first = battleAction(current, "attack");
     if (!first.ok || first.nextWorldState.battle.status !== "active") throw new Error("expected second turn");
-    const second = battleAction(first.nextWorldState, "attack", deps);
+    const second = battleAction(first.nextWorldState, "attack");
     expect(second.ok).toBe(true);
     if (!second.ok) return;
     expect(second.nextWorldState.battle.status).toBe("resolved");
     expect(second.nextWorldState.defeatedEnemyIds).toEqual([asEnemyId("enemy_a"), asEnemyId("enemy_b")]);
-    const resolved = second.events.find((event) => event.kind === "battle_resolved");
-    expect(resolved?.type === "battle_resolved" ? resolved.enemyIds : undefined).toEqual([asEnemyId("enemy_a"), asEnemyId("enemy_b")]);
-    expect(second.events.filter((event) => event.kind === "enemy_defeated")).toHaveLength(2);
+    const resolved = second.drafts.find((event) => event.payload.type === "battle_resolved");
+    expect(resolved?.payload.type === "battle_resolved" ? resolved.payload.enemyIds : undefined).toEqual([asEnemyId("enemy_a"), asEnemyId("enemy_b")]);
+    expect(second.drafts.filter((event) => event.payload.type === "enemy_defeated")).toHaveLength(2);
   });
 
   it("rejects a command bound to a non-current actor without changing the battle", () => {
-    const started = startBattle(makeModernWorld(), asEnemyId("enemy_b"), deps);
+    const started = startBattle(makeModernWorld(), asEnemyId("enemy_b"));
     if (!started.ok || started.nextWorldState.battle.status !== "active") throw new Error("setup failed");
-    const result = battleAction(started.nextWorldState, "attack", deps, {
+    const result = battleAction(started.nextWorldState, "attack", {
       actorId: "ally:forged" as never,
       targetId: "enemy:enemy_b" as never,
     });

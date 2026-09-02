@@ -36,7 +36,7 @@ const GENERATION: GenerationMetadata = {
 };
 
 /** 与 createInitialWorldState 一致：开局事件仍在账本里。 */
-const INITIALIZED_LEDGER: readonly CommittedNarrativeEvent[] = [{ type: "game_initialized", generation: GENERATION }];
+const INITIALIZED_LEDGER: readonly CommittedNarrativeEvent[] = [{ type: "game_initialized", generation: GENERATION } as unknown as CommittedNarrativeEvent];
 
 // 起始投影一次给全：小镇的连接边指向镇外破庙，因此破庙同批具象化。
 // 名册留空——本夹具不具象化任何 NPC；说台词的老乞丐只存在于 prepared step 的 scene 里。
@@ -163,7 +163,7 @@ function moveEvent(): CommittedNarrativeEvent {
     type: "location_visited",
     locationId: locTemple,
     occurredAt: "2026-08-24T00:00:00.000Z",
-  };
+  } as unknown as CommittedNarrativeEvent;
 }
 
 function consume(

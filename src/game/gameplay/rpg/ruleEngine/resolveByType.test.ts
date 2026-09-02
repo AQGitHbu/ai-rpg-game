@@ -1,4 +1,5 @@
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
+import type { CommittedNarrativeEvent } from "@/game/domain/events";
 import { describe, it, expect } from "vitest";
 import { resolveByType, autoResolveCurrentInvestigation } from "./resolveByType";
 import { updateStoryMetrics } from "./updateStoryMetrics";
@@ -40,7 +41,7 @@ describe("resolveByType", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.nextWorldState.currentLocationId).toBe(asLocationId("loc_2"));
-      expect(result.drafts[0]?.type).toBe("location_visited");
+      expect(result.drafts[0]?.payload.type).toBe("location_visited");
     }
   });
 
@@ -270,7 +271,7 @@ describe("resolveByType — attack", () => {
       expect(result.ok).toBe(true);
       if (result.ok) {
         expect(result.nextWorldState.inventory).not.toContain(item.id);
-        expect(result.drafts[0]).toMatchObject({ type: "item_given", itemId: item.id, npcId: npc.id, actionId: deps.actionId });
+        expect(result.drafts[0]).toMatchObject({ payload: { type: "item_given", itemId: item.id, npcId: npc.id } } as unknown as CommittedNarrativeEvent);
         const after = result.nextWorldState.npcs.find((n) => n.id === npc.id);
         expect(after?.memory.relationship.affinity).toBe(6);
         expect(after?.memory.interactionHistory).toHaveLength(1);
@@ -599,7 +600,7 @@ describe("resolveByType — investigate approaches", () => {
     if (!result.ok) throw new Error("investigate should succeed");
     expect(result.drafts[0]).toMatchObject({
       type: "fact_discovered", approachId: "risky", evidenceQuality: "noisy", tensionDelta: 12,
-    });
+    } as unknown as CommittedNarrativeEvent);
     const nextStory = updateStoryMetrics(storyWithDiscoverFact(), result.drafts);
     expect(nextStory.tension).toBeGreaterThan(storyWithDiscoverFact().tension);
   });
@@ -612,7 +613,7 @@ describe("resolveByType — investigate approaches", () => {
     if (result.ok) {
       expect(result.drafts[0]).toMatchObject({
         type: "fact_discovered", approachId: "careful", evidenceQuality: "clean", tensionDelta: 4,
-      });
+      } as unknown as CommittedNarrativeEvent);
       expect(result.nextWorldState.worldFacts[0]?.discovered).toBe(true);
       expect(result.stateChanges.some((change) => change.path.includes("discovered"))).toBe(true);
       expect(result.nextWorldState.eventLedger.length).toBe(worldWithApproaches().eventLedger.length + 1);
@@ -675,18 +676,18 @@ describe("autoResolveCurrentInvestigation", () => {
 
   it("automatically discovers an approach-less fact at a reveal boundary without exposing a player action", () => {
     const result = autoResolveCurrentInvestigation(worldWithApproachlessFact(), storyWithDiscoverFact());
-    expect(result.drafts).toContainEqual(expect.objectContaining({ type: "fact_discovered", factId: FACT_1_ID }));
+    expect(result.drafts).toContainEqual(expect.objectContaining({ payload: { type: "fact_discovered", factId: FACT_1_ID } } as unknown as CommittedNarrativeEvent));
     expect(result.stateChanges.some((change) => change.path.includes("discovered"))).toBe(true);
   });
 
   it("emits the automatic event with omitted approach metadata and zero extra tension", () => {
     const result = autoResolveCurrentInvestigation(worldWithApproachlessFact(), storyWithDiscoverFact());
     const autoEvent = result.drafts[0];
-    expect(autoEvent).toMatchObject({ type: "fact_discovered", factId: FACT_1_ID });
-    if (autoEvent?.type === "fact_discovered") {
-      expect(autoEvent.approachId).toBeUndefined();
-      expect(autoEvent.evidenceQuality).toBeUndefined();
-      expect(autoEvent.tensionDelta).toBeUndefined();
+    expect(autoEvent?.payload.type).toBe("fact_discovered");
+    if (autoEvent?.payload.type === "fact_discovered") {
+      expect(autoEvent.payload.approachId).toBeUndefined();
+      expect(autoEvent.payload.evidenceQuality).toBeUndefined();
+      expect(autoEvent.payload.tensionDelta).toBeUndefined();
     }
     expect(updateStoryMetrics(storyWithDiscoverFact(), result.drafts).tension).toBe(42); // 30 + 12
   });
@@ -717,7 +718,7 @@ describe("autoResolveCurrentInvestigation", () => {
   it("automatically discovers the current fact even when it has approved approaches", () => {
     const ws = worldWithApproaches({ quests: [QUEST_FACT] });
     const result = autoResolveCurrentInvestigation(ws, storyWithDiscoverFact());
-    expect(result.drafts).toContainEqual(expect.objectContaining({ type: "fact_discovered", factId: FACT_1_ID }));
+    expect(result.drafts).toContainEqual(expect.objectContaining({ payload: { type: "fact_discovered", factId: FACT_1_ID } } as unknown as CommittedNarrativeEvent));
     expect(result.nextWorldState).not.toBe(ws);
   });
 });

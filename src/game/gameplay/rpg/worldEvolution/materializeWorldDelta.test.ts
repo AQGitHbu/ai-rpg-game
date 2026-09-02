@@ -65,7 +65,7 @@ function makeWorld(overrides: WorldStateFixtureOverrides = {}): WorldState {
     generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia",
   };
   // 与 createInitialWorldState 一致：账本首条为 game_initialized。
-  const eventLedger: readonly CommittedNarrativeEvent[] = [{ type: "game_initialized", generation }];
+  const eventLedger: readonly CommittedNarrativeEvent[] = [{ type: "game_initialized", generation } as unknown as CommittedNarrativeEvent];
   return createWorldStateFixtureWith({ generation, base: BASE_PROJECTION }, { eventLedger, ...overrides });
 }
 
@@ -174,9 +174,10 @@ describe("materializeWorldDelta", () => {
     const event = delta.previewWorldState.eventLedger.at(-1)!;
     expect(event.kind).toBe("blueprint_expanded");
     if (event.kind === "blueprint_expanded") {
-      expect(event.newNpcIds).toEqual(["npc_dyn_1"]);
-      expect(event.newLocationIds).toEqual(["loc_dyn_1"]);
-      expect(event.newQuestIds).toEqual(["quest_dyn_1"]);
+      const bp = event.payload as unknown as { newNpcIds: string[]; newLocationIds: string[]; newQuestIds: string[] };
+      expect(bp.newNpcIds).toEqual(["npc_dyn_1"]);
+      expect(bp.newLocationIds).toEqual(["loc_dyn_1"]);
+      expect(bp.newQuestIds).toEqual(["quest_dyn_1"]);
     }
     // 物化新地点的幕，目标链首必为 visit_location（可完成性不变约束），因此新地点
     // 随装配立即释放；NPC 挂载到其地点索引。
@@ -255,7 +256,7 @@ describe("materializeWorldDelta", () => {
     expect(delta.previewStoryState.evolution.status).toBe("stable");
     const event = delta.previewWorldState.eventLedger.at(-1)!;
     if (event.kind === "blueprint_expanded") {
-      expect(event.newEndingIds).toHaveLength(2);
+      expect((event.payload as unknown as { newEndingIds: string[] }).newEndingIds).toHaveLength(2);
     }
   });
 

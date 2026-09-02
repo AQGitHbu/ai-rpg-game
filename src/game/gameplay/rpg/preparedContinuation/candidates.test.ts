@@ -49,7 +49,7 @@ const GENERATION: GenerationMetadata = {
 };
 
 /** 与 createInitialWorldState 一致：开局事件仍在账本里。 */
-const INITIALIZED_LEDGER: readonly CommittedNarrativeEvent[] = [{ type: "game_initialized", generation: GENERATION }];
+const INITIALIZED_LEDGER: readonly CommittedNarrativeEvent[] = [{ type: "game_initialized", generation: GENERATION } as unknown as CommittedNarrativeEvent];
 
 // 起始投影一次给全：小镇的连接边指向镇外破庙，因此破庙、老乞丐名册与野狼同批具象化。
 const BASE_PROJECTION: EntityCompatibilityProjection = {
@@ -181,7 +181,7 @@ describe("prepared continuation candidate projection", () => {
       },
       choiceCandidates: [
         { candidateId: "prepared_1_choice_1", action: { type: "talk", npcId: npcBeggar, dialogueAct: "support" } },
-        { candidateId: "prepared_1_choice_2", action: { type: "talk", npcId: npcBeggar, dialogueAct: "challenge" } },
+        { candidateId: "prepared_1_choice_2", action: { type: "talk", npcId: npcBeggar, dialogueAct: "challenge"  as unknown as CommittedNarrativeEvent} },
       ],
     });
     expect(move?.nextStepIds).toEqual([]);

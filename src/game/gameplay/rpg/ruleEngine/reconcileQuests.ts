@@ -29,11 +29,16 @@ export function npcUsedAction(ws: WorldState, npcId: string, actionId: string): 
   const npcMemoryUsed = npc?.history.interactions.some((entry) => entry.actionId === actionId)
     || npc?.relationships.outgoing.some((edge) => edge.evidence.some((evidence) => evidence.actionId === actionId))
     || false;
-  const actionEventUsed = ws.eventLedger.some((event) => (
-    (event.type === "npc_dialogue_completed" || event.type === "item_given")
-    && String(event.npcId) === npcId
-    && event.actionId === actionId
-  ));
+  const actionEventUsed = ws.eventLedger.some((event) => {
+    if (event.actionId !== actionId) return false;
+    if (event.kind === "npc_dialogue_completed" && event.payload.type === "npc_dialogue_completed") {
+      return String(event.payload.npcId) === npcId;
+    }
+    if (event.kind === "item_given" && event.payload.type === "item_given") {
+      return String(event.payload.npcId) === npcId;
+    }
+    return false;
+  });
   return npcMemoryUsed || actionEventUsed;
 }
 

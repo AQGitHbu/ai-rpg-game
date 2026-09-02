@@ -27,8 +27,8 @@ describe("resolveEnding", () => {
       endings: [{ id: asEndingId("e1"), name: "end", description: "t", requirements: [{ kind: "quest_completed", questId: asQuestId("q1") }] }],
     };
     const ss = { ...baseSs, endingAllowed: true };
-    const result = resolveEnding(ws, ss, deps);
-    expect(result.drafts[0]?.type).toBe("ending_reached");
+    const result = resolveEnding(ws, ss);
+    expect(result.drafts[0]?.payload.type).toBe("ending_reached");
     expect(result.nextWorldState.ending?.endingId).toBe(asEndingId("e1"));
   });
 
@@ -39,7 +39,7 @@ describe("resolveEnding", () => {
       endings: [{ id: asEndingId("e1"), name: "end", description: "t", requirements: [{ kind: "quest_completed", questId: asQuestId("q1") }] }],
     };
     const ss = { ...baseSs, endingAllowed: false };
-    const result = resolveEnding(ws, ss, deps);
+    const result = resolveEnding(ws, ss);
     expect(result.drafts).toHaveLength(0);
   });
 
@@ -60,7 +60,7 @@ describe("resolveEnding", () => {
         { id: asEndingId("e_doubt"), name: "doubt", description: "t", requirements: [{ kind: "npc_affinity_at_most", npcId: keyNpc.id, value: 5 }] },
       ],
     };
-    const result = resolveEnding(ws, { ...baseSs, endingAllowed: true }, deps);
+    const result = resolveEnding(ws, { ...baseSs, endingAllowed: true });
     expect(result.nextWorldState.ending?.endingId).toBe(asEndingId("e_doubt"));
   });
 
@@ -71,8 +71,8 @@ describe("resolveEnding", () => {
     ];
     const storyState = { ...baseSs, endingAllowed: true };
 
-    const forward = resolveEnding({ ...baseWs, endings }, storyState, deps);
-    const reversed = resolveEnding({ ...baseWs, endings: [...endings].reverse() }, storyState, deps);
+    const forward = resolveEnding({ ...baseWs, endings }, storyState);
+    const reversed = resolveEnding({ ...baseWs, endings: [...endings].reverse() }, storyState);
 
     expect(forward.nextWorldState.ending?.endingId).toBe(asEndingId("ending_a"));
     expect(reversed.nextWorldState.ending).toEqual(forward.nextWorldState.ending);
@@ -96,7 +96,7 @@ describe("resolveEnding", () => {
         { id: asEndingId("ending_z"), name: "trust", description: "t", requirements: [{ kind: "npc_affinity_at_least", npcId: keyNpc.id, value: 10 }] },
       ],
     };
-    const result = resolveEnding(ws, { ...baseSs, endingAllowed: true }, deps);
+    const result = resolveEnding(ws, { ...baseSs, endingAllowed: true });
     expect(result.nextWorldState.ending?.endingId).toBe(asEndingId("ending_z"));
   });
 
@@ -130,7 +130,7 @@ describe("resolveEnding", () => {
         { id: asEndingId("ending_z"), name: "trust", description: "t", requirements: [{ kind: "npc_affinity_at_least", npcId: openingNpc.id, value: 10 }] },
       ],
     };
-    const result = resolveEnding(ws, { ...baseSs, endingAllowed: true }, deps);
+    const result = resolveEnding(ws, { ...baseSs, endingAllowed: true });
     expect(result.nextWorldState.ending?.endingId).toBe(asEndingId("ending_z"));
   });
 
@@ -152,8 +152,8 @@ describe("resolveEnding", () => {
       ],
     };
     // 亲和度 8：既不满足 trust(≥10) 也不满足 doubt(≤5)——此时按 id 确定性回退。
-    const forward = resolveEnding(ws, { ...baseSs, endingAllowed: true }, deps);
-    const reversed = resolveEnding({ ...ws, endings: [...ws.endings].reverse() }, { ...baseSs, endingAllowed: true }, deps);
+    const forward = resolveEnding(ws, { ...baseSs, endingAllowed: true });
+    const reversed = resolveEnding({ ...ws, endings: [...ws.endings].reverse() }, { ...baseSs, endingAllowed: true });
     expect(forward.nextWorldState.ending?.endingId).toBe(asEndingId("ending_a"));
     expect(reversed.nextWorldState.ending).toEqual(forward.nextWorldState.ending);
   });

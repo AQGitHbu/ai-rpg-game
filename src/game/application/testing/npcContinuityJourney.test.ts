@@ -24,7 +24,7 @@ import type { ItemEntry, WorldState } from "@/game/domain/worldState";
 import type { GameRecord } from "@/game/application/server/persistence/gameRepository";
 import { isAllowedRelationshipStageTransition } from "@/game/gameplay/rpg/npcMemory";
 import { performBattleRound } from "@/game/application/performBattleRound";
-import { asNarrativeJobId } from "@/game/domain/events";
+import { asNarrativeJobId, CommittedNarrativeEvent } from "@/game/domain/events";
 import { createPreparedContinuationState, type PreparedContinuationState } from "@/game/domain/preparedContinuation";
 import type { FactChange } from "@/game/domain/resolvedEvent";
 
@@ -462,7 +462,7 @@ describe("NPC continuity long-form journey", () => {
         if (returned.ok) {
           const returnedNpc = npcById(returned.nextWorldState, dynamicNpcId);
           const returnedEdge = playerEdge(returnedNpc);
-          expect(returned.drafts).toContainEqual(expect.objectContaining({ type: "item_given", itemId: returnGift.id }));
+          expect(returned.drafts).toContainEqual(expect.objectContaining({ type: "item_given", itemId: returnGift.id } as unknown as CommittedNarrativeEvent));
           expect(returnedEdge.evidence.at(-1)).toMatchObject({ signal: "gave_item", actionId: giftDeps.actionId });
           expect(returnedEdge.commitments).toEqual([expect.objectContaining({
             kind: "debt",

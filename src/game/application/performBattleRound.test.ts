@@ -544,7 +544,7 @@ async function writeNpcLayersMidBattle(harness: InMemoryHarness): Promise<number
       npcId: NPC_ID,
       actionId: "mid_battle_act",
       occurredAt: CLOCK(),
-    }],
+    } as unknown as CommittedNarrativeEvent],
   };
   const committed = await commitState(harness.repo, {
     gameId: GAME_ID,

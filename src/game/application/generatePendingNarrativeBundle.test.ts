@@ -7,7 +7,7 @@ import type { StoryState } from "@/game/domain/storyState";
 import type { GenerationMetadata } from "@/game/domain/worldEntity";
 import { createWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 import { asNpcId, asLocationId } from "@/game/domain/worldEntity";
-import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
+import { asNarrativeJobId, asTurnId, CommittedNarrativeEvent } from "@/game/domain/events";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import { createGame, createFixtureOpeningSource } from "./createGame";
@@ -51,7 +51,7 @@ function createMinimalWorldState(): WorldState {
       defeatedEnemyIds: [],
       factions: [],
     },
-    eventLedger: [{ type: "game_initialized", generation: GENERATION }],
+    eventLedger: [{ type: "game_initialized", generation: GENERATION } as unknown as CommittedNarrativeEvent],
   });
 }
 

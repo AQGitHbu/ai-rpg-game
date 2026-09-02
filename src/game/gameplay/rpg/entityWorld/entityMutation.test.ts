@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import type { CommittedNarrativeEvent } from "@/game/domain/events";
 import { resolve } from "node:path";
 import { describe, it, expect } from "vitest";
 import { createWorldStateFixture, emptyProjection } from "@/game/domain/testing/worldStateFixture.testutil";
@@ -111,7 +112,7 @@ function world(overrides: Partial<EntityCompatibilityProjection> = {}): WorldSta
     generation: GENERATION,
     projection: { ...BASE, ...overrides },
     battle: { status: "active", enemyId: ENEMY_1, playerHp: 90, enemyHp: 20, round: 1 },
-    eventLedger: [{ type: "game_initialized", generation: GENERATION }],
+    eventLedger: [{ type: "game_initialized", generation: GENERATION } as unknown as CommittedNarrativeEvent],
   });
 }
 

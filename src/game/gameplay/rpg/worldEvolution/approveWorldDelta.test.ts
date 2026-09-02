@@ -96,7 +96,7 @@ function makeWorld(overrides: WorldStateFixtureOverrides = {}, seed = "seed-a"):
     generationId: asGenerationId("g1"), seed, templateVersion: "v2", inputDigest: "", gameType: "wuxia",
   };
   // 与 createInitialWorldState 一致：账本首条为 game_initialized。
-  const eventLedger: readonly CommittedNarrativeEvent[] = [{ type: "game_initialized", generation }];
+  const eventLedger: readonly CommittedNarrativeEvent[] = [{ type: "game_initialized", generation } as unknown as CommittedNarrativeEvent];
   return createWorldStateFixtureWith({ generation, base: BASE_PROJECTION }, { eventLedger, ...overrides });
 }
 

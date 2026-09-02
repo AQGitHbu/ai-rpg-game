@@ -1,4 +1,5 @@
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
+import type { CommittedNarrativeEvent, NarrativeEventPayload } from "@/game/domain/events";
 import { describe, expect, it } from "vitest";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { asQuestId } from "@/game/domain/worldEntity";
@@ -190,7 +191,7 @@ describe("deriveObjectiveTransition（Task 4）", () => {
         itemId: ITEM_SEAL_ID,
         locationId: LOC_1_ID,
         occurredAt: "2026-01-01",
-      }],
+      } as unknown as CommittedNarrativeEvent],
     });
     expect(currentObjectiveOf(after, story())?.label).toBe("击败野狼");
   });

@@ -1,4 +1,5 @@
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
+import type { CommittedNarrativeEvent } from "@/game/domain/events";
 /** @vitest-environment node */
 import { describe, it, expect, afterAll } from "vitest";
 import { join } from "node:path";
@@ -118,7 +119,7 @@ function worldWithApproaches(): WorldState {
       defeatedEnemyIds: [],
       factions: [],
     },
-    eventLedger: [{ type: "game_initialized", generation }],
+    eventLedger: [{ type: "game_initialized", generation } as unknown as CommittedNarrativeEvent],
   });
 }
 
@@ -176,7 +177,7 @@ function worldWithApproachlessFact(): WorldState {
       defeatedEnemyIds: [],
       factions: [],
     },
-    eventLedger: [{ type: "game_initialized", generation }],
+    eventLedger: [{ type: "game_initialized", generation } as unknown as CommittedNarrativeEvent],
   });
 }
 

@@ -5,8 +5,9 @@ import { createInitialStoryState } from "@/game/domain/storyState";
 import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
 import { createWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 import type { WorldState } from "@/game/domain/worldState";
-import type { CommittedNarrativeEvent } from "@/game/domain/events";
-import { asQuestId, asLocationId, asGenerationId } from "@/game/domain/worldEntity";
+import type { NarrativeEventDraft, CommittedNarrativeEvent, NarrativeEventPayload } from "@/game/domain/events";
+import { asEventId, asTurnId, episodeIdForTurn } from "@/game/domain/events";
+import { asQuestId, asLocationId, asGenerationId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 
 const LOC_1 = asLocationId("loc_1");
 
@@ -50,7 +51,7 @@ describe("advanceStoryProgression", () => {
 
   it("does not advance act when no main quest completed", () => {
     const ws = makeWorld();
-    const events: CommittedNarrativeEvent[] = [];
+    const events: NarrativeEventDraft[] = [];
     const result = advanceStoryProgression(ws, ss, events);
     expect(result.nextStoryState.currentAct).toBe(1);
   });
@@ -70,8 +71,8 @@ describe("advanceStoryProgression", () => {
         status: "completed",
       }],
     });
-    const events: CommittedNarrativeEvent[] = [
-      { type: "quest_completed", questId: asQuestId("q_main_1"), occurredAt: "t" },
+    const events: NarrativeEventDraft[] = [
+      { eventKey: "quest_completed:q_main_1", episodeKey: "turn", actorIds: [PLAYER_ENTITY_ID], targetIds: [PLAYER_ENTITY_ID], locationId: null, causeKeys: [], factIds: [], questIds: [asQuestId("q_main_1")], outcome: "success", salience: 80, payload: { type: "quest_completed", questId: asQuestId("q_main_1") } } as unknown as NarrativeEventDraft,
     ];
     const result = advanceStoryProgression(ws, ss, events);
     expect(result.nextStoryState.currentAct).toBe(2);
@@ -86,8 +87,8 @@ describe("advanceStoryProgression", () => {
         kind: "main", stage: 1, status: "completed",
       }],
     });
-    const events: CommittedNarrativeEvent[] = [
-      { type: "quest_completed", questId: asQuestId("q_main_1"), occurredAt: "t" },
+    const events: NarrativeEventDraft[] = [
+      { eventKey: "quest_completed:q_main_1", episodeKey: "turn", actorIds: [PLAYER_ENTITY_ID], targetIds: [PLAYER_ENTITY_ID], locationId: null, causeKeys: [], factIds: [], questIds: [asQuestId("q_main_1")], outcome: "success", salience: 80, payload: { type: "quest_completed", questId: asQuestId("q_main_1") } } as unknown as NarrativeEventDraft,
     ];
     const result = advanceStoryProgression(ws, ss, events);
     expect(result.nextStoryState.currentAct).toBe(2);
@@ -102,8 +103,8 @@ describe("advanceStoryProgression", () => {
         kind: "main", stage: 3, status: "completed",
       }],
     });
-    const events: CommittedNarrativeEvent[] = [
-      { type: "quest_completed", questId: asQuestId("q_final"), occurredAt: "t" },
+    const events: NarrativeEventDraft[] = [
+      { eventKey: "quest_completed:q_final", episodeKey: "turn", actorIds: [PLAYER_ENTITY_ID], targetIds: [PLAYER_ENTITY_ID], locationId: null, causeKeys: [], factIds: [], questIds: [asQuestId("q_final")], outcome: "success", salience: 80, payload: { type: "quest_completed", questId: asQuestId("q_final") } } as unknown as NarrativeEventDraft,
     ];
     const finalAct = { ...ss, currentAct: 3, targetActs: 3 };
     const result = advanceStoryProgression(ws, finalAct, events);
@@ -189,8 +190,8 @@ describe("advanceStoryProgression", () => {
         },
       ],
     });
-    const events: CommittedNarrativeEvent[] = [
-      { type: "quest_completed", questId: asQuestId("q_main_1"), occurredAt: "t" },
+    const events: NarrativeEventDraft[] = [
+      { eventKey: "quest_completed:q_main_1", episodeKey: "turn", actorIds: [PLAYER_ENTITY_ID], targetIds: [PLAYER_ENTITY_ID], locationId: null, causeKeys: [], factIds: [], questIds: [asQuestId("q_main_1")], outcome: "success", salience: 80, payload: { type: "quest_completed", questId: asQuestId("q_main_1") } } as unknown as NarrativeEventDraft,
     ];
     const finalAct = { ...ss, currentAct: 3, targetActs: 3, unresolvedThreads: ["thread_main"] };
     const result = advanceStoryProgression(ws, finalAct, events);

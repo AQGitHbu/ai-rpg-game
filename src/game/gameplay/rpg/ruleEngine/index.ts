@@ -225,7 +225,7 @@ export function resolveTurn(
   let ruleWorldState = revealedAtBoundary.worldState;
   const ruleStoryState = revealedAtBoundary.storyState;
   let questEvents = quests.drafts;
-  const autoInvestigation = autoResolveCurrentInvestigation(ruleWorldState, ruleStoryState, { now: deps.now });
+  const autoInvestigation = autoResolveCurrentInvestigation(ruleWorldState, ruleStoryState);
   if (autoInvestigation.drafts.length > 0) {
     ruleWorldState = autoInvestigation.nextWorldState;
     const afterAutoInvestigation = reconcileQuests(ruleWorldState, deps);
@@ -256,7 +256,6 @@ export function resolveTurn(
   for (const candidate of approval.approvedCandidates) {
     // 候选编译内的 NPC 写入沿用本回合真实行动：candidate.id 不是证据，不得充当 actionId。
     const compiled = compileCandidateEvent(afterCandidateWs, candidate, {
-      now: deps.now,
       actionId,
       turnNumber: storyState.turnNumber,
     });
@@ -276,8 +275,8 @@ export function resolveTurn(
     && (action.dialogueAct === "support" || action.dialogueAct === "challenge")
     && afterCandidateWs.endings.length >= 2;
   const ending = isExplicitEndingDecision
-    ? resolveEnding(afterCandidateWs, nextStoryState, deps)
-    : { nextWorldState: afterCandidateWs, nextStoryState, events: [] };
+    ? resolveEnding(afterCandidateWs, nextStoryState)
+    : { nextWorldState: afterCandidateWs, nextStoryState, drafts: [] as readonly NarrativeEventDraft[] };
   const finalDomainEvents: NarrativeEventDraft[] = [...domainEventsWithCandidate, ...ending.drafts];
 
   // Step 6: 物化视图增量归约

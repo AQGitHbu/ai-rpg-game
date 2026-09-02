@@ -23,7 +23,7 @@ import {
   asQuestId,
   asFactId,
 } from "@/game/domain/worldEntity";
-import { asNarrativeJobId } from "@/game/domain/events";
+import { asNarrativeJobId, CommittedNarrativeEvent } from "@/game/domain/events";
 
 const locTown = asLocationId("loc_0");
 const locDyn1 = asLocationId("loc_dyn_1");
@@ -137,7 +137,7 @@ const BASE_PROJECTION: EntityCompatibilityProjection = {
 function buildWorld(overrides: WorldStateFixtureOverrides = {}): WorldState {
   return createWorldStateFixtureWith(
     { generation: GENERATION, base: BASE_PROJECTION },
-    { eventLedger: [{ type: "game_initialized", generation: GENERATION }], ...overrides },
+    { eventLedger: [{ type: "game_initialized", generation: GENERATION  as unknown as CommittedNarrativeEvent} as unknown as CommittedNarrativeEvent], ...overrides },
   );
 }
 

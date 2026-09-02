@@ -24,6 +24,8 @@ export type ResolveResult = {
 };
 
 export type ResolveDeps = {
+  /** 时钟注入：用于 resolveDialogue 等需要时间戳的子函数。 */
+  readonly now: () => string;
   /** 当前回合的 actionId（写入 NpcInteraction.actionId，用于记忆去重）。 */
   readonly actionId: string;
   /** 当前回合号（写入 NpcInteraction.turnNumber）。 */
@@ -115,6 +117,7 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
       // 旧构造器可能缺失 dialogueAct（Task 9 交割前）：回退 ask
       const dialogueAct = action.dialogueAct ?? "ask";
       const dialogue = resolveDialogue(ws, npc, { ...action, dialogueAct }, {
+        now: deps.now,
         actionId: deps.actionId,
         turnNumber: deps.turnNumber,
       });
@@ -244,10 +247,10 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
       return { ok: true, nextWorldState: { ...ws }, drafts: [], feedback: "", status: "success", stateChanges: [], facts: [] };
     }
     case "attack": {
-      return startBattle(ws, action.enemyId, deps);
+      return startBattle(ws, action.enemyId);
     }
     case "battle_action": {
-      return battleAction(ws, action.action, deps, action.command);
+      return battleAction(ws, action.action, action.command);
     }
     default:
       return { ok: false, feedback: "此行动类型暂不支持。" };

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type {
-  NarrativeEventPayload,
   CommittedNarrativeEvent,
+  NarrativeEventPayload,
   NarrativeEventDraft,
   GameInitializedPayload,
   LocationObservedPayload,
@@ -62,7 +62,7 @@ function buildCommittedEvent(overrides: Partial<CommittedNarrativeEvent> = {}): 
     outcome: "success",
     salience: 50,
     committedAt: "2026-09-02T00:00:00Z",
-    payload: { type: "fact_discovered", factId: asFactId("fact_1") },
+    payload: { type: "fact_discovered", factId: asFactId("fact_1") } as unknown as NarrativeEventPayload,
     ...overrides,
   };
 }
@@ -320,7 +320,7 @@ describe("CommittedNarrativeEvent envelope", () => {
   it("parseCommittedEventLedger rejects mismatched kind and payload type", () => {
     const event = buildCommittedEvent({
       kind: "npc_met",
-      payload: { type: "fact_discovered", factId: asFactId("fact_1") },
+      payload: { type: "fact_discovered", factId: asFactId("fact_1") } as unknown as NarrativeEventPayload,
     });
     const result = parseCommittedEventLedger([event]);
     expect(result.ok).toBe(false);

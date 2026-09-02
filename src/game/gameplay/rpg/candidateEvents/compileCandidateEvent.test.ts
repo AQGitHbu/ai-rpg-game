@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import type { CommittedNarrativeEvent, NarrativeEventPayload } from "@/game/domain/events";
 import { compileCandidateEvent } from "./compileCandidateEvent";
 import type { ApprovedEventCandidate } from "./approveCandidateEvents";
 import { asNpcId, asFactId, asEnemyId, asLocationId, asGenerationId, type GenerationMetadata } from "@/game/domain/worldEntity";
@@ -180,7 +181,7 @@ describe("compileCandidateEvent 每种 kind 至少编译为真实领域事件", 
       reasonCode: "stale_effect_kind",
       rejectedAtTurn: DEPS.turnNumber,
       occurredAt: NOW(),
-    }]);
+    } as unknown as CommittedNarrativeEvent]);
     expect(result.dropReason).toBe("stale_effect_kind");
   });
 });

@@ -1,10 +1,11 @@
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
+import type { CommittedNarrativeEvent, NarrativeEventPayload } from "./events";
+import { makeCommittedEvent } from "./testing/committedEventFactory";
 import { describe, expect, it, vi } from "vitest";
 import type { Action } from "./action";
 import {
   asNarrativeJobId,
   asTurnId,
-  type CommittedNarrativeEvent,
 } from "./events";
 import type { ResolvedEvent } from "./resolvedEvent";
 import {
@@ -60,38 +61,14 @@ function createStates(): {
     startingItemIds: [],
   });
   const domainEvents: readonly CommittedNarrativeEvent[] = [
-    {
-      type: "location_observed",
-      locationId: startingLocation.id,
-      occurredAt: "2026-08-08T08:00:00.000Z",
-    },
-    {
-      type: "location_visited",
-      locationId: startingLocation.id,
-      occurredAt: "2026-08-08T08:00:01.000Z",
-    },
+    makeCommittedEvent({ type: "location_observed", locationId: startingLocation.id } as unknown as NarrativeEventPayload, { committedAt: "2026-08-08T08:00:00.000Z" }),
+    makeCommittedEvent({ type: "location_visited", locationId: startingLocation.id } as unknown as NarrativeEventPayload, { committedAt: "2026-08-08T08:00:01.000Z" }),
   ];
   const priorEvents: readonly CommittedNarrativeEvent[] = [
-    {
-      type: "location_observed",
-      locationId: startingLocation.id,
-      occurredAt: "2026-08-08T07:59:56.000Z",
-    },
-    {
-      type: "location_observed",
-      locationId: startingLocation.id,
-      occurredAt: "2026-08-08T07:59:57.000Z",
-    },
-    {
-      type: "location_observed",
-      locationId: startingLocation.id,
-      occurredAt: "2026-08-08T07:59:58.000Z",
-    },
-    {
-      type: "location_observed",
-      locationId: startingLocation.id,
-      occurredAt: "2026-08-08T07:59:59.000Z",
-    },
+    makeCommittedEvent({ type: "location_observed", locationId: startingLocation.id } as unknown as NarrativeEventPayload, { committedAt: "2026-08-08T07:59:56.000Z" }),
+    makeCommittedEvent({ type: "location_observed", locationId: startingLocation.id } as unknown as NarrativeEventPayload, { committedAt: "2026-08-08T07:59:57.000Z" }),
+    makeCommittedEvent({ type: "location_observed", locationId: startingLocation.id } as unknown as NarrativeEventPayload, { committedAt: "2026-08-08T07:59:58.000Z" }),
+    makeCommittedEvent({ type: "location_observed", locationId: startingLocation.id } as unknown as NarrativeEventPayload, { committedAt: "2026-08-08T07:59:59.000Z" }),
   ];
 
   return {

@@ -13,6 +13,7 @@ import {
   type CommittedNarrativeEvent,
   type NarrativeEventDraft,
   type NarrativeEventPayload,
+  type GameInitializedPayload,
 } from "./events";
 import {
   asLocationId,
@@ -167,11 +168,7 @@ function buildTurnSource(turnId: string, turnNumber: number): EventCommitSource 
   };
 }
 
-// A simple game_initialized payload for testing
-type GameInitializedPayload = {
-  readonly type: "game_initialized";
-  readonly generation: GenerationMetadata;
-};
+// A simple game_initialized payload for testing (re-exported from events.ts)
 
 function makeInitDraft(): NarrativeEventDraft<GameInitializedPayload> {
   return {
@@ -201,7 +198,7 @@ function makeLocationVisitedDraft(): NarrativeEventDraft {
     questIds: [],
     outcome: "success" as const,
     salience: 20,
-    payload: { type: "location_visited", locationId: asLocationId("loc_start") },
+    payload: { type: "location_visited", locationId: asLocationId("loc_start") } as unknown as NarrativeEventPayload,
   };
 }
 
@@ -242,7 +239,7 @@ describe("commitEventDrafts: envelope and ID rules", () => {
       questIds: [],
       outcome: "success",
       salience: 20,
-      payload: { type: "location_visited", locationId: asLocationId("loc_start") },
+      payload: { type: "location_visited", locationId: asLocationId("loc_start") } as unknown as NarrativeEventPayload,
     };
     const d2: NarrativeEventDraft = {
       eventKey: "location_observed:loc_start",
@@ -255,7 +252,7 @@ describe("commitEventDrafts: envelope and ID rules", () => {
       questIds: [],
       outcome: "success",
       salience: 20,
-      payload: { type: "location_observed", locationId: asLocationId("loc_start") },
+      payload: { type: "location_observed", locationId: asLocationId("loc_start") } as unknown as NarrativeEventPayload,
     };
 
     const r = commitEventDrafts({ ledger: [], drafts: [d1, d2], source, entityStore: store });
@@ -400,7 +397,7 @@ describe("commitEventDrafts: causal and reference validation", () => {
       questIds: [],
       outcome: "success",
       salience: 20,
-      payload: { type: "location_observed", locationId: asLocationId("loc_start") },
+      payload: { type: "location_observed", locationId: asLocationId("loc_start") } as unknown as NarrativeEventPayload,
     };
 
     const r = commitEventDrafts({ ledger: [], drafts: [d1, d2], source, entityStore: store });
@@ -435,7 +432,7 @@ describe("commitEventDrafts: causal and reference validation", () => {
       questIds: [],
       outcome: "success",
       salience: 20,
-      payload: { type: "location_visited", locationId: asLocationId("loc_start") },
+      payload: { type: "location_visited", locationId: asLocationId("loc_start") } as unknown as NarrativeEventPayload,
     };
 
     const r2 = commitEventDrafts({ ledger: r1.ledger, drafts: [d2], source: turnSource, entityStore: store });
@@ -459,7 +456,7 @@ describe("commitEventDrafts: causal and reference validation", () => {
       questIds: [],
       outcome: "success",
       salience: 20,
-      payload: { type: "location_visited", locationId: asLocationId("loc_start") },
+      payload: { type: "location_visited", locationId: asLocationId("loc_start") } as unknown as NarrativeEventPayload,
     };
     const d2: NarrativeEventDraft = {
       eventKey: "location_observed:loc_start",
@@ -472,7 +469,7 @@ describe("commitEventDrafts: causal and reference validation", () => {
       questIds: [],
       outcome: "success",
       salience: 20,
-      payload: { type: "location_observed", locationId: asLocationId("loc_start") },
+      payload: { type: "location_observed", locationId: asLocationId("loc_start") } as unknown as NarrativeEventPayload,
     };
 
     const r = commitEventDrafts({ ledger: [], drafts: [d1, d2], source, entityStore: store });
@@ -497,7 +494,7 @@ describe("commitEventDrafts: causal and reference validation", () => {
       questIds: [],
       outcome: "success",
       salience: 20,
-      payload: { type: "location_visited", locationId: asLocationId("loc_start") },
+      payload: { type: "location_visited", locationId: asLocationId("loc_start") } as unknown as NarrativeEventPayload,
     };
 
     const r = commitEventDrafts({ ledger: [], drafts: [d], source, entityStore: store });
@@ -534,7 +531,7 @@ describe("commitEventDrafts: causal and reference validation", () => {
       questIds: [],
       outcome: "success",
       salience: 20,
-      payload: { type: "location_visited", locationId: asLocationId("loc_nonexistent") },
+      payload: { type: "location_visited", locationId: asLocationId("loc_nonexistent") } as unknown as NarrativeEventPayload,
     };
 
     const r = commitEventDrafts({ ledger: [], drafts: [d], source, entityStore: store });
@@ -558,7 +555,7 @@ describe("commitEventDrafts: causal and reference validation", () => {
       questIds: [],
       outcome: "success",
       salience: 65,
-      payload: { type: "fact_discovered", factId: asFactId("fact_missing") },
+      payload: { type: "fact_discovered", factId: asFactId("fact_missing") } as unknown as NarrativeEventPayload,
     };
 
     const r = commitEventDrafts({ ledger: [], drafts: [d], source, entityStore: store });
@@ -582,7 +579,7 @@ describe("commitEventDrafts: causal and reference validation", () => {
       questIds: [asQuestId("quest_missing")],
       outcome: "success",
       salience: 80,
-      payload: { type: "quest_completed", questId: asQuestId("quest_missing") },
+      payload: { type: "quest_completed", questId: asQuestId("quest_missing") } as unknown as NarrativeEventPayload,
     };
 
     const r = commitEventDrafts({ ledger: [], drafts: [d], source, entityStore: store });
@@ -607,7 +604,7 @@ describe("commitEventDrafts: causal and reference validation", () => {
     };
     const conflictDraft: NarrativeEventDraft = {
       ...draft,
-      payload: { type: "game_initialized", generation: conflictGen },
+      payload: { type: "game_initialized", generation: conflictGen } as unknown as NarrativeEventPayload,
     };
 
     const r2 = commitEventDrafts({ ledger: r1.ledger, drafts: [conflictDraft], source, entityStore: store });

@@ -9,7 +9,8 @@ import type {
 } from "./server/persistence/gameRepository";
 import { asGameId } from "./server/persistence/gameRepository";
 import { type LocationEntry, type NpcEntry } from "@/game/domain/worldState";
-import type { CommittedNarrativeEvent } from "@/game/domain/events";
+import type { CommittedNarrativeEvent, NarrativeEventPayload } from "@/game/domain/events";
+import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
 import type { GenerationMetadata } from "@/game/domain/worldEntity";
 import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
 import {
@@ -99,7 +100,9 @@ const BASE_PROJECTION: EntityCompatibilityProjection = {
   factions: [],
 };
 
-const INITIALIZED_LEDGER: readonly CommittedNarrativeEvent[] = [{ type: "game_initialized", generation: GENERATION }];
+const INITIALIZED_LEDGER: readonly CommittedNarrativeEvent[] = [
+  makeCommittedEvent({ type: "game_initialized", generation: GENERATION } as unknown as NarrativeEventPayload),
+];
 
 function buildWorldState(overrides: WorldStateFixtureOverrides = {}): WorldState {
   return createWorldStateFixtureWith(
@@ -592,7 +595,9 @@ describe("performTurn 单次 CAS 提交", () => {
         ...opened.worldState,
         battle: midBattle,
         eventLedger: [...opened.worldState.eventLedger, {
-          type: "npc_dialogue_completed", npcId: npc1.id, actionId: "mid-battle-action-evidence", occurredAt: "2026-01-02",
+          // CommittedNarrativeEvent envelope for test
+      ...makeCommittedEvent({ type: "npc_dialogue_completed", npcId: npc1.id } as unknown as NarrativeEventPayload),
+      actionId: "mid-battle-action-evidence", committedAt: "2026-01-02",
         }],
       },
       nextStoryState: { ...opened.storyState, narrative: midNarrative },
@@ -1368,11 +1373,11 @@ describe("performTurn — 自动揭示必经事实（Task 3）", () => {
       "game_initialized", "npc_met", "fact_discovered", "quest_completed",
     ]);
     const autoEvent = applied.nextWorldState.eventLedger.find((event) => event.kind === "fact_discovered");
-    if (autoEvent?.type === "fact_discovered") {
-      expect(autoEvent.factId).toBe(FACT_1_ID);
-      expect(autoEvent.approachId).toBeUndefined();
-      expect(autoEvent.evidenceQuality).toBeUndefined();
-      expect(autoEvent.tensionDelta).toBeUndefined();
+    if (autoEvent?.payload.type === "fact_discovered") {
+      expect(autoEvent.payload.factId).toBe(FACT_1_ID);
+      expect(autoEvent.payload.approachId).toBeUndefined();
+      expect(autoEvent.payload.evidenceQuality).toBeUndefined();
+      expect(autoEvent.payload.tensionDelta).toBeUndefined();
     }
     expect(applied.nextWorldState.worldFacts[0]?.discovered).toBe(true);
     expect(applied.nextWorldState.quests[0]?.status).toBe("completed");

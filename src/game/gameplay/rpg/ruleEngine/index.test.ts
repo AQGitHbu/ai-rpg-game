@@ -32,7 +32,7 @@ const BASE = emptyProjection({
   currentLocationId: LOC_1.id,
   unlockedLocationIds: [LOC_1.id, LOC_2.id],
 });
-const INITIALIZED_LEDGER: readonly CommittedNarrativeEvent[] = [{ type: "game_initialized", generation: GENERATION }];
+const INITIALIZED_LEDGER: readonly CommittedNarrativeEvent[] = [{ type: "game_initialized", generation: GENERATION } as unknown as CommittedNarrativeEvent];
 
 /** 一次传入完整兼容投影：覆盖项与 entityStore 由同一组装点重建。 */
 function makeWorld(overrides: WorldStateFixtureOverrides = {}): WorldState {
@@ -133,7 +133,7 @@ describe("ruleEngine facade", () => {
       type: "npc_dialogue_completed",
       npcId: npc.id,
       actionId: "dialogue_2",
-    }));
+    } as unknown as CommittedNarrativeEvent));
     expect(second.resolution.nextStoryState.narrative.dialogueSession).toMatchObject({ turnCount: 2, completed: true });
   });
 
@@ -579,13 +579,13 @@ describe("candidate reaction events integrate after player action (Task 20)", ()
     const activated = r.domainEvents.filter((e) => e.kind === "candidate_event_activated");
     expect(activated.length).toBe(1);
     // 过期候选从池移除并记录 expired 审计
-    expect(r.domainEvents.some((e) => e.kind === "candidate_event_expired" && e.candidateId === "ce-old")).toBe(true);
+    expect(r.domainEvents.some((e) => e.kind === "candidate_event_expired" && (e.payload as { candidateId: string }).candidateId === "ce-old")).toBe(true);
     const remainingIds = r.nextStoryState.candidateEventPool.map((c) => c.id);
     expect(remainingIds).not.toContain("ce-old");
     // 未批准者保留在池（ce-a 或 ce-b 之一）
     expect(remainingIds.length).toBe(1);
     // 已批准者从池移除
-    expect(remainingIds).not.toContain(activated[0]!.candidateId);
+    expect(remainingIds).not.toContain((activated[0]!.payload as { candidateId: string }).candidateId);
   });
 });
 
@@ -621,7 +621,7 @@ describe("resolveTurn — 自动揭示无 approach 的必经事实 (Task 3)", ()
     const types = r.domainEvents.map((e) => e.kind);
     expect(types).toContain("fact_discovered");
     expect(types).toContain("quest_completed");
-    expect(r.domainEvents.find((e) => e.kind === "fact_discovered")).toMatchObject({ type: "fact_discovered", factId: FACT_1_ID });
+    expect(r.domainEvents.find((e) => e.kind === "fact_discovered")).toMatchObject({ type: "fact_discovered", factId: FACT_1_ID } as unknown as CommittedNarrativeEvent);
     expect(r.nextWorldState.worldFacts[0]?.discovered).toBe(true);
     expect(r.nextWorldState.quests[0]?.status).toBe("completed");
     expect(r.nextStoryState.tension).toBe(50); // 30 + 12 (fact_discovered) + 8 (quest_completed)
