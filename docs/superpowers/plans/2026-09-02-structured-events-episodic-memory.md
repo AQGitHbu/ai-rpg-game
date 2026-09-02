@@ -26,8 +26,10 @@
 - 检索先做 Event ID、当前任务、实体、地点和因果的硬条件，再稳定排序；本 Plan 不引入 embeddings、语义向量、全文搜索服务或让 AI 自选记忆。
 - 不实现 Living Outline、Arc、Milestone、Story Thread（Plan 5），不实现 Arc-aware scene planning（Plan 6），不实现分段 ledger、snapshot/cursor、归档、持久索引表或长局非线性加载（Plan 7），不开放十小时长篇（Plan 8）。
 - 当前设计原则明确不把 misinformation 作为独立模型；本 Plan 只为 canonical Fact 与 NPC knowledge 增加 Event provenance，不新增自由文本命题、真假断言或 NPC 虚假信念系统。
-- `WorldState.version` 从 4 升到 5，`StoryState.version` 从 7 升到 8，`EntityStore.version` 保持 2。旧 v4/v7 开发存档返回 `UNSUPPORTED_RECORD`，不做隐式迁移、不静默重置；SQLite 表与 `record_version` 不变。
-- 每个任务先写失败测试并运行 targeted tests；实现与同目录测试一起提交。完整门禁和短/中篇 journey 通过前不得把阶段标为 `completed / merged`。
+- `WorldState.version` 在 Task 2 随 ledger schema 从 4 升到 5，`StoryState.version` 在 Task 5 随 memory schema 从 7 升到 8，`EntityStore.version` 保持 2。旧 v4/v7 开发存档返回 `UNSUPPORTED_RECORD`，不做隐式迁移、不静默重置；SQLite 表与 `GAME_RECORD_VERSION`（当前为 1）不变。版本常量分别在 `src/game/domain/worldState.ts:44` 的 `WORLD_STATE_SCHEMA_VERSION` 与 `src/game/domain/storyState.ts:14` 的 `STORY_STATE_SCHEMA_VERSION`；两个 domain classifier 必须覆盖全部已知旧版本（World 1..4 / Story 1..7），SQLite 不再维护第二份 legacy whitelist。
+- 每个任务先写失败测试并运行 targeted tests；实现与同目录测试一起提交。每个任务的提交前必须额外跑 `npm run typecheck`。Task 1 只**增量引入**新 contract/helper，不切换 `WorldState.eventLedger`，因此可独立绿；真正把 `GameEvent` 换成 `CommittedNarrativeEvent` 的整仓类型收缩必须在 Task 2 一次完成，凡是 `readonly GameEvent[]` 形参、类型守卫、持久化 parser 和测试 fixture 都在该 Task 同步，不能把会导致 typecheck 失败的旧形状推迟到 Task 3/7/8。
+- 计划中的 `rg` 扫描沿用仓库既往 Plan 的写法；若执行环境没有 ripgrep，用 `grep -rn <pattern> <path>` 等价替代，判定结果必须一致。
+- 完整门禁和短/中篇 journey 通过前不得把阶段标为 `completed / merged`。
 
 ## 明确边界
 
@@ -78,13 +80,32 @@ type NarrativeEventDraft<P extends NarrativeEventPayload = NarrativeEventPayload
   salience: number;
   payload: P;
 }>;
+
+type EventCauseKey =
+  | Readonly<{ kind: "event_id"; eventId: EventId }>
+  | Readonly<{ kind: "same_batch"; eventKey: string }>;
 ```
+
+`narrative_scene_presented` 在新 payload union 中使用以下最小结构；地点与参与实体只放 envelope，避免同一索引在 payload/envelope 双写漂移：
+
+```ts
+type NarrativeScenePresentedPayload = Readonly<{
+  type: "narrative_scene_presented";
+  sceneId: string;
+  focusNpcId: NpcId | null;
+  pacing: StoryPacing;
+  beatIds: readonly string[];
+  revealedFactIds: readonly FactId[];
+}>;
+```
+
+`RecentSceneMemory.locationId` 从 committed envelope 的 `locationId` 读取；`referencedEntityIds` 从 envelope 的 `actorIds + targetIds` 稳定去重得到。payload 不再重复 `locationId/referencedEntityIds/occurredAt`。
 
 ID 规则必须纯且可重放：
 
 - initialization：`eventIdFor(turnId, "game_initialized")`，`turnId = asTurnId("init:" + generationId)`；
 - 玩家/规则回合：`eventIdFor(turnId, eventKey)`；`eventKey` 必须包含足够语义引用，例如 `fact_discovered:<factId>`、`relationship:<from>:<target>:<signal>`，不能依赖数组当前下标；
-- scene/world write-back：复用 pending job 的 `turnId`，分别使用 `scene_presented:<sceneId>`、`world_expanded:<jobId>`、`candidate_proposed:<candidateId>`；
+- scene/world write-back：复用 pending job 的 `turnId`，分别使用 `scene_presented:<sceneId>`、`world_expanded:<jobId>`；
 - `sequence` 只表达最终提交顺序，不参与 Event ID；事件排序调整不会改写同一事实的 ID；
 - `eventId` 与 `episodeId` 只由 domain helper 铸造，parser 只验证格式，不接受 provider/client 提交。
 
@@ -94,7 +115,7 @@ ID 规则必须纯且可重放：
 - `quest_completed` 引用本轮满足目标的事件及账本中该任务最近的目标证据；
 - `battle_round_resolved` 引用 `battle_started` 或上一回合，`battle_resolved` 引用最后一轮，`enemy_defeated` 引用胜利结算；
 - `ending_reached` 引用终幕立场 interaction 与满足 requirement 的最近 Event；
-- `blueprint_expanded`、`candidate_event_proposed`、`narrative_scene_presented` 引用 pending job 的 `domainEventIds`；
+- `blueprint_expanded`、`narrative_scene_presented` 引用 pending job 的 `domainEventIds`；
 - 找不到可证明原因时保留空 `causeEventIds`，不得伪造或引用未来事件。
 
 ## Canonical Episodic Memory Contract
@@ -115,6 +136,7 @@ type NarrativeEpisode = Readonly<{
   causeEventIds: readonly EventId[];
   outcome: CommittedNarrativeEvent["outcome"];
   salience: number;
+  summaryVersion: 1;                // 摘要格式版本；升版即可让旧 Episode 重算
   summaryKeys: readonly string[];   // 固定规则 key，不含 AI/玩家 prose
 }>;
 
@@ -139,7 +161,10 @@ type EpisodicMemoryState = Readonly<{
 }>;
 ```
 
+`NpcContact` 当前定义在 `src/game/domain/materializedView.ts`（字段：`npcId` / `lastContactTurn` / `lastLocationId`）。Task 5 删除 `materializedView.ts` 时把该类型原样迁入 `episodicMemory.ts`，字段不变。
+
 - 默认 Episode 以 `turnId` 聚合；同一 `battleKey` 的 started/round/resolved/defeated 事件跨 battle action 聚合为一个 battle Episode；同一 pending job 的 world/scene 事件并回触发它的 turn Episode。
+- Episode 的“未解决问题”只用 `questIds` + `factIds` 表达：Thread 级未决问题属于 Plan 5，本 Plan 的 Episode 不含 Thread 引用。
 - Episode 可以被后续同组事件扩展，但其 `eventIds` 只能按 sequence 追加；reducer 以 Event ID 去重，重复归约零变化。
 - `summaryKeys` 由 payload kind/outcome 固定映射，Prompt renderer 再用当前 Entity name/lifecycle 和公开 Fact 卡解释；Episode 本身不保存旧实体 prose。
 - 每次 state/scene CAS 前调用同一个 `reconcileEpisodicMemory`；持久化读取对完整 ledger 重建并与保存的 memory deep-compare，漂移返回稳定 corrupt 分类。
@@ -203,9 +228,17 @@ src/game/application/
 ├── sceneGenerationContext.ts
 ├── npcSpeechAuthority.ts
 └── testing/episodicMemoryJourney.test.ts
+
+src/game/gameplay/rpg/openingGeneration/
+├── compileOpeningGenerationCandidate.ts   # 生产开局世界 + 唯一 game_initialized 事件
+└── compileOpeningGenerationCandidate.test.ts
+
+src/dependencyBoundaries.test.ts           # Task 5 换掉 materializedView 锚点；Task 6 注册 narrativeMemory facade
 ```
 
 `materializedView.ts` 在 Task 5 被 `episodicMemory.ts` 完整替代后删除；不保留并行 recent-beat reducer。
+
+**注意：`src/game/domain/index.ts` 不在本 Plan 修改范围内。** 该文件是窄口 domain facade，注释已写明“Runtime internals use focused modules”，全仓生产代码没有任何 `from "@/game/domain"`（只有 `dependencyBoundaries.test.ts` 的合成片段），gameplay/application 一律深引 `@/game/domain/<module>`。Event 与 Episode 沿用同样的深引方式，不要往该 facade 塞导出。
 
 ---
 
@@ -266,7 +299,7 @@ Expected: `.worktrees/structured-events-episodic-memory` 创建成功；进入 w
 ### Task 1: 建立稳定 Event Envelope、ID 与严格账本校验
 
 **Consumes:** 当前 `domain/events.ts` 的 payload union、`TurnId`、Entity ID 与 WorldState v4。  
-**Produces:** 唯一持久化的 committed envelope、纯 draft commit 和账本 invariant；暂不迁移生产调用方。  
+**Produces:** committed envelope、纯 draft commit 和账本 invariant 的增量 contract；本 Task 不修改 `WorldState.eventLedger`，旧 `GameEvent` 只作为 Task 2 cutover 前的临时源码兼容名，不能传给新 commit/parser。
 **Independent proof:** domain tests 不依赖 rule/application/DB，直接证明重放、顺序、因果与引用。
 
 **Files:**
@@ -275,7 +308,6 @@ Expected: `.worktrees/structured-events-episodic-memory` 创建成功；进入 w
 - Modify: `src/game/domain/events.test.ts`
 - Create: `src/game/domain/eventLedger.ts`
 - Create: `src/game/domain/eventLedger.test.ts`
-- Modify: `src/game/domain/index.ts`
 
 - [ ] **Step 1: 写失败测试固定 envelope 和 exact payload shape**
 
@@ -283,11 +315,11 @@ Expected: `.worktrees/structured-events-episodic-memory` 创建成功；进入 w
 
 - [ ] **Step 2: 写失败测试固定 causal graph 与引用闭包**
 
-覆盖：cause 只能指向既有 ledger 或本批更早 draft；未知 cause、未来 cause、自因果、重复 Event ID、sequence 缺口、重复 episode/event membership 拒绝；Entity/Fact/Quest/Location 引用必须存在于提交后的 Entity Store。
+覆盖：cause 只能通过 `event_id` 指向既有 ledger，或通过 `same_batch` 指向本批更早 draft；未知 cause、未来 cause、自因果、ledger 内重复 Event ID、sequence 缺口、重复 episode/event membership 拒绝；Entity/Fact/Quest/Location 引用必须存在于提交后的 Entity Store。同一批重复 eventKey 拒绝；若 draft 的稳定 ID 已在 ledger，只有 source/episode/metadata/payload（不比较本次新传入的 `committedAt`）与既有 Event 完全等价时才作为 retry 幂等返回既有映射且 `appended=[]`，任何差异返回 `EVENT_ID_CONFLICT`。
 
-- [ ] **Step 3: 把旧 `GameEvent` 拆成 draft payload 与 committed envelope**
+- [ ] **Step 3: 增量定义 payload、draft 与 committed envelope**
 
-`NarrativeEventPayload` 保留当前封闭变体并新增三个规则事实 payload：
+`NarrativeEventPayload` 保留当前仍有生产语义的封闭变体，并新增三个规则事实 payload：
 
 ```ts
 type NpcInteractionRecordedPayload = {
@@ -309,7 +341,9 @@ type NpcRelationshipChangedPayload = {
 };
 ```
 
-移除 payload 内 `occurredAt`；时间只在 envelope。候选生命周期 payload 保留稳定 code/turn，不保存正文。
+新 `NarrativeEventPayload` 不含 `occurredAt`；时间只在 envelope。仍有生产路径的候选生命周期 payload 保留稳定 code/turn，不保存正文；`narrative_scene_presented` 使用 Canonical Event Contract 下方的最小结构。为保证本 Task 可独立 typecheck，现有 `GameEvent`/WorldState v4 暂不改名、不改形状，但 `commitEventDrafts` 与 `parseCommittedEventLedger` 的签名只接受新类型，测试必须证明 legacy payload 不能冒充 committed event。Task 2 完成整仓 cutover 后立刻删除旧 `GameEvent` 定义，不保留运行时双形状 parser。
+
+同时收口当前 union 中与隐私约束冲突或没有 producer 的遗留变体：删除从未由生产代码构造的 `narrative_choice` / `narrative_dialogue_choice` payload（玩家实际选择的裁决结果已由本轮真实 domain Event + `actionId` 表达），不把 `choiceToken/actionKey/dialogueIntent` 搬进新 union。`candidate_event_proposed` 同样删除：当前 Narrative Bundle 固定返回空 candidate pool，旧 scene path 只保留已有池，没有“新候选入池”事实；v4 又明确 unsupported，因此既不保留只解析分支，也不在 Plan 4 偷增 provider/candidate 玩法。`player_intent_expressed` 不再保存 `Action.intent` 字符串，改成封闭 `intentCode: "unmapped_freeform" | "thread_complicates" | "thread_resolves"`；自由输入无论原文为何只写 `unmapped_freeform`，原文仍只在 `PendingNarrativeJob.utterance` 有界暂存。
 
 - [ ] **Step 4: 实现唯一 `commitEventDrafts`**
 
@@ -329,22 +363,28 @@ commitEventDrafts(input: {
 ```bash
 npm test -- src/game/domain/events.test.ts src/game/domain/eventLedger.test.ts
 npm run typecheck
-git add src/game/domain/events.ts src/game/domain/eventLedger.ts src/game/domain/eventLedger.test.ts src/game/domain/index.ts
+git add src/game/domain/events.ts src/game/domain/events.test.ts src/game/domain/eventLedger.ts src/game/domain/eventLedger.test.ts
 git commit -m "feat(events): define committed narrative event ledger"
 ```
 
 ---
 
-### Task 2: 将规则回合迁移到单一 Event Commit Pipeline
+### Task 2: 整仓切换 Committed Event，并将规则回合迁移到单一 Commit Pipeline
 
-**Consumes:** `resolveTurn`、全部 resolver/reconcile/candidate event producer、Task 1 commit API。  
-**Produces:** 玩家/规则回合只产生 drafts，并在 `resolveTurn` 末尾一次铸造、追加和返回 committed events。  
+**Consumes:** `WorldState.eventLedger`、全部 producer/consumer/parser/fixture、`resolveTurn` 与 Task 1 commit API。
+**Produces:** 整仓不再存在 legacy `GameEvent` 账本形状；玩家/规则回合只产生 drafts，并在 `resolveTurn` 末尾一次铸造、追加和返回 committed events。
 **Independent proof:** gameplay tests 证明所有成功回合有稳定事件、失败/blocked 零追加、同输入可重放。
 
 **Files:**
 
 - Modify: `src/game/domain/turnResolution.ts`
 - Modify: `src/game/domain/turnResolution.test.ts`
+- Modify: `src/game/domain/events.ts`
+- Modify: `src/game/domain/worldState.ts`
+- Modify: `src/game/domain/worldState.test.ts`
+- Modify: `src/game/domain/materializedView.ts`
+- Modify: `src/game/domain/materializedView.test.ts`
+- Modify: `src/game/domain/testing/worldStateFixture.testutil.ts`
 - Modify: `src/game/gameplay/rpg/ruleEngine/index.ts`
 - Modify: `src/game/gameplay/rpg/ruleEngine/index.test.ts`
 - Modify: `src/game/gameplay/rpg/ruleEngine/resolveByType.ts`
@@ -353,25 +393,65 @@ git commit -m "feat(events): define committed narrative event ledger"
 - Modify: `src/game/gameplay/rpg/ruleEngine/reconcileQuests.test.ts`
 - Modify: `src/game/gameplay/rpg/ruleEngine/resolveEnding.ts`
 - Modify: `src/game/gameplay/rpg/ruleEngine/resolveEnding.test.ts`
-- Modify: `src/game/gameplay/rpg/ruleEngine/battleResolver.ts`
-- Modify: `src/game/gameplay/rpg/ruleEngine/battleResolver.test.ts`
+- Modify: `src/game/gameplay/rpg/ruleEngine/advanceStoryProgression.ts`
+- Modify: `src/game/gameplay/rpg/ruleEngine/advanceStoryProgression.test.ts`
+- Modify: `src/game/gameplay/rpg/ruleEngine/updateStoryMetrics.ts`
+- Modify: `src/game/gameplay/rpg/ruleEngine/updateStoryMetrics.test.ts`
 - Modify: `src/game/gameplay/rpg/candidateEvents/approveCandidateEvents.ts`
+- Modify: `src/game/gameplay/rpg/candidateEvents/approveCandidateEvents.test.ts`
 - Modify: `src/game/gameplay/rpg/candidateEvents/compileCandidateEvent.ts`
 - Modify: `src/game/gameplay/rpg/candidateEvents/compileCandidateEvent.test.ts`
+- Modify: `src/game/gameplay/rpg/dialogue/dialogueResolution.ts`
+- Modify: `src/game/gameplay/rpg/dialogue/dialogueResolution.test.ts`
+- Modify: `src/game/gameplay/rpg/entityWorld/entityMutation.ts`
+- Modify: `src/game/gameplay/rpg/entityWorld/entityMutation.test.ts`
+- Modify: `src/game/gameplay/rpg/ruleEngine/battleResolver.ts`
+- Modify: `src/game/gameplay/rpg/ruleEngine/battleResolver.test.ts`
+- Modify: `src/game/gameplay/rpg/openingGeneration/compileOpeningGenerationCandidate.ts`
+- Modify: `src/game/gameplay/rpg/openingGeneration/compileOpeningGenerationCandidate.test.ts`
+- Modify: `src/game/gameplay/rpg/worldEvolution/materializeWorldDelta.ts`
+- Modify: `src/game/gameplay/rpg/worldEvolution/materializeWorldDelta.test.ts`
 - Modify: `src/game/gameplay/rpg/narrativeContext/objectiveRules.ts`
 - Modify: `src/game/gameplay/rpg/narrativeContext/deriveObjectiveTransition.ts`
+- Modify: `src/game/gameplay/rpg/narrativeContext/narrativeContext.testutil.ts`
 - Create: `src/game/gameplay/rpg/narrativeMemory/eventPolicy.ts`
 - Create: `src/game/gameplay/rpg/narrativeMemory/eventPolicy.test.ts`
+- Modify: `src/game/application/createGame.ts`
+- Modify: `src/game/application/createGame.test.ts`
+- Modify: `src/game/application/consumeNarrativeBundle.ts`
+- Modify: `src/game/application/consumePreparedContinuation.ts`
+- Modify: `src/game/application/performTurn.ts`
+- Modify: `src/game/application/sceneGenerationContext.ts`
+- Modify: `src/game/application/sceneSource.ts`
+- Modify: `src/game/application/approveAndWriteScene.ts`
+- Modify: `src/game/application/server/persistence/worldStatePersistenceValidation.ts`
+- Modify: `src/game/application/server/persistence/worldStatePersistenceValidation.test.ts`
+- Modify: `src/game/application/server/persistence/sqliteGameRepository.ts`
+- Modify: `src/game/application/server/persistence/sqliteGameRepository.test.ts`
+- Modify: `src/game/application/testing/investigationChoiceJourney.test.ts`
 
-- [ ] **Step 1: 写失败测试证明 resolver 不再直接写 ledger**
-
-每个 `resolveByType` / quest / ending / candidate / battle helper 只返回 `eventDrafts` 与状态 mutation；测试断言 helper 返回的 WorldState ledger 与输入保持同一引用。全仓扫描：
+`narrativeContext.testutil.ts:81` 的 `INITIALIZED_LEDGER = [{ type: "game_initialized", generation: GENERATION }]` 是 `objectiveRules` / `deriveObjectiveTransition` / `updateStoryMetrics` 等测试共用的原始 payload 常量；本 Task 必须先改成 `commitEventDrafts` 产出的初始化事件，否则整个 `narrativeContext` 测试目录会红。其余 fixture 不靠手工漏列：执行下面的源码扫描，把所有命中同样迁移后才允许提交：
 
 ```bash
-rg -n "eventLedger:\s*\[\.\.\.|eventLedger\.concat|\.eventLedger\.push" src/game/gameplay/rpg
+rg -l "GameEvent|eventLedger|domainEvents" src/game --glob '**/*.test.ts' --glob '**/*.testutil.ts'
+rg -n 'eventLedger:\s*\[\{\s*type:|eventLedger:\s*\[\.\.\.|eventLedger\.concat|\.eventLedger\.push' src/game
 ```
 
-Expected: Task 完成后零命中。
+第一条是迁移工作集，不要求最终零命中；第二条最终除专门验证 parser 拒绝 legacy payload 的负例外必须零命中。测试统一经 `worldStateFixture.testutil.ts` 中的 deterministic committed-event fixture helper 构造，不在各测试复制 envelope/sequence/ID 规则。
+
+- [ ] **Step 1: 写失败测试并完成整仓账本形状 cutover**
+
+把 `WorldState.eventLedger`、`BattleStartSnapshot.eventLedger`、`TurnResolution.domainEvents` 与所有消费形参一次切成 `readonly CommittedNarrativeEvent[]`，删除旧 `GameEvent`。这是持久化 schema 破坏性变化，因此同一 Task 把 `WORLD_STATE_SCHEMA_VERSION` 从 4 升 5，并新增 `classifyWorldStateSchemaVersion`：World v1–v4 → `UNSUPPORTED_RECORD`，v5 → ok，未知/未来 → unknown-version code。所有 consumer 读取 `event.kind` 与 `event.payload`，不能靠交叉类型继续读取扁平字段。
+
+`worldStatePersistenceValidation` 此时就委托 `parseCommittedEventLedger`；`sqliteGameRepository` 改用 World classifier，移除自己的 World legacy 版本数组，确保 v4 明确返回 `UNSUPPORTED_RECORD`，从而保证 Task 2 提交后的新游戏、完整流程与 SQLite reload 都可用。Task 7 只再做 Ledger ↔ Memory/NPC provenance 交叉校验，不得把 World 版本升级推迟到那时。
+
+每个 `resolveByType` / quest / ending / candidate / battle / world-evolution helper 只返回 `eventDrafts` 与状态 mutation；测试断言 helper 返回的 WorldState ledger 与输入保持同一引用。全仓生产扫描：
+
+```bash
+rg -n "eventLedger:\s*\[\.\.\.|eventLedger\.concat|\.eventLedger\.push" src/game --glob '!**/*.test.ts'
+```
+
+Expected: 零命中。`battleResolver.ts` 的 8 处直接拼接（当前行 93/116/215/246/299/351/398/430）也必须在本 Task 机械迁成 draft；Task 8 只增加跨 action 的 battle Episode 因果和失败回滚证明，不承担延迟的类型迁移。
 
 - [ ] **Step 2: 为每种 payload 建立固定 metadata policy**
 
@@ -379,18 +459,40 @@ Expected: Task 完成后零命中。
 
 - [ ] **Step 3: `resolveTurn` 一次提交本回合 drafts**
 
-捕获一次 `committedAt = deps.now()`；用 `turnId/actionId/previous turnNumber + 1` 调 `commitEventDrafts`；随后才从 committed ledger 派生 StoryState。`TurnResolution.domainEvents` 改为 `CommittedNarrativeEvent[]`，`triggeredEvents` 仍投影 payload kind，不暴露 envelope 给客户端。
+在 `resolveTurn` 顶部捕获一次 `committedAt = deps.now()`。`ResolveDeps` 在本 Task 加入真实 `turnId`（Task 4 复用，不再重复新增）。当前 `ResolveDeps`/`BattleResolveDeps` 把 `now` 当函数往下传，`resolveByType`、`reconcileQuests`、`resolveEnding`、`approveCandidateEvents`、`compileCandidateEvent` 与 battle resolver 各自多次调用它给每个事件盖不同时间。迁移后这些 helper 一律不再产生 `occurredAt`，改为只返回 draft；`now` 只被 `resolveTurn` 调一次。
+
+回合号不要自己算：`turnNumber` 取 `previousStoryState.turnNumber + 1`，与 `createTurnResolution`（`turnResolution.ts:48` 计算该值并同步写回 `nextStoryState.turnNumber`）保持一致。调用顺序固定为：
+
+```text
+committedAt = deps.now()
+  → 收集 resolver/quest/ending/candidate 的 drafts
+  → commitEventDrafts({ ledger: worldState.eventLedger, drafts, source: { turnId, actionId, turnNumber: previousStoryState.turnNumber + 1, committedAt }, entityStore })
+  → nextWorldState.eventLedger = commitResult.ledger
+  → createTurnResolution({ ..., domainEvents: commitResult.appended })
+```
+
+`commitEventDrafts` 必须在 `createTurnResolution` 之前完成，否则 `TurnResolution.domainEvents` 与 `nextWorldState.eventLedger` 会落在不同回合号上。`TurnResolution.domainEvents` 改为 `CommittedNarrativeEvent[]`，`triggeredEvents` 仍投影 payload kind，不暴露 envelope 给客户端。
+
+战斗开始时不要再用 `occurredAt` 当 `battleKey`。先按 `turnId + battle_started:<enemyId>` 预铸稳定 `battle_started` Event ID，再由它派生 `battleKey`；同一 action retry/replay 必须得到同一个 key。`startBattle`/`battleAction` 返回 draft 时直接携带该 `episodeKey`，后续 action 从 `WorldState.battle.battleKey` 复用。
 
 - [ ] **Step 4: 移除 ledger-index 作为业务 turn 的替代**
 
 `materializedView`、objective rules、dialogue completed 查询、quest/candidate/ending 查询统一读取 `event.payload` 和 envelope `turnNumber/eventId`。禁止继续用数组下标伪造 turn；同一玩家回合多个事件必须共享 turnNumber。
 
+同时迁移两处 `game_initialized` 生产构造点，避免 Task 2 后新游戏仍写 legacy payload：
+
+1. `src/game/domain/worldState.ts` 的 `createInitialWorldState`；
+2. `src/game/gameplay/rpg/openingGeneration/compileOpeningGenerationCandidate.ts` 的生产开局路径。
+
+`createInitialWorldState` 增加必填 `committedAt`；`compileOpeningGenerationCandidate` 增加必填 `createdAt`。`createGame` 每次开局尝试只捕获一个 `createdAt`，同时传给编译、opening novelty 与最终 repository create/replace，不能在三个位置分别调用时钟。两处都用最终 opening Entity Store 调 `commitEventDrafts` 构造唯一 initialization Event；`turnId = asTurnId("init:" + generationId)`、`episodeKey = "initialization"`、`turnNumber = 0`、无 actionId。opening NPC 的 `initial_world` 来源不伪造 eventId。
+
 - [ ] **Step 5: 运行并提交**
 
 ```bash
-npm test -- src/game/domain/turnResolution.test.ts src/game/gameplay/rpg/ruleEngine src/game/gameplay/rpg/candidateEvents src/game/gameplay/rpg/narrativeContext
+npm test -- src/game/domain/events.test.ts src/game/domain/eventLedger.test.ts src/game/domain/worldState.test.ts src/game/domain/turnResolution.test.ts src/game/gameplay/rpg/ruleEngine src/game/gameplay/rpg/candidateEvents src/game/gameplay/rpg/narrativeContext src/game/gameplay/rpg/narrativeMemory src/game/gameplay/rpg/openingGeneration src/game/gameplay/rpg/worldEvolution/materializeWorldDelta.test.ts src/game/application/createGame.test.ts src/game/application/server/persistence/worldStatePersistenceValidation.test.ts src/game/application/server/persistence/sqliteGameRepository.test.ts
 npm run typecheck
-git add src/game/domain/turnResolution.ts src/game/domain/turnResolution.test.ts src/game/gameplay/rpg
+npm test
+git add src/game/domain src/game/gameplay/rpg src/game/application
 git commit -m "refactor(events): commit rule outcomes through one ledger pipeline"
 ```
 
@@ -399,7 +501,7 @@ git commit -m "refactor(events): commit rule outcomes through one ledger pipelin
 ### Task 3: 让 Pending Job、世界演化和 Scene Write-back 使用 Event ID 与明确因果
 
 **Consumes:** pending `domainEventRange`、world delta、scene approval/write-back、Task 2 committed events。  
-**Produces:** 后台叙事任务以 Event ID 而非脆弱数组范围引用规则结果；scene CAS 原子追加 world/scene/candidate events。  
+**Produces:** 后台叙事任务以 Event ID 而非脆弱数组范围引用规则结果；scene CAS 原子追加 world/scene events。
 **Independent proof:** application tests 覆盖 stale/retry/同 job 幂等与一次 CAS。
 
 **Files:**
@@ -407,7 +509,10 @@ git commit -m "refactor(events): commit rule outcomes through one ledger pipelin
 - Modify: `src/game/domain/pendingNarrativeJob.ts`
 - Modify: `src/game/domain/pendingNarrativeJob.test.ts`
 - Modify: `src/game/domain/narrative.ts`
+- Modify: `src/game/domain/narrative.test.ts`
 - Modify: `src/game/domain/narrativeBundle.ts`
+- Modify: `src/game/domain/narrativeBundle.test.ts`
+- Modify: `src/game/domain/preparedContinuation.test.ts`
 - Modify: `src/game/application/performTurn.ts`
 - Modify: `src/game/application/performTurn.test.ts`
 - Modify: `src/game/application/sceneGenerationContext.ts`
@@ -419,8 +524,19 @@ git commit -m "refactor(events): commit rule outcomes through one ledger pipelin
 - Modify: `src/game/application/generatePendingNarrativeBundle.ts`
 - Modify: `src/game/application/generatePendingNarrativeBundle.test.ts`
 - Modify: `src/game/application/sceneWriteBack.ts`
+- Modify: `src/game/application/consumeNarrativeBundle.ts`
+- Modify: `src/game/application/consumePreparedContinuation.test.ts`
+- Modify: `src/game/application/entityContextProjection.test.ts`
+- Modify: `src/game/application/markNarrativeGenerationFailed.test.ts`
+- Modify: `src/game/application/retryNarrativeGeneration.test.ts`
+- Modify: `src/game/application/server/ai/sourceFactory.test.ts`
+- Modify: `src/game/application/server/ai/worldEvolutionSource.test.ts`
+- Modify: `src/game/application/server/compositionRoot.test.ts`
+- Modify: `src/game/gameplay/rpg/narrativeBundle/descriptors.test.ts`
 - Modify: `src/game/gameplay/rpg/worldEvolution/materializeWorldDelta.ts`
 - Modify: `src/game/gameplay/rpg/worldEvolution/materializeWorldDelta.test.ts`
+
+`consumeNarrativeBundle.ts` 的 Event 形状已在 Task 2 机械切到 committed envelope；本 Task 只把它的触发查询改为 stable Event ID/payload 语义。`entityContextProjection.test.ts:95`、`markNarrativeGenerationFailed.test.ts:27`、`retryNarrativeGeneration.test.ts:33`、`server/ai/sourceFactory.test.ts:145`、`domain/narrative.test.ts:39` 都手工构造 `domainEventRange`，必须同步改为 `domainEventIds`。
 
 - [ ] **Step 1: 用 `domainEventIds` 替代 `domainEventRange`**
 
@@ -428,15 +544,34 @@ git commit -m "refactor(events): commit rule outcomes through one ledger pipelin
 
 - [ ] **Step 2: 世界演化返回 draft，不自行追加 ledger**
 
-`materializeWorldDelta` 只返回 preview Entity/Story state + `blueprint_expanded` draft；该 draft 的 cause keys 绑定 job domain events，episodeKey 绑定 job turn。没有新增实体时不得伪造 world-expanded 事件。
+Task 2 已让 `materializeWorldDelta` 不再自行追加 ledger；本 Step 固化其返回 preview Entity/Story state + `blueprint_expanded` draft 的语义，并补上 cause keys 绑定 job domain events、episodeKey 绑定 job turn。没有新增实体时不得伪造 world-expanded 事件。
 
-- [ ] **Step 3: 场景提交记录安全的 recent-scene payload**
+- [ ] **Step 3: 落地 `narrative_scene_presented`，它是 recent-scene 记忆的唯一来源**
 
-扩展 `narrative_scene_presented` payload 为 sceneId/location/focus/pacing/beatIds/referencedEntityIds/revealedFactIds；从已批准 scene 与 mandatory beats 构建，不保存 narration/台词。候选事件若仍由 scene 路径产生，同批形成 `candidate_event_proposed` draft。
+先核实一个容易踩空的事实：`narrative_scene_presented` 目前**从未被生产代码构造**。
+
+```bash
+rg -n 'type: "narrative_scene_presented"' src --glob '!*.test.ts'
+```
+
+Expected：当前基线零命中；该名字只出现在 `src/game/domain/events.ts` 的 union（当前行 215）和 `worldStatePersistenceValidation.ts` 的 `isGameEvent` switch（当前行 281）。Task 1/2 已把 payload/parser 单源化，但仍必须在本 Task 补上真实 scene producer。`candidate_event_proposed` 已因没有任何新候选入池路径而从新 union 删除，本 Task 不扩展 provider/candidate schema。
+
+`RecentSceneMemory`、"最近 8 幕"裁剪、Task 6 的 `recent_scenes` 块全部依赖 `narrative_scene_presented`。本 Step 必须真正产出它，否则整条 recent-scene 链路永远为空：
+
+- 在 `approveNarrativeBundle`（v7 生产路径）与 `approveAndWriteScene`（其余路径）审批通过处**返回 draft 所需的已批准结构数据**，最终仍只由上层 orchestration 在 scene CAS 前 commit，不能让纯审批函数直接写 ledger：
+  - `sceneId`：已批准 `currentScene.sceneId`；
+  - `locationId`：Narrative Bundle 路径取 `approved.nextWorldState.currentLocationId`，其余路径取已审批 `SceneGenerationContext.currentLocationId`；`NarrativeSceneState` 本身没有 location 字段，禁止臆造 `scene.locationId`；
+  - `focusNpcId`：优先取 `scene.event.kind === "dialogue"` 的 `focusNpcId`，否则取已通过 speech authority 的 `scene.npcLine?.npcId`，再否则为 null；
+  - `pacing`：场景 schema 当前没有 pacing 字段，使用唯一固定映射把该 job 对应的 `StoryState.nextPacingNeed` 转成 `StoryPacing`（`reveal→setup`、`develop→develop`、`complicate/escalate→turn`、`climax→climax`、`resolve→resolution`），映射只定义一次并做 exhaustiveness test；
+  - `beatIds`：只取 `job.mandatoryBeats` 的 `beatId`，不含 `instruction` 正文；
+  - envelope `actorIds/targetIds`：actor 固定包含玩家，target 只取 scene event、焦点 NPC、在场对白 speaker 与 mandatory beat 所引用且已通过校验的实体 ID；Fact 单独进入 `factIds`，不混入 actor/target；recent-scene reducer 再由 actor/target 生成 `referencedEntityIds`，payload 不重复保存；
+  - `revealedFactIds`：本幕向玩家揭示且 `discovered` 的 `FactId`。
+- 绝不写入 narration、`npcLine` 文本、choiceToken、actionKey、玩家原文或 secret Fact 正文。
+- cause 绑定 pending job 的 `domainEventIds`；`episodeKey` 绑定 job 的 `turnId`，从而并回触发它的 turn Episode。
 
 - [ ] **Step 4: scene CAS 前一次 commit 所有 drafts**
 
-`generatePendingNarrativeBundle` 在 proposal 全部审批通过后，使用 pending `turnId/actionId/turnNumber` 提交 world + candidate + scene drafts，再把 ledger 与 ready narrative 一次交给 `applySceneWriteBack`。同 job retry 发现 Event ID 已存在时必须视为幂等同值；payload 不同则拒绝 `EVENT_ID_CONFLICT`，不能覆盖。
+`generatePendingNarrativeBundle` 在 proposal 全部审批通过后，使用 pending `turnId/actionId/turnNumber` 提交 world + scene drafts，再把 ledger 与 ready narrative 一次交给 `applySceneWriteBack`。同 job retry 发现 Event ID 已存在时必须视为幂等同值；payload 不同则拒绝 `EVENT_ID_CONFLICT`，不能覆盖。
 
 - [ ] **Step 5: 保持 provider 和 revision 语义**
 
@@ -445,7 +580,7 @@ git commit -m "refactor(events): commit rule outcomes through one ledger pipelin
 - [ ] **Step 6: 运行并提交**
 
 ```bash
-npm test -- src/game/domain/pendingNarrativeJob.test.ts src/game/application/performTurn.test.ts src/game/application/sceneGenerationContext.test.ts src/game/application/approveNarrativeBundle.test.ts src/game/application/approveAndWriteScene.test.ts src/game/application/generatePendingNarrativeBundle.test.ts src/game/gameplay/rpg/worldEvolution/materializeWorldDelta.test.ts
+npm test -- src/game/domain/pendingNarrativeJob.test.ts src/game/domain/narrative.test.ts src/game/application/performTurn.test.ts src/game/application/sceneGenerationContext.test.ts src/game/application/approveNarrativeBundle.test.ts src/game/application/approveAndWriteScene.test.ts src/game/application/generatePendingNarrativeBundle.test.ts src/game/application/entityContextProjection.test.ts src/game/application/markNarrativeGenerationFailed.test.ts src/game/application/retryNarrativeGeneration.test.ts src/game/application/server/ai/sourceFactory.test.ts src/game/application/server/ai/worldEvolutionSource.test.ts src/game/application/server/compositionRoot.test.ts src/game/gameplay/rpg/worldEvolution/materializeWorldDelta.test.ts src/game/gameplay/rpg/narrativeBundle/descriptors.test.ts
 npm run typecheck
 git add src/game/domain src/game/application src/game/gameplay/rpg/worldEvolution
 git commit -m "feat(events): link narrative writeback through stable event ids"
@@ -481,6 +616,9 @@ git commit -m "feat(events): link narrative writeback through stable event ids"
 - Modify: `src/game/application/focusNpcContext.test.ts`
 - Modify: `src/game/application/sceneGenerationContext.ts`
 - Modify: `src/game/application/sceneGenerationContext.test.ts`
+- Modify: `src/game/application/consumePreparedContinuation.ts`
+- Modify: `src/game/application/testing/prologueAckPreservesSceneChoices.test.ts`
+- Modify: `src/game/gameplay/rpg/preparedContinuation/candidates.test.ts`
 - Modify: `src/game/domain/narrative.ts`
 - Modify: `src/game/domain/narrativeBundle.ts`
 - Modify: `src/game/domain/preparedContinuation.ts`
@@ -510,12 +648,22 @@ git commit -m "feat(events): link narrative writeback through stable event ids"
 - action knowledge source 新增 `eventId`；
 - `RelationshipEvidence` 新增且至少一个 `supportingEventIds`，保留 actionId/turnNumber 作为幂等与诊断；
 - `NpcInteraction` 新增 `eventId`；
-- `initial_world` 来源不伪造 action event；
+- `initial_world` 来源不伪造 action event：`NpcKnowledgeSource` 与 `RelationshipSource` 的 `initial_world` 分支是独立判别联合分支，`eventId` 在这两个分支里必须保持缺省（不出现在对象上），不能填空串或假 ID；
 - 未知、重复、非该 NPC 参与的 Event ID 在 store/persistence 校验失败。
+
+**必须先同步 `npcComponents.ts` 的三张 exact-keys 表，否则所有合法存档都会被判成 `invalid_component_shape`，而且没有编译期信号**：
+
+| 表 | 位置 | 本次要加的字段 |
+|---|---|---|
+| `KNOWLEDGE_ACTION_SOURCE_KEYS` | `npcComponents.ts:583` | `eventId` |
+| `EVIDENCE_KEYS` | `npcComponents.ts:656` | `supportingEventIds` |
+| `INTERACTION_REQUIRED_KEYS` | `npcComponents.ts:830` | `eventId` |
+
+`validateKnowledgeSource` 用 `hasExactKeys(raw, KNOWLEDGE_ACTION_SOURCE_KEYS, KNOWLEDGE_ACTION_SOURCE_KEYS_ALLOWED)` 判定，多一个键或 required 少一个键都直接拒绝；`NpcInteractionKeyLock`（`npcComponents.ts:837`）是 `IsExactly<keyof NpcInteraction, ...>`，改 `worldEntries.ts` 的 `NpcInteraction` 而不同步这张表时 typecheck 会失败——两个方向都要验。`RelationshipEvidence` 没有键集合类型锁，所以那张表只能靠本 Step 的失败测试兜住。
 
 - [ ] **Step 2: 规则调用方从 semantic event key 预铸 Event ID**
 
-`ResolveDeps` 增加真实 `turnId`，对话、FactChange、赠物、明确 NPC 任务、candidate effect 和共同战斗使用与 Task 2 policy 相同的 semantic key，并在 mutation 前调用 `eventIdFor(turnId, eventKey)`。Knowledge source、relationship evidence 和 interaction 因而从写入开始就是合法完整组件；同回合必须同时产生相同 key 的 draft。`commitEventDrafts` 校验预铸 ID 与 draft 映射一致；缺 draft、key 冲突或 ID 不匹配时整回合失败、零提交，不能保留 action-only evidence，也不允许先写缺 Event ID 的临时组件。
+复用 Task 2 已加入 `ResolveDeps` 的真实 `turnId`，对话、FactChange、赠物、明确 NPC 任务、candidate effect 和共同战斗使用与 Task 2 policy 相同的 semantic key，并在 mutation 前调用 `eventIdFor(turnId, eventKey)`。Knowledge source、relationship evidence 和 interaction 因而从写入开始就是合法完整组件；同回合必须同时产生相同 key 的 draft。`commitEventDrafts` 校验预铸 ID 与 draft 映射一致；缺 draft、key 冲突或 ID 不匹配时整回合失败、零提交，不能保留 action-only evidence，也不允许先写缺 Event ID 的临时组件。
 
 - [ ] **Step 3: speech authority 改用 Event ID**
 
@@ -528,7 +676,7 @@ opening（Event 引用固定为空）、narrative bundle、prepared continuation
 - [ ] **Step 5: 运行并提交**
 
 ```bash
-npm test -- src/game/domain/entity src/game/gameplay/rpg/npcMemory src/game/gameplay/rpg/entityWorld src/game/gameplay/rpg/dialogue src/game/gameplay/rpg/ruleEngine/propagateKnownFacts.test.ts src/game/application/npcSpeechAuthority.test.ts src/game/application/createGame.test.ts src/game/application/approveNarrativeBundle.test.ts src/game/application/approvePreparedContinuation.test.ts src/game/application/approveAndWriteScene.test.ts
+npm test -- src/game/domain/entity src/game/domain/narrativeBundle.test.ts src/game/domain/preparedContinuation.test.ts src/game/gameplay/rpg/npcMemory src/game/gameplay/rpg/entityWorld src/game/gameplay/rpg/dialogue src/game/gameplay/rpg/preparedContinuation src/game/gameplay/rpg/ruleEngine/propagateKnownFacts.test.ts src/game/application/npcSpeechAuthority.test.ts src/game/application/createGame.test.ts src/game/application/approveNarrativeBundle.test.ts src/game/application/approvePreparedContinuation.test.ts src/game/application/consumePreparedContinuation.test.ts src/game/application/approveAndWriteScene.test.ts src/game/application/testing/prologueAckPreservesSceneChoices.test.ts
 npm run typecheck
 git add src/game/domain src/game/gameplay/rpg src/game/application
 git commit -m "feat(npc): ground continuity evidence in committed events"
@@ -555,7 +703,11 @@ git commit -m "feat(npc): ground continuity evidence in committed events"
 - Modify: `src/game/application/stateCommit.ts`
 - Modify: `src/game/application/stateCommit.test.ts`
 - Modify: `src/game/application/sceneWriteBack.ts`
+- Modify: `src/game/application/server/compositionRoot.test.ts`
+- Modify: `src/game/application/server/persistence/sqliteGameRepository.ts`
+- Modify: `src/game/application/server/persistence/sqliteGameRepository.test.ts`
 - Modify: `src/game/gameplay/rpg/ruleEngine/index.ts`
+- Modify: `src/dependencyBoundaries.test.ts`
 
 - [ ] **Step 1: 写失败测试固定 Episode 聚合与 recent scene cap**
 
@@ -569,16 +721,31 @@ git commit -m "feat(npc): ground continuity evidence in committed events"
 
 删除 weak `recentBeats: unknown[]`、`npcContacts: unknown[]`、`reducedThroughEventCount`；`createInitialStoryState` 使用 `createEmptyEpisodicMemory()`。所有 selector 读 `storyState.memory`，不保留第二 reducer 或双写。
 
+同时把版本常量推到 v8（`src/game/domain/storyState.ts`）：
+
+- `STORY_STATE_SCHEMA_VERSION` 从 `7` 改为 `8`（当前在 `storyState.ts:14`）；
+- `classifyStoryStateSchemaVersion` 的旧版本分支由 `2 || 3 || 4 || 5 || 6` 改为覆盖 `1..7`，让所有已知旧 Story schema（尤其 v7）落进 `UNSUPPORTED_RECORD`（当前在 `storyState.ts:34`）；
+- `storyState.test.ts:63` 现有断言 `classifyStoryStateSchemaVersion(7)` 返回 ok，必须改为断言 `UNSUPPORTED_RECORD`，并新增 `classifyStoryStateSchemaVersion(8)` 返回 ok 的断言；`storyState.test.ts:36` 的 `expect(STORY_STATE_SCHEMA_VERSION).toBe(7)` 改为 `8`。
+
+`src/game/application/server/compositionRoot.test.ts:64-66` 手工铺 `recentBeats: [] / npcContacts: [] / reducedThroughEventCount: 0`，本 Step 一并替换为 `memory: createEmptyEpisodicMemory()`。
+
+Story memory 是持久化 schema 变化，不能只改常量而让 adapter 自己猜版本：本 Step 同时让 `sqliteGameRepository` 使用 `classifyStoryStateSchemaVersion`，删除 adapter 的 Story legacy 版本数组；Story v1–v7 都稳定映射 `UNSUPPORTED_RECORD`，v8 为当前，未知/未来映射 `VERSION_MISMATCH`。完整的 Story 内容 parser 与 ledger deep-compare 仍留给 Task 7。
+
 - [ ] **Step 4: CAS 前统一 reconcile**
 
-`commitState` 与 `writeBackScene` 都调用 `reconcileCommittedMemory({previous: nextStoryState.memory, ledger: nextWorldState.eventLedger})`；规则层不提前按临时 ledger 归约。修复当前 `resolveTurn` 在 final ledger 组装前先 reconcile 的顺序隐患。
+`commitState` 与 `writeBackScene` 都调用 `reconcileCommittedMemory({previous: nextStoryState.memory, ledger: nextWorldState.eventLedger})`；规则层不提前按临时 ledger 归约。
 
-- [ ] **Step 5: 运行并提交**
+这里要修掉一个已核实的顺序隐患：`src/game/gameplay/rpg/ruleEngine/index.ts` 现在先在第 286 行用 `ending.nextWorldState.eventLedger` 调 `reconcileMaterializedView`，**之后**才在第 300-305 行把 `finalDomainEvents` 追加成 `nextWorldState.eventLedger`——也就是说归约看到的账本比最终账本少一整回合。本 Step 删除第 282-297 行的提前归约，改为在 `nextWorldState` 组装完成之后 reconcile，并把结果只写进 `nextStoryStateWithView`。`stateCommit.ts:29` 是第二处归约点，同样换成 `reconcileCommittedMemory`。
+
+- [ ] **Step 5: 同步 `dependencyBoundaries.test.ts` 后再跑门禁**
+
+`src/dependencyBoundaries.test.ts:789` 的 `canonical state surfaces` 用例把 `"game/domain/materializedView.ts"` 写进硬编码清单并断言 `statSync(file).isFile()` 为 `true`。删除 `materializedView.ts` 后这条会直接失败，而 Task 5 的 targeted 测试扫不到它。把该条目替换为 `"game/domain/episodicMemory.ts"`。
 
 ```bash
-npm test -- src/game/domain/episodicMemory.test.ts src/game/domain/storyState.test.ts src/game/application/reconcileCommittedMemory.test.ts src/game/application/stateCommit.test.ts
+npm test -- src/game/domain/episodicMemory.test.ts src/game/domain/storyState.test.ts src/game/application/reconcileCommittedMemory.test.ts src/game/application/stateCommit.test.ts src/game/application/server/compositionRoot.test.ts src/game/application/server/persistence/sqliteGameRepository.test.ts
+npm run test:boundaries
 npm run typecheck
-git add src/game/domain src/game/application src/game/gameplay/rpg/ruleEngine/index.ts
+git add src/game/domain src/game/application src/game/gameplay/rpg/ruleEngine/index.ts src/dependencyBoundaries.test.ts
 git commit -m "feat(memory): derive episodic memory from committed ledger"
 ```
 
@@ -606,6 +773,7 @@ git commit -m "feat(memory): derive episodic memory from committed ledger"
 - Modify: `src/game/application/server/ai/narrativeContext/worldNarrativeContext.ts`
 - Modify: `src/game/application/server/ai/narrativeContext/worldNarrativeContext.test.ts`
 - Modify: `src/game/application/server/ai/narrativeContext/contextBlock.ts`
+- Modify: `src/dependencyBoundaries.test.ts`
 
 - [ ] **Step 1: 写失败测试固定 query 与 lexicographic rank**
 
@@ -628,15 +796,23 @@ Episode card 只说“在第 N 回合发生 X/涉及 Y”；实体名称、当�
 - 当前 job 的 exact Event cards：`slot="relevant_events"`、`authority="event"`、mandatory；
 - 召回 Episode：`slot="relevant_events"`、`authority="memory"`、optional，按 rank 转 priority；
 - recent scenes：`slot="recent_scenes"`、`authority="memory"`、optional；
-- manifest refs 使用 Event/Episode ID，不保存正文；整体仍用既有 8k 预算，不新增调用。
+- manifest refs 使用 Event/Episode ID，不保存正文；整体仍用既有 8k 预算（`NARRATIVE_BUNDLE_CONTEXT_MAX_ESTIMATED_TOKENS = 8_000`，`narrativeBundleContext.ts:25`），不新增调用。
 
-- [ ] **Step 6: 运行并提交**
+- [ ] **Step 6: 注册 `narrativeMemory` facade 并跑边界门禁**
+
+`docs/游戏开发规范.md` 要求"新增跨层 import、facade 或 server 入口时同步更新 `src/dependencyBoundaries.test.ts` 并运行 `npm run test:boundaries`"。在 `dependencyBoundaries.test.ts` 的 `FACADES` 清单（`dependencyBoundaries.test.ts:56-69`）末尾新增一项：
+
+```ts
+{ name: "narrativeMemory", path: "@/game/gameplay/rpg/narrativeMemory", anchors: ["eventPolicy", "retrieveNarrativeMemory"] }
+```
+
+注册后 `FACADE_DEEP_IMPORTS` 会自动禁止 `@/game/gameplay/rpg/narrativeMemory/<internal>` 形式的 deep-import，所以本 Task 的所有调用方必须统一写 `import { … } from "@/game/gameplay/rpg/narrativeMemory"`——这正是 `index.ts` 要存在的原因。`src/game/application/server/ai/**` 与 `src/game/application/**` 两条规则都包含 `FACADE_DEEP_IMPORTS`，因此它们也在约束范围内。
 
 ```bash
 npm test -- src/game/gameplay/rpg/narrativeMemory src/game/application/sceneGenerationContext.test.ts src/game/application/server/ai/narrativeContext src/game/application/server/ai/liveNarrativeBundleSource.test.ts
-npm run typecheck
 npm run test:boundaries
-git add src/game/gameplay/rpg/narrativeMemory src/game/application
+npm run typecheck
+git add src/game/gameplay/rpg/narrativeMemory src/game/application src/dependencyBoundaries.test.ts
 git commit -m "feat(memory): retrieve relevant episodes for narrative context"
 ```
 
@@ -656,22 +832,30 @@ git commit -m "feat(memory): retrieve relevant episodes for narrative context"
 - Modify: `src/game/domain/worldStateValidation.test.ts`
 - Modify: `src/game/application/server/persistence/worldStatePersistenceValidation.ts`
 - Modify: `src/game/application/server/persistence/worldStatePersistenceValidation.test.ts`
+- Create: `src/game/application/server/persistence/storyStatePersistenceValidation.ts`
+- Create: `src/game/application/server/persistence/storyStatePersistenceValidation.test.ts`
 - Modify: `src/game/application/server/persistence/sqliteGameRepository.ts`
 - Modify: `src/game/application/server/persistence/sqliteGameRepository.test.ts`
 - Modify: `src/game/application/server/persistence/gameRepository.ts`
 - Modify: `src/game/domain/testing/worldStateFixture.testutil.ts`
+- Modify: `src/game/application/testing/investigationChoiceJourney.test.ts`
+- Modify: `src/game/domain/storyState.ts`
 
 - [ ] **Step 1: 先写旧版与坏数据失败测试**
 
 v4/v7 → `UNSUPPORTED_RECORD`；未知未来版本 → `VERSION_MISMATCH`；坏 Event payload、重复 ID、sequence 缺口、未来 cause、未知 entity ref、memory cursor 漂移、Episode eventIds 与 ledger 不符、NPC provenance 指向无关 Event → `ENTITY_STATE_INVALID`，且绝不自动清档。
 
-- [ ] **Step 2: 初始存档创建完整 v5/v8 事实**
+- [ ] **Step 2: 复核 v5/v8 初始化与版本分类没有旁路**
 
-`createGame` 用 `createdAt`、generationId、opening preview Entity Store 构建唯一 `game_initialized` committed event 和 initialization Episode；opening NPC action-era 引用为空，initial_world 来源保持合法。
+Task 2 已随 committed ledger 把 WorldState 升到 v5，Task 5 已随 `memory` 把 StoryState 升到 v8。本 Step 不再改版本号或重复初始化逻辑，只证明新局初始化后 `memory` 是由 initialization Event rebuild 得到，而不是另写一份 Episode。
+
+复核两个 classifier 是唯一版本来源：World v1–v4、Story v1–v7 → `UNSUPPORTED_RECORD`；当前 v5/v8 → ok；非整数/未知未来版本 → 各自 unknown-version code，由 repository 映射为 `VERSION_MISMATCH`。SQLite 不得重新引入 `LEGACY_WORLD_SCHEMA_VERSIONS` / `LEGACY_STORY_SCHEMA_VERSIONS`。
 
 - [ ] **Step 3: persistence parser 单源化**
 
-`worldStatePersistenceValidation` 委托 `parseCommittedEventLedger`，StoryState parser 委托 `parseEpisodicMemory`；读取成功后 full rebuild memory 并 deep compare。删除当前 `isGameEvent` 巨型重复 switch，payload shape 只由 domain parser 定义一次。
+Task 2 已让 `worldStatePersistenceValidation` 委托 `parseCommittedEventLedger` 并删除巨型 `isGameEvent` switch；本 Step 在该单源 parser 上补齐 v5 的 ledger ↔ Entity/NPC provenance 交叉校验，`BattleStartSnapshot.eventLedger` 同样走它，不能重新复制 payload switch。
+
+StoryState 侧**当前没有独立 parser，不要假托一个**：`classifyStoryStateSchemaVersion` 只有测试在用，`sqliteGameRepository.ts` 当前是直接比较版本。本 Step 创建 `application/server/persistence/storyStatePersistenceValidation.ts`，提供显式 `parsePersistableStoryState`，并让 create/replace/applyState/applySceneWriteBack 的序列化前校验与读取路径共用。它做三件事：校验 StoryState exact keys 并调用 classifier、委托 `parseNarrativeRuntimeState` 与 `parseEpisodicMemory`、再对传入的 World ledger full rebuild 并 deep compare；内容/交叉引用失败映射 `ENTITY_STATE_INVALID`，版本失败保留 `UNSUPPORTED_RECORD`/`VERSION_MISMATCH`，不能一律压成内容损坏。
 
 - [ ] **Step 4: reload/CAS/scene CAS tests**
 
@@ -680,11 +864,13 @@ v4/v7 → `UNSUPPORTED_RECORD`；未知未来版本 → `VERSION_MISMATCH`；坏
 - [ ] **Step 5: 运行并提交**
 
 ```bash
-npm test -- src/game/domain/worldState.test.ts src/game/domain/worldStateValidation.test.ts src/game/application/server/persistence/worldStatePersistenceValidation.test.ts src/game/application/server/persistence/sqliteGameRepository.test.ts
+npm test -- src/game/domain/worldState.test.ts src/game/domain/worldStateValidation.test.ts src/game/domain/storyState.test.ts src/game/application/server/persistence/worldStatePersistenceValidation.test.ts src/game/application/server/persistence/storyStatePersistenceValidation.test.ts src/game/application/server/persistence/sqliteGameRepository.test.ts src/game/application/testing/investigationChoiceJourney.test.ts
 npm run typecheck
-git add src/game/domain src/game/application/server/persistence
+git add src/game/domain src/game/application
 git commit -m "feat(persistence): validate v5 event ledger and v8 memory"
 ```
+
+`investigationChoiceJourney.test.ts` 的 raw `game_initialized` fixture 已在 Task 2 随整仓 cutover 机械迁移；本 Task 保留它是为了证明 v5/v8 reload 与两条调查分支仍然稳定，不能到本 Task 才第一次修类型。
 
 ---
 
@@ -697,9 +883,13 @@ git commit -m "feat(persistence): validate v5 event ledger and v8 memory"
 **Files:**
 
 - Modify: `src/game/domain/worldState.ts`
+- Modify: `src/game/domain/narrative.ts`
+- Modify: `src/game/domain/narrative.test.ts`
 - Modify: `src/game/domain/combat.ts`
 - Modify: `src/game/gameplay/rpg/ruleEngine/battleResolver.ts`
+- Modify: `src/game/gameplay/rpg/ruleEngine/battleResolver.test.ts`
 - Modify: `src/game/gameplay/rpg/ruleEngine/advanceBattle.ts`
+- Modify: `src/game/gameplay/rpg/ruleEngine/advanceBattle.test.ts`
 - Modify: `src/game/application/performBattleRound.ts`
 - Modify: `src/game/application/performBattleRound.test.ts`
 - Modify: `src/game/application/battleShapeValidation.ts`
@@ -710,9 +900,13 @@ git commit -m "feat(persistence): validate v5 event ledger and v8 memory"
 
 `BattleStartSnapshot` 继续保存 entityStore + eventLedger；现有 `BattleNarrativeCheckpointState.storySnapshot` 在 StoryState v8 后自然包含 `memory`。战斗开始时两者必须取自同一战前 revision，恢复时分别整体替换，不新增第三份 memory snapshot，也不能在失败后尝试“逆向删除” Episode。
 
-- [ ] **Step 2: battle causal policy**
+- [ ] **Step 2: battleKey 必须稳定贯穿 draft 的 episodeKey**
+
+Task 2 已把当前由 `deps.now()` ISO 串生成的 `battleKey` 改成从稳定 `battle_started` Event ID 派生，并让所有 battle draft 携带 episodeKey。本 Step 不再给 `ResolveResult` 增加第二条 `battleKey` 通道：`startBattle` 成功后的权威 key 已在 `nextWorldState.battle.battleKey`，同次返回的 draft 也已有 key；后续 `battleAction`/`modernBattleAction` 只从 active battle state 读回。测试固定同 action retry/replay key 不变、不同 battle started Event 不撞 key。
 
 所有战斗 Event 共享 `episodeIdForBattle(battleKey)`；每轮 cause 指向上一轮/started，resolved 指向终结轮，enemy_defeated 与 `fought_together` relationship event 指向 victory resolved。HP 为 0 的真实参战同伴仍可获得共同作战证据。
+
+`fought_together` 事件不能漏在账本外：它现在由 `performBattleRound.ts` 的 `applyCompanionVictorySignals` 在 `resolveTurn` **返回之后**才写进 Entity Store，本回合 ledger 此时已经提交完。把这段规则下沉到 victory battle resolution：先按 Task 4 的 semantic key 预铸 `npc_relationship_changed` Event ID，把它写入关系 evidence 并返回同 key draft，最终与 round/resolved/defeated 一起由 `resolveTurn` 的**同一次** `commitEventDrafts` 提交。`performBattleRound` 删除 post-resolution 关系 mutation，不再对同一规则回合做第二批 Event commit。关系 evidence 的 `turnNumber` 使用 `resolution.nextStoryState.turnNumber` 对应的 committed source；active 非终结轮仍可重复使用同一玩家回合号，但没有关系事件。测试必须断言胜利后 `supportingEventIds` 指向的 Event 真实存在于 ledger，且不是靠 actionId 假造。
 
 - [ ] **Step 3: 失败/撤退恢复完整战前事实**
 
@@ -725,11 +919,14 @@ git commit -m "feat(persistence): validate v5 event ledger and v8 memory"
 - [ ] **Step 5: 运行并提交**
 
 ```bash
-npm test -- src/game/gameplay/rpg/ruleEngine/battleResolver.test.ts src/game/gameplay/rpg/ruleEngine/advanceBattle.test.ts src/game/application/performBattleRound.test.ts src/game/application/battleShapeValidation.test.ts src/game/application/server/persistence/sqliteGameRepository.test.ts
+npm test -- src/game/domain/narrative.test.ts src/game/gameplay/rpg/ruleEngine/battleResolver.test.ts src/game/gameplay/rpg/ruleEngine/advanceBattle.test.ts src/game/gameplay/rpg/ruleEngine/index.test.ts src/game/application/performBattleRound.test.ts src/game/application/battleShapeValidation.test.ts src/game/application/server/persistence/sqliteGameRepository.test.ts
+rg -n "eventLedger:\s*\[\.\.\.|eventLedger\.concat|\.eventLedger\.push" src/game --glob '!**/*.test.ts'
 npm run typecheck
 git add src/game/domain src/game/gameplay/rpg/ruleEngine src/game/application
 git commit -m "feat(memory): preserve causal battle episodes and rollback"
 ```
+
+最后那条 `rg` 在排除测试负例后必须零命中；Task 2 已消除 `battleResolver.ts` 的直接追加，本 Task 只防止回归。
 
 ---
 
@@ -745,9 +942,12 @@ git commit -m "feat(memory): preserve causal battle episodes and rollback"
 - Modify: `src/game/application/testing/npcContinuityJourney.test.ts`
 - Modify: `src/game/application/testing/narrativeGroundingJourney.test.ts`
 - Modify: `src/game/application/testing/dynamicMaterializationJourney.test.ts`
+- Modify: `src/game/application/testing/investigationChoiceJourney.test.ts`
 - Modify: `src/game/application/testing/mediumActJourney.test.ts`
 - Modify: `src/game/application/testing/storyDivergenceJourney.test.ts`
 - Modify: `src/game/application/testing/foundationJourney.test.ts`
+
+`investigationChoiceJourney.test.ts` 也是当前验收命令里的既有 journey（`当前开发阶段.md` 的验收命令包含它，`current-phase.json` 的 `acceptanceCommands` 漏了，本 Plan 在 Task 10 一并补上）。它原先直接构造 `game_initialized` payload，已在 Task 2 做机械迁移；本 Task 负责补上它的召回/隐私断言。
 
 - [ ] **Step 1: 构造至少 24 成功玩家回合的中篇 Journey**
 
@@ -772,7 +972,8 @@ git commit -m "feat(memory): preserve causal battle episodes and rollback"
 - [ ] **Step 6: 运行并提交**
 
 ```bash
-npm test -- src/game/application/testing/episodicMemoryJourney.test.ts src/game/application/testing/npcContinuityJourney.test.ts src/game/application/testing/narrativeGroundingJourney.test.ts src/game/application/testing/dynamicMaterializationJourney.test.ts src/game/application/testing/mediumActJourney.test.ts src/game/application/testing/storyDivergenceJourney.test.ts src/game/application/testing/foundationJourney.test.ts
+npm test -- src/game/application/testing/episodicMemoryJourney.test.ts src/game/application/testing/npcContinuityJourney.test.ts src/game/application/testing/narrativeGroundingJourney.test.ts src/game/application/testing/investigationChoiceJourney.test.ts src/game/application/testing/dynamicMaterializationJourney.test.ts src/game/application/testing/mediumActJourney.test.ts src/game/application/testing/storyDivergenceJourney.test.ts src/game/application/testing/foundationJourney.test.ts
+npm run typecheck
 git add src/game/application/testing
 git commit -m "test(memory): prove long-gap episodic recall and continuity"
 ```
@@ -809,9 +1010,14 @@ git commit -m "test(memory): prove long-gap episodic recall and continuity"
 ```bash
 rg -n "domainEventRange|recentBeats|reducedThroughEventCount|materializedView|usedInteractionActionIds|allowedInteractionActionIds" src
 rg -n "eventLedger:\s*\[\.\.\.|eventLedger\.concat|\.eventLedger\.push" src/game --glob '!**/*.test.ts'
+rg -n 'type: "game_initialized"' src --glob '!*.test.ts'
 ```
 
-Expected: 两组生产代码零命中；所有 ledger 追加只在 `eventLedger.ts` 的 commit helper 内。
+Expected:
+- 第一、二组生产代码零命中；所有 ledger 追加只在 `eventLedger.ts` 的 commit helper 内。
+- 第三组只命中 `src/game/domain/eventLedger.ts`（或初始化专用的 domain helper）里通过 `commitEventDrafts` 构造的那一行；不得再出现任何手工拼出的 `{ type: "game_initialized", generation }` 字面量。
+
+顺带清掉 `docs/agent/current-phase.json` 与 `docs/agent/当前开发阶段.md` 之间的验收命令不一致：两者当前差一个 `src/game/application/testing/investigationChoiceJourney.test.ts`（`当前开发阶段.md` 有，`current-phase.json` 没有）。本 Task 统一补上，Step 4 的命令表即为准。
 
 - [ ] **Step 3: 先标记待验收**
 
@@ -833,7 +1039,7 @@ npm run test:app
 npm test
 npm run test:foundation-journey
 npm run journey:foundation
-npm test -- src/game/application/testing/episodicMemoryJourney.test.ts src/game/application/testing/npcContinuityJourney.test.ts src/game/application/testing/narrativeGroundingJourney.test.ts src/game/application/testing/dynamicMaterializationJourney.test.ts src/game/application/testing/mediumActJourney.test.ts src/game/application/testing/storyDivergenceJourney.test.ts
+npm test -- src/game/application/testing/episodicMemoryJourney.test.ts src/game/application/testing/npcContinuityJourney.test.ts src/game/application/testing/narrativeGroundingJourney.test.ts src/game/application/testing/investigationChoiceJourney.test.ts src/game/application/testing/dynamicMaterializationJourney.test.ts src/game/application/testing/mediumActJourney.test.ts src/game/application/testing/storyDivergenceJourney.test.ts
 npm run build
 npm run phase:status
 ```
@@ -859,15 +1065,19 @@ npm run branch:merge -- codex/structured-events-episodic-memory
 ## Acceptance Checklist
 
 - [ ] `WorldState.eventLedger` 只保存严格 `CommittedNarrativeEvent`，每项有稳定 Event ID、连续 sequence、真实 turn/action、参与者、地点、因果、outcome 与显著度。
-- [ ] 所有 ledger 写入都走一个纯 commit helper；规则、world delta、scene write-back、battle 不直接拼数组。
+- [ ] 所有 ledger 写入都走一个纯 commit helper；规则、world delta、scene write-back、battle 不直接拼数组（含 `battleResolver.ts`，Task 2 cutover 后生产扫描即零命中）。
 - [ ] 同一 turn/job 重放产生相同 ID；stale/retry 不产生重复事件或 payload 覆盖。
 - [ ] cause 只能指向更早 Event，quest/battle/ending/world/scene 的固定因果 policy 有测试。
-- [ ] NPC knowledge、relationship evidence、interaction 与台词引用使用真实 Event ID；actionId 只保留为幂等/诊断，不再充当长期证据。
+- [ ] 两处 `game_initialized` 生产构造点（`worldState.ts` 的 `createInitialWorldState` 与 `openingGeneration/compileOpeningGenerationCandidate.ts`）都在 Task 2 产出 committed envelope，全仓无手工拼出的 `game_initialized` 字面量。
+- [ ] `narrative_scene_presented` 真正由审批通过路径产出（此前从未被生产代码构造），recent-scene 记忆非空；没有 producer 且旧存档不兼容的 `candidate_event_proposed` 已从新 payload/parser 删除，Plan 4 未偷增 candidate/provider schema。
+- [ ] NPC knowledge、relationship evidence、interaction 与台词引用使用真实 Event ID；actionId 只保留为幂等/诊断，不再充当长期证据；`npcComponents.ts` 的三张 exact-keys 表（`KNOWLEDGE_ACTION_SOURCE_KEYS` / `EVIDENCE_KEYS` / `INTERACTION_REQUIRED_KEYS`）已同步，合法 record 不会被判 `invalid_component_shape`。
 - [ ] Episode/recent scene/memory 可从 ledger full rebuild，incremental 结果 deep equal full rebuild，持久化漂移稳定判 corrupt。
 - [ ] 旧事件可按 Event/quest/entity/cause/location/salience/recency 结构化召回；不依赖完整 ledger Prompt 或向量检索。
 - [ ] Entity 当前状态覆盖 Episode 历史；旧位置、旧关系或旧任务状态不会被当成当前事实。
 - [ ] Context manifest 只含 Event/Episode ID 与元数据；玩家原文、secret Fact 正文、完整 narration/台词和其他 NPC 私密历史不进入 Event/Episode/Prompt。
-- [ ] 战斗失败/撤退恢复战前 Entity Store、ledger、Episode、NPC provenance 和叙事状态；胜利才保留 causal battle Episode 与共同作战证据。
+- [ ] 新 payload union 不含 `narrative_choice` / `narrative_dialogue_choice` 的 token/action-key 遗留形状；`player_intent_expressed` 只保存封闭 `intentCode`，不保存 `Action.intent/rawText`。
+- [ ] 战斗失败/撤退恢复战前 Entity Store、ledger、Episode、NPC provenance 和叙事状态；胜利才保留 causal battle Episode 与共同作战证据，且共同作战证据的 Event 真实存在于 ledger。
+- [ ] `dependencyBoundaries.test.ts` 已同步：`materializedView.ts` 锚点换成 `episodicMemory.ts`，新 `narrativeMemory` facade 已登记进 `FACADES`，所有调用方只经 facade 导入。
 - [ ] provider 调用数、六个路由、CAS、一次生成逐步消费和短/中篇完成路径不变。
 - [ ] `WorldState.version=5` / `StoryState.version=8` / `EntityStore.version=2` 严格持久化；旧 v4/v7 明确 unsupported。
 - [ ] Plan 5 Living Outline/Arc、Plan 6 scene planning、Plan 7 segmented storage/vector index、Plan 8 十小时支持与 misinformation 没有被提前实现。
