@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { GameEvent, LocationObservedEvent, NpcMetEvent, FactDiscoveredEvent, LocationVisitedEvent, QuestCompletedEvent, QuestUnlockedEvent, ItemObtainedEvent, BattleStartedEvent, BattleRoundResolvedEvent, BattleResolvedEvent, EnemyDefeatedEvent, QuestFailedEvent, EndingReachedEvent, NarrativeScenePresentedEvent, CandidateEventProposedEvent, CandidateEventApprovedEvent, CandidateEventRejectedEvent, CandidateEventExpiredEvent, CandidateEventActivatedEvent } from "./events";
+import type { GameEvent, LocationObservedEvent, NpcMetEvent, NpcDialogueCompletedEvent, FactDiscoveredEvent, LocationVisitedEvent, QuestCompletedEvent, QuestUnlockedEvent, ItemObtainedEvent, ItemGivenEvent, BattleStartedEvent, BattleRoundResolvedEvent, BattleResolvedEvent, EnemyDefeatedEvent, QuestFailedEvent, EndingReachedEvent, NarrativeScenePresentedEvent, CandidateEventProposedEvent, CandidateEventApprovedEvent, CandidateEventRejectedEvent, CandidateEventExpiredEvent, CandidateEventActivatedEvent } from "./events";
 import { asLocationId, asNpcId, asFactId, asGenerationId, asItemId, asQuestId, asEnemyId, asEndingId, type GenerationMetadata } from "./worldEntity";
 
 function buildGeneration(): GenerationMetadata {
@@ -32,6 +32,17 @@ describe("GameEvent union (Phase 3 action events)", () => {
     };
     expect(event.type).toBe("npc_met");
     expect(event.npcId).toBe("npc_1");
+  });
+
+  it("accepts dialogue completion action evidence while keeping old events readable", () => {
+    const legacy: NpcDialogueCompletedEvent = {
+      type: "npc_dialogue_completed", npcId: asNpcId("npc_1"), occurredAt: "2026-07-27T10:01:30Z",
+    };
+    const current: NpcDialogueCompletedEvent = {
+      ...legacy, actionId: "dialogue_action_1",
+    };
+    expect(legacy.actionId).toBeUndefined();
+    expect(current.actionId).toBe("dialogue_action_1");
   });
 
   it("accepts fact_discovered event with injected timestamp", () => {
@@ -113,6 +124,14 @@ describe("GameEvent union (Phase 3 action events)", () => {
     expect(event.itemId).toBe("item_key");
     expect(event.locationId).toBe("loc_3");
     expect(event.occurredAt).toBe("2026-07-27T10:06:00Z");
+  });
+
+  it("accepts item_given action evidence without requiring it on legacy events", () => {
+    const event: ItemGivenEvent = {
+      type: "item_given", itemId: asItemId("item_key"), npcId: asNpcId("npc_1"),
+      locationId: asLocationId("loc_3"), actionId: "give_action_1", occurredAt: "2026-07-27T10:06:30Z",
+    };
+    expect(event.actionId).toBe("give_action_1");
   });
 
   it("GameEvent union narrows on all Phase 3 type discriminators", () => {

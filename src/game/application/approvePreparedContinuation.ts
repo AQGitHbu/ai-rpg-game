@@ -19,6 +19,14 @@ import { asEnemyId, asFactId, asLocationId, asNpcId, asQuestId } from "@/game/do
 import type { NarrativeJobId } from "@/game/domain/events";
 import type { WorldState } from "@/game/domain/worldState";
 import type { PreparedStepDescriptor } from "@/game/gameplay/rpg/preparedContinuation";
+import {
+  buildNpcSpeechAuthority,
+  isValidNpcSpeechTarget,
+  validateNpcSpeechReferences,
+  type NpcSpeechAuthority,
+} from "./npcSpeechAuthority";
+import { entitiesOfKind } from "@/game/domain/entity";
+import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 
 export type PreparedContinuationRejection =
   | "missing_step"
@@ -27,12 +35,20 @@ export type PreparedContinuationRejection =
   | "invalid_graph"
   | "invalid_entity_reference"
   | "invalid_fact_reference"
+  | "invalid_interaction_reference"
+  | "duplicate_npc_reference"
   | "invalid_choice_count"
   | "invalid_choice_candidate";
 
 export type ApprovePreparedContinuationResult =
   | { readonly ok: true; readonly prepared: PreparedContinuationState }
   | { readonly ok: false; readonly code: PreparedContinuationRejection };
+
+type PreparedApprovalDescriptor = Omit<PreparedStepDescriptor, "arrivalNpc"> & Readonly<{
+  readonly arrivalNpc?: NonNullable<PreparedStepDescriptor["arrivalNpc"]> & Readonly<{
+    readonly speechAuthority?: NpcSpeechAuthority;
+  }>;
+}>;
 
 function eventForTrigger(descriptor: PreparedStepDescriptor): NarrativeEventState {
   switch (descriptor.trigger.kind) {
@@ -48,25 +64,62 @@ function eventForTrigger(descriptor: PreparedStepDescriptor): NarrativeEventStat
 
 function rebuildNpcLine(
   line: ScenePerformanceNpcLine | null,
-  descriptor: PreparedStepDescriptor,
-): NarrativeNpcLineState | null {
+  descriptor: PreparedApprovalDescriptor,
+  worldState?: WorldState,
+): NarrativeNpcLineState | { readonly code: PreparedContinuationRejection } | null {
   if (line === null) return null;
-  if (!descriptor.authority.allowedEntityIds.some((entityId) => String(entityId) === String(line.npcId))) return null;
-  if (descriptor.arrivalNpc !== undefined && String(line.npcId) !== String(descriptor.arrivalNpc.id)) return null;
-  const allowedFactIds = new Set(descriptor.authority.visibleFactIds.map(String));
-  if (line.usedFactIds.some((factId) => !allowedFactIds.has(String(factId)))) return null;
+  if (!descriptor.authority.allowedEntityIds.some((entityId) => String(entityId) === String(line.npcId))) {
+    return { code: "invalid_entity_reference" };
+  }
+  if (descriptor.arrivalNpc !== undefined && String(line.npcId) !== String(descriptor.arrivalNpc.id)) {
+    return { code: "invalid_entity_reference" };
+  }
+  if (!Array.isArray(line.usedFactIds)) return { code: "invalid_fact_reference" };
+  if (!Array.isArray(line.usedInteractionActionIds)) return { code: "invalid_interaction_reference" };
+  const arrivalSpeechAuthority = descriptor.arrivalNpc?.speechAuthority;
+  if (arrivalSpeechAuthority !== undefined
+    && String(arrivalSpeechAuthority.speakerNpcId) !== String(line.npcId)) {
+    return { code: "invalid_entity_reference" };
+  }
+  if (worldState !== undefined && !isValidNpcSpeechTarget(worldState.entityStore, PLAYER_ENTITY_ID)) {
+    return { code: "invalid_entity_reference" };
+  }
+  const worldSpeechAuthority = worldState !== undefined
+    ? buildNpcSpeechAuthority({
+      store: worldState.entityStore,
+      speakerNpcId: line.npcId as never,
+      sceneVisibleFactIds: entitiesOfKind(worldState.entityStore, "fact")
+        .filter((fact) => fact.fact.discovered)
+        .map((fact) => fact.core.id),
+      targetContext: { targetId: PLAYER_ENTITY_ID },
+    })
+    : undefined;
+  if (worldState !== undefined && worldSpeechAuthority === null) {
+    return { code: "invalid_entity_reference" };
+  }
+  const speechAuthority = worldSpeechAuthority ?? arrivalSpeechAuthority;
+  if (speechAuthority === undefined) return { code: "invalid_entity_reference" };
+  const referenceCheck = validateNpcSpeechReferences({
+    authority: speechAuthority,
+    usedFactIds: line.usedFactIds,
+    usedInteractionActionIds: line.usedInteractionActionIds,
+  });
+  if (!referenceCheck.ok) {
+    return { code: referenceCheck.code };
+  }
   return {
     npcId: asNpcId(line.npcId),
     text: line.text.trim(),
     emotion: line.emotion,
     usedFactIds: line.usedFactIds.map(asFactId),
+    usedInteractionActionIds: [...line.usedInteractionActionIds],
     answeredBeatIds: [...line.answeredBeatIds],
   };
 }
 
 function rebuildObjectiveLink(
   link: ScenePerformanceObjectiveLink | null,
-  descriptor: PreparedStepDescriptor,
+  descriptor: PreparedApprovalDescriptor,
 ): PreparedObjectiveLinkState | null | undefined {
   if (link === null) return null;
   if (String(link.questId) !== String(descriptor.authority.questId)
@@ -96,12 +149,14 @@ function rebuildSegments(segments: readonly ScenePerformanceSegment[]): readonly
 
 function rebuildStep(
   proposal: PreparedContinuationProposal,
-  descriptor: PreparedStepDescriptor,
+  descriptor: PreparedApprovalDescriptor,
+  worldState?: WorldState,
 ): PreparedContinuationStepState | { readonly code: PreparedContinuationRejection } {
   const segments = rebuildSegments(proposal.segments);
   if (segments === null) return { code: "invalid_graph" };
-  const npcLine = rebuildNpcLine(proposal.npcLine, descriptor);
+  const npcLine = rebuildNpcLine(proposal.npcLine, descriptor, worldState);
   if (proposal.npcLine !== null && npcLine === null) return { code: "invalid_entity_reference" };
+  if (npcLine !== null && "code" in npcLine) return npcLine;
   const objectiveLink = rebuildObjectiveLink(proposal.objectiveLink, descriptor);
   if (objectiveLink === undefined) return { code: "invalid_entity_reference" };
 
@@ -139,11 +194,10 @@ function rebuildStep(
 export function approvePreparedContinuation(input: {
   readonly originJobId: NarrativeJobId;
   readonly proposals: readonly PreparedContinuationProposal[];
-  readonly descriptors: readonly PreparedStepDescriptor[];
+  readonly descriptors: readonly PreparedApprovalDescriptor[];
   readonly activeStepIds: readonly string[];
   readonly worldState?: WorldState;
 }): ApprovePreparedContinuationResult {
-  void input.worldState;
   const descriptorsById = new Map(input.descriptors.map((descriptor) => [descriptor.stepId, descriptor]));
   if (descriptorsById.size !== input.descriptors.length) return { ok: false, code: "duplicate_step" };
   if (new Set(input.activeStepIds).size !== input.activeStepIds.length
@@ -163,7 +217,7 @@ export function approvePreparedContinuation(input: {
   for (const descriptor of input.descriptors) {
     const proposal = proposalsById.get(descriptor.stepId);
     if (proposal === undefined) return { ok: false, code: "missing_step" };
-    const rebuilt = rebuildStep(proposal, descriptor);
+    const rebuilt = rebuildStep(proposal, descriptor, input.worldState);
     if ("code" in rebuilt) return { ok: false, code: rebuilt.code };
     steps.push(rebuilt);
   }

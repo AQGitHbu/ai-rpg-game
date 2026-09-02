@@ -157,6 +157,7 @@ export function materializeWorldDelta(input: MaterializeWorldDeltaInput): Approv
     },
     createdAtTurn: ss.turnNumber,
     previousStore: ws.entityStore,
+    npcCreationComponentsById: approved.npcCreationComponentsById,
   });
   const existingIds = new Set(ws.entityStore.records.map((record) => record.core.id));
   const mutations: EntityMutation[] = [];

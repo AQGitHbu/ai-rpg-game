@@ -8,7 +8,6 @@ import type { PacingNeed, ThreadId } from "./storyState";
 /** 支持的候选事件 kind（Spec §11.1）。 */
 export type EventCandidateKind =
   | "npc_reveals_fact"
-  | "npc_changes_stance"
   | "hostile_force_acts"
   | "enemy_appears"
   | "thread_complicates"
@@ -17,7 +16,6 @@ export type EventCandidateKind =
 
 export const EVENT_CANDIDATE_KINDS: readonly EventCandidateKind[] = [
   "npc_reveals_fact",
-  "npc_changes_stance",
   "hostile_force_acts",
   "enemy_appears",
   "thread_complicates",
@@ -31,7 +29,6 @@ export const EVENT_CANDIDATE_KINDS: readonly EventCandidateKind[] = [
  */
 export type ProposedEffect =
   | { readonly kind: "npc_reveals_fact"; readonly npcId: NpcId; readonly factId: FactId }
-  | { readonly kind: "npc_changes_stance"; readonly npcId: NpcId; readonly stance: string }
   | { readonly kind: "hostile_force_acts"; readonly locationId: LocationId; readonly action: string }
   | { readonly kind: "enemy_appears"; readonly enemyId: EnemyId; readonly locationId: LocationId }
   | { readonly kind: "thread_complicates"; readonly threadId: ThreadId }
@@ -164,9 +161,6 @@ function parseProposedEffect(input: unknown): ProposedEffect | null {
     case "npc_reveals_fact":
       if (typeof raw.npcId !== "string" || typeof raw.factId !== "string") return null;
       return { kind, npcId: raw.npcId as NpcId, factId: raw.factId as FactId };
-    case "npc_changes_stance":
-      if (typeof raw.npcId !== "string" || typeof raw.stance !== "string") return null;
-      return { kind, npcId: raw.npcId as NpcId, stance: raw.stance };
     case "hostile_force_acts":
       if (typeof raw.locationId !== "string" || typeof raw.action !== "string") return null;
       return { kind, locationId: raw.locationId as LocationId, action: raw.action };

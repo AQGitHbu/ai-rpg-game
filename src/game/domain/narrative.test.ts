@@ -4,7 +4,9 @@ import type { ResolvedEvent } from "./resolvedEvent";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "./pendingNarrativeJob";
 import { asLocationId, asNpcId } from "./worldEntity";
 import type {
+  NarrativeNpcLineState,
   NarrativeRuntimeState,
+  NpcDialogueInScene,
   NarrativeSceneState,
 } from "./narrative";
 import { buildNpcDialoguePages, parseNarrativeRuntimeState } from "./narrative";
@@ -100,6 +102,59 @@ describe("NarrativeSceneState", () => {
     ])[0];
     expect(fallback?.speechSource).toBe("fixture");
     expect(fallback?.speechPurpose).toBe("ambient");
+    expect(fallback?.usedFactIds).toEqual([]);
+    expect(fallback?.usedInteractionActionIds).toEqual([]);
+  });
+
+  it("requires both reference arrays on persisted NPC lines and dialogues", () => {
+    const legacyLine = {
+      npcId: "npc_1",
+      text: "我知道这件事。",
+      emotion: "neutral",
+      usedFactIds: [],
+      answeredBeatIds: [],
+    };
+    expect(parseNarrativeRuntimeState({
+      status: "ready",
+      mode: "offline",
+      currentScene: { ...readyScene, npcLine: legacyLine },
+      choiceRegistry: [],
+    }).ok).toBe(false);
+
+    const legacyDialogue = {
+      npcId: "npc_1",
+      npcName: "老周",
+      npcRole: "茶摊老人",
+      speechPages: ["路过喝口茶。"],
+      speechSource: "fixture",
+      speechPurpose: "ambient",
+    };
+    expect(parseNarrativeRuntimeState({
+      status: "ready",
+      mode: "offline",
+      currentScene: { ...readyScene, npcDialogues: [legacyDialogue] },
+      choiceRegistry: [],
+    }).ok).toBe(false);
+  });
+
+  it("requires speech reference arrays in production DTO construction types", () => {
+    // @ts-expect-error v4 persisted NPC line construction must include the interaction array.
+    const missingLineReferences: NarrativeNpcLineState = {
+      npcId: asNpcId("npc_1"),
+      text: "我知道这件事。",
+      emotion: "neutral",
+      usedFactIds: [],
+    };
+    // @ts-expect-error v4 persisted scene dialogue construction must include both arrays.
+    const missingDialogueReferences: NpcDialogueInScene = {
+      npcId: asNpcId("npc_1"),
+      npcName: "老周",
+      npcRole: "茶摊老人",
+      speechPages: ["路过喝口茶。"],
+    };
+    void missingLineReferences;
+    void missingDialogueReferences;
+    expect(true).toBe(true);
   });
 });
 
@@ -184,5 +239,39 @@ describe("NarrativeRuntimeState", () => {
         activeStepIds: ["missing-step"],
       },
     })).toEqual({ ok: false, code: "INVALID_NARRATIVE_RUNTIME" });
+  });
+
+  it("round-trips complete battle checkpoint continuation fields and keeps old omissions compatible", () => {
+    const checkpoint = {
+      storySnapshot: { turnNumber: 3 },
+      currentScene: readyScene,
+      choiceRegistry: [],
+      preparedContinuation: {
+        originJobId: asNarrativeJobId("job-checkpoint"),
+        steps: [],
+        activeStepIds: [],
+      },
+      dialogueResume: {
+        objectiveKey: "quest_1:0",
+        npcId: asNpcId("npc_1"),
+        locationId: asLocationId("loc_1"),
+        scene: readyScene,
+        choiceRegistry: [],
+      },
+      dialogueSession: {
+        npcId: asNpcId("npc_1"), turnCount: 1, requiredTurns: 2, completed: false,
+      },
+    };
+    const runtime = { ...ready, battleCheckpoint: checkpoint };
+    expect(parseNarrativeRuntimeState(runtime)).toEqual({ ok: true, value: runtime });
+    expect(parseNarrativeRuntimeState({ ...ready, battleCheckpoint: {
+      storySnapshot: { turnNumber: 3 }, currentScene: readyScene, choiceRegistry: [],
+    } })).toMatchObject({ ok: true });
+    expect(parseNarrativeRuntimeState({ ...ready, battleCheckpoint: {
+      ...checkpoint, preparedContinuation: { ...checkpoint.preparedContinuation, unexpected: true },
+    } })).toEqual({ ok: false, code: "INVALID_NARRATIVE_RUNTIME" });
+    expect(parseNarrativeRuntimeState({ ...ready, battleCheckpoint: {
+      ...checkpoint, dialogueResume: { ...checkpoint.dialogueResume, choiceRegistry: [null] },
+    } })).toEqual({ ok: false, code: "INVALID_NARRATIVE_RUNTIME" });
   });
 });

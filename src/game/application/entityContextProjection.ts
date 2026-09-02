@@ -6,6 +6,7 @@ import {
 } from "@/game/domain/entity";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { StoryState } from "@/game/domain/storyState";
+import type { WorldDeltaEntityContextClosure } from "@/game/domain/worldDelta";
 import type { QuestObjective } from "@/game/domain/worldEntries";
 import type { WorldState } from "@/game/domain/worldState";
 
@@ -63,7 +64,10 @@ function directReferenceIds(record: EntityRecord, safeFactIds: ReadonlySet<strin
   }
   if (isEntityKind(record, "npc")) return [
     String(record.position.locationId),
-    ...record.npcState.memory.knownFactIds.map(String).filter((id) => safeFactIds.has(id)),
+    ...record.knowledge.entries
+      .filter((entry) => entry.disclosure !== "secret")
+      .map((entry) => String(entry.factId))
+      .filter((id) => safeFactIds.has(id)),
   ];
   if (isEntityKind(record, "item")) {
     const owner = record.possession.owner;
@@ -89,11 +93,16 @@ function summaryOf(record: EntityRecord, focusNpcId: string | undefined): Narrat
   };
   if (isEntityKind(record, "npc")) {
     const recent = String(record.core.id) === focusNpcId
-      ? record.npcState.memory.interactionHistory.slice(-5).map((entry) => entry.summary).filter((entry) => entry.trim() !== "")
+      ? record.history.interactions.slice(-5)
+        .map((entry) => entry.summary.replace(/关系[+-]?\d+(?:\.\d+)?/g, "关系变化"))
+        .filter((entry) => entry.trim() !== "")
       : [];
+    const goals = record.dynamicState.goals
+      .filter((goal) => goal.status === "active" || goal.status === "blocked")
+      .map((goal) => goal.description);
     return {
       id: String(record.core.id), kind: record.core.kind, name: record.core.name,
-      summary: `角色=${record.identity.role}；${record.identity.description}；目标=${record.npcState.memory.goals.join("、") || "无"}${recent.length === 0 ? "" : `；最近交互=${recent.join("｜")}`}`,
+      summary: `角色=${record.identity.role}；${record.identity.description}；目标=${goals.join("、") || "无"}${recent.length === 0 ? "" : `；最近交互=${recent.join("｜")}`}`,
       locationId: String(record.position.locationId),
     };
   }
@@ -151,7 +160,10 @@ export function buildEntityContextProjection(input: {
 }): EntityContextProjection {
   const { entityStore } = input.worldState;
   const hiddenFactIds = new Set(
-    entitiesOfKind(entityStore, "npc").flatMap((record) => record.npcState.memory.hiddenFactIds.map(String)),
+    entitiesOfKind(entityStore, "npc")
+      .flatMap((record) => record.knowledge.entries)
+      .filter((entry) => entry.disclosure === "secret")
+      .map((entry) => String(entry.factId)),
   );
   const safeFactIds = new Set(
     entitiesOfKind(entityStore, "fact")
@@ -249,5 +261,26 @@ export function buildEntityContextProjection(input: {
       location: names("location"), npc: names("npc"), item: names("item"),
       enemy: names("enemy"), quest: names("quest"),
     },
+  };
+}
+
+/**
+ * 将同一应用边界已经计算出的实体闭包交给 world-delta 审批。
+ * 这是关系种子的 allowlist，不是让审批层自行遍历全世界的替代入口。
+ */
+export function buildWorldDeltaEntityContextClosure(input: {
+  readonly worldState: WorldState;
+  readonly storyState: StoryState;
+  readonly job: PendingNarrativeJob;
+}): WorldDeltaEntityContextClosure {
+  const projection = buildEntityContextProjection(input);
+  const currentLocationId = String(input.worldState.currentLocationId);
+  const currentLocationActiveNpcIds = entitiesOfKind(input.worldState.entityStore, "npc")
+    .filter((record) => record.core.lifecycle === "active" && String(record.position.locationId) === currentLocationId)
+    .map((record) => String(record.core.id));
+  return {
+    mandatoryEntityIds: projection.mandatory.map((entity) => entity.id),
+    directReferenceEntityIds: projection.mandatory.map((entity) => entity.id),
+    currentLocationActiveNpcIds,
   };
 }

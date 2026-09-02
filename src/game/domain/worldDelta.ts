@@ -10,6 +10,11 @@ import type {
 } from "./worldEntity";
 import type { StoryState } from "./storyState";
 import type { EndingRequirement, InvestigationApproach, WorldState } from "./worldState";
+import type {
+  NpcGoalProposal,
+  NpcIdentityAnchors,
+  NpcRelationshipSeedProposal,
+} from "./entity/npcComponents";
 
 // ---------------------------------------------------------------------------
 // 故事演化状态与需求：运行时按需具象化的推进账本。
@@ -74,7 +79,9 @@ export type WorldDeltaProposal = {
     readonly role: string;
     readonly description: string;
     readonly locationRef: { readonly kind: "existing"; readonly id: string } | { readonly kind: "new_location" };
-    readonly goals: readonly string[];
+    readonly anchors: NpcIdentityAnchors;
+    readonly goals: readonly NpcGoalProposal[];
+    readonly relationshipSeeds: readonly NpcRelationshipSeedProposal[];
   };
   readonly newItem: null | { readonly name: string; readonly description: string; readonly locationRef: "current" | "new_location" };
   readonly newEnemy: null | { readonly name: string; readonly tier: "normal" | "boss"; readonly locationRef: "current" | "new_location" };
@@ -89,6 +96,13 @@ export type WorldDeltaProposal = {
   readonly nextMainQuest: null | DynamicQuestProposal;
   readonly endingPair: null | readonly [DynamicEndingProposal, DynamicEndingProposal];
 };
+
+/** 应用边界明确传入的关系种子可见实体闭包；不是全量世界实体列表。 */
+export type WorldDeltaEntityContextClosure = Readonly<{
+  readonly mandatoryEntityIds: readonly string[];
+  readonly directReferenceEntityIds: readonly string[];
+  readonly currentLocationActiveNpcIds: readonly string[];
+}>;
 
 /** 已审批的世界演化：服务端铸造品牌化 ID，并携带预览状态供场景表演构建合法选项。 */
 export type ApprovedWorldDelta = {

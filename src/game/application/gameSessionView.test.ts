@@ -209,7 +209,7 @@ describe("projectGameSessionView", () => {
       turn: 1,
       narration: "老猎户打量着来客。",
       usedFactIds: [],
-      npcLine: { npcId: npc1.id, text, emotion: "guarded" as const, usedFactIds: [] },
+      npcLine: { npcId: npc1.id, text, emotion: "guarded" as const, usedFactIds: [], usedInteractionActionIds: [] },
       choices: [],
       source: "generated" as const,
       event: { kind: "dialogue" as const, focusNpcId: npc1.id },
@@ -218,6 +218,8 @@ describe("projectGameSessionView", () => {
         npcName: npc1.name,
         npcRole: npc1.role,
         speechPages: [text.slice(0, -3), text.slice(-3)],
+        usedFactIds: [],
+        usedInteractionActionIds: [],
         speechSource: "generated" as const,
         speechPurpose: "focus" as const,
       }],
@@ -289,14 +291,14 @@ describe("projectGameSessionView", () => {
       turn: 2,
       narration: "老板压低声音：“那脚印往街道那边去了。”",
       usedFactIds: [],
-      npcLine: { npcId: npc1.id, text: "那脚印往街道那边去了，你真想查就去瞧瞧。", emotion: "neutral" as const, usedFactIds: [] },
+      npcLine: { npcId: npc1.id, text: "那脚印往街道那边去了，你真想查就去瞧瞧。", emotion: "neutral" as const, usedFactIds: [], usedInteractionActionIds: [] },
       choices: [
         { choiceToken: "move-handoff", label: "（动身前往街道）谢过老板，我这就去瞧瞧。" },
         { choiceToken: "talk-more", label: "老板，那脚印可有什么说法？" },
       ] as const,
       source: "fixture" as const,
       event: { kind: "observe" as const, locationId: asLocationId("loc_1") },
-      npcDialogues: [{ npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["那脚印往街道那边去了。"] }],
+      npcDialogues: [{ npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["那脚印往街道那边去了。"], usedFactIds: [], usedInteractionActionIds: [] }],
     };
     const wsWithQuest: WorldState = buildWorld({
       quests: [{
@@ -400,7 +402,7 @@ describe("projectGameSessionView", () => {
       turn: 0,
       narration: "你在客栈。",
       usedFactIds: [],
-      npcLine: { npcId: asNpcId("npc_1"), text: "老板说道：\"需要什么吗？\"", emotion: "neutral" as const, usedFactIds: [] },
+      npcLine: { npcId: asNpcId("npc_1"), text: "老板说道：\"需要什么吗？\"", emotion: "neutral" as const, usedFactIds: [], usedInteractionActionIds: [] },
       choices: [
         { choiceToken: "t1", label: "请问一下目前状况是怎么样的？", choiceKind: "dialogue_response" as const, dialogueIntent: "intent_1", actionKey: "dialogue:t1" },
         { choiceToken: "t2", label: "是否可以告诉我事情的缘由？", choiceKind: "dialogue_response" as const, dialogueIntent: "intent_2", actionKey: "dialogue:t2" },
@@ -408,7 +410,7 @@ describe("projectGameSessionView", () => {
       source: "generated" as const,
       event: { kind: "dialogue" as const, focusNpcId: asNpcId("npc_1") },
       npcDialogues: [
-        { npcId: asNpcId("npc_1"), npcName: "老板", npcRole: "路人", speechPages: ["需要什么吗？"] },
+        { npcId: asNpcId("npc_1"), npcName: "老板", npcRole: "路人", speechPages: ["需要什么吗？"], usedFactIds: [], usedInteractionActionIds: [] },
       ],
     };
     const ssWithScene = {
@@ -440,7 +442,7 @@ describe("projectGameSessionView", () => {
       turn: 0,
       narration: "你在客栈。",
       usedFactIds: [],
-      npcLine: { npcId: asNpcId("npc_1"), text: "老板说道：\"需要什么吗？\"", emotion: "neutral" as const, usedFactIds: [] },
+      npcLine: { npcId: asNpcId("npc_1"), text: "老板说道：\"需要什么吗？\"", emotion: "neutral" as const, usedFactIds: [], usedInteractionActionIds: [] },
       choices: [
         { choiceToken: "t1", label: "请问一下目前状况是怎么样的？", choiceKind: "dialogue_response" as const, dialogueIntent: "intent_1", actionKey: "dialogue:t1" },
         { choiceToken: "t2", label: "是否可以告诉我事情的缘由？", choiceKind: "dialogue_response" as const, dialogueIntent: "intent_2", actionKey: "dialogue:t2" },
@@ -448,7 +450,7 @@ describe("projectGameSessionView", () => {
       source: "generated" as const,
       event: { kind: "dialogue" as const, focusNpcId: asNpcId("npc_1") },
       npcDialogues: [
-        { npcId: asNpcId("npc_1"), npcName: "老板", npcRole: "路人", speechPages: ["需要什么吗？"] },
+        { npcId: asNpcId("npc_1"), npcName: "老板", npcRole: "路人", speechPages: ["需要什么吗？"], usedFactIds: [], usedInteractionActionIds: [] },
       ],
     };
     const secondNpc: NpcEntry = {
@@ -510,7 +512,7 @@ describe("projectGameSessionView", () => {
       turn: 2,
       narration: "主线已经交给传讯人。",
       usedFactIds: [],
-      npcLine: { npcId: npc1.id, text: "去找传讯人吧。", emotion: "neutral" as const, usedFactIds: [] },
+      npcLine: { npcId: npc1.id, text: "去找传讯人吧。", emotion: "neutral" as const, usedFactIds: [], usedInteractionActionIds: [] },
       choices: [
         { choiceToken: "t1", label: "表示愿意支持老板" },
         { choiceToken: "t2", label: "质疑老板的说法" },
@@ -518,8 +520,8 @@ describe("projectGameSessionView", () => {
       source: "fixture" as const,
       event: { kind: "dialogue" as const, focusNpcId: npc1.id },
       npcDialogues: [
-        { npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["去找传讯人吧。"] },
-        { npcId: secondNpc.id, npcName: secondNpc.name, npcRole: secondNpc.role, speechPages: ["我有消息给你。"] },
+        { npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["去找传讯人吧。"], usedFactIds: [], usedInteractionActionIds: [] },
+        { npcId: secondNpc.id, npcName: secondNpc.name, npcRole: secondNpc.role, speechPages: ["我有消息给你。"], usedFactIds: [], usedInteractionActionIds: [] },
       ],
     };
     const ssHandoff: StoryState = {
@@ -622,7 +624,7 @@ describe("projectGameSessionView", () => {
           turn: 2,
           narration: "老茶头让你去找赵文远。",
           usedFactIds: [],
-          npcLine: { npcId: npc1.id, text: "赵师爷就在镇东，你去问他吧。", emotion: "warm", usedFactIds: [] },
+          npcLine: { npcId: npc1.id, text: "赵师爷就在镇东，你去问他吧。", emotion: "warm", usedFactIds: [], usedInteractionActionIds: [] },
           choices: [],
           handoffAcknowledgement: "多谢老丈指点。",
           source: "generated",
@@ -633,6 +635,8 @@ describe("projectGameSessionView", () => {
               npcName: npc1.name,
               npcRole: npc1.role,
               speechPages: ["赵师爷就在镇东，你去问他吧。"],
+              usedFactIds: [],
+              usedInteractionActionIds: [],
               speechSource: "generated",
               speechPurpose: "focus",
             },
@@ -641,6 +645,8 @@ describe("projectGameSessionView", () => {
               npcName: zhao.name,
               npcRole: zhao.role,
               speechPages: ["这青石镇的晚风，倒比州府衙门里的穿堂风还凉。"],
+              usedFactIds: [],
+              usedInteractionActionIds: [],
               speechSource: "generated",
               speechPurpose: "ambient",
             },
@@ -676,14 +682,14 @@ describe("projectGameSessionView", () => {
       turn: 7,
       narration: "苏绾已经说完了。",
       usedFactIds: [],
-      npcLine: { npcId: npc1.id, text: "你去面对追兵吧。", emotion: "neutral" as const, usedFactIds: [] },
+      npcLine: { npcId: npc1.id, text: "你去面对追兵吧。", emotion: "neutral" as const, usedFactIds: [], usedInteractionActionIds: [] },
       choices: [
         { choiceToken: "expired-1", label: "旧选项一" },
         { choiceToken: "expired-2", label: "旧选项二" },
       ] as const,
       source: "generated" as const,
       event: { kind: "dialogue" as const, focusNpcId: npc1.id },
-      npcDialogues: [{ npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["你去面对追兵吧。"] }],
+      npcDialogues: [{ npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["你去面对追兵吧。"], usedFactIds: [], usedInteractionActionIds: [] }],
     };
     const view = projectGameSessionView(
       buildWorld({ enemies: [enemy] }),
@@ -702,14 +708,14 @@ describe("projectGameSessionView", () => {
       turn: 4,
       narration: "顾砚已经把证物交到你面前。",
       usedFactIds: [],
-      npcLine: { npcId: npc1.id, text: "这枚腰牌该交给你了。", emotion: "neutral" as const, usedFactIds: [] },
+      npcLine: { npcId: npc1.id, text: "这枚腰牌该交给你了。", emotion: "neutral" as const, usedFactIds: [], usedInteractionActionIds: [] },
       choices: [
         { choiceToken: "support-after-talk", label: "支持老板" },
         { choiceToken: "challenge-after-talk", label: "质疑老板" },
       ] as const,
       source: "fixture" as const,
       event: { kind: "dialogue" as const, focusNpcId: npc1.id },
-      npcDialogues: [{ npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["这枚腰牌该交给你了。"] }],
+      npcDialogues: [{ npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["这枚腰牌该交给你了。"], usedFactIds: [], usedInteractionActionIds: [] }],
     };
     const wsAfterTalk: WorldState = buildWorld({
       npcs: [{ ...npc1, met: true }],
@@ -766,7 +772,7 @@ describe("projectGameSessionView", () => {
       turn: 2,
       narration: "主线线索把你带到传讯人面前。",
       usedFactIds: [],
-      npcLine: { npcId: secondNpc.id, text: "我手里有一条线索。", emotion: "neutral" as const, usedFactIds: [] },
+      npcLine: { npcId: secondNpc.id, text: "我手里有一条线索。", emotion: "neutral" as const, usedFactIds: [], usedInteractionActionIds: [] },
       choices: [
         { choiceToken: "t1", label: "表示愿意支持传讯人" },
         { choiceToken: "t2", label: "质疑传讯人的说法" },
@@ -774,7 +780,7 @@ describe("projectGameSessionView", () => {
       source: "fixture" as const,
       event: { kind: "travel" as const, locationId: asLocationId("loc_1") },
       npcDialogues: [
-        { npcId: secondNpc.id, npcName: secondNpc.name, npcRole: secondNpc.role, speechPages: ["我手里有一条线索。"] },
+        { npcId: secondNpc.id, npcName: secondNpc.name, npcRole: secondNpc.role, speechPages: ["我手里有一条线索。"], usedFactIds: [], usedInteractionActionIds: [] },
       ],
     };
     const wsTarget = buildWorld({
@@ -814,7 +820,7 @@ describe("projectGameSessionView", () => {
       turn: 9,
       narration: "迷雾散去，老板仍在等你的答复。",
       usedFactIds: [],
-      npcLine: { npcId: npc1.id, text: "证据已经齐了，你准备怎样面对众人？", emotion: "guarded" as const, usedFactIds: [] },
+      npcLine: { npcId: npc1.id, text: "证据已经齐了，你准备怎样面对众人？", emotion: "guarded" as const, usedFactIds: [], usedInteractionActionIds: [] },
       choices: [
         { choiceToken: "end-support", label: "回应老板：我愿意把证据摊开。" },
         { choiceToken: "end-challenge", label: "质疑老板：我会先核对证据。" },
@@ -822,7 +828,7 @@ describe("projectGameSessionView", () => {
       source: "fixture" as const,
       event: { kind: "battle" as const, enemyId: asEnemyId("enemy_1") },
       npcDialogues: [
-        { npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["证据已经齐了，你准备怎样面对众人？"] },
+        { npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["证据已经齐了，你准备怎样面对众人？"], usedFactIds: [], usedInteractionActionIds: [] },
       ],
     };
     const story: StoryState = {
@@ -972,13 +978,13 @@ describe("projectGameSessionView", () => {
           turn: 0,
           narration: "你在客栈。",
           usedFactIds: [],
-          npcLine: { npcId: asNpcId("npc_1"), text: "老板说道：\"需要什么吗？\"", emotion: "neutral" as const, usedFactIds: [] },
+          npcLine: { npcId: asNpcId("npc_1"), text: "老板说道：\"需要什么吗？\"", emotion: "neutral" as const, usedFactIds: [], usedInteractionActionIds: [] },
           choices: [] as never,
           source: "generated" as const,
           event: { kind: "dialogue" as const, focusNpcId: asNpcId("npc_1") },
           npcDialogues: [
-            { npcId: asNpcId("npc_1"), npcName: "老板", npcRole: "路人", speechPages: ["需要什么吗？"] },
-            { npcId: asNpcId("npc_2"), npcName: "客人", npcRole: "酒客", speechPages: [] },
+            { npcId: asNpcId("npc_1"), npcName: "老板", npcRole: "路人", speechPages: ["需要什么吗？"], usedFactIds: [], usedInteractionActionIds: [] },
+            { npcId: asNpcId("npc_2"), npcName: "客人", npcRole: "酒客", speechPages: [], usedFactIds: [], usedInteractionActionIds: [] },
           ],
         },
       },
@@ -1022,6 +1028,8 @@ describe("projectGameSessionView", () => {
             speechPages: [],
             speechSource: "generated",
             speechPurpose: "focus",
+            usedFactIds: [],
+            usedInteractionActionIds: [],
           }],
         },
         choiceRegistry: [],
@@ -1045,12 +1053,12 @@ describe("projectGameSessionView", () => {
       turn: 2,
       narration: "老板指向街道尽头。",
       usedFactIds: [],
-      npcLine: { npcId: npc1.id, text: "线索已经指向街道。你现在过去，就能赶上留下的痕迹。", emotion: "neutral" as const, usedFactIds: [] },
+          npcLine: { npcId: npc1.id, text: "线索已经指向街道。你现在过去，就能赶上留下的痕迹。", emotion: "neutral" as const, usedFactIds: [], usedInteractionActionIds: [] },
       choices: [{ choiceToken: "handoff-token", label: "我这就去核对。" }],
       handoffAcknowledgement: "我这就去核对。",
       source: "generated" as const,
       event: { kind: "dialogue" as const, focusNpcId: npc1.id },
-      npcDialogues: [{ npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["线索已经指向街道。你现在过去，就能赶上留下的痕迹。"] }],
+      npcDialogues: [{ npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["线索已经指向街道。你现在过去，就能赶上留下的痕迹。"], usedFactIds: [], usedInteractionActionIds: [] }],
     };
     const story: StoryState = {
       ...ss,
@@ -1088,11 +1096,11 @@ describe("projectGameSessionView", () => {
       turn: 2,
       narration: "老板指向街道尽头。",
       usedFactIds: [],
-      npcLine: { npcId: npc1.id, text: "线索已经指向街道。你现在过去，就能赶上留下的痕迹。", emotion: "neutral" as const, usedFactIds: [] },
+          npcLine: { npcId: npc1.id, text: "线索已经指向街道。你现在过去，就能赶上留下的痕迹。", emotion: "neutral" as const, usedFactIds: [], usedInteractionActionIds: [] },
       choices: [] as const,
       source: "generated" as const,
       event: { kind: "dialogue" as const, focusNpcId: npc1.id },
-      npcDialogues: [{ npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["线索已经指向街道。你现在过去，就能赶上留下的痕迹。"], speechSource: "generated" as const, speechPurpose: "focus" as const }],
+      npcDialogues: [{ npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["线索已经指向街道。你现在过去，就能赶上留下的痕迹。"], speechSource: "generated" as const, speechPurpose: "focus" as const, usedFactIds: [], usedInteractionActionIds: [] }],
     };
     const story: StoryState = {
       ...ss,
@@ -1123,11 +1131,11 @@ describe("projectGameSessionView", () => {
           turn: 0,
           narration: "确定性旁白。",
           usedFactIds: [],
-          npcLine: { npcId: npc1.id, text: "确定性回应。", emotion: "neutral" as const, usedFactIds: [] },
+          npcLine: { npcId: npc1.id, text: "确定性回应。", emotion: "neutral" as const, usedFactIds: [], usedInteractionActionIds: [] },
           choices: [] as never,
           source: "fixture" as const,
           event: { kind: "dialogue" as const, focusNpcId: npc1.id },
-          npcDialogues: [{ npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["确定性回应。"] }],
+          npcDialogues: [{ npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["确定性回应。"], usedFactIds: [], usedInteractionActionIds: [] }],
         },
       },
     }, 0, "ending");
@@ -1148,7 +1156,7 @@ describe("projectGameSessionView", () => {
           turn: 0,
           narration: "确定性旁白。",
           usedFactIds: [],
-          npcLine: { npcId: npc1.id, text: "确定性回应。", emotion: "neutral", usedFactIds: [] },
+          npcLine: { npcId: npc1.id, text: "确定性回应。", emotion: "neutral", usedFactIds: [], usedInteractionActionIds: [] },
           choices: [],
           source: "fixture",
           event: { kind: "dialogue", focusNpcId: npc1.id },
@@ -1157,6 +1165,8 @@ describe("projectGameSessionView", () => {
             npcName: npc1.name,
             npcRole: npc1.role,
             speechPages: ["确定性回应。"],
+            usedFactIds: [],
+            usedInteractionActionIds: [],
             speechSource: "fixture",
             speechPurpose: "focus",
           }],
@@ -1183,12 +1193,12 @@ describe("projectGameSessionView", () => {
           turn: 0,
           narration: "你在客栈。",
           usedFactIds: [],
-          npcLine: { npcId: asNpcId("npc_1"), text: "老板如实答道：\"我知道了。\"", emotion: "neutral" as const, usedFactIds: [] },
+          npcLine: { npcId: asNpcId("npc_1"), text: "老板如实答道：\"我知道了。\"", emotion: "neutral" as const, usedFactIds: [], usedInteractionActionIds: [] },
           choices: [] as never,
           source: "fixture" as const,
           event: { kind: "dialogue" as const, focusNpcId: asNpcId("npc_1") },
           npcDialogues: [
-            { npcId: asNpcId("npc_1"), npcName: "老板", npcRole: "路人", speechPages: ["老板如实答道：\"我知道了。\""] },
+            { npcId: asNpcId("npc_1"), npcName: "老板", npcRole: "路人", speechPages: ["老板如实答道：\"我知道了。\""], usedFactIds: [], usedInteractionActionIds: [] },
           ],
         },
       },
@@ -1211,7 +1221,7 @@ describe("projectGameSessionView", () => {
           turn: 0,
           narration: "镇口一阵风吹过。",
           usedFactIds: [],
-          npcLine: { npcId: asNpcId("npc_1"), text: "老板说道：\"我知道了。\"", emotion: "neutral" as const, usedFactIds: [] },
+          npcLine: { npcId: asNpcId("npc_1"), text: "老板说道：\"我知道了。\"", emotion: "neutral" as const, usedFactIds: [], usedInteractionActionIds: [] },
           choices: [] as never,
           source: "generated" as const,
           event: { kind: "observe" as const, locationId: asLocationId("loc_1") },
@@ -1474,7 +1484,7 @@ describe("projectGameSessionView", () => {
       turn: 2,
       narration: "老板压低声音。",
       usedFactIds: [],
-      npcLine: { npcId: asNpcId("npc_1"), text: "此事不可声张。", emotion: "guarded" as const, usedFactIds: [] },
+      npcLine: { npcId: asNpcId("npc_1"), text: "此事不可声张。", emotion: "guarded" as const, usedFactIds: [], usedInteractionActionIds: [] },
       choices: [
         { choiceToken: "c_aabbccddeeff0011", label: "追问线索" },
         { choiceToken: "c_1122334455667788", label: "表示理解" },
@@ -1541,7 +1551,7 @@ describe("projectGameSessionView", () => {
       turn: 3,
       narration: "你抵达客栈，老板迎了上来。",
       usedFactIds: [],
-      npcLine: { npcId: asNpcId("npc_1"), text: "老板把旧案的关键线索说给你听。", emotion: "neutral" as const, usedFactIds: [] },
+      npcLine: { npcId: asNpcId("npc_1"), text: "老板把旧案的关键线索说给你听。", emotion: "neutral" as const, usedFactIds: [], usedInteractionActionIds: [] },
       choices: [
         { choiceToken: "arrival-1", label: "请把下一步说清楚。" },
         { choiceToken: "arrival-2", label: "不再追问，离开这里" },
@@ -1634,7 +1644,7 @@ describe("projectGameSessionView", () => {
       turn: 2,
       narration: "你与周伯交谈时，韩征在一旁巡视。",
       usedFactIds: [],
-      npcLine: { npcId: asNpcId("npc_1"), text: "周伯低声说道：那天晚上我确实看到了可疑的人影。", emotion: "guarded" as const, usedFactIds: [] },
+      npcLine: { npcId: asNpcId("npc_1"), text: "周伯低声说道：那天晚上我确实看到了可疑的人影。", emotion: "guarded" as const, usedFactIds: [], usedInteractionActionIds: [] },
       choices: [
         { choiceToken: "c_choice1", label: "追问详情" },
         { choiceToken: "c_choice2", label: "表示支持" },
@@ -1647,12 +1657,16 @@ describe("projectGameSessionView", () => {
           npcName: "周伯",
           npcRole: "客栈掌柜",
           speechPages: ["那天晚上我确实看到了可疑的人影。"],
+          usedFactIds: [],
+          usedInteractionActionIds: [],
         },
         {
           npcId: asNpcId("npc_2"),
           npcName: "韩征",
           npcRole: "捕头",
           speechPages: ["韩征看了你一眼，继续巡视。"],
+          usedFactIds: [],
+          usedInteractionActionIds: [],
           speechSource: "generated" as const,
           smallTalk: {
             prompt: "向韩征打个招呼",
@@ -1738,7 +1752,7 @@ describe("projectGameSessionView", () => {
           turn: 5,
           narration: "老板说完了。",
           usedFactIds: [],
-          npcLine: { npcId: npc1.id, text: "接下来去查明车轮印。", emotion: "neutral" as const, usedFactIds: [] },
+          npcLine: { npcId: npc1.id, text: "接下来去查明车轮印。", emotion: "neutral" as const, usedFactIds: [], usedInteractionActionIds: [] },
           choices: [] as never,
           source: "fixture" as const,
           event: { kind: "observe" as const, locationId: loc1.id },
@@ -1992,7 +2006,7 @@ describe("projectGameSessionView", () => {
       turn: 1,
       narration: "老板在等你表态。",
       usedFactIds: [],
-      npcLine: { npcId: npc1.id, text: "东西带来了吗？", emotion: "neutral" as const, usedFactIds: [] },
+      npcLine: { npcId: npc1.id, text: "东西带来了吗？", emotion: "neutral" as const, usedFactIds: [], usedInteractionActionIds: [] },
       choices: [
         { choiceToken: "give-support", label: "支持老板" },
         { choiceToken: "give-challenge", label: "质疑老板" },

@@ -19,6 +19,8 @@ import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import { buildNarrativeBundleDescriptors } from "@/game/gameplay/rpg/narrativeBundle";
 import type { OpeningNarrativeBundleProposal } from "../../narrativeBundleSource";
 import { compileDecisionNarrativeContext } from "./narrativeContext";
+import { parseWorldDeltaProposal } from "./liveWorldEvolutionSource";
+import { hasOnlyKnownOpeningCandidateKeys } from "./openingGenerationSource";
 
 // ---------------------------------------------------------------------------
 // Task 5：统一叙事生成包 live source。
@@ -73,7 +75,7 @@ function buildOpeningPrompt(context: Extract<NarrativeBundleSourceContext, { rea
 - player 必须是 {"name":"...","identity":"...","backgroundSummary":"...","baseStats":{"hp":100,"attack":10,"defense":5}}。姓名与身份必须保留开局输入。
 - storyContract 必须是 {"version":1,"targetActs":${targetActs},"centralConflict":"...","endingDirections":[{"key":"trust","theme":"..."},{"key":"doubt","theme":"..."}]}。
 - opening.location 必须有 name、description、buildingName 和固定 scale:"town"。
-- opening.npc 必须有 name、role、description、knownFactKeys、privateFactKeys、goals；两个 factKeys 数组只能引用 world.publicFacts 的 key。
+- opening.npc 必须有 name、role、description、knownFactKeys、privateFactKeys、anchors、goals；两个 factKeys 数组只能引用 world.publicFacts 的 key。anchors 必须包含 selfConcept、values、speechStyle、capabilityBoundaries、taboos 五个字段；goals 必须是至少一条的 typed creation proposals，每项只能包含 horizon、description、priority、reason。goalId/status 由服务端生成，禁止输出。
 - opening.quest 必须有 name、description 和固定 objective:{"kind":"talk_to_opening_npc"}。
 
 # JSON 轮廓
@@ -86,7 +88,11 @@ function buildOpeningPrompt(context: Extract<NarrativeBundleSourceContext, { rea
     "storyContract": { "version": 1, "targetActs": ${targetActs}, "centralConflict": "...", "endingDirections": [{ "key": "trust", "theme": "..." }, { "key": "doubt", "theme": "..." }] },
     "opening": {
       "location": { "name": "...", "description": "...", "buildingName": "...", "scale": "town" },
-      "npc": { "name": "...", "role": "...", "description": "...", "knownFactKeys": ["fact_0"], "privateFactKeys": [], "goals": ["..."] },
+      "npc": {
+        "name": "...", "role": "...", "description": "...", "knownFactKeys": ["fact_0"], "privateFactKeys": [],
+        "anchors": { "selfConcept": "...", "values": ["..."], "speechStyle": "...", "capabilityBoundaries": ["..."], "taboos": [] },
+        "goals": [{ "horizon": "short", "description": "...", "priority": 3, "reason": "..." }]
+      },
       "quest": { "name": "...", "description": "...", "objective": { "kind": "talk_to_opening_npc" } }
     }
   },
@@ -113,9 +119,11 @@ function firstString(...values: readonly unknown[]): string {
 }
 
 /**
- * Some compatible providers still emit the prior opening vocabulary despite
+ * Some compatible providers still emit prior presentation vocabulary despite
  * the current prompt. This is structural normalization only: it reuses text
  * already returned by the provider and never writes a rule-owned narrative.
+ * Creation fields are passed through untouched so missing/legacy material fails
+ * closed in parseOpeningGenerationCandidate instead of receiving defaults.
  */
 function normalizeOpeningCandidateShape(value: unknown, targetActs: 3 | 5): unknown {
   const raw = asRecord(value);
@@ -185,7 +193,8 @@ function normalizeOpeningCandidateShape(value: unknown, targetActs: 3 | 5): unkn
           description: firstString(providerNpc?.description, providerNpc?.role),
           knownFactKeys: Array.isArray(providerNpc?.knownFactKeys) ? providerNpc.knownFactKeys : [],
           privateFactKeys: Array.isArray(providerNpc?.privateFactKeys) ? providerNpc.privateFactKeys : [],
-          goals: Array.isArray(providerNpc?.goals) ? providerNpc.goals : [],
+          ...(providerNpc?.anchors === undefined ? {} : { anchors: providerNpc.anchors }),
+          ...(providerNpc?.goals === undefined ? {} : { goals: providerNpc.goals }),
         },
         quest: {
           ...(quest ?? {}),
@@ -378,6 +387,10 @@ type ParseOpeningBundleResult =
 
 function parseOpeningBundleProposal(value: unknown, targetActs: 3 | 5): ParseOpeningBundleResult {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return { ok: false, reason: "root_not_object" };
+  const response = value as Record<string, unknown>;
+  const allowedResponseKeys = new Set(["opening", "currentScene", "continuationScenes", "terminal"]);
+  if (Object.keys(response).some((key) => !allowedResponseKeys.has(key))) return { ok: false, reason: "unknown_keys" };
+  if (!hasOnlyKnownOpeningCandidateKeys(response.opening)) return { ok: false, reason: "opening_unknown_keys" };
   const raw = normalizeOpeningCandidateShape(value, targetActs) as Record<string, unknown>;
   const opening = parseOpeningGenerationCandidate(raw.opening);
   if (!opening.ok) return { ok: false, reason: `opening_${opening.code}` };
@@ -473,12 +486,50 @@ export function createNarrativeBundleSource(
         }
 
         if (context.kind === "decision") {
-          const proposalResult = parseNarrativeBundleProposal(normalizeDecisionBundleShape(
+          const normalizedBundle = normalizeDecisionBundleShape(
             parsed.value,
             context.worldState,
             context.storyState,
             context.job,
-          ));
+          );
+          const normalizedRecord = asRecord(normalizedBundle);
+          // 终幕包仍需携带 provider 生成的 endingPair；normalizeDecisionBundleShape
+          // 只负责把终幕的 currentScene/continuationScenes/terminal 归一化，不能
+          // 在 needs_ending_pair 时静默丢弃 worldDelta，否则结局永远无法物化，
+          // endingAllowed 会与 worldState.endings 脱节并把界面卡在上一目标。
+          const rawWorldDelta = normalizedRecord?.worldDelta;
+          const parsedWorldDelta = rawWorldDelta === null || rawWorldDelta === undefined
+            ? null
+            : (() => {
+                const parsed = parseWorldDeltaProposal(rawWorldDelta, context.worldState.generation.gameType);
+                if (parsed !== null) return parsed;
+
+                // newFact.investigationApproaches is an optional enrichment of a
+                // next-act bundle. Compatible providers occasionally emit a
+                // single approach even though the standalone fact contract
+                // requires exactly 2–3. Do not let that optional malformed
+                // enrichment block the required location/NPC/item/enemy/quest
+                // package; retry the same raw proposal with only newFact
+                // removed. All required fields still pass the strict parser.
+                const rawRecord = asRecord(rawWorldDelta);
+                if (rawRecord === null || rawRecord.newFact === null || rawRecord.newFact === undefined) return null;
+                const withoutFact = parseWorldDeltaProposal(
+                  { ...rawRecord, newFact: null },
+                  context.worldState.generation.gameType,
+                );
+                if (withoutFact !== null) {
+                  logger?.warn("narrative_bundle_invalid_optional_world_fact_dropped");
+                  return withoutFact;
+                }
+                return null;
+              })();
+          if (rawWorldDelta !== null && rawWorldDelta !== undefined && parsedWorldDelta === null) {
+            logger?.warn("narrative_bundle_invalid_world_delta");
+            return failBundle("invalid_schema", "invalid_schema", "world_delta_invalid");
+          }
+          const proposalResult = parseNarrativeBundleProposal(normalizedRecord === null
+            ? normalizedBundle
+            : { ...normalizedRecord, worldDelta: parsedWorldDelta?.proposal ?? null });
           if (!proposalResult.ok) {
             const detail = proposalResult.stepKey === undefined
               ? proposalResult.reason

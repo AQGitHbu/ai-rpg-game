@@ -1,7 +1,7 @@
 import type { GameLength } from "@/game/domain/newGame";
 import type { OpeningGenerationCandidate } from "@/game/domain/openingGenerationCandidate";
 import type { GenerationMetadata } from "@/game/domain/worldEntity";
-import { asLocationId, asNpcId, asQuestId, asFactId } from "@/game/domain/worldEntity";
+import { asLocationId, asNpcId, asQuestId, asFactId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import type { WorldState } from "@/game/domain/worldState";
 import { createWorldStateFromProjection } from "@/game/domain/worldState";
 import type {
@@ -12,6 +12,11 @@ import { createInitialStoryState } from "@/game/domain/storyState";
 import type { NarrativeRuntimeState } from "@/game/domain/narrative";
 import { createTownRuntime, townSeedFor, bindNpcToTownSlot } from "@/game/gameplay/rpg/town";
 import { PLAYER_COMBAT_STATS, toStatBlock } from "@/game/domain/combat";
+import { npcGoalId } from "@/game/domain/entity";
+import type {
+  NpcDynamicStateComponent, NpcGoal, NpcHistoryComponent, NpcKnowledgeComponent,
+  NpcRelationshipComponent,
+} from "@/game/domain/entity";
 
 // ---------------------------------------------------------------------------
 // Task 2：把已验证的开局切片编译为单一 World State + Story State。
@@ -53,6 +58,43 @@ export function compileOpeningGenerationCandidate(
 
   const knownFactIds = candidate.opening.npc.knownFactKeys.map((key) => factIds.find((fact) => fact.key === key)!.factId);
   const privateFactIds = candidate.opening.npc.privateFactKeys.map((key) => factIds.find((fact) => fact.key === key)!.factId);
+
+  const privateFactIdSet = new Set(privateFactIds);
+  const knowledgeFactIds = [...new Set([...knownFactIds, ...privateFactIds])];
+  const openingKnowledge: NpcKnowledgeComponent = {
+    entries: knowledgeFactIds.map((factId) => ({
+      factId,
+      certainty: "known",
+      disclosure: privateFactIdSet.has(factId) ? "secret" : "public",
+      source: { kind: "initial_world", learnedAtTurn: 0 },
+    })),
+  };
+  const openingDynamicState: NpcDynamicStateComponent = {
+    isCompanion: false,
+    met: false,
+    emotion: "neutral",
+    goals: candidate.opening.npc.goals.map((proposal, index): NpcGoal => ({
+      goalId: npcGoalId(String(npcId), index + 1),
+      horizon: proposal.horizon,
+      description: proposal.description,
+      priority: proposal.priority,
+      status: "active",
+      reason: proposal.reason,
+    })),
+  };
+  const openingRelationships: NpcRelationshipComponent = {
+    outgoing: [{
+      targetId: PLAYER_ENTITY_ID,
+      dimensions: { affinity: 0, trust: 0, fear: 0, hostility: 0 },
+      stage: "unknown",
+      trend: "stable",
+      commitments: [],
+      evidence: [],
+      origin: { kind: "initial_world", createdAtTurn: 0, reasonKey: "opening_npc" },
+      lastChangedAtTurn: 0,
+    }],
+  };
+  const openingHistory: NpcHistoryComponent = { interactions: [] };
 
   // Task 7：开局地点是 scale="town" 时编译稳定几何 + 未绑定剧情建筑 slot，
   // 开局 NPC npc_0 绑定 slot_0。不再生成任何未来 NPC 名称。
@@ -98,7 +140,7 @@ export function compileOpeningGenerationCandidate(
       interactionHistory: [],
       relationship: { affinity: 0 },
       emotion: "neutral",
-      goals: candidate.opening.npc.goals,
+      goals: candidate.opening.npc.goals.map((goal) => goal.description),
     },
   };
 
@@ -149,6 +191,13 @@ export function compileOpeningGenerationCandidate(
       defeatedEnemyIds: [],
       factions: [],
     },
+    npcCreationComponentsById: new Map([[npcId, {
+      anchors: candidate.opening.npc.anchors,
+      dynamicState: openingDynamicState,
+      knowledge: openingKnowledge,
+      relationships: openingRelationships,
+      history: openingHistory,
+    }]]),
     eventLedger: [{ type: "game_initialized", generation }],
   });
 

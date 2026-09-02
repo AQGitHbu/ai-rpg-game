@@ -1,5 +1,9 @@
 import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
-import { isFinalDialogueHandoff, type SceneGenerationContext } from "@/game/application/sceneGenerationContext";
+import {
+  isFinalDialogueHandoff,
+  type PreparedSceneStepDescriptor,
+  type SceneGenerationContext,
+} from "@/game/application/sceneGenerationContext";
 import type { SceneChoiceCandidate } from "@/game/application/sceneChoiceCandidates";
 import type { PreparedStepDescriptor } from "@/game/gameplay/rpg/preparedContinuation";
 import { compileNarrativeContext } from "./compileNarrativeContext";
@@ -97,23 +101,42 @@ function repairInstruction(context: SceneGenerationContext): string {
 function focusContent(context: SceneGenerationContext): string {
   const focus = context.focusNpcContext;
   if (focus === undefined) return "无焦点 NPC；npcLine 必须为 null。";
-  const interactions = focus.recentInteractions
+  const authority = focus.speechAuthority;
+  if (authority === undefined || focus.identityAnchors === undefined) {
+    const historicalActionIds = [...new Set(focus.recentInteractions.map((interaction) => interaction.actionId))].slice(-5);
+    return `id=${focus.id}；${focus.name}（${focus.role}）；公开档案=${focus.publicProfile}；speech authority unavailable；已知线索=不可用；历史交互 IDs（不可引用）=[${historicalActionIds.join(", ") || "无"}]；不得引用事实、关系或数值字段，usedFactIds 与 usedInteractionActionIds 必须为 []。`;
+  }
+  const anchors = authority.identityAnchors;
+  const relations = authority.relationships
+    .map((relation) => `${relation.targetId}：stage=${relation.stage}；trend=${relation.trend}；openCommitments=${relation.openCommitments.map((commitment) => `${commitment.kind}:${commitment.description}`).join("、") || "无"}`)
+    .join("\n") || "无明确相关关系";
+  const interactions = authority.recentInteractions
     .map((interaction) => `${interaction.actionId}：dialogueAct=${interaction.dialogueAct}；topicSummary=${interaction.topicSummary}；outcome=${interaction.outcome}；summary=${interaction.summary}`)
     .join("\n") || "无（usedInteractionActionIds 必须为 []）";
   return `id=${focus.id}；${focus.name}（${focus.role}）；公开档案=${focus.publicProfile}；\n` +
-    `回应政策：tier=${focus.responsePolicy.tier}；tone=${focus.responsePolicy.toneInstruction}；initiative=${focus.responsePolicy.initiative}；允许披露事实 ID=[${focus.responsePolicy.allowedDisclosureFactIds.join(", ")}]；私密知识必须扣留，正文不得编造或泄露；\n` +
-    `目标=${focus.goals.join("、") || "无"}；情绪=${focus.emotion}；thisTurn.outcome=${focus.thisTurn.outcome}；\n` +
-    `可说线索卡：${factCards(focus.speakableFactCards)}；\n` +
+    `人格锚点：selfConcept=${anchors.selfConcept}；values=${anchors.values.join("、") || "无"}；speechStyle=${anchors.speechStyle}；capabilityBoundaries=${anchors.capabilityBoundaries.join("、") || "无"}；taboos=${anchors.taboos.join("、") || "无"}；\n` +
+    `回应政策：tier=${focus.responsePolicy.tier}；tone=${focus.responsePolicy.toneInstruction}；initiative=${focus.responsePolicy.initiative}；允许披露事实 ID=[${authority.allowedFactIds.join(", ")}]；私密知识必须扣留，正文不得编造或泄露；\n` +
+    `目标=${authority.activeGoals.join("、") || "无"}；情绪=${focus.emotion}；thisTurn.outcome=${focus.thisTurn.outcome}；\n` +
+    `相关关系：\n${relations}\n证据 keys=[${authority.evidenceKeys.join(", ") || "无"}]；\n` +
+    `可说线索卡：${factCards(authority.allowedFactCards)}；\n` +
     `最近结构化交互（最多 5 条）：\n${interactions}`;
 }
 
-function previousDialogueContent(context: SceneGenerationContext): string | undefined {
+function previousDialogueContent(
+  context: SceneGenerationContext,
+  allowedFactIds: ReadonlySet<string> | undefined,
+): string | undefined {
   if (context.previousDialogue === undefined) return undefined;
+  const usedFactIds = allowedFactIds === undefined
+    ? []
+    : (context.previousDialogue.usedFactIds ?? [])
+      .map(String)
+      .filter((factId) => allowedFactIds.has(factId));
   return `上一轮 NPC 原话=${context.previousDialogue.npcLine}；` +
     `玩家上一轮选择=${context.previousDialogue.selectedChoice?.label ?? "自定义回应"}；` +
     `结构化回应=${context.previousDialogue.selectedChoice?.dialogueAct ?? "ask"}；` +
     `主题=${context.previousDialogue.selectedChoice?.topic?.kind ?? "general"}；` +
-    `上一轮已引用事实=${context.previousDialogue.usedFactIds?.join("、") || "无"}。`;
+    `上一轮已引用事实=${usedFactIds.join("、") || "无"}。`;
 }
 
 function preparedStepAction(descriptor: PreparedStepDescriptor): string {
@@ -125,10 +148,27 @@ function preparedStepAction(descriptor: PreparedStepDescriptor): string {
   }
 }
 
-function preparedStepDescriptorContent(descriptor: PreparedStepDescriptor): string {
+function preparedArrivalContent(
+  arrival: NonNullable<PreparedSceneStepDescriptor["arrivalNpc"]>,
+): string {
+  const authority = arrival.speechAuthority;
+  if (authority === undefined) {
+    return `arrivalNpc=${arrival.id}（${arrival.name}；${arrival.role}；公开身份=${arrival.publicProfile}；speech authority unavailable；可说事实=无）；合法 choices=仅服务端候选`;
+  }
+  const anchors = authority.identityAnchors;
+  const relations = authority.relationships
+    .map((relation) => `${relation.targetId}：stage=${relation.stage}；trend=${relation.trend}；openCommitments=${relation.openCommitments.map((commitment) => `${commitment.kind}:${commitment.description}`).join("、") || "无"}`)
+    .join("\n") || "无明确相关关系";
+  const interactions = authority.recentInteractions
+    .map((interaction) => `${interaction.actionId}：topicSummary=${interaction.topicSummary}；outcome=${interaction.outcome}；summary=${interaction.summary}`)
+    .join("\n") || "无";
+  return `arrivalNpc=${arrival.id}（${arrival.name}；${arrival.role}；公开身份=${arrival.publicProfile}；人格锚点=${anchors.selfConcept}；values=${anchors.values.join("、") || "无"}；speechStyle=${anchors.speechStyle}；capabilityBoundaries=${anchors.capabilityBoundaries.join("、") || "无"}；taboos=${anchors.taboos.join("、") || "无"}；activeGoals=${authority.activeGoals.join("、") || "无"}；相关关系=\n${relations}；证据 keys=${authority.evidenceKeys.join("、") || "无"}；可说事实=${factCards(authority.allowedFactCards)}；最近交互=\n${interactions}）；合法 choices=仅服务端候选`;
+}
+
+function preparedStepDescriptorContent(descriptor: PreparedSceneStepDescriptor): string {
   const arrival = descriptor.arrivalNpc === undefined
     ? "arrivalNpc=无；choices=[]"
-    : `arrivalNpc=${descriptor.arrivalNpc.id}（${descriptor.arrivalNpc.name}；${descriptor.arrivalNpc.role}；公开身份=${descriptor.arrivalNpc.publicProfile}；可说事实=${factCards(descriptor.arrivalNpc.knownFactCards)}）；合法 choices=${descriptor.choiceCandidates.map((candidate) => describeChoiceCandidate({
+    : `${preparedArrivalContent(descriptor.arrivalNpc)}；合法 choices=${descriptor.choiceCandidates.map((candidate) => describeChoiceCandidate({
       candidateId: candidate.candidateId,
       label: "",
       action: candidate.action,
@@ -136,14 +176,14 @@ function preparedStepDescriptorContent(descriptor: PreparedStepDescriptor): stri
   return `- stepId=${descriptor.stepId}；action=${preparedStepAction(descriptor)}；objectiveKey=${descriptor.objectiveKey}；允许实体=[${descriptor.authority.allowedEntityIds.join(", ")}]；${arrival}`;
 }
 
-function preparedContinuationsContent(descriptors: readonly PreparedStepDescriptor[]): string {
+function preparedContinuationsContent(descriptors: readonly PreparedSceneStepDescriptor[]): string {
   if (descriptors.length === 0) return "服务端 descriptor 列表为空；preparedContinuations 必须输出 []。";
   const arrivalSteps = descriptors.filter((descriptor) => descriptor.arrivalNpc !== undefined);
   return `服务端 descriptor 列表（只读，必须逐条使用）：\n${descriptors.map(preparedStepDescriptorContent).join("\n")}\n` +
     `输出契约：每个 descriptor 恰好生成一个 preparedContinuations 条目，stepId 必须逐字复制且不得新增、遗漏或重复；${arrivalSteps.length === 0 ? "当前没有 arrival step。" : "arrival step 必须恰好生成两个 choices，且 candidateId 必须逐字使用该 descriptor 的两个合法候选。"}非 arrival step 的 choices 必须为 []。每个条目的字段只允许 stepId、segments、npcLine、objectiveLink、choices；图结构和消费状态由服务端保留，AI 不得追加服务端元数据字段。不得捏造新事实、新实体或具体时间，不得输出系统元话术。`;
 }
 
-function preparedContinuationsJsonShape(descriptors: readonly PreparedStepDescriptor[]): string {
+function preparedContinuationsJsonShape(descriptors: readonly PreparedSceneStepDescriptor[]): string {
   const entries = descriptors.map((descriptor) => {
     const arrival = descriptor.arrivalNpc !== undefined;
     const choices = arrival
@@ -173,11 +213,9 @@ export function buildSceneNarrativeContextBlocks(
   const activeQuest = story.activeQuest === undefined
     ? "无已解析的当前主线摘要；沿用目标转换和 NPC 可说事实。"
     : `主线=${story.activeQuest.name}；主线说明=${story.activeQuest.description}；当前目标=${story.activeQuest.objectiveLabel}（${story.activeQuest.objectiveKind}，序号${story.activeQuest.objectiveIndex}）`;
-  const allowedFactIds = focus === undefined ? [] : [...new Set([
-    ...focus.speakableFactCards.map((fact) => String(fact.factId)),
-    ...context.presentNpcs.flatMap((npc) => npc.sceneVisibleFactIds.map(String)),
-  ])];
-  const allowedInteractionIds = focus?.recentInteractions.map((interaction) => interaction.actionId) ?? [];
+  const authorityReady = focus?.speechAuthority !== undefined && focus.identityAnchors !== undefined;
+  const allowedFactIds = authorityReady ? focus.speechAuthority!.allowedFactIds.map(String) : [];
+  const allowedInteractionIds = authorityReady ? focus.speechAuthority!.allowedInteractionActionIds : [];
   const objective = after === null
     ? "无当前目标；objectiveLink 必须为 null。"
     : `当前目标：${after.label}；objectiveLink 必须为 {"questId":"${after.questId}","objectiveIndex":${after.objectiveIndex},"mode":"${objectiveMode(context)}"}。`;
@@ -193,7 +231,10 @@ export function buildSceneNarrativeContextBlocks(
   const nonFocusContract = nonFocus.length === 0
     ? "非焦点 NPC 同步闲聊：无非焦点 NPC，输出 npcDialogues=[]。"
     : `非焦点 NPC 同步闲聊：为以下每个非焦点在场 NPC 各生成一条直接闲聊：${nonFocus.join("；")}。`;
-  const previousDialogue = previousDialogueContent(context);
+  const previousDialogue = previousDialogueContent(
+    context,
+    authorityReady ? new Set(allowedFactIds) : undefined,
+  );
   const finalDialogueHandoff = isFinalDialogueHandoff(context);
   const choiceShape = finalDialogueHandoff
     ? "\"choices\":[],\"handoffAcknowledgement\":\"玩家对当前 NPC 的具体致意\""

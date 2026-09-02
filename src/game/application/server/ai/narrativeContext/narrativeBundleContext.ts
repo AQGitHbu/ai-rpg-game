@@ -2,19 +2,16 @@ import type { Action } from "@/game/domain/action";
 import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
 import type { NarrativeSceneState } from "@/game/domain/narrative";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
-import { relationshipTierOf } from "@/game/domain/relationship";
 import type { StoryState } from "@/game/domain/storyState";
 import type { WorldState } from "@/game/domain/worldState";
-import { projectEntityStore } from "@/game/domain/entity";
+import { entitiesOfKind, projectEntityStore } from "@/game/domain/entity";
 import { buildStylePolicy } from "@/game/application/stylePolicy";
 import { buildEntityContextProjection, type EntityContextProjection } from "@/game/application/entityContextProjection";
+import { buildNpcSpeechAuthority } from "@/game/application/npcSpeechAuthority";
+import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import {
   buildNarrativeBundleDescriptors,
 } from "@/game/gameplay/rpg/narrativeBundle";
-import {
-  createNpcResponsePolicy,
-  selectAllowedDisclosureFactIds,
-} from "@/game/gameplay/rpg/narrativeContext";
 import type {
   NarrativeBundleRepair,
 } from "@/game/application/narrativeBundleSource";
@@ -72,12 +69,19 @@ function repairInstruction(repair: NarrativeBundleRepair): string {
   const duplicateInstruction = duplicateEntries.map((entry) =>
     `- 上一轮新${entry[1]}名称“${entry[2]}”已与世界中现有实体重复；本轮必须另起一个未占用名称，不能沿用或仅加“新”“另一个”等前缀。`,
   ).join("\n");
+  const rejectionSpecificInstruction = repair.rejectionCode === "invented_beat_id"
+    ? "- currentScene.segments 的 beatId 只能逐字复制 current_resolution 列出的节拍 ID；本轮不要使用 dialogue、narration、response 等自造 beatId。若列表只有 atmosphere，就省略 segments 或只使用 beatId=atmosphere。"
+    : repair.reason === "invalid_schema" && repair.detail === "world_delta_invalid"
+      ? "- worldDelta.newFact 若出现 investigationApproaches，必须恰好提供 2–3 条合法条目；无法提供完整列表时将 newFact 设为 null，绝不能保留单条列表。"
+      : "";
   return `上一轮提案已被服务端拒绝。\n${rejection === "" ? `失败类型 ${repair.reason}。` : `${rejection}。`}
 本轮只需修正被拒绝的那一项，其余中文叙事文本可以沿用你自己的写法。硬性要求：
 - continuationScenes 必须与服务端投影步骤一一对应：不得新增投影之外的步骤，也不得漏掉投影中的步骤。
 - 终点步骤（terminal.target.stepKey 指向的那一步）必须给出该步骤列出的全部 candidateId 选项，每个选项都要有中文 label；其余步骤 choices 必须为空。
 - 新地点/NPC/物品/敌人/任务的名称不得与“已占用实体名称”中的任何一项重复。
-${duplicateInstruction}`;
+- 若输出 worldDelta.newFact，investigationApproaches 必须是恰好 2–3 条且每条字段合法；若无法提供完整 2–3 条，直接将 newFact 设为 null，不要输出单条或不完整列表。
+${duplicateInstruction}
+${rejectionSpecificInstruction}`;
 }
 
 function recentScene(storyState: StoryState): NarrativeSceneState | null {
@@ -100,39 +104,33 @@ function isRecentBeat(value: unknown): value is { readonly turn: number; readonl
 function focusNpcContent(worldState: WorldState, job: PendingNarrativeJob): string {
   const focusNpc = job.focusNpcId === undefined
     ? undefined
-    : worldState.npcs.find((npc) => String(npc.id) === String(job.focusNpcId));
+    : entitiesOfKind(worldState.entityStore, "npc").find((npc) => String(npc.core.id) === String(job.focusNpcId));
   if (focusNpc === undefined) return "本回合没有焦点 NPC；currentScene.npcLine 仅在权威图明确要求时出现。";
 
-  const tier = relationshipTierOf(focusNpc.memory.relationship);
-  const allowedDisclosureFactIds = selectAllowedDisclosureFactIds({
-    tier,
-    knownFactIds: focusNpc.memory.knownFactIds,
-    hiddenFactIds: focusNpc.memory.hiddenFactIds,
+  const authority = buildNpcSpeechAuthority({
+    store: worldState.entityStore,
+    speakerNpcId: focusNpc.core.id,
+    sceneVisibleFactIds: entitiesOfKind(worldState.entityStore, "fact")
+      .filter((fact) => fact.fact.discovered)
+      .map((fact) => fact.core.id),
+    targetContext: { targetId: PLAYER_ENTITY_ID },
   });
-  const policy = createNpcResponsePolicy({
-    tier,
-    allowedDisclosureFactIds,
-    privateKnowledgeIds: focusNpc.memory.hiddenFactIds,
-  });
-  const factById = new Map(worldState.worldFacts.map((fact) => [String(fact.factId), fact]));
-  const speakableFacts = policy.allowedDisclosureFactIds
-    .map((factId) => factById.get(String(factId)))
-    .filter((fact): fact is NonNullable<typeof fact> => fact !== undefined)
-    .map((fact) => `${fact.factId}=${fact.text}`);
-  const interactions = focusNpc.memory.interactionHistory.slice(-5).map((interaction) =>
+  if (authority === null) return "本回合没有焦点 NPC；currentScene.npcLine 仅在权威图明确要求时出现。";
+
+  const speakableFacts = authority.allowedFactCards.map((fact) => `${fact.factId}=${fact.text}`);
+  const interactions = authority.recentInteractions.map((interaction) =>
     `${interaction.actionId}：dialogueAct=${interaction.dialogueAct}；topic=${interaction.topicSummary}；outcome=${interaction.outcome}；summary=${interaction.summary}`,
   );
-  const thisTurn = [...focusNpc.memory.interactionHistory]
-    .reverse()
-    .find((interaction) => interaction.actionId === job.actionId);
+  const thisTurn = authority.recentInteractions.find((interaction) => interaction.actionId === job.actionId);
 
   return [
-    `本回合对话焦点 NPC：${focusNpc.name}（${focusNpc.id}，${focusNpc.role}）`,
-    `公开档案=${focusNpc.description}`,
-    `关系档位=${policy.tier}；回应语气=${policy.toneInstruction}；主动性=${policy.initiative}`,
-    `当前情绪=${focusNpc.memory.emotion}；目标=${list(focusNpc.memory.goals)}`,
-    `本轮关系信号=${thisTurn === undefined ? "neutral" : `${thisTurn.outcome}（delta=${thisTurn.relationshipDelta}）`}`,
+    `本回合对话焦点 NPC：${focusNpc.core.name}（${focusNpc.core.id}，${focusNpc.identity.role}）`,
+    `公开档案=${focusNpc.identity.description}`,
+    `关系档位=${authority.responseTier}；回应语气仅由当前关系档位决定；主动性仅由当前关系档位决定。`,
+    `当前情绪=${focusNpc.dynamicState.emotion}；目标=${list(authority.activeGoals)}`,
+    `本轮关系信号=${thisTurn === undefined ? "neutral" : thisTurn.outcome}`,
     `允许披露事实=${list(speakableFacts)}`,
+    "npcLine.usedFactIds 只能引用上述事实 ID；npcLine.usedInteractionActionIds 只能引用最近五条结构化交互中的 actionId；没有引用时必须输出显式空数组。",
     `最近五条结构化交互：\n${interactions.length === 0 ? "（无）" : interactions.map((entry) => `- ${entry}`).join("\n")}`,
     "私密事实正文与未授权知识不在本上下文中；不得自行补全。",
   ].join("\n");
@@ -154,12 +152,18 @@ function expectedBundleProjection(worldState: WorldState, storyState: StoryState
     ? "当前场景不允许 choices；终点步骤的 choices 必须使用下方对应候选。"
     : descriptorGraph.currentChoiceCandidates.map((candidate) => candidate.candidateId).join("、");
   const expectedSteps = nextActProjection !== null
-    ? `- move:${nextActProjection.locationId}；choices: move:${nextActProjection.locationId}_choice_1、move:${nextActProjection.locationId}_choice_2；到达 NPC: ${nextActProjection.npcId}`
+    ? `- move:${nextActProjection.locationId}；choices: move:${nextActProjection.locationId}_choice_1、move:${nextActProjection.locationId}_choice_2；到达 NPC: ${nextActProjection.npcId}；这是终点步骤，scene.npcLine 必须是该 NPC 的直接开场对白，不能为 null。`
     : descriptorGraph.steps.length === 0
       ? "无 continuation step。"
       : descriptorGraph.steps.map((step) => {
           const choices = step.choiceCandidates.map((candidate) => candidate.candidateId).join("、") || "无";
-          return `- ${step.stepKey}；choices: ${choices}`;
+          const terminalArrivalRequirement = descriptorGraph.terminal.kind === "next_decision"
+            && descriptorGraph.terminal.target.kind === "continuation_step"
+            && descriptorGraph.terminal.target.stepKey === step.stepKey
+            && step.arrivalNpc !== undefined
+            ? `；这是终点步骤，scene.npcLine 必须是到达 NPC ${step.arrivalNpc.id} 的直接开场对白，不能为 null`
+            : "";
+          return `- ${step.stepKey}；choices: ${choices}${terminalArrivalRequirement}`;
         }).join("\n");
   const expectedTerminal = nextActProjection !== null
     ? { kind: "next_decision", target: { kind: "continuation_step", stepKey: `move:${nextActProjection.locationId}` } }
@@ -335,7 +339,13 @@ export function buildDecisionNarrativeContextBlocks(
       id: "bundle:output-contract", slot: "output_contract", title: "输出契约",
       authority: "rule", retention: "mandatory", priority: 1000,
       source: { kind: "narrative_bundle_schema", refs: [] },
-      content: `返回一个 JSON 对象，顶层只有 worldDelta、currentScene、continuationScenes、terminal。\n- currentScene={segments:[{beatId,text}],npcLine:null或{npcId,text,emotion,answeredBeatIds,usedFactIds,usedInteractionActionIds},objectiveLink:null或{questId,objectiveIndex,mode},choices:[{candidateId,label}]}。\n- continuationScenes=[{stepKey,scene:与 currentScene 同形}]，必须与“唯一合法续接图”的步骤数量、stepKey 和顺序完全一致。\n- terminal 只能是 {\"kind\":\"next_decision\",\"target\":{\"kind\":\"current_scene\"}}、{\"kind\":\"next_decision\",\"target\":{\"kind\":\"continuation_step\",\"stepKey\":\"服务端步骤\"}} 或 {\"kind\":\"ending\"}。\n- 终点决策点恰好两个 choices，candidateId 逐字复制合法图；其余步骤 choices=[]。\n- npcLine 不能是字符串；emotion 只能是 neutral|warm|guarded|afraid|angry|sad；引用数组没有合法引用时输出 []。\n- 若要求 worldDelta，严格使用 {\"beatSummary\":\"...\",\"newLocation\":{\"name\":\"...\",\"description\":\"...\",\"scale\":\"scene\",\"placement\":\"world\",\"connectFromLocationId\":\"现有地点 ID\"},\"newNpc\":{\"name\":\"...\",\"role\":\"...\",\"description\":\"...\",\"locationRef\":{\"kind\":\"new_location\"},\"goals\":[\"...\"]},\"newItem\":{\"name\":\"...\",\"description\":\"...\",\"locationRef\":\"new_location\"},\"newEnemy\":{\"name\":\"...\",\"tier\":\"normal\",\"locationRef\":\"new_location\"},\"newFact\":null或{\"text\":\"...\",\"visibility\":\"public或private\",\"investigationLabel\":\"可选\",\"investigationApproaches\":[{\"approachId\":\"...\",\"label\":\"...\",\"hint\":\"可选\",\"evidenceQuality\":\"clean或noisy\",\"tensionDelta\":-5到20}]},\"nextMainQuest\":{\"name\":\"...\",\"description\":\"...\",\"objectiveText\":\"...\"},\"endingPair\":null或[{\"themeKey\":\"trust\",\"name\":\"...\",\"description\":\"...\"},{\"themeKey\":\"doubt\",\"name\":\"...\",\"description\":\"...\"}]}；未要求字段必须为 null。\n- nextMainQuest 回合 currentScene.choices=[]，唯一 continuationScenes[0] 必须使用抵达骨架。所有玩家可见文本必须为中文。`,
+      content: `返回一个 JSON 对象，顶层只有 worldDelta、currentScene、continuationScenes、terminal。\n- currentScene={segments:[{beatId,text}],npcLine:null或{npcId,text,emotion,answeredBeatIds,usedFactIds,usedInteractionActionIds},objectiveLink:null或{questId,objectiveIndex,mode},choices:[{candidateId,label}]}。\n- continuationScenes=[{stepKey,scene:与 currentScene 同形}]，必须与“唯一合法续接图”的步骤数量、stepKey 和顺序完全一致。\n- terminal 只能是 {\"kind\":\"next_decision\",\"target\":{\"kind\":\"current_scene\"}}、{\"kind\":\"next_decision\",\"target\":{\"kind\":\"continuation_step\",\"stepKey\":\"服务端步骤\"}} 或 {\"kind\":\"ending\"}。\n- 终点决策点恰好两个 choices，candidateId 逐字复制合法图；其余步骤 choices=[]。\n- npcLine 不能是字符串；emotion 只能是 neutral|warm|guarded|afraid|angry|sad；引用数组没有合法引用时输出 []。\n- 若要求 worldDelta，严格使用 {\"beatSummary\":\"...\",\"newLocation\":{\"name\":\"...\",\"description\":\"...\",\"scale\":\"scene\",\"placement\":\"world\",\"connectFromLocationId\":\"现有地点 ID\"},\"newNpc\":{\"name\":\"...\",\"role\":\"...\",\"description\":\"...\",\"locationRef\":{\"kind\":\"new_location\"},\"anchors\":{\"selfConcept\":\"...\",\"values\":[\"...\"],\"speechStyle\":\"...\",\"capabilityBoundaries\":[\"...\"],\"taboos\":[]},\"goals\":[{\"horizon\":\"short\",\"description\":\"...\",\"priority\":3,\"reason\":\"...\"}],\"relationshipSeeds\":[{\"targetNpcId\":\"既有 active NPC ID\",\"stance\":\"ally|protective_of|indebted_to|rival|wary\",\"reason\":\"...\"}]},\"newItem\":{\"name\":\"...\",\"description\":\"...\",\"locationRef\":\"new_location\"},\"newEnemy\":{\"name\":\"...\",\"tier\":\"normal\",\"locationRef\":\"new_location\"},\"newFact\":null或{\"text\":\"...\",\"visibility\":\"public或private\",\"investigationLabel\":\"可选\",\"investigationApproaches\":[{\"approachId\":\"...\",\"label\":\"...\",\"hint\":\"可选\",\"evidenceQuality\":\"clean或noisy\",\"tensionDelta\":-5到20}]},\"nextMainQuest\":{\"name\":\"...\",\"description\":\"...\",\"objectiveText\":\"...\"},\"endingPair\":null或[{\"themeKey\":\"trust\",\"name\":\"...\",\"description\":\"...\"},{\"themeKey\":\"doubt\",\"name\":\"...\",\"description\":\"...\"}]}；anchors 五个字段都必需，goals 至少 1 条且最多 4 条；relationshipSeeds 最多 4 条，每项只能包含 targetNpcId、stance、reason，targetNpcId 只能引用实体规则闭包中的既有 active NPC，stance 只能使用上述定性枚举，reason 必须非空且≤200字；不得提交 affinity、stage、evidence 或 actionId；goalId/status 由服务端生成，禁止输出。未要求字段必须为 null。\n- nextMainQuest 回合 currentScene.choices=[]，唯一 continuationScenes[0] 必须使用抵达骨架。所有玩家可见文本必须为中文。`,
+    }),
+    block({
+      id: "bundle:world-delta-investigation-contract", slot: "output_contract", title: "事实调查方式契约",
+      authority: "rule", retention: "mandatory", priority: 1000,
+      source: { kind: "narrative_bundle_schema", refs: [] },
+      content: "若 worldDelta.newFact 非 null，investigationApproaches 必须恰好包含 2–3 条合法条目；若无法提供完整列表就输出 newFact:null，绝不能输出只有 1 条或不完整的列表。",
     }),
   ];
 

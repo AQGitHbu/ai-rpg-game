@@ -181,13 +181,11 @@ function validateCandidateEntities(
   candidate: EventCandidate,
 ): string | null {
   for (const effect of candidate.proposedEffects) {
+    // Runtime stale data may carry an effect kind removed from ProposedEffect; the compiler owns that drop path.
     switch (effect.kind) {
       case "npc_reveals_fact":
         if (!ws.npcs.some((n) => n.id === effect.npcId)) return "entity_missing";
         if (!ws.worldFacts.some((f) => f.factId === effect.factId)) return "entity_missing";
-        break;
-      case "npc_changes_stance":
-        if (!ws.npcs.some((n) => n.id === effect.npcId)) return "entity_missing";
         break;
       case "hostile_force_acts":
         if (!ws.locations.some((l) => l.id === effect.locationId)) return "entity_missing";

@@ -2,7 +2,8 @@ import type {
   EnemyTier, FactSource, ItemCategory, ItemRarity, ItemStatLine, LocationKind, LocationScale,
   LocationId, NpcId, PlayerEntityId, StatBlock,
 } from "../worldEntity";
-import type { InvestigationApproach, NpcMemory, QuestObjective, QuestOutcome, QuestEntry } from "../worldEntries";
+import type { InvestigationApproach, QuestObjective, QuestOutcome, QuestEntry } from "../worldEntries";
+import type { NpcIdentityAnchors } from "./npcComponents";
 import type { TownRuntimeState } from "../townState";
 
 // ---------------------------------------------------------------------------
@@ -23,13 +24,8 @@ export type NpcIdentityComponent = Readonly<{
   role: string;
   description: string;
   tags: readonly string[];
-}>;
-
-/** Plan 3 才把 memory 拆为人格/知识/关系组件；本阶段原样持有 NpcMemory。 */
-export type NpcStateComponent = Readonly<{
-  isCompanion: boolean;
-  met: boolean;
-  memory: NpcMemory;
+  /** Plan 3：长期人格锚点，不随回合漂移；validator 见 npcComponents.validateNpcIdentityAnchors。 */
+  anchors: NpcIdentityAnchors;
 }>;
 
 export type LocationComponent = Readonly<{

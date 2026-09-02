@@ -1,6 +1,7 @@
 import type { GameLength } from "@/game/domain/newGame";
 import { TARGET_ACTS } from "@/game/domain/storyBudget";
 import type { OpeningGenerationCandidate } from "@/game/domain/openingGenerationCandidate";
+import { parseNpcCreationAnchors, parseNpcGoalProposals } from "@/game/domain/entity";
 import { investigationApproachListIsValid } from "@/game/gameplay/rpg/worldEvolution/approveWorldDelta";
 
 // ---------------------------------------------------------------------------
@@ -18,7 +19,9 @@ export type OpeningGenerationIssueCode =
   | "contract_target_acts_mismatch"
   | "duplicate_fact_key"
   | "unknown_fact_key"
-  | "invalid_investigation_approaches";
+  | "invalid_investigation_approaches"
+  | "invalid_npc_anchors"
+  | "invalid_npc_goals";
 
 export type OpeningGenerationIssue = {
   readonly code: OpeningGenerationIssueCode;
@@ -34,6 +37,14 @@ export type OpeningGenerationValidationContext = {
   readonly targetActs: number;
 };
 
+function validOpeningAnchors(value: unknown): boolean {
+  return parseNpcCreationAnchors(value) !== null;
+}
+
+function validOpeningGoals(value: unknown): boolean {
+  return parseNpcGoalProposals(value) !== null;
+}
+
 export function validateOpeningGenerationCandidate(
   candidate: OpeningGenerationCandidate,
   context: OpeningGenerationValidationContext,
@@ -46,6 +57,13 @@ export function validateOpeningGenerationCandidate(
   }
   if (candidate.storyContract.targetActs !== context.targetActs) {
     issues.push({ code: "contract_target_acts_mismatch", params: { expected: context.targetActs, actual: candidate.storyContract.targetActs } });
+  }
+
+  if (!validOpeningAnchors(candidate.opening.npc.anchors)) {
+    issues.push({ code: "invalid_npc_anchors" });
+  }
+  if (!validOpeningGoals(candidate.opening.npc.goals)) {
+    issues.push({ code: "invalid_npc_goals" });
   }
 
   const factKeys = new Set<string>();

@@ -10,7 +10,7 @@ import { createTurnResolution } from "@/game/domain/turnResolution";
 import type { ValidationCode } from "./validateAction";
 import { validateAction } from "./validateAction";
 import { resolveByType, autoResolveCurrentInvestigation } from "./resolveByType";
-import { reconcileQuests } from "./reconcileQuests";
+import { npcUsedAction, reconcileQuests } from "./reconcileQuests";
 import { resolveEnding } from "./resolveEnding";
 import { updateStoryMetrics } from "./updateStoryMetrics";
 import { propagateKnownFacts } from "./propagateKnownFacts";
@@ -165,8 +165,11 @@ export function resolveTurn(
     };
   }
 
-  // P4 Step 1: NPC knownFactIds 传播
-  const propagatedWs = propagateKnownFacts(resolved.nextWorldState, resolved.facts);
+  // P4 Step 1: NPC knownFactIds 传播（知识写入必须带本轮真实 actionId/turn）
+  const propagatedWs = propagateKnownFacts(resolved.nextWorldState, resolved.facts, {
+    actionId,
+    turnNumber: storyState.turnNumber,
+  });
 
   // Spec §13.1 固定顺序：resolve → propagate → reconcile quests → advance act/
   // derive endingAllowed → approve candidate events → update tension/progress →
@@ -184,7 +187,7 @@ export function resolveTurn(
       || String(previousDialogueSession.npcId) !== String(dialogueSession.npcId)
       || !previousDialogueSession.completed
     )
-    ? [{ type: "npc_dialogue_completed", npcId: dialogueSession.npcId, occurredAt: deps.now() }]
+    ? [{ type: "npc_dialogue_completed", npcId: dialogueSession.npcId, actionId, occurredAt: deps.now() }]
     : [];
   // 当前会话是 talk_to_npc 是否完成的权威游标。即使本回合不是正式回应，
   // 也要持续传入；否则 ask 写入的 met=true 或随后一次移动/探索会让通用
@@ -196,6 +199,14 @@ export function resolveTurn(
           npcId: String(dialogueSession.npcId),
           completed: dialogueSession.completed,
         },
+        ...(action.type === "talk" ? {
+          actionContext: {
+            participantNpcId: String(action.npcId),
+            actionId,
+            turnNumber: storyState.turnNumber,
+            actionWasAlreadyUsed: npcUsedAction(worldState, String(action.npcId), actionId),
+          },
+        } : {}),
       });
   // 初步 domainEvents：resolver + 对话完成 + quest（ending 在 Step 5 追加）
   const domainEvents: GameEvent[] = [...resolved.events, ...dialogueEvents, ...quests.events];
@@ -242,7 +253,12 @@ export function resolveTurn(
   const candidateFlowEvents: GameEvent[] = [...approval.events];
   let afterCandidateWs = ruleWorldState;
   for (const candidate of approval.approvedCandidates) {
-    const compiled = compileCandidateEvent(afterCandidateWs, candidate, { now: deps.now });
+    // 候选编译内的 NPC 写入沿用本回合真实行动：candidate.id 不是证据，不得充当 actionId。
+    const compiled = compileCandidateEvent(afterCandidateWs, candidate, {
+      now: deps.now,
+      actionId,
+      turnNumber: storyState.turnNumber,
+    });
     afterCandidateWs = compiled.worldState;
     candidateFlowEvents.push(...compiled.events);
   }

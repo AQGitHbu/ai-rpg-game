@@ -48,7 +48,7 @@ describe("ackPrologue 不递增 revision，场景固定选项保持有效", () =
       turn: storyState.turnNumber,
       narration: "沈掌柜注视着你。",
       usedFactIds: [],
-      npcLine: { npcId, text: "客官，您来得正好。", emotion: "neutral", usedFactIds: [] },
+      npcLine: { npcId, text: "客官，您来得正好。", emotion: "neutral", usedFactIds: [], usedInteractionActionIds: [] },
       choices: [
         { choiceToken: choiceA.choice.choiceToken, label: choiceA.choice.label },
         { choiceToken: choiceB.choice.choiceToken, label: choiceB.choice.label },

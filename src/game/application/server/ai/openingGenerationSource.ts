@@ -27,6 +27,78 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function hasOnlyKeys(value: unknown, allowedKeys: readonly string[]): boolean {
+  if (!isRecord(value)) return true;
+  const allowed = new Set(allowedKeys);
+  return Object.keys(value).every((key) => allowed.has(key));
+}
+
+function hasOnlyKeysInArray(value: unknown, allowedKeys: readonly string[]): boolean {
+  return !Array.isArray(value) || value.every((entry) => hasOnlyKeys(entry, allowedKeys));
+}
+
+/**
+ * Opening candidates are a closed creation contract. Keep this check structural
+ * and separate from the semantic parser so repair can still normalize malformed
+ * arrays/strings, while unknown creation/runtime fields fail closed.
+ */
+export function hasOnlyKnownOpeningCandidateKeys(value: unknown): boolean {
+  if (!isRecord(value) || !hasOnlyKeys(value, ["world", "player", "prologue", "storyContract", "opening"])) return false;
+
+  const world = value.world;
+  if (isRecord(world)) {
+    if (!hasOnlyKeys(world, ["summary", "tone", "themes", "publicFacts"])) return false;
+    if (!hasOnlyKeysInArray(world.publicFacts, ["key", "text", "investigationApproaches"])) return false;
+    if (Array.isArray(world.publicFacts)) {
+      for (const fact of world.publicFacts) {
+        if (!isRecord(fact)) continue;
+        if (!hasOnlyKeysInArray(fact.investigationApproaches, ["approachId", "label", "hint", "evidenceQuality", "tensionDelta"])) return false;
+      }
+    }
+  }
+
+  const player = value.player;
+  if (isRecord(player) && !hasOnlyKeys(player, ["name", "identity", "backgroundSummary", "baseStats"])) return false;
+  if (isRecord(player) && isRecord(player.baseStats)
+    && !hasOnlyKeys(player.baseStats, ["hp", "attack", "defense"])) return false;
+
+  const storyContract = value.storyContract;
+  if (isRecord(storyContract)) {
+    if (!hasOnlyKeys(storyContract, ["version", "targetActs", "centralConflict", "endingDirections"])) return false;
+    if (!hasOnlyKeysInArray(storyContract.endingDirections, ["key", "theme"])) return false;
+  }
+
+  const opening = value.opening;
+  if (!isRecord(opening) || !hasOnlyKeys(opening, ["location", "npc", "quest", "firstScene", "variationProfile"])) return false;
+
+  const location = opening.location;
+  if (isRecord(location) && !hasOnlyKeys(location, ["name", "description", "buildingName", "scale"])) return false;
+
+  const npc = opening.npc;
+  if (isRecord(npc)) {
+    if (!hasOnlyKeys(npc, ["name", "role", "description", "knownFactKeys", "privateFactKeys", "anchors", "goals"])) return false;
+    if (isRecord(npc.anchors) && !hasOnlyKeys(npc.anchors, ["selfConcept", "values", "speechStyle", "capabilityBoundaries", "taboos"])) return false;
+    if (!hasOnlyKeysInArray(npc.goals, ["horizon", "description", "priority", "reason"])) return false;
+  }
+
+  const quest = opening.quest;
+  if (isRecord(quest)) {
+    if (!hasOnlyKeys(quest, ["name", "description", "objective"])) return false;
+    if (isRecord(quest.objective) && !hasOnlyKeys(quest.objective, ["kind"])) return false;
+  }
+
+  const firstScene = opening.firstScene;
+  if (isRecord(firstScene)) {
+    if (!hasOnlyKeys(firstScene, ["narration", "npcLine", "choices"])) return false;
+    if (isRecord(firstScene.npcLine) && !hasOnlyKeys(firstScene.npcLine, ["text", "emotion", "usedFactKeys"])) return false;
+    if (!hasOnlyKeysInArray(firstScene.choices, ["candidateId", "label"])) return false;
+  }
+
+  if (isRecord(opening.variationProfile)
+    && !hasOnlyKeys(opening.variationProfile, ["sceneFrame", "npcArchetype", "leadType", "conflictMode"])) return false;
+  return true;
+}
+
 // 机械修复：只做无创意、可推导的修复。返回是否发生变更。
 //   - 数组字段为 null/非数组 → 空数组；
 //   - 字符串字段为 null/非字符串 → 空字符串；
@@ -36,6 +108,7 @@ export function repairOpeningGenerationCandidate(
   raw: unknown,
 ): { readonly candidate: OpeningGenerationCandidate | null; readonly repaired: boolean } {
   if (!isRecord(raw)) return { candidate: null, repaired: false };
+  if (!hasOnlyKnownOpeningCandidateKeys(raw)) return { candidate: null, repaired: false };
   let repaired = false;
 
   const fixArray = (v: unknown): readonly unknown[] => {
@@ -117,7 +190,7 @@ export function repairOpeningGenerationCandidate(
         const npc = isRecord(opening.npc) ? opening.npc : null;
         if (npc === null) {
           repaired = true;
-          return { name: "", role: "", description: "", knownFactKeys: [], privateFactKeys: [], goals: [] };
+          return { name: "", role: "", description: "", knownFactKeys: [], privateFactKeys: [] };
         }
         return {
           ...npc,
@@ -126,7 +199,6 @@ export function repairOpeningGenerationCandidate(
           description: fixString(npc.description),
           knownFactKeys: fixArray(npc.knownFactKeys),
           privateFactKeys: fixArray(npc.privateFactKeys),
-          goals: fixArray(npc.goals),
         };
       })(),
       quest: (() => {
@@ -329,7 +401,7 @@ ${setupSection}${noveltySection}
 3. prologue：故事序幕（2-3 句），聚焦故事钩子、主角动机和背景冲突：说明主角为什么会来到这条故事线上、什么未解事件或危险正在逼近、以及为什么值得继续行动。它可以提及已确定的世界背景，但不是当前地点的感官镜头；不要描写雨声、光线、气味、脚步、材质等即时细节，不要写 NPC 台词、玩家选项或完整场景表演
 4. storyContract：version=1、targetActs=${targetActs}（必须与档位一致）、centralConflict、endingDirections 恰好两个（key 分别为 "trust" 与 "doubt"）
 5. opening.location：开场地点，scale 必须是 "town"（小镇层级），buildingName 是该地点中承载首个 NPC 的剧情建筑名
-6. opening.npc：开场焦点 NPC，knownFactKeys/privateFactKeys 必须且只能引用 world.publicFacts 中已定义的 fact key
+6. opening.npc：开场焦点 NPC，knownFactKeys/privateFactKeys 必须且只能引用 world.publicFacts 中已定义的 fact key；必须提供完整 anchors；goals 必须是 typed creation proposals。goalId/status 由服务端生成，禁止输出
 7. opening.quest：首个主线任务，objective 只能是 { "kind": "talk_to_opening_npc" }
 8. opening.variationProfile：只描述结构差异，四个字段必须从以下枚举中各选一个：
    sceneFrame = street | market | inn | outskirts | station | workshop | shrine | other
@@ -347,7 +419,11 @@ ${setupSection}${noveltySection}
   "storyContract": { "version": 1, "targetActs": ${targetActs}, "centralConflict": "...", "endingDirections": [{ "key": "trust", "theme": "..." }, { "key": "doubt", "theme": "..." }] },
   "opening": {
     "location": { "name": "...", "description": "...", "buildingName": "...", "scale": "town" },
-    "npc": { "name": "...", "role": "...", "description": "...", "knownFactKeys": ["fact_xxx"], "privateFactKeys": [], "goals": [] },
+    "npc": {
+      "name": "...", "role": "...", "description": "...", "knownFactKeys": ["fact_xxx"], "privateFactKeys": [],
+      "anchors": { "selfConcept": "...", "values": ["..."], "speechStyle": "...", "capabilityBoundaries": ["..."], "taboos": [] },
+      "goals": [{ "horizon": "short", "description": "...", "priority": 3, "reason": "..." }]
+    },
     "quest": { "name": "...", "description": "...", "objective": { "kind": "talk_to_opening_npc" } },
     "variationProfile": { "sceneFrame": "street", "npcArchetype": "witness", "leadType": "trace", "conflictMode": "concealment" }
   }

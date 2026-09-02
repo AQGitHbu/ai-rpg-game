@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { emptyProjection } from "@/game/domain/testing/worldStateFixture.testutil";
+import { createWorldStateFixture, emptyProjection } from "@/game/domain/testing/worldStateFixture.testutil";
 import type { EntityRecord, EntityStore } from "@/game/domain/entity";
-import { createWorldStateFromProjection } from "@/game/domain/worldState";
 import { asGenerationId, asItemId, asLocationId, asNpcId } from "@/game/domain/worldEntity";
 import { parseProposedEntityCommands, approveProposedEntityCommands, entityMutationsForApprovedCommands } from "./proposedEntityCommand";
 import { applyEntityMutations } from "./entityMutation";
@@ -10,7 +9,7 @@ const npcId = asNpcId("npc");
 const itemId = asItemId("item");
 const locA = asLocationId("a");
 const locB = asLocationId("b");
-const store = createWorldStateFromProjection({
+const store = createWorldStateFixture({
   generation: { generationId: asGenerationId("g"), seed: "s", templateVersion: "v", inputDigest: "", gameType: "wuxia" },
   projection: {
     ...emptyProjection({ player: { name: "p", identity: "i", stats: { hp: 1, attack: 1, defense: 1 } }, locations: [

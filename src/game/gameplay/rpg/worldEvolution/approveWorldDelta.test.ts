@@ -23,7 +23,7 @@ import { TRUST_ENDING_MIN_AFFINITY, DOUBT_ENDING_MAX_AFFINITY } from "@/game/app
 
 // ---------------------------------------------------------------------------
 // Fixture：起始地点听雨客栈(loc_0) 与其名册内的掌柜韩征(npc_0) 一次给出完整合法
-// 兼容投影；v3 下 NPC 必须由 entityStore 派生，不能再 spread 单条 legacy 数组。
+// 兼容投影；当前版本 NPC 必须由 entityStore 派生，不能再 spread 单条 legacy 数组。
 // ---------------------------------------------------------------------------
 
 const LOC_0: LocationEntry = {
@@ -37,8 +37,37 @@ const NPC_0: NpcEntry = {
   memory: { npcId: asNpcId("npc_0"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
 };
 
+const NPC_CREATION = {
+  anchors: {
+    selfConcept: "守信的传讯人",
+    values: ["守信"],
+    speechStyle: "谨慎而直接",
+    capabilityBoundaries: ["不超出自身所知"],
+    taboos: [],
+  },
+  goals: [{ horizon: "short" as const, description: "送达密信", priority: 3 as const, reason: "必须完成传递" }],
+  relationshipSeeds: [],
+};
+
+const ENTITY_CONTEXT_CLOSURE = {
+  mandatoryEntityIds: ["npc_0"],
+  directReferenceEntityIds: [],
+  currentLocationActiveNpcIds: [],
+};
+
+function proposalWithSeed(stance: string, reason = "旧日经历，仅供诊断"): WorldDeltaProposal {
+  const base = nextActProposal();
+  return {
+    ...base,
+    newNpc: {
+      ...base.newNpc!,
+      relationshipSeeds: [{ targetNpcId: "npc_0", stance, reason }],
+    },
+  } as WorldDeltaProposal;
+}
+
 // 结局要求由 stage 最大的主线任务的 talk_to_npc 目标派生：该目标 NPC 必须是世界里
-// 真实存在的实体（v3 投影不变量下 quest 目标引用未知 NPC 直接非法），所以把它
+// 真实存在的实体（当前投影不变量下 quest 目标引用未知 NPC 直接非法），所以把它
 // 补进投影；断言仍只关心派生出的 npcId 是否为 npc_9。
 const KEY_ENDING_NPC: NpcEntry = {
   id: asNpcId("npc_9"), name: "密信送信人", role: "信使", description: "掌握盟约裂痕证据的信使。",
@@ -100,11 +129,11 @@ function nextActProposal(): WorldDeltaProposal {
       connectFromLocationId: "loc_0",
     },
     newNpc: {
+      ...NPC_CREATION,
       name: "新出现的信使",
       role: "传话人",
       description: "风尘仆仆的赶路人，怀里揣着密信。",
       locationRef: { kind: "new_location" },
-      goals: ["送达密信"],
     },
     newItem: null,
     newEnemy: null,
@@ -127,6 +156,140 @@ function makeWorldWithFinalMainQuestTalk(): WorldState {
 }
 
 describe("approveWorldDelta", () => {
+  it("requires an explicit entity-context closure for relationship seeds", () => {
+    const result = approveWorldDelta({
+      proposal: proposalWithSeed("ally"),
+      need: { kind: "next_act", act: 2 },
+      ws: makeWorld(),
+      ss: makeStory({ currentAct: 2 }),
+    } as never);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("invalid_npc_relationship_seeds");
+    expect(result.reason).toBe("entity_context_closure_required");
+  });
+
+  it.each([
+    ["ally", "cooperative"],
+    ["protective_of", "cooperative"],
+    ["indebted_to", "cooperative"],
+    ["rival", "wary"],
+    ["wary", "wary"],
+  ] as const)("maps %s to the bounded directed seed edge", (stance, stage) => {
+    const result = approveWorldDelta({
+      proposal: proposalWithSeed(stance),
+      need: { kind: "next_act", act: 2 },
+      ws: makeWorld(),
+      ss: makeStory({ currentAct: 2 }),
+      entityContextClosure: ENTITY_CONTEXT_CLOSURE,
+    } as never);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const layers = result.approved.npcCreationComponentsById.get(asNpcId("npc_dyn_1"));
+    const edge = layers?.relationships.outgoing.find((candidate) => candidate.targetId === asNpcId("npc_0"));
+    expect(edge?.stage).toBe(stage);
+    expect(edge?.origin).toEqual(expect.objectContaining({ kind: "initial_world", reasonKey: expect.any(String) }));
+    if (stance === "rival" || stance === "wary") {
+      expect(edge?.dimensions.affinity).toBeLessThan(0);
+    } else {
+      expect(edge?.dimensions.affinity).toBeGreaterThan(0);
+    }
+    if (stance === "indebted_to") {
+      expect(edge?.commitments).toHaveLength(1);
+      expect(edge?.commitments[0]).toEqual(expect.objectContaining({
+        kind: "debt", direction: "source_owes_target", status: "open",
+      }));
+    } else {
+      expect(edge?.commitments).toEqual([]);
+    }
+    expect(JSON.stringify(edge)).not.toContain("旧日经历");
+    expect(layers?.relationships.outgoing.some((candidate) => candidate.targetId === asNpcId("npc_dyn_1"))).toBe(false);
+  });
+
+  it("rejects seed targets outside the supplied active-NPC closure", () => {
+    for (const closure of [
+      ENTITY_CONTEXT_CLOSURE,
+      { ...ENTITY_CONTEXT_CLOSURE, mandatoryEntityIds: [] },
+      { ...ENTITY_CONTEXT_CLOSURE, currentLocationActiveNpcIds: ["npc_0"], mandatoryEntityIds: [] },
+    ] as const) {
+      const result = approveWorldDelta({
+        proposal: proposalWithSeed("ally"),
+        need: { kind: "next_act", act: 2 },
+        ws: makeWorld(),
+        ss: makeStory({ currentAct: 2 }),
+        entityContextClosure: closure,
+      } as never);
+      if (closure.mandatoryEntityIds.some((id) => id === "npc_0") || closure.currentLocationActiveNpcIds.some((id) => id === "npc_0")) {
+        expect(result.ok).toBe(true);
+      } else {
+        expect(result.ok).toBe(false);
+      }
+    }
+  });
+
+  it.each([
+    ["self", "npc_dyn_1", "self_target"],
+    ["unknown", "npc_unknown", "target_outside_entity_context"],
+  ] as const)("rejects %s seed target", (_label, targetNpcId, reason) => {
+    const base = nextActProposal();
+    const result = approveWorldDelta({
+      proposal: {
+        ...base,
+        newNpc: { ...base.newNpc!, relationshipSeeds: [{ targetNpcId, stance: "ally", reason: "诊断" }] },
+      },
+      need: { kind: "next_act", act: 2 },
+      ws: makeWorld(),
+      ss: makeStory({ currentAct: 2 }),
+      entityContextClosure: {
+        mandatoryEntityIds: ["npc_0", "npc_dyn_1"],
+        directReferenceEntityIds: [],
+        currentLocationActiveNpcIds: [],
+      },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("invalid_npc_relationship_seeds");
+    expect(result.reason).toBe(reason);
+  });
+
+  it("rejects inactive and duplicate seed targets", () => {
+    const base = nextActProposal();
+    const inactive = makeWorld();
+    const inactiveStore = {
+      ...inactive.entityStore,
+      records: inactive.entityStore.records.map((record) => record.core.kind === "npc"
+        ? { ...record, core: { ...record.core, lifecycle: "inactive" as const } }
+        : record),
+    } as typeof inactive.entityStore;
+    const inactiveResult = approveWorldDelta({
+      proposal: { ...base, newNpc: { ...base.newNpc!, relationshipSeeds: [{ targetNpcId: "npc_0", stance: "ally", reason: "诊断" }] } },
+      need: { kind: "next_act", act: 2 },
+      ws: { ...inactive, entityStore: inactiveStore },
+      ss: makeStory({ currentAct: 2 }),
+      entityContextClosure: ENTITY_CONTEXT_CLOSURE,
+    });
+    expect(inactiveResult.ok).toBe(false);
+    if (!inactiveResult.ok) expect(inactiveResult.reason).toBe("target_inactive");
+
+    const duplicateResult = approveWorldDelta({
+      proposal: {
+        ...base,
+        newNpc: {
+          ...base.newNpc!,
+          relationshipSeeds: [
+            { targetNpcId: "npc_0", stance: "ally", reason: "诊断一" },
+            { targetNpcId: "npc_0", stance: "wary", reason: "诊断二" },
+          ],
+        },
+      } as never,
+      need: { kind: "next_act", act: 2 },
+      ws: makeWorld(),
+      ss: makeStory({ currentAct: 2 }),
+      entityContextClosure: ENTITY_CONTEXT_CLOSURE,
+    });
+    expect(duplicateResult.ok).toBe(false);
+    if (!duplicateResult.ok) expect(duplicateResult.code).toBe("invalid_npc_relationship_seeds");
+  });
   it("approves a valid next_act proposal and mints sequential server ids", () => {
     const ws = makeWorld();
     const ss = makeStory({
@@ -198,8 +361,9 @@ describe("approveWorldDelta", () => {
         beatSummary: "满槽小镇仍试图塞入新人物",
         newLocation: null,
         newNpc: {
+          ...NPC_CREATION,
           name: "无处落脚者", role: "旅人", description: "找不到空闲建筑的旅人。",
-          locationRef: { kind: "existing", id: "loc_0" }, goals: [],
+          locationRef: { kind: "existing", id: "loc_0" },
         },
         newItem: null, newEnemy: null, newFact: null, nextMainQuest: null, endingPair: null,
       },
@@ -226,8 +390,9 @@ describe("approveWorldDelta", () => {
           placement: "town_building", connectFromLocationId: "loc_0",
         },
         newNpc: {
+          ...NPC_CREATION,
           name: "茶馆线人", role: "旧案传讯人", description: "在茶馆等候交出密信的线人。",
-          locationRef: { kind: "new_location" }, goals: ["交出密信"],
+          locationRef: { kind: "new_location" },
         },
         newItem: null, newEnemy: null, newFact: null, nextMainQuest: null, endingPair: null,
       },
@@ -264,8 +429,9 @@ describe("approveWorldDelta", () => {
     const proposal: WorldDeltaProposal = {
       ...nextActProposal(),
       newNpc: {
+        ...NPC_CREATION,
         name: "新出现的信使", role: "传话人", description: "风尘仆仆的赶路人。",
-        locationRef: { kind: "existing", id: "loc_does_not_exist" }, goals: [],
+        locationRef: { kind: "existing", id: "loc_does_not_exist" },
       },
     };
     const result = approveWorldDelta({ proposal, need: { kind: "next_act", act: 2 }, ws: makeWorld(), ss: makeStory({ currentAct: 2 }) });
@@ -279,8 +445,9 @@ describe("approveWorldDelta", () => {
       ...nextActProposal(),
       newLocation: null,
       newNpc: {
+        ...NPC_CREATION,
         name: "新出现的信使", role: "传话人", description: "风尘仆仆的赶路人。",
-        locationRef: { kind: "new_location" }, goals: [],
+        locationRef: { kind: "new_location" },
       },
     };
     const result = approveWorldDelta({ proposal, need: { kind: "next_act", act: 2 }, ws: makeWorld(), ss: makeStory({ currentAct: 2 }) });
@@ -369,8 +536,9 @@ describe("approveWorldDelta", () => {
     const proposal: WorldDeltaProposal = {
       ...nextActProposal(),
       newNpc: {
+        ...NPC_CREATION,
         name: "韩征", role: "掌柜", description: "一个名叫韩征的人。",
-        locationRef: { kind: "new_location" }, goals: [],
+        locationRef: { kind: "new_location" },
       },
     };
     const result = approveWorldDelta({ proposal, need: { kind: "next_act", act: 2 }, ws: makeWorld(), ss: makeStory({ currentAct: 2 }) });
@@ -417,8 +585,9 @@ describe("approveWorldDelta", () => {
     const proposal: WorldDeltaProposal = {
       ...nextActProposal(),
       newNpc: {
+        ...NPC_CREATION,
         name: "青山别院", role: "掌柜", description: "一个跟同批新地点撞名的人。",
-        locationRef: { kind: "existing", id: "loc_0" }, goals: [],
+        locationRef: { kind: "existing", id: "loc_0" },
       },
     };
     const result = approveWorldDelta({ proposal, need: { kind: "next_act", act: 2 }, ws: makeWorld(), ss: makeStory({ currentAct: 2 }) });
@@ -590,8 +759,9 @@ describe("approveWorldDelta", () => {
     const proposal: WorldDeltaProposal = {
       ...nextActProposal(),
       newNpc: {
+        ...NPC_CREATION,
         name: "如", role: "掌柜", description: "风尘仆仆的赶路人。",
-        locationRef: { kind: "new_location" }, goals: [],
+        locationRef: { kind: "new_location" },
       },
     };
     const result = approveWorldDelta({ proposal, need: { kind: "next_act", act: 2 }, ws: makeWorld(), ss: makeStory({ currentAct: 2 }) });

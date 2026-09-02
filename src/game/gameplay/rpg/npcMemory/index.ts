@@ -1,0 +1,109 @@
+// npcMemory facade：NPC 记忆与关系的规则层公开面。
+// 3B 的 EntityMutation 只能经由这里调用规则，不得 deep-import 内部文件。
+// 刻意**不**重导出裸 `applyRelationshipSignal`：它的 `edge` 参数允许 undefined，
+// 分不清「还没有边」与「调用方跳过了查边」。gameplay/game 内的写入一律走组件入口
+// `applyRelationshipSignalToComponent`（它自己查边），规则层表测试直接 import 内部文件。
+export {
+  RELATIONSHIP_COMMITMENT_OP_KINDS,
+  RELATIONSHIP_COMMITMENT_TARGETS,
+  RELATIONSHIP_SIGNAL_CAPS,
+  RELATIONSHIP_SIGNAL_POLICY,
+  RELATIONSHIP_STAGE_GATES,
+  RELATIONSHIP_STAGE_TRANSITIONS,
+  applyRelationshipCommitment,
+  applyRelationshipSignalToComponent,
+  findRelationshipEdge,
+  isAllowedRelationshipStageTransition,
+  mintRelationshipCommitmentId,
+  mintRelationshipEvidenceId,
+  relationshipStageCandidate,
+  resolveRelationshipStage,
+  upsertRelationshipEdge,
+  type ApplyRelationshipCommitmentInput,
+  type ApplyRelationshipCommitmentResult,
+  type ApplyRelationshipSignalInput,
+  type ApplyRelationshipSignalResult,
+  type ApplyRelationshipSignalToComponentInput,
+  type ApplyRelationshipSignalToComponentResult,
+  type RelationshipCapsCoverageLock,
+  type RelationshipCommitmentKind,
+  type RelationshipCommitmentOperation,
+  type RelationshipCommitmentOpKind,
+  type RelationshipCommitmentStatus,
+  type RelationshipCommitmentStatusOp,
+  type RelationshipCommitmentStatusOpLock,
+  type RelationshipCommitmentTarget,
+  type RelationshipPolicyErrorCode,
+  type RelationshipPromisor,
+  type RelationshipDebtDirection,
+  type RelationshipSignalCaps,
+  type RelationshipSignalCommitmentRule,
+  type RelationshipSignalInput,
+  type RelationshipSignalRule,
+  type RelationshipSignalTableLock,
+  type RelationshipTargetId,
+} from "./relationshipSignalPolicy";
+// Task 4A：知识 entry 语义。写入入口一律要求 `references`（canonical Fact / NPC 的
+// ID 集合），因此不存在「调用方跳过查表就能写知识」的裸函数面：
+// `writeNpcKnowledge` / `setNpcKnowledgeDisclosure` 自己按 factId 定位既有条目。
+export {
+  KNOWLEDGE_DISCLOSURE_VISIBILITY,
+  KNOWLEDGE_VISIBILITIES,
+  createNpcKnowledgeEntry,
+  createNpcKnowledgeSource,
+  findKnowledgeEntry,
+  knowledgeVisibilityOf,
+  knowledgeWritesFromFactChange,
+  partitionKnowledgeByVisibility,
+  setNpcKnowledgeDisclosure,
+  writeNpcKnowledge,
+  type CreateNpcKnowledgeEntryInput,
+  type CreateNpcKnowledgeEntryResult,
+  type CreateNpcKnowledgeSourceResult,
+  type FactChangeKnowledgeResult,
+  type FactChangeKnowledgeSkipped,
+  type FactChangeKnowledgeWrite,
+  type NpcKnowledgeBroadcastRequest,
+  type NpcKnowledgeErrorCode,
+  type NpcKnowledgeCertaintyRankLock,
+  type NpcKnowledgeDisclosureVisibilityLock,
+  type NpcKnowledgeReferences,
+  type NpcKnowledgeSourceInput,
+  type NpcKnowledgeSourceNpcPolicyLock,
+  type NpcKnowledgeVisibility,
+  type NpcKnowledgeVisibilityPartitions,
+  type SetNpcKnowledgeDisclosureInput,
+  type SetNpcKnowledgeDisclosureResult,
+  type WriteNpcKnowledgeInput,
+  type WriteNpcKnowledgeResult,
+} from "./npcKnowledge";
+// Task 4C：NPC 运行时投影的**唯一读取面**。对话、调查、赠物、明确 NPC 任务与共同战斗
+// （Task 5 / 7 / 8）一律读 `projectNpcRuntimeProfile`，不得各自再拼一份 NPC 视图。
+// 披露→可见性的词汇仍归 npcKnowledge 所有（上面逐字重导出），本模块只 import 不复抄。
+// `NpcRuntimeProfile<M>` 按 `mode` 分臂：累计数值关系权威（边 dimensions/evidence/commitments
+// 与交互 relationshipDelta）只在 `M = "rule"` 那一臂，prompt 臂在类型上就读不到。
+// 读卡片时注意：`NpcProfileFactCard.text` **缺省有两件不同的意思**，判别式只有 `visibility`——
+// `rule_required` 且无正文是「本视图不许说」（模式授权），`shareable` 且无正文是「那条 Fact
+// 记录取不到」（数据缺口）；渲染侧必须分流，绝不把缺卡片当成「这位 NPC 无话可说」。
+export {
+  NPC_PROFILE_INTERACTION_TAIL,
+  NPC_RUNTIME_PROFILE_MODES,
+  projectNpcRuntimeProfile,
+  type NpcProfileEdgeView,
+  type NpcProfileErrorCode,
+  type NpcProfileFactCard,
+  type NpcProfileInteractionView,
+  type NpcProfilePromptEdgeKeysLock,
+  type NpcProfilePromptInteraction,
+  type NpcProfilePromptInteractionKeysLock,
+  type NpcProfilePromptRelationshipEdge,
+  type NpcProfileProseColumnLock,
+  type NpcProfileProseTableLock,
+  type NpcProfileRuleEdgeKeysLock,
+  type NpcProfileRuleInteractionKeysLock,
+  type NpcRuntimeProfile,
+  type NpcRuntimeProfileFailure,
+  type NpcRuntimeProfileMode,
+  type NpcRuntimeProfileRequest,
+  type NpcRuntimeProfileResult,
+} from "./npcRuntimeProjection";

@@ -13,13 +13,17 @@ import type { NarrativeEmotion } from "@/game/domain/narrative";
 import type { RecentBeat } from "@/game/domain/materializedView";
 import type { MandatoryNarrativeBeat, ObjectiveRef, ObjectiveTransition } from "@/game/domain/narrativeBeat";
 import type { WorldState } from "@/game/domain/worldState";
-import { projectEntityStore } from "@/game/domain/entity";
+import { entitiesOfKind, projectEntityStore } from "@/game/domain/entity";
+import type { RelationshipStage, RelationshipTrend } from "@/game/domain/entity";
+import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 import {
   buildPreparedStepDescriptors,
+  type PreparedArrivalNpcContext,
   type PreparedStepDescriptor,
 } from "@/game/gameplay/rpg/preparedContinuation";
 import { buildFocusNpcContext, type FocusNpcContext, type FactCard } from "./focusNpcContext";
+import { buildNpcSpeechAuthority, type NpcSpeechAuthority } from "./npcSpeechAuthority";
 import { isObjectiveEntityReleased } from "@/game/gameplay/rpg/worldEvolution";
 import { buildStylePolicy, type StylePolicy } from "./stylePolicy";
 import type { GameRecord } from "./server/persistence/gameRepository";
@@ -47,6 +51,8 @@ export type NpcSceneContext = {
   readonly publicProfile: string;
   /** 该 NPC 已知的事实卡（自己的 knownFactIds）。 */
   readonly knownFactCards: readonly FactCard[];
+  /** 该 NPC 的服务端 speech authority；审批不得用下方兼容投影替代。 */
+  readonly speechAuthority?: NpcSpeechAuthority;
   /** 该 NPC 自己的 hidden facts（不泄漏给其他 NPC，只给该 NPC 自己）。 */
   readonly hiddenFactCards: readonly FactCard[];
   /** 当前场景对玩家可见的 factId（无正文泄漏）。 */
@@ -55,7 +61,13 @@ export type NpcSceneContext = {
   readonly recentInteractionSummaries: readonly string[];
   /** Task 6：该 NPC 最近交互的 actionId（供审批校验 usedInteractionActionIds 归属）。 */
   readonly recentInteractionActionIds: readonly string[];
-  readonly relationship: { readonly affinity: number };
+  /** Qualitative relation only; cumulative dimensions never enter scene context. */
+  readonly relationship: {
+    readonly stage?: RelationshipStage;
+    readonly trend?: RelationshipTrend;
+    /** Legacy hand-built fixtures may still provide this; production never does. */
+    readonly affinity?: number;
+  };
   readonly emotion: NarrativeEmotion;
   readonly goals: readonly string[];
   /** forbidden knowledge 索引（仅 ID 列表，不含正文）。 */
@@ -66,7 +78,17 @@ export type NpcSceneContext = {
 export type UpcomingArrivalNpcContext = Pick<
   NpcSceneContext,
   "id" | "name" | "role" | "publicProfile" | "knownFactCards" | "sceneVisibleFactIds" | "goals"
->;
+> & Readonly<{
+  /** Production projections always fill this; old hand-built contexts may omit it. */
+  readonly speechAuthority?: import("./npcSpeechAuthority").NpcSpeechAuthority;
+}>;
+
+/** Application-only enriched descriptor; gameplay graph shape stays unchanged for 8B. */
+export type PreparedSceneStepDescriptor = Omit<PreparedStepDescriptor, "arrivalNpc"> & Readonly<{
+  readonly arrivalNpc?: PreparedArrivalNpcContext & Readonly<{
+    readonly speechAuthority?: import("./npcSpeechAuthority").NpcSpeechAuthority;
+  }>;
+}>;
 
 export type PlayerSceneSummary = {
   readonly name: string;
@@ -192,7 +214,7 @@ export type SceneGenerationContext = {
   /** Handoff semantics are fixed by the job, never inferred from mutable dialogue state. */
   readonly finalDialogueHandoff?: boolean;
   /** Server-authored continuation graph projected for this accepted rule result. */
-  readonly preparedStepDescriptors?: readonly PreparedStepDescriptor[];
+  readonly preparedStepDescriptors?: readonly PreparedSceneStepDescriptor[];
   readonly preparedActiveStepIds?: readonly string[];
   readonly player: PlayerSceneSummary;
   readonly currentLocation: LocationSceneCard;
@@ -302,6 +324,11 @@ function buildPreviousDialogueContext(
 function resolveEntityDescriptions(ws: WorldState, subjectIds: readonly string[]): EntityDescription[] {
   const result: EntityDescription[] = [];
   const seen = new Set<string>();
+  const secretFactIds = new Set(
+    entitiesOfKind(ws.entityStore, "npc").flatMap((npc) => npc.knowledge.entries
+      .filter((entry) => entry.disclosure === "secret")
+      .map((entry) => String(entry.factId))),
+  );
   const push = (desc: EntityDescription): void => {
     if (seen.has(desc.id)) return;
     seen.add(desc.id);
@@ -319,7 +346,15 @@ function resolveEntityDescriptions(ws: WorldState, subjectIds: readonly string[]
     const quest = ws.quests.find((q) => String(q.id) === id);
     if (quest) { push({ id, kind: "quest", name: quest.name, description: quest.description }); continue; }
     const fact = ws.worldFacts.find((f) => String(f.factId) === id);
-    if (fact) { push({ id, kind: "fact", name: "线索", description: fact.discovered ? fact.text : "尚未查明的线索" }); continue; }
+    if (fact) {
+      push({
+        id,
+        kind: "fact",
+        name: "线索",
+        description: fact.discovered && !secretFactIds.has(id) ? fact.text : "尚未查明的线索",
+      });
+      continue;
+    }
     push({ id, kind: "npc", name: id, description: "（尚未具象化的实体）" });
   }
   return result;
@@ -331,6 +366,11 @@ function resolveObjectiveTarget(
   ref: { readonly questId: string; readonly objectiveIndex: number } | null,
 ): ObjectiveTargetRef | null {
   if (ref === null) return null;
+  const secretFactIds = new Set(
+    entitiesOfKind(ws.entityStore, "npc").flatMap((npc) => npc.knowledge.entries
+      .filter((entry) => entry.disclosure === "secret")
+      .map((entry) => String(entry.factId))),
+  );
   const quest = ws.quests.find((q) => String(q.id) === String(ref.questId));
   const objective = quest?.objectives[ref.objectiveIndex];
   if (objective === undefined) return null;
@@ -353,7 +393,9 @@ function resolveObjectiveTarget(
         questId: String(ref.questId),
         objectiveIndex: ref.objectiveIndex,
         entityId: String(objective.factId),
-        entityName: fact?.discovered === true ? fact.text : `调查${fact?.investigationLabel ?? "现场线索"}`,
+        entityName: fact?.discovered === true && !secretFactIds.has(String(objective.factId))
+          ? fact.text
+          : `调查${fact?.investigationLabel ?? "现场线索"}`,
       };
     }
     case "defeat_enemy": {
@@ -395,7 +437,11 @@ function buildUpcomingLinearObjectives(
   if (after === null) return [];
   const quest = ws.quests.find((q) => String(q.id) === String(after.questId));
   if (quest === undefined) return [];
-  const factById = new Map(ws.worldFacts.map((fact) => [String(fact.factId), fact]));
+  const secretFactIds = new Set(
+    entitiesOfKind(ws.entityStore, "npc").flatMap((npc) => npc.knowledge.entries
+      .filter((entry) => entry.disclosure === "secret")
+      .map((entry) => String(entry.factId))),
+  );
   const buildArrivalNpc = (locationId: LocationId, objectiveIndex: number): UpcomingArrivalNpcContext | undefined => {
     const next = quest.objectives[objectiveIndex + 1];
     if (next?.kind !== "talk_to_npc") return undefined;
@@ -403,19 +449,24 @@ function buildUpcomingLinearObjectives(
       String(entry.id) === String(next.npcId) && String(entry.locationId) === String(locationId),
     );
     if (npc === undefined) return undefined;
+    const authority = buildNpcSpeechAuthority({
+      store: ws.entityStore,
+      speakerNpcId: npc.id,
+      sceneVisibleFactIds: entitiesOfKind(ws.entityStore, "fact")
+        .filter((fact) => fact.fact.discovered)
+        .map((fact) => fact.core.id),
+      targetContext: { targetId: PLAYER_ENTITY_ID },
+    });
+    if (authority === null) return undefined;
     return {
       id: npc.id,
       name: npc.name,
       role: npc.role,
       publicProfile: npc.description,
-      knownFactCards: npc.memory.knownFactIds
-        .map((id) => factById.get(String(id)))
-        .filter((fact): fact is NonNullable<typeof fact> => fact !== undefined)
-        .map((fact) => ({ factId: fact.factId, text: fact.text })),
-      sceneVisibleFactIds: ws.worldFacts
-        .filter((fact) => fact.discovered)
-        .map((fact) => fact.factId),
-      goals: [...npc.memory.goals],
+      knownFactCards: authority.allowedFactCards,
+      sceneVisibleFactIds: authority.allowedFactIds,
+      goals: authority.activeGoals,
+      speechAuthority: authority,
     };
   };
   const result: UpcomingObjectiveRef[] = [];
@@ -428,7 +479,7 @@ function buildUpcomingLinearObjectives(
         kind: "discover_fact",
         factId: objective.factId,
         investigationLabel: fact?.investigationLabel ?? "现场线索",
-        factText: fact?.text ?? "",
+        factText: fact !== undefined && !secretFactIds.has(String(fact.factId)) ? fact.text : "",
         ...(nextEntityName === undefined ? {} : { nextObjectiveEntityName: nextEntityName }),
       });
       continue;
@@ -450,6 +501,40 @@ function buildUpcomingLinearObjectives(
     break;
   }
   return result;
+}
+
+function enrichPreparedStepDescriptors(
+  ws: WorldState,
+  descriptors: readonly PreparedStepDescriptor[],
+): readonly PreparedSceneStepDescriptor[] {
+  const sceneVisibleFactIds = entitiesOfKind(ws.entityStore, "fact")
+    .filter((fact) => fact.fact.discovered)
+    .map((fact) => fact.core.id);
+  return descriptors.map((descriptor) => {
+    const arrivalNpc = descriptor.arrivalNpc;
+    if (arrivalNpc === undefined) return descriptor;
+    const speechAuthority = buildNpcSpeechAuthority({
+      store: ws.entityStore,
+      speakerNpcId: arrivalNpc.id,
+      sceneVisibleFactIds,
+      targetContext: { targetId: PLAYER_ENTITY_ID },
+    });
+    if (speechAuthority === null) return descriptor;
+    return {
+      ...descriptor,
+      authority: {
+        ...descriptor.authority,
+        visibleFactIds: speechAuthority.allowedFactIds,
+      },
+      arrivalNpc: {
+        ...arrivalNpc,
+        knownFactCards: speechAuthority.allowedFactCards,
+        sceneVisibleFactIds: speechAuthority.allowedFactIds,
+        goals: speechAuthority.activeGoals,
+        speechAuthority,
+      },
+    };
+  });
 }
 
 /** 从持久化 record 投影最小权限上下文（唯一构造入口）。 */
@@ -501,42 +586,51 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
     ?? ws.locations[0];
   const currentLocId = currentLocation.id;
 
+  const secretFactKeys = new Set<string>();
+  for (const entity of entitiesOfKind(ws.entityStore, "npc")) {
+    for (const entry of entity.knowledge.entries) {
+      if (entry.disclosure === "secret") secretFactKeys.add(String(entry.factId));
+    }
+  }
+
   // 玩家已知事实卡：只含玩家已发现（discovered）的事实（不含 NPC 私密）。
-  const factById = new Map(ws.worldFacts.map((f) => [String(f.factId), f]));
   const playerKnownFactCards = ws.worldFacts
-    .filter((f) => f.discovered)
+    .filter((f) => f.discovered && !secretFactKeys.has(String(f.factId)))
     .map((f) => ({ factId: f.factId, text: f.text }));
 
   const presentNpcs: NpcSceneContext[] = ws.npcs
     .filter((n) => n.locationId === currentLocId)
     .filter((n) => isObjectiveEntityReleased(ws, ss, (objective) =>
       objective.kind === "talk_to_npc" && String(objective.npcId) === String(n.id)))
-    .map((n) => {
-      const knownCards = n.memory.knownFactIds
-        .map((id) => factById.get(String(id)))
-        .filter((f): f is NonNullable<typeof f> => f !== undefined)
-        .map((f) => ({ factId: f.factId, text: f.text }));
-      const hiddenCards = n.memory.hiddenFactIds
-        .map((id) => factById.get(String(id)))
-        .filter((f): f is NonNullable<typeof f> => f !== undefined)
-        .map((f) => ({ factId: f.factId, text: f.text }));
-      return {
+    .flatMap((n) => {
+      const speechAuthority = buildNpcSpeechAuthority({
+        store: ws.entityStore,
+        speakerNpcId: n.id,
+        sceneVisibleFactIds: ws.worldFacts.filter((fact) => fact.discovered).map((fact) => fact.factId),
+        targetContext: { targetId: PLAYER_ENTITY_ID },
+      });
+      if (speechAuthority === null) return [];
+      return [{
         id: n.id,
         name: n.name,
         role: n.role,
         publicProfile: n.description,
-        knownFactCards: knownCards,
-        hiddenFactCards: hiddenCards,
-        sceneVisibleFactIds: ws.worldFacts
-          .filter((f) => f.discovered)
-          .map((f) => f.factId),
-        recentInteractionSummaries: n.memory.interactionHistory.slice(-3).map((h) => h.summary),
-        recentInteractionActionIds: n.memory.interactionHistory.slice(-5).map((h) => String(h.actionId)),
-        relationship: { affinity: n.memory.relationship.affinity },
-        emotion: n.memory.emotion,
-        goals: [...n.memory.goals],
-        forbiddenKnowledgeIds: [...n.memory.hiddenFactIds],
-      };
+        knownFactCards: speechAuthority.allowedFactCards,
+        speechAuthority,
+        hiddenFactCards: [],
+        sceneVisibleFactIds: speechAuthority.allowedFactIds,
+        recentInteractionSummaries: speechAuthority.recentInteractions.slice(-3).map((h) => h.summary),
+        recentInteractionActionIds: speechAuthority.allowedInteractionActionIds,
+        relationship: speechAuthority.relationship === undefined ? {} : {
+          stage: speechAuthority.relationship.stage,
+          trend: speechAuthority.relationship.trend,
+        },
+        emotion: entitiesOfKind(ws.entityStore, "npc").find((entity) =>
+          String(entity.core.id) === String(n.id),
+        )?.dynamicState.emotion ?? "neutral",
+        goals: speechAuthority.activeGoals,
+        forbiddenKnowledgeIds: [],
+      }];
     });
 
   const reachableLocations = ws.locations.filter(
@@ -567,15 +661,11 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
       ? objectiveNpcId
       : undefined;
   const focusNpcContext = focusNpcId !== undefined
-    ? buildFocusNpcContext(record, focusNpcId)
+    ? buildFocusNpcContext(record, focusNpcId, { targetId: PLAYER_ENTITY_ID })
     : undefined;
 
-  // 私密事实集合：属于任何 NPC hiddenFactIds 的事实不得进入公开/场景可见卡，
-  // 只出现在对应 NPC 自己的 hiddenFactCards（最小权限，spec §10.2）。
-  const secretFactKeys = new Set<string>();
-  for (const npc of ws.npcs) {
-    for (const id of npc.memory.hiddenFactIds) secretFactKeys.add(String(id));
-  }
+  // 私密事实集合：属于任何 NPC secret knowledge entry 的事实不得进入公开/场景可见卡；
+  // 兼容字段 hiddenFactCards/forbiddenKnowledgeIds 保持为空，authority 只向焦点路径放行卡片。
   const publicFacts = ws.worldFacts
     .filter((f) => !secretFactKeys.has(String(f.factId)) && f.discovered)
     .map((f) => ({ factId: f.factId, text: f.text }));
@@ -627,6 +717,7 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
     storyState: ss,
     transition,
   });
+  const preparedDescriptors = enrichPreparedStepDescriptors(ws, preparedProjection.descriptors);
   const narrativeReferenceIds = [...new Set([
     ...beatSubjects.map((subject) => subject.id),
     ...(objectiveTarget === null ? [] : [objectiveTarget.entityId]),
@@ -636,7 +727,7 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
           String(ref.locationId),
           ...(ref.arrivalNpc === undefined ? [] : [String(ref.arrivalNpc.id)]),
         ]),
-    ...preparedProjection.descriptors.flatMap((descriptor) => [
+    ...preparedDescriptors.flatMap((descriptor) => [
       ...descriptor.authority.allowedEntityIds,
       ...descriptor.authority.visibleFactIds.map(String),
       ...(descriptor.arrivalNpc === undefined ? [] : [String(descriptor.arrivalNpc.id)]),
@@ -651,7 +742,7 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
     job,
     ...(job.generationKind === null ? {} : { generationKind: job.generationKind }),
     finalDialogueHandoff: job.sceneRequestKind === "npc_handoff",
-    preparedStepDescriptors: preparedProjection.descriptors,
+    preparedStepDescriptors: preparedDescriptors,
     preparedActiveStepIds: preparedProjection.activeStepIds,
     player: {
       name: ws.player.name,

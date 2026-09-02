@@ -12,6 +12,7 @@ import {
 } from "../worldEntity";
 import type { EntityLifecycle } from "./entityCore";
 import type { EntityRecord, PlayerEntityRecord } from "./entityRecord";
+import { RELATIONSHIP_EVIDENCE_CAP } from "./npcComponents";
 import {
   createEntityStore,
   entitiesOfKind,
@@ -50,21 +51,53 @@ function npcRecord(id = "npc_0", overrides: { lifecycle?: EntityLifecycle } = {}
       createdAtTurn: 0,
       lifecycle: overrides.lifecycle ?? "active",
     },
-    identity: { role: "掌柜", description: "客栈掌柜", tags: ["shopkeep"] },
-    position: { locationId: asLocationId("loc_0"), locationOrder: 0 },
-    npcState: {
-      isCompanion: false,
-      met: false,
-      memory: {
-        npcId: asNpcId(id),
-        knownFactIds: [],
-        hiddenFactIds: [asFactId("fact_1")],
-        interactionHistory: [],
-        relationship: { affinity: 0 },
-        emotion: "neutral",
-        goals: ["守住客栈"],
+    identity: {
+      role: "掌柜",
+      description: "客栈掌柜",
+      tags: ["shopkeep"],
+      anchors: {
+        selfConcept: "守客栈的人",
+        values: ["守诺"],
+        speechStyle: "短句",
+        capabilityBoundaries: ["不会武艺"],
+        taboos: [],
       },
     },
+    position: { locationId: asLocationId("loc_0"), locationOrder: 0 },
+    dynamicState: {
+      isCompanion: false,
+      met: false,
+      emotion: "neutral",
+      goals: [{
+        goalId: `${id}_goal_1`,
+        horizon: "short",
+        description: "守住客栈",
+        priority: 3,
+        status: "active",
+        reason: "legacy_import",
+      }],
+    },
+    knowledge: {
+      entries: [{
+        factId: asFactId("fact_1"),
+        certainty: "known",
+        disclosure: "secret",
+        source: { kind: "initial_world", learnedAtTurn: 0 },
+      }],
+    },
+    relationships: {
+      outgoing: [{
+        targetId: PLAYER_ENTITY_ID,
+        dimensions: { affinity: 0, trust: 0, fear: 0, hostility: 0 },
+        stage: "unknown",
+        trend: "stable",
+        commitments: [],
+        evidence: [],
+        origin: { kind: "initial_world", createdAtTurn: 0, reasonKey: "legacy_import" },
+        lastChangedAtTurn: 0,
+      }],
+    },
+    history: { interactions: [] },
   };
 }
 
@@ -146,6 +179,45 @@ function factRecord(): EntityRecord {
   };
 }
 
+/** 未收窄的形状构造器：供严格解析测试拼出「形状像但值非法」的嵌套值。 */
+function edgeRecordFor(targetId: string): Record<string, unknown> {
+  return {
+    targetId,
+    dimensions: { affinity: 0, trust: 0, fear: 0, hostility: 0 },
+    stage: "acquainted",
+    trend: "stable",
+    commitments: [],
+    evidence: [],
+    origin: { kind: "initial_world", createdAtTurn: 0, reasonKey: "legacy_import" },
+    lastChangedAtTurn: 0,
+  };
+}
+
+function evidenceRecord(evidenceId: string, actionId: string): Record<string, unknown> {
+  return {
+    evidenceId,
+    actionId,
+    turnNumber: 1,
+    signal: "supported",
+    severity: "normal",
+    summaryKey: "supported",
+  };
+}
+
+function interactionRecord(actionId: string): Record<string, unknown> {
+  return {
+    turnNumber: 1,
+    actionId,
+    locationId: "loc_0",
+    dialogueAct: "ask",
+    topicSummary: "打听井钥",
+    outcome: "neutral",
+    relationshipDelta: 0,
+    learnedFactIds: [],
+    summary: "一次交谈",
+  };
+}
+
 function fullStoreRecords(): EntityRecord[] {
   return [
     playerRecord(),
@@ -185,7 +257,7 @@ function tamperStore(store: unknown, mutate: (records: TamperRecord[]) => void):
 describe("entity store identity 与结构", () => {
   it("accepts one record per kind with globally unique IDs", () => {
     const store = createEntityStore(fullStoreRecords());
-    expect(store.version).toBe(1);
+    expect(store.version).toBe(2);
     expect(store.records).toHaveLength(9);
   });
 
@@ -203,20 +275,32 @@ describe("entity store identity 与结构", () => {
 
   it("reports duplicate_entity_id as a structure issue without throwing", () => {
     const issues = validateEntityStoreStructure(
-      untrusted({ version: 1, records: [...fullStoreRecords(), itemRecord("npc_0")] }),
+      untrusted({ version: 2, records: [...fullStoreRecords(), itemRecord("npc_0")] }),
     );
     expect(issues.some((issue) => issue.code === "duplicate_entity_id")).toBe(true);
   });
 
-  it("requires npc records to carry identity + position + npcState and no foreign component", () => {
+  it("requires npc records to carry identity + position + 分层组件且不含 npcState", () => {
     const missing = untrusted(createEntityStore(fullStoreRecords()));
-    expect(
-      issueCodesOf(
-        tamperStore(missing, (records) => {
-          delete records[1].npcState;
-        }),
-      ),
-    ).toContain("invalid_record_shape");
+    for (const component of ["dynamicState", "knowledge", "relationships", "history"] as const) {
+      expect(
+        issueCodesOf(
+          tamperStore(missing, (records) => {
+            delete records[1][component];
+          }),
+        ),
+      ).toContain("invalid_record_shape");
+    }
+
+    // 旧形状不得与分层组件共存，也不得单独存活。
+    const legacyOnly = tamperStore(missing, (records) => {
+      const record = records[1];
+      for (const component of ["dynamicState", "knowledge", "relationships", "history"] as const) {
+        delete record[component];
+      }
+      record.npcState = { isCompanion: false, met: false, memory: {} };
+    });
+    expect(issueCodesOf(legacyOnly)).toContain("invalid_record_shape");
 
     const foreign = tamperStore(missing, (records) => {
       records[1].quest = { status: "active" };
@@ -264,28 +348,27 @@ describe("entity store identity 与结构", () => {
     ).toContain("kind_id_mismatch");
   });
 
-  it("requires memory.npcId to equal core.id", () => {
+  it("拒绝指向自身的NPC关系边", () => {
     const store = untrusted(createEntityStore(fullStoreRecords()));
-    expect(
-      issueCodesOf(
-        tamperStore(store, (records) => {
-          (records[1].npcState as { memory: { npcId: string } }).memory.npcId = "npc_other";
-        }),
-      ),
-    ).toContain("component_id_mismatch");
+    const issues = tamperStore(store, (records) => {
+      const outgoing = (records[1].relationships as { outgoing: { targetId: string }[] }).outgoing;
+      outgoing[0]!.targetId = "npc_0";
+    });
+    expect(issueCodesOf(issues)).toContain("component_id_mismatch");
   });
 
   it("requires exactly one player record", () => {
-    const withoutPlayer = untrusted({ version: 1, records: fullStoreRecords().filter((r) => r.core.kind !== "player_character") });
+    const withoutPlayer = untrusted({ version: 2, records: fullStoreRecords().filter((r) => r.core.kind !== "player_character") });
     expect(issueCodesOf(withoutPlayer)).toContain("missing_player");
 
-    const withTwo = untrusted({ version: 1, records: [...fullStoreRecords(), playerRecord({ id: asLocationId("dup_player") })] });
+    const withTwo = untrusted({ version: 2, records: [...fullStoreRecords(), playerRecord({ id: asLocationId("dup_player") })] });
     const codes = issueCodesOf(withTwo);
     expect(codes).toContain("multiple_players");
   });
 
-  it("rejects a store version other than 1", () => {
-    expect(issueCodesOf(untrusted({ version: 2, records: fullStoreRecords() }))).toContain("invalid_store_version");
+  it("rejects a store version other than 2", () => {
+    expect(issueCodesOf(untrusted({ version: 1, records: fullStoreRecords() }))).toContain("invalid_store_version");
+    expect(issueCodesOf(untrusted({ version: 3, records: fullStoreRecords() }))).toContain("invalid_store_version");
   });
 });
 
@@ -385,7 +468,8 @@ describe("entity store 读取与序列化", () => {
       (records[4].possession as { quantity: number }).quantity = 2;
     }))).toContain("invalid_component_value");
     expect(issueCodesOf(tamperStore(store, (records) => {
-      (records[1].npcState as { memory: { relationship: { affinity: number } } }).memory.relationship.affinity = 101;
+      const edge = (records[1].relationships as { outgoing: { dimensions: { affinity: number } }[] }).outgoing[0]!;
+      edge.dimensions.affinity = 101;
     }))).toContain("invalid_component_value");
     expect(issueCodesOf(tamperStore(store, (records) => {
       records[2].location = {
@@ -424,8 +508,59 @@ describe("entity store 读取与序列化", () => {
     ).toContain("component_lifecycle_mismatch");
   });
 
+  it("逐字段严格解析NPC分层组件：重复、越界、超上限与多余键都稳定拒绝", () => {
+    const store = untrusted(createEntityStore(fullStoreRecords()));
+    const tamper = (mutate: (records: TamperRecord[]) => void) => issueCodesOf(tamperStore(store, mutate));
+
+    expect(tamper((records) => {
+      const knowledge = records[1].knowledge as { entries: Record<string, unknown>[] };
+      knowledge.entries.push({ ...knowledge.entries[0] });
+    })).toContain("invalid_component_value");
+
+    expect(tamper((records) => {
+      const relationships = records[1].relationships as { outgoing: Record<string, unknown>[] };
+      relationships.outgoing.push(edgeRecordFor("npc_2"));
+      relationships.outgoing.unshift(edgeRecordFor("npc_1"));
+    })).toContain("invalid_component_value");
+
+    expect(tamper((records) => {
+      const history = records[1].history as { interactions: Record<string, unknown>[] };
+      history.interactions = Array.from({ length: 11 }, (_, index) => interactionRecord(`act_${index}`));
+    })).toContain("invalid_component_value");
+
+    expect(tamper((records) => {
+      // 恰在上限（当前 12 条）必须被接受：off-by-one（`>` 写成 `>=`）只会在这一支暴露。
+      const edgeValue = (records[1].relationships as { outgoing: Record<string, unknown>[] }).outgoing[0]!;
+      edgeValue.evidence = Array.from({ length: RELATIONSHIP_EVIDENCE_CAP }, (_, index) => evidenceRecord(`ev_${index}`, `act_${index}`));
+    })).toEqual([]);
+
+    expect(tamper((records) => {
+      const edgeValue = (records[1].relationships as { outgoing: Record<string, unknown>[] }).outgoing[0]!;
+      edgeValue.evidence = Array.from({ length: RELATIONSHIP_EVIDENCE_CAP + 1 }, (_, index) => evidenceRecord(`ev_${index}`, `act_${index}`));
+    })).toContain("invalid_component_value");
+
+    expect(tamper((records) => {
+      const edgeValue = (records[1].relationships as { outgoing: Record<string, unknown>[] }).outgoing[0]!;
+      edgeValue.commitments = [{ kind: "debt", commitmentId: "c1", direction: "nope", status: "open", description: "d", source: { kind: "action", actionId: "a", turnNumber: 1 } }];
+    })).toContain("invalid_component_value");
+
+    expect(tamper((records) => {
+      const identity = records[1].identity as { anchors: Record<string, unknown> };
+      identity.anchors.extra = "x";
+    })).toContain("invalid_component_value");
+
+    expect(tamper((records) => {
+      const identity = records[1].identity as { anchors: Record<string, unknown> };
+      identity.anchors.values = [];
+    })).toContain("invalid_component_value");
+
+    expect(tamper((records) => {
+      (records[1].dynamicState as { emotion: string }).emotion = "furious";
+    })).toContain("invalid_component_value");
+  });
+
   it("parseEntityStore reports the same issues and yields no store", () => {
-    const result = parseEntityStore({ version: 1, records: "not-an-array" });
+    const result = parseEntityStore({ version: 2, records: "not-an-array" });
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.issues.length).toBeGreaterThan(0);

@@ -181,13 +181,18 @@ describe("buildSceneGenerationContext", () => {
     expect(context.currentLocation).toEqual({
       id: loc1.id, name: loc1.name, description: loc1.description, kind: "main",
     });
-    expect(context.presentNpcs).toEqual([{
+    expect(context.presentNpcs).toEqual([expect.objectContaining({
       id: npc1.id, name: npc1.name, role: npc1.role, publicProfile: npc1.description,
       knownFactCards: [], hiddenFactCards: [], sceneVisibleFactIds: [],
       recentInteractionSummaries: [], recentInteractionActionIds: [],
-      relationship: { affinity: 0 }, emotion: "neutral",
+      relationship: { stage: "unknown", trend: "stable" }, emotion: "neutral",
       goals: [], forbiddenKnowledgeIds: [],
-    }]);
+      speechAuthority: expect.objectContaining({
+        speakerNpcId: npc1.id,
+        allowedFactIds: [],
+        allowedInteractionActionIds: [],
+      }),
+    })]);
     expect(context.story.currentAct).toBe(1);
     expect(context.story.targetActs).toBe(3);
     expect(context.story.tension).toBe(30);
@@ -313,14 +318,22 @@ describe("buildSceneGenerationContext", () => {
     const npcAContext = context.presentNpcs.find((n) => String(n.id) === "npc_1")!;
     const npcBContext = context.presentNpcs.find((n) => String(n.id) === "npc_2")!;
     const serialized = JSON.stringify(context);
-    // npcA 的私密事实正文只出现在 npcA 自己的 hiddenFactCards，不出现在 npcB context / 全局文本
-    expect(npcAContext.hiddenFactCards.map((f) => f.text)).toContain("老板的秘密A");
-    expect(npcAContext.hiddenFactCards.map((f) => f.text)).not.toContain("客人的秘密B");
-    expect(npcBContext.hiddenFactCards.map((f) => f.text)).toContain("客人的秘密B");
-    expect(npcBContext.hiddenFactCards.map((f) => f.text)).not.toContain("老板的秘密A");
-    // 序列化后只出现各自秘密一次（无全局 publicWorldFacts 泄漏文本）
-    expect(serialized.split("老板的秘密A").length - 1).toBe(1);
-    expect(serialized.split("客人的秘密B").length - 1).toBe(1);
+    // Private fact bodies never enter the scene context, including the owner NPC's card.
+    expect(npcAContext.hiddenFactCards).toEqual([]);
+    expect(npcBContext.hiddenFactCards).toEqual([]);
+    expect(serialized).not.toContain("老板的秘密A");
+    expect(serialized).not.toContain("客人的秘密B");
+    const npcAJson = JSON.stringify(npcAContext);
+    const npcBJson = JSON.stringify(npcBContext);
+    expect(serialized).toContain(npcAJson);
+    expect(serialized).toContain(npcBJson);
+    // 其他 NPC 与所有全局投影都拿不到别人的私密事实正文
+    expect(npcAContext.knownFactCards.map((f) => f.text)).not.toContain("客人的秘密B");
+    expect(npcBContext.knownFactCards.map((f) => f.text)).not.toContain("老板的秘密A");
+    expect(context.publicWorldFacts.map((f) => f.text)).toEqual([]);
+    expect(context.sceneVisibleFacts.map((f) => f.text)).toEqual([]);
+    expect(context.player.knownFactCards.map((f) => f.text)).not.toContain("老板的秘密A");
+    expect(context.player.knownFactCards.map((f) => f.text)).not.toContain("客人的秘密B");
   });
 
   // ── Task 4：把规则结果/目标转换投影给场景源 ──────────────────────────────
@@ -477,7 +490,7 @@ describe("buildSceneGenerationContext", () => {
     expect(context.focusNpcContext?.responsePolicy.initiative).toBe("reactive");
     expect(context.focusNpcContext?.emotion).toBe("neutral");
     // talk job 无 interaction → 本轮默认 neutral/0
-    expect(context.focusNpcContext?.thisTurn).toEqual({ relationshipDelta: 0, outcome: "neutral" });
+    expect(context.focusNpcContext?.thisTurn).toEqual({ outcome: "neutral" });
   });
 
   it("非对白行动抵达当前 talk_to_npc 目标时，焦点切到新目标而不是沿用旧 NPC", () => {
@@ -487,7 +500,7 @@ describe("buildSceneGenerationContext", () => {
       name: "传讯人",
       role: "信使",
       locationId: loc1.id,
-      // memory 属于该 NPC 自身：store 要求 npcState.memory.npcId 与 core.id 一致。
+      // memory 现由分层组件重建、不再被 store 校验归属；保持 npcId 与 core.id 一致只为可读。
       memory: { ...npc1.memory, npcId: asNpcId("npc_2") },
     };
     const world = makeWorld({
@@ -570,7 +583,7 @@ describe("buildSceneGenerationContext", () => {
     expect(context.focusNpcContext?.recentInteractions).toHaveLength(1);
     expect(context.focusNpcContext?.recentInteractions[0]?.actionId).toBe(IMPORTANT_ACTION_ID);
     // 本轮 delta/outcome 来自 actionId 匹配的 interaction
-    expect(context.focusNpcContext?.thisTurn).toEqual({ relationshipDelta: -2, outcome: "negative" });
+    expect(context.focusNpcContext?.thisTurn).toEqual({ outcome: "negative" });
   });
 
   it("把 provider job 的 generation/handoff 语义与完整 prepared graph 投影到 context", () => {
@@ -625,6 +638,15 @@ describe("buildSceneGenerationContext", () => {
         { candidateId: "prepared_1_choice_1" },
         { candidateId: "prepared_1_choice_2" },
       ],
+    });
+    expect(context.preparedStepDescriptors?.[0]?.arrivalNpc).toMatchObject({
+      speechAuthority: {
+        identityAnchors: expect.any(Object),
+        activeGoals: expect.any(Array),
+        relationships: expect.any(Array),
+        recentInteractions: expect.any(Array),
+        evidenceKeys: expect.any(Array),
+      },
     });
   });
 });

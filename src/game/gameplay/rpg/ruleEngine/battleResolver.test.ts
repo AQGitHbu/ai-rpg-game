@@ -115,6 +115,51 @@ describe("battleAction", () => {
     }
   });
 
+  it("keeps the pre-battle snapshot and battleKey across a non-terminal legacy round", () => {
+    const ws = makeWorldWithEnemy();
+    const started = startBattle(ws, asEnemyId("enemy_1"), deps);
+    if (!started.ok) throw new Error("setup failed");
+    if (started.nextWorldState.battle.status !== "active") throw new Error("setup failed: battle not active");
+    const before = started.nextWorldState.battle;
+
+    const result = battleAction(started.nextWorldState, "attack", deps);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("non-terminal round must be accepted");
+    if (result.nextWorldState.battle.status !== "active") throw new Error("round must stay non-terminal");
+    const after = result.nextWorldState.battle;
+
+    // 战前快照是战败/撤退唯一可恢复的世界，battleKey 标识同一场战斗：
+    // 它们在规则层就该跨回合存活，否则回滚保证在应用层之前就已经没了。
+    expect(after.preBattleSnapshot).toEqual(before.preBattleSnapshot);
+    expect(after.battleKey).toBe(before.battleKey);
+  });
+
+  it("carries every active-battle field through a non-terminal legacy round", () => {
+    const ws = makeWorldWithEnemy();
+    const started = startBattle(ws, asEnemyId("enemy_1"), deps);
+    if (!started.ok) throw new Error("setup failed");
+    if (started.nextWorldState.battle.status !== "active") throw new Error("setup failed: battle not active");
+    // 旧存档可以带可选 enemyIds 却不带任何现代战斗字段：仍属非终结的 legacy 分支。
+    const worldState: WorldState = {
+      ...started.nextWorldState,
+      battle: { ...started.nextWorldState.battle, enemyIds: [asEnemyId("enemy_1")] },
+    };
+    const before = worldState.battle;
+    if (before.status !== "active") throw new Error("setup failed: battle not active");
+
+    const result = battleAction(worldState, "attack", deps);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("non-terminal round must be accepted");
+    if (result.nextWorldState.battle.status !== "active") throw new Error("round must stay non-terminal");
+    const after = result.nextWorldState.battle;
+
+    // 回合只允许改写 hp 与 round：其余字段（这里用可选 enemyIds 探针）必须原样带过。
+    // 手工枚举字段的结构一旦漏写新字段就静默丢档，所以这里锁“整份带过去”而不是锁两个字段。
+    expect(after.enemyIds).toEqual(before.enemyIds);
+    expect(after.enemyId).toBe(before.enemyId);
+    expect(after.status).toBe("active");
+  });
+
   it("guard reduces counter damage", () => {
     const ws = makeWorldWithEnemy();
     const started = startBattle(ws, asEnemyId("enemy_1"), deps);

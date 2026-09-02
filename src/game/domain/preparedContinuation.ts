@@ -1,12 +1,13 @@
 import type { Action, DialogueTopic } from "./action";
 import type { NarrativeJobId } from "./events";
-import type { NarrativeEventState, NarrativeNpcLineState } from "./narrative";
+import type { NarrativeEventState, NarrativeNpcLineState, NpcDialogueInScene } from "./narrative";
 import type {
   EnemyId,
   FactId,
   LocationId,
   QuestId,
 } from "./worldEntity";
+import { areUniqueNpcSpeechReferenceIds } from "./npcSpeechReferences";
 
 export const NARRATIVE_CONTINUATION_MISSING = "NARRATIVE_CONTINUATION_MISSING" as const;
 export const NARRATIVE_CONTINUATION_INVALID = "NARRATIVE_CONTINUATION_INVALID" as const;
@@ -45,6 +46,7 @@ export type PreparedSceneSeedState = {
   readonly segments: readonly PreparedNarrativeSegmentState[];
   readonly event: NarrativeEventState;
   readonly npcLine: NarrativeNpcLineState | null;
+  readonly npcDialogues?: readonly NpcDialogueInScene[];
   readonly objectiveLink: PreparedObjectiveLinkState | null;
   readonly choiceSeeds: readonly PreparedChoiceSeedState[];
   readonly source: "generated" | "fixture";
@@ -199,17 +201,44 @@ function isNarrativeEvent(value: unknown): value is NarrativeEventState {
 
 function isNpcLine(value: unknown): value is NarrativeNpcLineState {
   return isRecord(value)
-    && hasOnlyKeys(value, ["npcId", "text", "emotion", "usedFactIds", "answeredBeatIds"])
+    && hasOnlyKeys(value, ["npcId", "text", "emotion", "usedFactIds", "usedInteractionActionIds", "answeredBeatIds"])
     && isNonEmptyString(value.npcId)
     && isNonEmptyString(value.text)
     && PREPARED_NARRATIVE_EMOTIONS.includes(value.emotion as string)
     && isStringArray(value.usedFactIds)
+    && isStringArray(value.usedInteractionActionIds)
+    && areUniqueNpcSpeechReferenceIds(value.usedFactIds)
+    && areUniqueNpcSpeechReferenceIds(value.usedInteractionActionIds)
     && (value.answeredBeatIds === undefined || isStringArray(value.answeredBeatIds));
+}
+
+function isNpcDialogue(value: unknown): value is NpcDialogueInScene {
+  return isRecord(value)
+    && hasOnlyKeys(value, [
+      "npcId", "npcName", "npcRole", "speechPages", "usedFactIds", "usedInteractionActionIds",
+      "speechSource", "speechPurpose", "smallTalk",
+    ])
+    && isNonEmptyString(value.npcId)
+    && typeof value.npcName === "string"
+    && typeof value.npcRole === "string"
+    && isStringArray(value.speechPages)
+    && isStringArray(value.usedFactIds)
+    && isStringArray(value.usedInteractionActionIds)
+    && areUniqueNpcSpeechReferenceIds(value.usedFactIds)
+    && areUniqueNpcSpeechReferenceIds(value.usedInteractionActionIds)
+    && (value.speechSource === undefined || value.speechSource === "generated" || value.speechSource === "fixture")
+    && (value.speechPurpose === undefined || value.speechPurpose === "focus" || value.speechPurpose === "ambient")
+    && (value.smallTalk === undefined || (
+      isRecord(value.smallTalk)
+      && hasOnlyKeys(value.smallTalk, ["prompt", "response"])
+      && typeof value.smallTalk.prompt === "string"
+      && typeof value.smallTalk.response === "string"
+    ));
 }
 
 function isScene(value: unknown): value is PreparedSceneSeedState {
   if (!isRecord(value) || !hasOnlyKeys(value, [
-    "segments", "event", "npcLine", "objectiveLink", "choiceSeeds", "source",
+    "segments", "event", "npcLine", "npcDialogues", "objectiveLink", "choiceSeeds", "source",
   ])) return false;
   if (!Array.isArray(value.segments) || !value.segments.every((segment) => (
     isRecord(segment)
@@ -220,6 +249,8 @@ function isScene(value: unknown): value is PreparedSceneSeedState {
   ))) return false;
   if (!isNarrativeEvent(value.event)) return false;
   if (value.npcLine !== null && !isNpcLine(value.npcLine)) return false;
+  if (value.npcDialogues !== undefined
+    && (!Array.isArray(value.npcDialogues) || !value.npcDialogues.every(isNpcDialogue))) return false;
   if (value.objectiveLink !== null && !(
     isRecord(value.objectiveLink)
     && hasOnlyKeys(value.objectiveLink, ["questId", "objectiveIndex", "mode"])

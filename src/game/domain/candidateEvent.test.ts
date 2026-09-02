@@ -29,10 +29,9 @@ function baseCandidate(overrides?: Partial<EventCandidate>): EventCandidate {
 }
 
 describe("EventCandidate 结构化契约", () => {
-  it("支持全部 7 种事件 kind，且每条都含结构化执行字段", () => {
+  it("支持剩余 6 种事件 kind，且每条都含结构化执行字段", () => {
     const kinds: EventCandidateKind[] = [
       "npc_reveals_fact",
-      "npc_changes_stance",
       "hostile_force_acts",
       "enemy_appears",
       "thread_complicates",
@@ -43,12 +42,6 @@ describe("EventCandidate 结构化契约", () => {
 
     const candidates: EventCandidate[] = [
       baseCandidate(),
-      baseCandidate({
-        id: "c2",
-        kind: "npc_changes_stance",
-        involvedEntityIds: ["npc_2"],
-        proposedEffects: [{ kind: "npc_changes_stance", npcId: asNpcId("npc_2"), stance: "hostile" }],
-      }),
       baseCandidate({
         id: "c3",
         kind: "hostile_force_acts",
@@ -133,6 +126,16 @@ describe("EventCandidate 结构化契约", () => {
     if (!badExpiry.ok) expect(badExpiry.code).toBe("invalid_expiry");
   });
 
+  it("拒绝已删除的旧效果 kind，并复用 unknown_kind", () => {
+    const legacyKind = ["npc", "changes", "stance"].join("_");
+    const result = parseEventCandidate({
+      ...baseCandidate(),
+      kind: legacyKind,
+      proposedEffects: [{ kind: legacyKind, npcId: asNpcId("npc_1"), stance: "hostile" }],
+    });
+    expect(result).toEqual({ ok: false, code: "unknown_kind" });
+  });
+
   it("合法候选通过 schema 解析，且引用 ID 集合一致", () => {
     const result = parseEventCandidate(baseCandidate());
     expect(result.ok).toBe(true);
@@ -172,7 +175,6 @@ describe("ProposedEffect 封闭 union", () => {
   it("效果字段可区分、不含任意 path patch", () => {
     const effects: readonly ProposedEffect[] = [
       { kind: "npc_reveals_fact", npcId: asNpcId("npc_1"), factId: asFactId("fact_1") },
-      { kind: "npc_changes_stance", npcId: asNpcId("npc_1"), stance: "friendly" },
       { kind: "hostile_force_acts", locationId: asLocationId("loc_1"), action: "attack" },
       { kind: "enemy_appears", enemyId: asEnemyId("enemy_1"), locationId: asLocationId("loc_1") },
       { kind: "thread_complicates", threadId: "thread_1" },

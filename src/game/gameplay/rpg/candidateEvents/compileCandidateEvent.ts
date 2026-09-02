@@ -3,22 +3,33 @@ import type { GameEvent } from "@/game/domain/events";
 import type { ApprovedEventCandidate } from "./approveCandidateEvents";
 import type { ProposedEffect } from "@/game/domain/candidateEvent";
 import { applyEntityMutations, EntityMutationInvariantError } from "@/game/gameplay/rpg/entityWorld";
-import { entitiesOfKind } from "@/game/domain/entity";
 
 // ---------------------------------------------------------------------------
 // 纯候选事件编译（Spec §11.2 / Task 19）
 // 把已批准的候选事件逐 effect 编译为真实 GameEvent 和 WorldState 变化。
-// effect 必须是封闭 union，禁止任意 path patch；未知 kind 直接抛错。
+// effect 必须是封闭 union，禁止任意 path patch；旧存档中的未知 kind 丢弃。
 // 纯函数：不读取时钟/随机数/AI/DB；时间由调用方注入 deps.now。
 // ---------------------------------------------------------------------------
 
-export type CompileCandidateEventDeps = { readonly now: () => string };
+/**
+ * actionId/turnNumber 由 resolveTurn 传入的**本回合真实行动**：candidate.id 与
+ * deps.now() 都不是证据，绝不允许拿来充当。
+ */
+export type CompileCandidateEventDeps = {
+  readonly now: () => string;
+  readonly actionId: string;
+  readonly turnNumber: number;
+};
 
 export type CompileCandidateEventResult = {
   readonly worldState: WorldState;
   /** 编译产生的真实领域事件 + candidate_event_activated 审计事件。 */
   readonly events: readonly GameEvent[];
+  /** 旧存档携带不可再表示的 effect 时的稳定诊断；同批返回一条 candidate_event_rejected 审计事件。 */
+  readonly dropReason?: CompileCandidateEventDropReason;
 };
+
+export type CompileCandidateEventDropReason = "stale_effect_kind";
 
 export function compileCandidateEvent(
   worldState: WorldState,
@@ -30,7 +41,22 @@ export function compileCandidateEvent(
   let ws = worldState;
 
   for (const effect of candidate.proposedEffects) {
-    const compiled = applyEffect(ws, effect, occurredAt);
+    const compiled = applyEffect(ws, effect, { occurredAt, actionId: deps.actionId, turnNumber: deps.turnNumber });
+    if ("dropReason" in compiled) {
+      // 丢弃不静默：落一条结构化审计事件（不含正文），调用方无需再消费 dropReason 也能查账。
+      return {
+        worldState,
+        events: [{
+          type: "candidate_event_rejected",
+          candidateId: candidate.id,
+          kind: candidate.kind,
+          reasonCode: compiled.dropReason,
+          rejectedAtTurn: deps.turnNumber,
+          occurredAt,
+        }],
+        dropReason: compiled.dropReason,
+      };
+    }
     ws = compiled.worldState;
     events.push(...compiled.events);
   }
@@ -47,11 +73,14 @@ export function compileCandidateEvent(
   return { worldState: ws, events };
 }
 
+type CompileEffectContext = Readonly<{ occurredAt: string; actionId: string; turnNumber: number }>;
+
 function applyEffect(
   ws: WorldState,
   effect: ProposedEffect,
-  occurredAt: string,
-): { worldState: WorldState; events: readonly GameEvent[] } {
+  context: CompileEffectContext,
+): { worldState: WorldState; events: readonly GameEvent[] } | { dropReason: CompileCandidateEventDropReason } {
+  const { occurredAt } = context;
   const mutate = (mutation: Parameters<typeof applyEntityMutations>[1]) => {
     const applied = applyEntityMutations(ws, mutation);
     if (!applied.ok) throw new EntityMutationInvariantError(applied);
@@ -62,31 +91,6 @@ function applyEffect(
       const event: GameEvent = { type: "fact_discovered", factId: effect.factId, occurredAt };
       return {
         worldState: { ...mutate([{ kind: "discover_fact", factId: effect.factId }]), eventLedger: [...ws.eventLedger, event] },
-        events: [event],
-      };
-    }
-    case "npc_changes_stance": {
-      const event: GameEvent = {
-        type: "npc_met",
-        npcId: effect.npcId,
-        occurredAt,
-        interactionKind: "greet",
-      };
-      const npc = entitiesOfKind(ws.entityStore, "npc").find((record) => record.core.id === effect.npcId);
-      if (npc === undefined) throw new EntityMutationInvariantError({ code: "unknown_entity_id", entityId: effect.npcId });
-      const nextWorldState = mutate([{
-        kind: "replace_npc_state",
-        npcId: effect.npcId,
-        npcState: {
-          ...npc.npcState,
-          memory: {
-            ...npc.npcState.memory,
-            emotion: effect.stance === "hostile" ? "afraid" : effect.stance === "friendly" ? "warm" : effect.stance === "guarded" ? "guarded" : "neutral",
-          },
-        },
-      }]);
-      return {
-        worldState: { ...nextWorldState, eventLedger: [...nextWorldState.eventLedger, event] },
         events: [event],
       };
     }
@@ -140,7 +144,8 @@ function applyEffect(
     }
     default: {
       const _exhaustive: never = effect;
-      throw new Error(`compileCandidateEvent: 不支持的 effect kind ${String(_exhaustive)}`);
+      void _exhaustive;
+      return { dropReason: "stale_effect_kind" };
     }
   }
 }

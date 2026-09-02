@@ -8,7 +8,7 @@ import {
   LIVE_WORLD_EVOLUTION_MAX_TOKENS,
   LIVE_WORLD_EVOLUTION_TIMEOUT_MS,
 } from "./liveWorldEvolutionSource";
-import { createInitialWorldState, createWorldStateFromProjection } from "@/game/domain/worldState";
+import { createInitialWorldState } from "@/game/domain/worldState";
 import { projectEntityStore, type EntityCompatibilityProjection } from "@/game/domain/entity";
 import { asFactId, asLocationId, asGenerationId, asNpcId, asQuestId } from "@/game/domain/worldEntity";
 import { createInitialStoryState } from "@/game/domain/storyState";
@@ -17,6 +17,7 @@ import type { WorldState } from "@/game/domain/worldState";
 import type { EvolutionNeed } from "@/game/domain/worldDelta";
 import type { WorldEvolutionSourceContext } from "../../worldEvolutionSource";
 import { bindNpcToTownSlot, createTownRuntime } from "@/game/gameplay/rpg/town";
+import { createWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 
 function makeWorld(): WorldState {
   return createInitialWorldState({
@@ -31,7 +32,7 @@ function makeWorld(): WorldState {
 }
 
 function withProjection(base: WorldState, overrides: Partial<EntityCompatibilityProjection>): WorldState {
-  return createWorldStateFromProjection({
+  return createWorldStateFixture({
     generation: base.generation,
     projection: { ...projectEntityStore(base.entityStore), ...overrides },
     battle: base.battle,
@@ -41,6 +42,18 @@ function withProjection(base: WorldState, overrides: Partial<EntityCompatibility
   });
 }
 
+const NPC_CREATION = {
+  anchors: {
+    selfConcept: "守信的传讯人",
+    values: ["守信"],
+    speechStyle: "谨慎而直接",
+    capabilityBoundaries: ["不超出自身所知"],
+    taboos: [],
+  },
+  goals: [{ horizon: "short", description: "送达密信", priority: 3, reason: "必须完成传递" }],
+  relationshipSeeds: [],
+};
+
 const pacingNeed: EvolutionNeed = { kind: "pacing", pacingNeed: "complicate" };
 
 describe("parseWorldDeltaProposal", () => {
@@ -48,13 +61,125 @@ describe("parseWorldDeltaProposal", () => {
     const parsed = parseWorldDeltaProposal({
       beatSummary: "补给一名在场人物",
       newNpc: {
+        ...NPC_CREATION,
         name: "新来客", role: "过客", description: "路过的旅人。",
-        locationRef: { kind: "existing", id: "loc_a" }, goals: ["随缘"],
+        locationRef: { kind: "existing", id: "loc_a" },
       },
     });
     expect(parsed).not.toBeNull();
     expect(parsed?.proposal.newNpc?.name).toBe("新来客");
     expect(parsed?.proposal.newNpc?.locationRef).toEqual({ kind: "existing", id: "loc_a" });
+  });
+
+  it("accepts a dynamic NPC with an explicitly empty relationshipSeeds array", () => {
+    const parsed = parseWorldDeltaProposal({
+      beatSummary: "补充一名暂未与他人建立关系的信使",
+      newNpc: {
+        ...NPC_CREATION,
+        name: "新来客", role: "过客", description: "路过的旅人。",
+        locationRef: { kind: "existing", id: "loc_a" },
+        relationshipSeeds: [],
+      },
+    });
+    expect(parsed?.proposal.newNpc?.relationshipSeeds).toEqual([]);
+  });
+
+  it("rejects a world-delta NPC that omits relationshipSeeds", () => {
+    const { relationshipSeeds: _omitted, ...legacyCreation } = NPC_CREATION;
+    expect(parseWorldDeltaProposal({
+      beatSummary: "缺少关系种子的 NPC",
+      newNpc: {
+        ...legacyCreation,
+        name: "新来客", role: "过客", description: "路过的旅人。",
+        locationRef: { kind: "existing", id: "loc_a" },
+      },
+    })).toBeNull();
+  });
+
+  it("parses bounded directed relationship seeds and fails closed for AI-owned fields", () => {
+    const parsed = parseWorldDeltaProposal({
+      beatSummary: "补充一名与掌柜有旧交的信使",
+      newNpc: {
+        ...NPC_CREATION,
+        name: "新来客", role: "过客", description: "路过的旅人。",
+        locationRef: { kind: "existing", id: "loc_a" },
+        relationshipSeeds: [{ targetNpcId: "npc_0", stance: "ally", reason: "曾共同守护一封密信" }],
+      },
+    });
+    expect(parsed?.proposal.newNpc?.relationshipSeeds).toEqual([
+      { targetNpcId: "npc_0", stance: "ally", reason: "曾共同守护一封密信" },
+    ]);
+
+    const invalidSeeds = [
+      [{ targetNpcId: "npc_0", stance: "unknown", reason: "不应接受" }],
+      [{ targetNpcId: "npc_0", stance: "ally", reason: "" }],
+      [{ targetNpcId: "npc_0", stance: "ally", reason: "有效", stage: "trusted" }],
+      [{ targetNpcId: "npc_0", stance: "ally", reason: "有效", affinity: 90 }],
+      [{ targetNpcId: "npc_0", stance: "ally", reason: "有效", evidence: [] }],
+      [{ targetNpcId: "npc_0", stance: "ally", reason: "有效", actionId: "action_1" }],
+      [{ targetNpcId: "npc_0", stance: "ally", reason: "有效", extra: true }],
+      [
+        { targetNpcId: "npc_0", stance: "ally", reason: "重复" },
+        { targetNpcId: "npc_0", stance: "rival", reason: "重复" },
+      ],
+    ];
+    for (const relationshipSeeds of invalidSeeds) {
+      expect(parseWorldDeltaProposal({
+        beatSummary: "非法关系种子",
+        newNpc: {
+          ...NPC_CREATION,
+          name: "新来客", role: "过客", description: "路过的旅人。",
+          locationRef: { kind: "existing", id: "loc_a" },
+          relationshipSeeds,
+        },
+      })).toBeNull();
+    }
+  });
+
+  it("rejects unknown world-delta keys instead of silently dropping them", () => {
+    expect(parseWorldDeltaProposal({
+      beatSummary: "带有未知字段的提案",
+      newNpc: {
+        ...NPC_CREATION,
+        name: "新来客", role: "过客", description: "路过的旅人。",
+        locationRef: { kind: "existing", id: "loc_a" },
+      },
+      serverOnly: true,
+    })).toBeNull();
+    expect(parseWorldDeltaProposal({
+      beatSummary: "带有未知地点字段的提案",
+      newLocation: {
+        name: "新地点", description: "一处新的地点。", scale: "scene", placement: "world",
+        connectFromLocationId: "loc_a", serverOnly: true,
+      },
+    })).toBeNull();
+    expect(parseWorldDeltaProposal({
+      beatSummary: "带有未知事实字段的提案",
+      newFact: { text: "一条新事实。", visibility: "public", provenance: "provider" },
+    })).toBeNull();
+  });
+
+  it("rejects unknown keys in locationRef and investigation approaches", () => {
+    expect(parseWorldDeltaProposal({
+      beatSummary: "地点引用带未知字段",
+      newNpc: {
+        ...NPC_CREATION,
+        name: "新来客", role: "过客", description: "路过的旅人。",
+        locationRef: { kind: "existing", id: "loc_a", extra: true },
+      },
+    })).toBeNull();
+
+    expect(parseWorldDeltaProposal({
+      beatSummary: "调查方式带未知字段",
+      newFact: {
+        text: "井沿留有新鲜绳痕。",
+        visibility: "public",
+        investigationApproaches: [
+          { approachId: "inspect", label: "检查井沿", evidenceQuality: "clean", tensionDelta: 1, extra: true },
+          { approachId: "ask", label: "询问路人", evidenceQuality: "noisy", tensionDelta: 0 },
+        ],
+      },
+    })).toBeNull();
   });
 
   it("drops proposals with illegal name length or missing fields", () => {
@@ -78,8 +203,9 @@ describe("parseWorldDeltaProposal", () => {
         connectFromLocationId: "loc_a",
       },
       newNpc: {
+        ...NPC_CREATION,
         name: "茶馆线人", role: "传讯人", description: "等候交信的线人。",
-        locationRef: { kind: "new_location" }, goals: [],
+        locationRef: { kind: "new_location" },
       },
     });
     expect(townBuilding?.proposal.newLocation?.placement).toBe("town_building");
@@ -208,7 +334,7 @@ describe("filterProposalRefs", () => {
 
     const npc = parseWorldDeltaProposal({
       beatSummary: "新人物",
-      newNpc: { name: "新来客", role: "过客", description: "路过的旅人。", locationRef: { kind: "existing", id: "loc_missing" }, goals: [] },
+      newNpc: { ...NPC_CREATION, name: "新来客", role: "过客", description: "路过的旅人。", locationRef: { kind: "existing", id: "loc_missing" } },
     })!.proposal;
     expect(filterProposalRefs(npc, ws)).toBeNull();
   });
@@ -217,7 +343,7 @@ describe("filterProposalRefs", () => {
     const ws = makeWorld();
     const proposal = parseWorldDeltaProposal({
       beatSummary: "新人物",
-      newNpc: { name: "新来客", role: "过客", description: "路过的旅人。", locationRef: { kind: "existing", id: "loc_a" }, goals: [] },
+      newNpc: { ...NPC_CREATION, name: "新来客", role: "过客", description: "路过的旅人。", locationRef: { kind: "existing", id: "loc_a" } },
     })!.proposal;
     expect(filterProposalRefs(proposal, ws)).not.toBeNull();
   });
@@ -230,7 +356,7 @@ describe("filterProposalRefs", () => {
     const proposal = parseWorldDeltaProposal({
       beatSummary: "旧角色指出了新的去处",
       newLocation: { name: "潮痕深处", description: "裂隙尽头的能量空腔。", scale: "scene", placement: "world", connectFromLocationId: "loc_a" },
-      newNpc: { name: "韩征", role: "掌柜", description: "已经在客栈中的掌柜。", locationRef: { kind: "existing", id: "loc_a" }, goals: [] },
+      newNpc: { ...NPC_CREATION, name: "韩征", role: "掌柜", description: "已经在客栈中的掌柜。", locationRef: { kind: "existing", id: "loc_a" } },
       nextMainQuest: { name: "进入潮痕深处", description: "沿着裂隙深入。", objectiveText: "前往潮痕深处。" },
     })!.proposal;
 
@@ -471,6 +597,74 @@ describe("createLiveWorldEvolutionSource", () => {
       nextMainQuest: null,
       endingPair: null,
     });
+  });
+
+  it("accepts a no-seed dynamic NPC through the live source", async () => {
+    let prompt = "";
+    const complete = vi.fn(async (_role: "world", messages: readonly { readonly content?: string }[]) => {
+      prompt = messages[0]?.content ?? "";
+      return {
+        ok: true as const,
+        content: JSON.stringify({
+          proposal: {
+            beatSummary: "补充一名暂未与他人建立关系的信使",
+            newNpc: {
+              ...NPC_CREATION,
+              name: "新来客", role: "过客", description: "路过的旅人。",
+              locationRef: { kind: "existing", id: "loc_a" },
+              relationshipSeeds: [],
+            },
+          },
+        }),
+        latencyMs: 1,
+      };
+    });
+    const source = createLiveWorldEvolutionSource({
+      aiClient: {
+        complete,
+        policy: () => ({ thinking: "off" as const, timeoutMs: 45_000, maxTokens: 3_200, jsonMode: "prompt_only" as const, maxAttempts: 1 }),
+      },
+    });
+
+    const result = await source.propose({
+      worldState: makeWorld(),
+      storyState: createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
+      need: pacingNeed,
+      reason: "scene_evolution",
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok && result.proposal !== null) expect(result.proposal.newNpc?.relationshipSeeds).toEqual([]);
+    expect(prompt).toContain("relationshipSeeds 必须出现");
+    expect(prompt).toContain("无关系时必须输出 []");
+  });
+
+  it("rejects an unknown proposal wrapper key before parsing the world delta", async () => {
+    const complete = vi.fn(async () => ({
+      ok: true as const,
+      content: JSON.stringify({
+        proposal: {
+          beatSummary: "补足一条调查线索",
+          newFact: { text: "井沿留有新鲜绳痕。", visibility: "public" },
+        },
+        extra: true,
+      }),
+      latencyMs: 1,
+    }));
+    const source = createLiveWorldEvolutionSource({
+      aiClient: {
+        complete,
+        policy: () => ({ thinking: "off" as const, timeoutMs: 45_000, maxTokens: 3_200, jsonMode: "prompt_only" as const, maxAttempts: 1 }),
+      },
+    });
+    const result = await source.propose({
+      worldState: makeWorld(),
+      storyState: createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
+      need: pacingNeed,
+      reason: "scene_evolution",
+    });
+    expect(result).toMatchObject({ ok: false, repairReason: "invalid_schema" });
+    expect(complete).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -721,5 +915,22 @@ describe("world source 内容修复契约", () => {
     expect(prompt).toContain("客栈");
     expect(prompt).toContain("loc_a");
     expect(prompt).not.toContain("worldFacts");
+  });
+
+  it("world-evolution prompt declares typed NPC anchors, goals, and directed seed boundaries", async () => {
+    const ai = makeClient("not json");
+    const source = createLiveWorldEvolutionSource({ aiClient: ai });
+    let prompt = "";
+    ai.complete.mockImplementation(async (_role, messages, _ctx) => {
+      prompt = (messages[0] as { readonly content?: string } | undefined)?.content ?? "";
+      return { ok: true as const, content: "not json", latencyMs: 1 };
+    });
+    await source.propose(makeCtx({ need: pacingNeed }));
+    expect(prompt).toContain('"relationshipSeeds":[{"targetNpcId"');
+    expect(prompt).toContain('"targetNpcId"');
+    expect(prompt).toContain("relationshipSeeds 必须出现");
+    expect(prompt).toContain("无关系时必须输出 []");
+    expect(prompt).toContain("只能引用实体规则闭包中的既有 active NPC");
+    expect(prompt).toContain("不得提交 affinity、stage、evidence 或 actionId");
   });
 });

@@ -8,6 +8,7 @@ import type {
   PlayerState, QuestEntry, WorldFactEntry,
 } from "./worldEntries";
 import type { EntityStore } from "./entity/entityStore";
+import type { NpcImportedLayers } from "./entity/npcProjection";
 import {
   compileEntityStoreFromCompatibilityProjection,
   projectEntityStore,
@@ -39,8 +40,11 @@ export type EndingState = { readonly endingId: EndingId; readonly outcome: "succ
 
 // ── World State ──
 
+/** 世界存档 schema 版本唯一来源：v4 起 NPC record 携带分层组件，v3 及更早一律按不支持处理。 */
+export const WORLD_STATE_SCHEMA_VERSION = 4 as const;
+
 export type WorldState = {
-  readonly version: 3;
+  readonly version: typeof WORLD_STATE_SCHEMA_VERSION;
   readonly generation: GenerationMetadata;
   /** 唯一世界事实来源；下方集合与索引全部由 projectEntityStore 派生。 */
   readonly entityStore: EntityStore;
@@ -82,6 +86,8 @@ export function createWorldStateFromProjection(input: {
   readonly generation: GenerationMetadata;
   readonly projection: EntityCompatibilityProjection;
   readonly createdAtTurn?: number;
+  readonly previousStore?: EntityStore;
+  readonly npcCreationComponentsById?: ReadonlyMap<NpcId, NpcImportedLayers>;
   readonly battle?: BattleState;
   readonly endings?: readonly EndingEntry[];
   readonly ending?: EndingState;
@@ -90,9 +96,11 @@ export function createWorldStateFromProjection(input: {
   const entityStore = compileEntityStoreFromCompatibilityProjection({
     projection: input.projection,
     createdAtTurn: input.createdAtTurn ?? 0,
+    ...(input.previousStore === undefined ? {} : { previousStore: input.previousStore }),
+    ...(input.npcCreationComponentsById === undefined ? {} : { npcCreationComponentsById: input.npcCreationComponentsById }),
   });
   return {
-    version: 3,
+    version: 4,
     generation: input.generation,
     entityStore,
     ...projectEntityStore(entityStore),

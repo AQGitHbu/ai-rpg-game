@@ -1,7 +1,12 @@
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { Action } from "@/game/domain/action";
-import type { EvolutionNeed, ApprovedWorldDelta, WorldDeltaProposal } from "@/game/domain/worldDelta";
+import type {
+  EvolutionNeed,
+  ApprovedWorldDelta,
+  WorldDeltaEntityContextClosure,
+  WorldDeltaProposal,
+} from "@/game/domain/worldDelta";
 import type { WorldEvolutionContentRepair, WorldEvolutionSource, WorldEvolutionSourceContext } from "./worldEvolutionSource";
 import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
 import type { AiGenerationFailure } from "@/game/domain/narrativeGenerationFailure";
@@ -45,6 +50,7 @@ export type EvolveWorldInput = {
   readonly reason: string;
   /** 回合修复路径：把行动引用 ID 原样铸造为缺失实体 ID（只作用于匹配 kind）。 */
   readonly idOverride?: WorldDeltaIdOverride;
+  readonly entityContextClosure?: WorldDeltaEntityContextClosure;
   /** 仅用于关联 world AI 审计事件，不进入世界状态。 */
   readonly auditLink?: AiTextAuditLink;
   readonly now: () => string;
@@ -129,6 +135,7 @@ export async function evolveWorld(input: EvolveWorldInput): Promise<EvolveWorldR
           ws: input.worldState,
           ss: input.storyState,
           idOverride: input.idOverride,
+          entityContextClosure: input.entityContextClosure,
         });
         if (!approval.ok) {
           terminalResult = {

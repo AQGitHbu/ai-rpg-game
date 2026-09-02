@@ -197,19 +197,20 @@ describe("buildFocusNpcContext", () => {
     expect(context.name).toBe("老板");
     expect(context.role).toBe("客栈老板");
     expect(context.publicProfile).toBe("热情的老板");
-    // 70 affinity → trusted → 坦诚/主动
+    // The policy is projected from the entity relationship component.
     expect(context.responsePolicy.tier).toBe("trusted");
     expect(context.responsePolicy.initiative).toBe("proactive");
-    // 已知且非私密、坦诚度达标 → 只含公开事实
+    expect(context.identityAnchors).toBeDefined();
+    // Authority only permits the scene-visible, non-secret fact.
     expect(context.responsePolicy.allowedDisclosureFactIds).toEqual([FACT_PUBLIC]);
     expect(context.speakableFactCards).toEqual([{ factId: FACT_PUBLIC, text: "矿坑里藏着密道" }]);
     // 私密事实只出现 ID，正文绝不出现
-    expect(context.responsePolicy.privateKnowledgeIds).toEqual([FACT_PRIVATE]);
+    expect(context.responsePolicy).not.toHaveProperty("privateKnowledgeIds");
     expect(context.emotion).toBe("warm");
     expect(context.goals).toEqual(["守住客栈的秘密"]);
   });
 
-  it("hostile 档位 → 拒绝式政策，且允许披露集合为空", () => {
+  it("component relationship keeps the existing affinity-based public policy", () => {
     const record = makeRecord({
       npcs: [
         { ...bossNpc, memory: { ...bossNpc.memory, relationship: { affinity: -70 } } },
@@ -219,8 +220,8 @@ describe("buildFocusNpcContext", () => {
     const context = buildFocusNpcContext(record, NPC_1);
     expect(context.responsePolicy.tier).toBe("hostile");
     expect(context.responsePolicy.initiative).toBe("refuse");
-    expect(context.responsePolicy.allowedDisclosureFactIds).toEqual([]);
-    expect(context.speakableFactCards).toEqual([]);
+    expect(context.responsePolicy.allowedDisclosureFactIds).toEqual([FACT_PUBLIC]);
+    expect(context.speakableFactCards).toEqual([{ factId: FACT_PUBLIC, text: "矿坑里藏着密道" }]);
   });
 
   it("recentInteractions 只含选中 NPC 最近 5 条结构化交互", () => {
@@ -234,7 +235,7 @@ describe("buildFocusNpcContext", () => {
       dialogueAct: "support",
       topicSummary: "询问线索",
       outcome: "positive",
-      summary: "再次交谈，support，气氛融洽，关系+3",
+      summary: "再次交谈，support，气氛融洽，关系变化",
     });
   });
 
@@ -244,10 +245,10 @@ describe("buildFocusNpcContext", () => {
     expect(actionIds).not.toContain("guest_1");
   });
 
-  it("thisTurn 携带本轮 relationshipDelta 与 outcome（非裸数字）", () => {
+  it("thisTurn carries only the qualitative outcome", () => {
     const context = buildFocusNpcContext(makeRecord(), NPC_1);
-    expect(context.thisTurn.relationshipDelta).toBe(4);
-    expect(context.thisTurn.outcome).toBe("positive");
+    expect(context.thisTurn).toEqual({ outcome: "positive" });
+    expect(JSON.stringify(context)).not.toMatch(/"relationshipDelta"\s*:/);
   });
 
   it("玩家原话绝不进入焦点上下文（含 JSON 序列化扫描）", () => {

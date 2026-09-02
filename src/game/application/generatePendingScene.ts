@@ -20,6 +20,7 @@ import type { NarrativeGenerationFailure } from "@/game/domain/narrativeGenerati
 import type { NarrativeGenerationRepairReason } from "@/game/domain/narrativeGenerationFailure";
 import { markNarrativeGenerationFailed } from "./markNarrativeGenerationFailed";
 import { runBoundedAttempts } from "@/game/core/retry";
+import { buildWorldDeltaEntityContextClosure } from "./entityContextProjection";
 
 export type GeneratePendingSceneDeps = {
   readonly repository: GameRepository;
@@ -201,6 +202,11 @@ export async function generatePendingScene(
       storyState: record.storyState,
       source: deps.worldEvolutionSource,
       reason: "scene_evolution",
+      entityContextClosure: buildWorldDeltaEntityContextClosure({
+        worldState: record.worldState,
+        storyState: record.storyState,
+        job: generation.job,
+      }),
       auditLink: { ...deps.auditLink, gameId: String(record.gameId), jobId: String(generation.job.jobId), turnNumber: generation.job.turnNumber },
       now: deps.now,
     });
@@ -236,6 +242,11 @@ export async function generatePendingScene(
       storyState: scenarioSs,
       source: deps.worldEvolutionSource,
       reason: "scene_candidate_shortage",
+      entityContextClosure: buildWorldDeltaEntityContextClosure({
+        worldState: scenarioWs,
+        storyState: scenarioSs,
+        job: generation.job,
+      }),
       auditLink: {
         ...deps.auditLink,
         gameId: String(record.gameId),
@@ -302,6 +313,7 @@ export async function generatePendingScene(
         proposal,
         basedOnRevision: record.revision + 1,
         existingCandidateEventPool: record.storyState.candidateEventPool,
+        worldState: scenarioWs,
         logger: deps.logger,
       });
       if (approvedGenerated.ok) {

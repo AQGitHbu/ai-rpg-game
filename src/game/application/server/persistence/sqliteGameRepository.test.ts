@@ -7,6 +7,8 @@ import { tmpdir } from "node:os";
 import { createSqliteGameRepository } from "./sqliteGameRepository";
 import { createSqliteClient, type SqliteClient } from "./sqliteClient";
 import { asGameId } from "./gameRepository";
+import type { GameRecord, GameRepository } from "./gameRepository";
+import { WORLD_STATE_SCHEMA_VERSION } from "@/game/domain/worldState";
 import type { LocationEntry } from "@/game/domain/worldState";
 import { createWorldStateFixtureWith, emptyProjection, type WorldStateFixtureOverrides } from "@/game/domain/testing/worldStateFixture.testutil";
 import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
@@ -64,6 +66,19 @@ function openRepo(databasePath: string): ReturnType<typeof createSqliteGameRepos
   return repo;
 }
 
+/**
+ * 无条件读回 active 存档：corrupt / none 分类必须让用例当场失败。
+ * getCurrentGame 对一切分类失败都返回 ok:true，绝不允许再用 status 守卫静默跳过后置断言。
+ */
+async function expectActiveCurrentGame(repo: GameRepository): Promise<GameRecord> {
+  const current = await repo.getCurrentGame();
+  expect(current).toMatchObject({ ok: true, status: "active" });
+  if (!current.ok || current.status !== "active") {
+    throw new Error("getCurrentGame 未返回 active 存档");
+  }
+  return current.record;
+}
+
 afterAll(async () => {
   for (const repo of openedRepos) {
     try { await repo.close(); } catch { /* ignore */ }
@@ -109,14 +124,11 @@ describe("sqliteGameRepository", () => {
       }],
     });
     await repo.createInitialGame({ gameId: asGameId("g-approaches"), worldState: withApproaches, storyState, createdAt: "2026-01-01T00:00:00.000Z" });
-    const current = await repo.getCurrentGame();
-    expect(current.ok).toBe(true);
-    if (current.ok && current.status === "active") {
-      expect(current.record.worldState.worldFacts[0]?.investigationApproaches).toEqual([
-        { approachId: "a", label: "检查井沿", hint: "先看压痕深浅", evidenceQuality: "clean", tensionDelta: 2 },
-        { approachId: "b", label: "细听井底动静", evidenceQuality: "noisy", tensionDelta: 5 },
-      ]);
-    }
+    const record = await expectActiveCurrentGame(repo);
+    expect(record.worldState.worldFacts[0]?.investigationApproaches).toEqual([
+      { approachId: "a", label: "检查井沿", hint: "先看压痕深浅", evidenceQuality: "clean", tensionDelta: 2 },
+      { approachId: "b", label: "细听井底动静", evidenceQuality: "noisy", tensionDelta: 5 },
+    ]);
   });
 
   it("原子保存开局指纹，清档后仍保留历史供下一局去重", async () => {
@@ -157,16 +169,18 @@ describe("sqliteGameRepository", () => {
     expect(await repo.createInitialGame({ gameId, worldState, storyState, createdAt: "2026-01-01" })).toEqual({ ok: true });
 
     const current = await repo.getCurrentGame();
-    expect(current.ok).toBe(true);
+    // 直接断言 active：corrupt 读取必须让本用例失败，不允许被 status 守卫跳过。
+    expect(current).toMatchObject({ ok: true, status: "active" });
     if (current.ok && current.status === "active") {
       expect(current.record.gameId).toBe(gameId);
       expect(current.record.revision).toBe(0);
-      expect(current.record.worldState.version).toBe(3);
+      expect(current.record.worldState.version).toBe(WORLD_STATE_SCHEMA_VERSION);
+      expect(current.record.worldState.entityStore.version).toBe(2);
       expect(current.record.storyState.version).toBe(7);
     }
   });
 
-  it("classifies malformed v3 entity state as ENTITY_STATE_INVALID", async () => {
+  it("classifies malformed v4 entity state as ENTITY_STATE_INVALID", async () => {
     const dbPath = nextDbPath();
     const repo = openRepo(dbPath);
     const { worldState, storyState } = buildTestState();
@@ -179,6 +193,26 @@ describe("sqliteGameRepository", () => {
       args: [JSON.stringify({ ...worldState, entityStore: { ...worldState.entityStore, records: [...worldState.entityStore.records, worldState.entityStore.records[0]] } }), gameId],
     });
     expect(await repo.getCurrentGame()).toEqual({ ok: true, status: "corrupt", reason: "ENTITY_STATE_INVALID" });
+  });
+
+  it("只降级 world version 到当前常量前一代（store 仍是当前版本）的存档归类为 UNSUPPORTED_RECORD，不迁移也不伪装成损坏", async () => {
+    // 版本写差一时（常量与 LEGACY 闸门/解析器不同源）必须在这里暴露：
+    // 旧世代只会落进 UNSUPPORTED_RECORD，绝不允许伪装成 ENTITY_STATE_INVALID 的内容损坏。
+    const legacyWorldVersion = WORLD_STATE_SCHEMA_VERSION - 1;
+    const dbPath = nextDbPath();
+    const repo = openRepo(dbPath);
+    await repo.initializeSchema();
+    const raw = createSqliteClient(dbPath);
+    rawClients.push(raw);
+    const { worldState, storyState } = buildTestState();
+    await raw.execute({
+      sql: `INSERT INTO game_records (game_id, record_version, world_state_json, story_state_json, created_at, revision)
+            VALUES (?, ?, ?, ?, ?, ?)`,
+      args: ["legacy_world_v3", 1, JSON.stringify({ ...worldState, version: legacyWorldVersion }), JSON.stringify(storyState), "2025-01-01", 0],
+    });
+    await raw.execute({ sql: "INSERT INTO current_game (slot, game_id) VALUES (1, ?)", args: ["legacy_world_v3"] });
+
+    expect(await repo.getCurrentGame()).toEqual({ ok: true, status: "corrupt", reason: "UNSUPPORTED_RECORD" });
   });
 
   it("createInitialGame rejects when active game exists", async () => {
@@ -281,11 +315,9 @@ describe("sqliteGameRepository", () => {
     }
 
     // 持久化读回同样保持 revision 不变
-    const current = await repo.getCurrentGame();
-    if (current.ok && current.status === "active") {
-      expect(current.record.revision).toBe(0);
-      expect(current.record.storyState.prologueShown).toBe(true);
-    }
+    const record = await expectActiveCurrentGame(repo);
+    expect(record.revision).toBe(0);
+    expect(record.storyState.prologueShown).toBe(true);
 
     // 后续基于同一 revision 的正常写入（默认递增）仍可 CAS 成功
     const r2 = await repo.applyState({ gameId, expectedRevision: 0, nextWorldState: worldState, nextStoryState: storyState });
@@ -632,13 +664,10 @@ describe("sqliteGameRepository：事务原子性", () => {
     });
     expect(result).toEqual({ ok: false, code: "INFRASTRUCTURE_FAILURE" });
 
-    const current = await repo.getCurrentGame();
-    expect(current.ok).toBe(true);
-    if (current.ok && current.status === "active") {
-      expect(current.record.revision).toBe(0);
-      expect(current.record.worldState).toEqual(worldState);
-      expect(current.record.storyState).toEqual(storyState);
-    }
+    const record = await expectActiveCurrentGame(repo);
+    expect(record.revision).toBe(0);
+    expect(record.worldState).toEqual(worldState);
+    expect(record.storyState).toEqual(storyState);
   });
 
   it("UPDATE 前失败（注入 UPDATE 语句异常）→ 回滚后 World/Story 均保持旧值", async () => {
@@ -668,13 +697,10 @@ describe("sqliteGameRepository：事务原子性", () => {
 
     // 全新实例读取同一文件：revision 未增长，World 与 Story 都是旧值
     const reader = openRepo(dbPath);
-    const current = await reader.getCurrentGame();
-    expect(current.ok).toBe(true);
-    if (current.ok && current.status === "active") {
-      expect(current.record.revision).toBe(0);
-      expect(current.record.worldState).toEqual(worldState);
-      expect(current.record.storyState).toEqual(storyState);
-    }
+    const record = await expectActiveCurrentGame(reader);
+    expect(record.revision).toBe(0);
+    expect(record.worldState).toEqual(worldState);
+    expect(record.storyState).toEqual(storyState);
   });
 
   it("read-back 失败（UPDATE 成功后注入读取异常）→ 整体回滚，旧值保留", async () => {
@@ -703,13 +729,10 @@ describe("sqliteGameRepository：事务原子性", () => {
     expect(result).toEqual({ ok: false, code: "INFRASTRUCTURE_FAILURE" });
 
     const reader = openRepo(dbPath);
-    const current = await reader.getCurrentGame();
-    expect(current.ok).toBe(true);
-    if (current.ok && current.status === "active") {
-      expect(current.record.revision).toBe(0);
-      expect(current.record.worldState).toEqual(worldState);
-      expect(current.record.storyState).toEqual(storyState);
-    }
+    const record = await expectActiveCurrentGame(reader);
+    expect(record.revision).toBe(0);
+    expect(record.worldState).toEqual(worldState);
+    expect(record.storyState).toEqual(storyState);
   });
 });
 
@@ -730,13 +753,10 @@ describe("sqliteGameRepository：stale 后旧值保留", () => {
     });
     expect(stale).toEqual({ ok: false, code: "STALE_GAME_REVISION" });
 
-    const current = await repo.getCurrentGame();
-    expect(current.ok).toBe(true);
-    if (current.ok && current.status === "active") {
-      expect(current.record.revision).toBe(0);
-      expect(current.record.storyState.tension).toBe(storyState.tension);
-      expect(current.record.worldState).toEqual(worldState);
-    }
+    const record = await expectActiveCurrentGame(repo);
+    expect(record.revision).toBe(0);
+    expect(record.storyState.tension).toBe(storyState.tension);
+    expect(record.worldState).toEqual(worldState);
   });
 
   it("短篇规模：80 回合连续 CAS 写入 + reload 一致性 + 大小基线（Task 32）", async () => {
@@ -772,14 +792,11 @@ describe("sqliteGameRepository：stale 后旧值保留", () => {
     const elapsedMs = performance.now() - startTime;
 
     // reload：从持久化读回，turnNumber/事件数/CAS revision 语义正确
-    const current = await repo.getCurrentGame();
-    expect(current.ok).toBe(true);
-    if (current.ok && current.status === "active") {
-      expect(current.record.revision).toBe(TURNS);
-      expect(current.record.storyState.turnNumber).toBe(TURNS);
-      expect(current.record.storyState.tension).toBe(Math.max(0, 100 - TURNS));
-      expect(current.record.worldState.eventLedger.length).toBe(initialLedgerLength + TURNS);
-    }
+    const record = await expectActiveCurrentGame(repo);
+    expect(record.revision).toBe(TURNS);
+    expect(record.storyState.turnNumber).toBe(TURNS);
+    expect(record.storyState.tension).toBe(Math.max(0, 100 - TURNS));
+    expect(record.worldState.eventLedger.length).toBe(initialLedgerLength + TURNS);
 
     // 大小基线（记录而非断言）：供长篇门禁参考
     const { statSync } = await import("node:fs");

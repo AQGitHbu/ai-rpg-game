@@ -11,14 +11,6 @@ export type RelationshipValue = {
   readonly affinity: number;  // -100 ~ +100
 };
 
-// 常量
-export const RELATIONSHIP_CHANGE = {
-  GREET_FIRST_MEET: 5,
-  ASK_MAIN_QUEST_COMPLETE: 10,
-  FREE_INPUT_POSITIVE: 3,
-  FREE_INPUT_NEGATIVE: -3,
-} as const;
-
 export const RELATIONSHIP_MIN = -100;
 export const RELATIONSHIP_MAX = 100;
 

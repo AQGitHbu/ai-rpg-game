@@ -119,7 +119,8 @@ describe("createDeterministicEvolutionSource ending_pair", () => {
 
   it("keeps scripted later-act NPCs and quests unique when their names already exist", async () => {
     const source = createDeterministicEvolutionSource();
-    // 克隆出的既有 NPC 的 memory 必须归属自身（store 校验 npcState.memory.npcId）。
+    // 克隆出的既有 NPC 的 memory 由投影器按 core.id 重建，npcId 对齐只为可读；
+    // store 侧的归属不变量现在是关系边自指禁令（relationships 不得指向自身）。
     const existingNpc: NpcEntry = {
       ...shopkeeper(0),
       id: NPC_1,

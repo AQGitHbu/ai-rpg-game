@@ -60,6 +60,8 @@ export type NpcMetEvent = {
 export type NpcDialogueCompletedEvent = {
   readonly type: "npc_dialogue_completed";
   readonly npcId: NpcId;
+  /** 服务器铸造的本轮 action provenance；旧存档事件可缺省。 */
+  readonly actionId?: string;
   readonly occurredAt: string;
 };
 
@@ -128,6 +130,8 @@ export type ItemGivenEvent = {
   readonly itemId: ItemId;
   readonly npcId: NpcId;
   readonly locationId: LocationId;
+  /** 服务器铸造的本轮 action provenance；旧存档事件可缺省。 */
+  readonly actionId?: string;
   readonly occurredAt: string;
 };
 

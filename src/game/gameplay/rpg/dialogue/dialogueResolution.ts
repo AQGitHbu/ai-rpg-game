@@ -1,10 +1,13 @@
 import type { WorldState, NpcEntry, NpcInteraction } from "@/game/domain/worldState";
 import type { DialogueAct, DialogueTopic, TalkAction } from "@/game/domain/action";
-import { relationshipTierOf, RELATIONSHIP_CHANGE, type RelationshipTier } from "@/game/domain/relationship";
-import type { FactId } from "@/game/domain/worldEntity";
+import { relationshipTierOf, type RelationshipTier } from "@/game/domain/relationship";
+import type { NarrativeEmotion } from "@/game/domain/narrative";
+import type { RelationshipSignal } from "@/game/domain/entity";
+import { PLAYER_ENTITY_ID, type FactId } from "@/game/domain/worldEntity";
 import type { GameEvent } from "@/game/domain/events";
 import type { StateChange } from "@/game/domain/resolvedEvent";
-import { updateNpcMemory } from "@/game/gameplay/rpg/ruleEngine/updateNpcMemory";
+import { RELATIONSHIP_SIGNAL_POLICY } from "@/game/gameplay/rpg/npcMemory";
+import type { EntityMutation, NpcInteractionPayload } from "@/game/gameplay/rpg/entityWorld/entityMutation";
 
 // ---------------------------------------------------------------------------
 // 固定对话选项的结构化裁决（Spec §7.2 / FND-03）。
@@ -31,34 +34,25 @@ export type DialogueDisclosure =
 export type DialogueResolution = {
   readonly status: DialogueStatus;
   readonly outcome: NpcInteraction["outcome"];
-  readonly relationshipDelta: number;
   readonly disclosure: DialogueDisclosure;
-  readonly interaction: NpcInteraction;
-  readonly npcAfter: NpcEntry;
+  readonly signal: RelationshipSignal | null;
+  readonly interaction: NpcInteractionPayload;
+  readonly mutations: readonly EntityMutation[];
   readonly event: GameEvent;
   readonly feedback: string;
   readonly stateChanges: readonly StateChange[];
 };
 
-/** 每种 dialogueAct 的基础好感变化（neutral 档位基准）。 */
-export const DIALOGUE_ACT_BASE_DELTA: Readonly<Record<DialogueAct, number>> = {
-  ask: 1,
-  support: 3,
-  challenge: -2,
-  threaten: -4,
-  deceive: -1,
-  offer: 2,
-  refuse: -2,
-  reassure: 3,
-};
-
-/** 档位对好感变化的修正：敌意更差，信任更好。 */
-export const DIALOGUE_TIER_DELTA_MODIFIER: Readonly<Record<RelationshipTier, number>> = {
-  hostile: -2,
-  cold: -1,
-  neutral: 0,
-  friendly: 1,
-  trusted: 2,
+/** 对话行为只声明既有关系 signal；数值、趋势和裁剪均由关系规则表负责。 */
+const DIALOGUE_SIGNAL_BY_ACT: Readonly<Record<DialogueAct, RelationshipSignal | null>> = {
+  ask: null,
+  support: "supported",
+  challenge: "challenged",
+  threaten: "threatened",
+  deceive: "deceived",
+  offer: "offered_help",
+  refuse: "refused",
+  reassure: "reassured",
 };
 
 /** 档位坦诚度：NPC 主动透露的意愿基线。 */
@@ -85,10 +79,23 @@ export const DIALOGUE_ACT_PRESSURE: Readonly<Record<DialogueAct, number>> = {
 /** 披露阈值：坦诚度 + 威压 ≥ 阈值才披露。 */
 export const DIALOGUE_REVEAL_THRESHOLD = 0.5;
 
-function outcomeFor(delta: number): NpcInteraction["outcome"] {
-  if (delta > 0) return "positive";
-  if (delta < 0) return "negative";
+function outcomeFor(signal: RelationshipSignal | null): NpcInteraction["outcome"] {
+  if (signal === null) return "neutral";
+  const trend = RELATIONSHIP_SIGNAL_POLICY[signal].trend;
+  if (trend === "improving") return "positive";
+  if (trend === "worsening") return "negative";
   return "neutral";
+}
+
+/** 对话结果的情绪映射；情绪是 qualitative state，由对话批次提交窄写入。 */
+export function emotionForOutcome(
+  outcome: NpcInteraction["outcome"],
+  prevEmotion: NarrativeEmotion,
+): NarrativeEmotion {
+  if (outcome === "positive") return "warm";
+  if (outcome === "negative") return "guarded";
+  if (outcome === "mixed" && (prevEmotion === "guarded" || prevEmotion === "angry")) return "neutral";
+  return prevEmotion;
 }
 
 function statusFor(
@@ -98,23 +105,11 @@ function statusFor(
   disclosure: DialogueDisclosure,
 ): DialogueStatus {
   if (tier === "hostile" && (act === "threaten" || act === "deceive")) return "failure";
+  // hostile NPC 对没有具体披露内容的 ask 仍只勉强交流；这保持既有 qualitative status 语义，
+  // 不把它重新伪造成关系数值或 signal。
+  if (tier === "hostile" && act === "ask" && disclosure.kind !== "revealed") return "partial_success";
   if (outcome === "negative" || disclosure.kind === "withheld") return "partial_success";
   return "success";
-}
-
-function summaryFor(
-  npc: NpcEntry,
-  act: DialogueAct | "freeform",
-  outcome: NpcInteraction["outcome"],
-  delta: number,
-): string {
-  const meetPart = npc.met ? "再次交谈" : "首次见面";
-  const moodPart = outcome === "positive" ? "气氛融洽"
-    : outcome === "negative" ? "氛围紧张"
-    : outcome === "mixed" ? "气氛复杂"
-    : "语气平淡";
-  const deltaText = delta >= 0 ? `+${delta}` : `${delta}`;
-  return `${meetPart}，${act}，${moodPart}，关系${deltaText}`;
 }
 
 /** 主题摘要（规则生成，绝不含玩家原文；不含事实内容本身）。 */
@@ -143,12 +138,6 @@ export function resolveDialogue(
   const topic = action.topic ?? { kind: "general" };
   const tier = relationshipTierOf(npc.memory.relationship);
 
-  // 关系变化：act 基础值 + 档位修正 + 首次见面奖励（仅一次，敌意 NPC 不奖励）
-  const actDelta = DIALOGUE_ACT_BASE_DELTA[act];
-  const tierDelta = DIALOGUE_TIER_DELTA_MODIFIER[tier];
-  const firstMeetDelta = npc.met || tier === "hostile" ? 0 : RELATIONSHIP_CHANGE.GREET_FIRST_MEET;
-  const relationshipDelta = actDelta + tierDelta + firstMeetDelta;
-
   // 披露裁决：NPC 不知道（或藏着）topic fact 时绝不能直接透露
   let disclosure: DialogueDisclosure = { kind: "not_applicable" };
   if (topic.kind === "fact") {
@@ -161,12 +150,17 @@ export function resolveDialogue(
       : { kind: "withheld" };
   }
 
-  const outcome = outcomeFor(relationshipDelta);
+  const signal = act === "ask" && disclosure.kind !== "revealed"
+    ? null
+    : act === "ask"
+      ? "shared_fact"
+      : DIALOGUE_SIGNAL_BY_ACT[act];
+  const outcome = outcomeFor(signal);
   const status = statusFor(act, tier, outcome, disclosure);
   // NPC 当场披露的事实才进入本轮 learnedFactIds（玩家由此得知）。
   const learnedFactIds = disclosure.kind === "revealed" ? [disclosure.factId] : [];
 
-  const interaction: NpcInteraction = {
+  const interaction: NpcInteractionPayload = {
     turnNumber: deps.turnNumber,
     actionId: deps.actionId,
     locationId: ws.currentLocationId,
@@ -174,11 +168,23 @@ export function resolveDialogue(
     topic,
     topicSummary: topicSummaryFor(topic),
     outcome,
-    relationshipDelta,
     learnedFactIds,
-    summary: summaryFor(npc, act, outcome, relationshipDelta),
   };
-  const npcAfter = { ...updateNpcMemory(npc, interaction), met: true };
+  const emotion = emotionForOutcome(outcome, npc.memory.emotion);
+  const mutations: EntityMutation[] = [];
+  if (signal !== null) {
+    mutations.push({
+      kind: "apply_relationship_signal",
+      fromNpcId: npc.id,
+      targetId: PLAYER_ENTITY_ID,
+      signal,
+      source: { kind: "action", actionId: deps.actionId, turnNumber: deps.turnNumber },
+    });
+  }
+  mutations.push({ kind: "record_npc_interaction", npcId: npc.id, ...interaction });
+  if (emotion !== npc.memory.emotion) mutations.push({ kind: "set_npc_emotion", npcId: npc.id, emotion });
+  // met 写在最后：interaction append 时仍能读到 false，摘要才会记录「首次见面」。
+  if (!npc.met) mutations.push({ kind: "set_npc_met", npcId: npc.id, met: true });
   const event: GameEvent = { type: "npc_met", npcId: action.npcId, occurredAt: deps.now(), interactionKind: "greet" };
 
   // 与既有 talk 裁决的 stateChanges 契约保持一致：met 变化必有；关系变化仅在部分成功时显式声明
@@ -196,10 +202,10 @@ export function resolveDialogue(
   return {
     status,
     outcome,
-    relationshipDelta,
     disclosure,
+    signal,
     interaction,
-    npcAfter,
+    mutations,
     event,
     feedback: feedbackFor(npc.name, status, disclosure),
     stateChanges,

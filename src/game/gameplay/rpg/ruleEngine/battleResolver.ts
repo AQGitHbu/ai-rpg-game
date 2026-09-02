@@ -422,13 +422,11 @@ export function battleAction(
 
   const nextWs: WorldState = {
     ...ws,
-    battle: {
-      status: "active",
-      enemyId: battle.enemyId,
-      playerHp,
-      enemyHp,
-      round: battle.round + 1,
-    },
+    // 非终结回合只改 hp 与 round，其余字段整份带过去：这里曾是逐字段重建的形状，
+    // 而正是那个形状让 preBattleSnapshot / battleKey 被悄悄漏掉（快照是战败/撤退唯一
+    // 可恢复的世界，落盘校验又要求 active battle 必带它）。展开现存 battle 才能保证
+    // ActiveBattle 以后新增的可选字段也不会再丢。
+    battle: { ...battle, playerHp, enemyHp, round: battle.round + 1 },
     eventLedger: [...ws.eventLedger, ...events],
   };
 

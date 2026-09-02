@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { createWorldStateFixtureWith, emptyProjection } from "@/game/domain/testing/worldStateFixture.testutil";
-import { asGenerationId, asLocationId } from "@/game/domain/worldEntity";
+import { createWorldStateFixtureWith, emptyProjection, updateWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
+import { WORLD_STATE_SCHEMA_VERSION } from "@/game/domain/worldState";
+import { asEnemyId, asGenerationId, asLocationId } from "@/game/domain/worldEntity";
 import { validatePersistableWorldState } from "./worldStatePersistenceValidation";
 
 const state = () => createWorldStateFixtureWith({
@@ -12,12 +13,30 @@ const state = () => createWorldStateFixtureWith({
   }),
 });
 
+function stateWithEnemy() {
+  return updateWorldStateFixture(state(), {
+    enemies: [{
+      id: asEnemyId("enemy_1"), name: "灰狼", tier: "normal",
+      stats: { hp: 30, attack: 8, defense: 4 }, locationId: asLocationId("loc"), tags: [],
+    }],
+  });
+}
+
 describe("validatePersistableWorldState", () => {
-  it("accepts v3 state and rebuilds compatibility projections from entityStore", () => {
+  it(`accepts v${WORLD_STATE_SCHEMA_VERSION} state and rebuilds compatibility projections from entityStore`, () => {
     const valid = state();
+    expect(valid.version).toBe(WORLD_STATE_SCHEMA_VERSION);
     const result = validatePersistableWorldState(valid);
     expect(result).toMatchObject({ ok: true });
     if (result.ok) expect(result.value.locations).toEqual(valid.locations);
+  });
+
+  it("版本闸门与 WORLD_STATE_SCHEMA_VERSION 同源：非当前世代（高低两侧）一律 wrong_world_version", () => {
+    // 闸门若重新写死字面量，版本再上台阶时旧/新世代会被静默放行或伪装成
+    // invalid_entity_store/ENTITY_STATE_INVALID（老存档误分类为内容损坏）。
+    const valid = state();
+    expect(validatePersistableWorldState({ ...valid, version: WORLD_STATE_SCHEMA_VERSION - 1 })).toMatchObject({ ok: false, code: "wrong_world_version" });
+    expect(validatePersistableWorldState({ ...valid, version: WORLD_STATE_SCHEMA_VERSION + 1 })).toMatchObject({ ok: false, code: "wrong_world_version" });
   });
 
   it("rejects a missing store, duplicate id and compatibility projection tampering", () => {
@@ -73,6 +92,124 @@ describe("validatePersistableWorldState", () => {
     })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
   });
 
+  it("保留完全 legacy active battle，但任一 modern 字段出现就要求六字段完整存在", () => {
+    const valid = stateWithEnemy();
+    const legacyBattle = {
+      status: "active" as const,
+      enemyId: asEnemyId("enemy_1"),
+      playerHp: 100,
+      enemyHp: 30,
+      round: 1,
+      preBattleSnapshot: { entityStore: valid.entityStore, eventLedger: valid.eventLedger },
+    };
+    expect(validatePersistableWorldState({ ...valid, battle: legacyBattle })).toMatchObject({ ok: true });
+
+    const completeModernBattle = {
+      ...legacyBattle,
+      combatants: [{
+        combatantId: "ally:protagonist",
+        side: "allies",
+        controller: "player",
+        source: { kind: "protagonist" },
+        name: "p",
+        stats: { maxHp: 100, maxEnergy: 40, attack: 10, defense: 5, speed: 12 },
+        hp: 100,
+        energy: 40,
+        guarding: false,
+      }, {
+        combatantId: "enemy:enemy_1",
+        side: "enemies",
+        controller: "rule",
+        source: { kind: "enemy", enemyId: "enemy_1" },
+        name: "灰狼",
+        stats: { maxHp: 30, maxEnergy: 30, attack: 8, defense: 4, speed: 8 },
+        hp: 30,
+        energy: 15,
+        guarding: false,
+      }],
+      turnOrder: ["ally:protagonist", "enemy:enemy_1"],
+      turnIndex: 0,
+      enemyIntents: [],
+      downedEnemyIds: [],
+      lastAdvance: [],
+    };
+    expect(validatePersistableWorldState({ ...valid, battle: completeModernBattle })).toMatchObject({ ok: true });
+    expect(validatePersistableWorldState({ ...valid, battle: {
+      ...completeModernBattle,
+      combatants: [{
+        ...completeModernBattle.combatants[0]!,
+        stats: { ...completeModernBattle.combatants[0]!.stats, maxHp: 0 },
+      }],
+    } })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
+    expect(validatePersistableWorldState({ ...valid, battle: {
+      ...completeModernBattle,
+      turnOrder: ["missing-combatant"],
+    } })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
+    expect(validatePersistableWorldState({ ...valid, battle: {
+      ...completeModernBattle,
+      enemyIntents: [{ actorId: "ally:protagonist", kind: "attack", targetId: "enemy:enemy_1" }],
+    } })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
+    expect(validatePersistableWorldState({ ...valid, battle: {
+      ...completeModernBattle,
+      lastAdvance: [{
+        round: 1, sequence: 0, actorId: "ally:protagonist", targetId: "enemy:enemy_1",
+        kind: "attack", damage: 1, actorEnergyAfter: 41, targetHpAfter: 29,
+      }],
+    } })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
+    expect(validatePersistableWorldState({ ...valid, battle: {
+      ...completeModernBattle,
+      downedEnemyIds: ["enemy_1"],
+    } })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
+    expect(validatePersistableWorldState({ ...valid, battle: {
+      ...completeModernBattle,
+      combatants: completeModernBattle.combatants.map((combatant) => combatant.source.kind === "enemy"
+        ? { ...combatant, hp: 0 }
+        : combatant),
+      turnOrder: ["ally:protagonist"],
+      downedEnemyIds: [],
+    } })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
+    expect(validatePersistableWorldState({ ...valid, battle: {
+      ...completeModernBattle,
+      downedEnemyIds: ["enemy_1", "enemy_1"],
+    } })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
+
+    const unknownCompanion = {
+      combatantId: "companion:npc_missing",
+      side: "allies",
+      controller: "rule",
+      source: { kind: "companion", npcId: "npc_missing" },
+      name: "缺席同伴",
+      stats: { maxHp: 80, maxEnergy: 40, attack: 16, defense: 8, speed: 10 },
+      hp: 80,
+      energy: 20,
+      guarding: false,
+    };
+    expect(validatePersistableWorldState({ ...valid, battle: {
+      ...completeModernBattle,
+      combatants: [completeModernBattle.combatants[0], unknownCompanion, completeModernBattle.combatants[1]],
+      turnOrder: ["ally:protagonist", "companion:npc_missing", "enemy:enemy_1"],
+    } })).toMatchObject({
+      ok: false,
+      code: "invalid_entity_reference",
+      issueCode: "unknown_battle_combatant_companion_ref",
+    });
+
+    const modernFields = [
+      { combatants: completeModernBattle.combatants },
+      { turnOrder: completeModernBattle.turnOrder },
+      { turnIndex: completeModernBattle.turnIndex },
+      { enemyIntents: completeModernBattle.enemyIntents },
+      { downedEnemyIds: completeModernBattle.downedEnemyIds },
+      { lastAdvance: completeModernBattle.lastAdvance },
+    ] as const;
+    for (const field of modernFields) {
+      expect(validatePersistableWorldState({
+        ...valid,
+        battle: { ...legacyBattle, ...field },
+      })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
+    }
+  });
+
   it("rejects unknown or malformed ending requirements without throwing", () => {
     const valid = state();
     expect(() => validatePersistableWorldState({
@@ -98,6 +235,27 @@ describe("validatePersistableWorldState", () => {
     expect(validatePersistableWorldState({
       ...valid,
       generation: { ...valid.generation, gameType: "unknown_genre" },
+    })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
+  });
+
+  it("accepts server actionId evidence on dialogue/item events while retaining legacy event compatibility", () => {
+    const valid = state();
+    const result = validatePersistableWorldState({
+      ...valid,
+      eventLedger: [
+        { type: "npc_dialogue_completed", npcId: "npc_1", occurredAt: "now" },
+        { type: "npc_dialogue_completed", npcId: "npc_1", actionId: "dialogue_action", occurredAt: "now" },
+        { type: "item_given", itemId: "item_1", npcId: "npc_1", locationId: "loc", actionId: "give_action", occurredAt: "now" },
+      ],
+    });
+    expect(result).toMatchObject({ ok: true });
+  });
+
+  it("rejects malformed optional event actionId evidence", () => {
+    const valid = state();
+    expect(validatePersistableWorldState({
+      ...valid,
+      eventLedger: [{ type: "npc_dialogue_completed", npcId: "npc_1", actionId: 42, occurredAt: "now" }],
     })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
   });
 });

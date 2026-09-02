@@ -1,14 +1,52 @@
 import { describe, expect, it } from "vitest";
-import { asFactId, asLocationId, asNpcId, asQuestId } from "@/game/domain/worldEntity";
+import { asFactId, asLocationId, asNpcId, asQuestId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { SceneGenerationContext } from "@/game/application/sceneGenerationContext";
+import type { NpcSpeechAuthority } from "@/game/application/npcSpeechAuthority";
 import { buildSelectableSceneCandidates } from "@/game/application/deterministicSceneSource";
 import { buildStylePolicy } from "@/game/application/stylePolicy";
 import type { PreparedStepDescriptor } from "@/game/gameplay/rpg/preparedContinuation";
 import { compileSceneNarrativeContext } from "./sceneNarrativeContext";
 
+const ARRIVAL_AUTHORITY: NpcSpeechAuthority = {
+  speakerNpcId: asNpcId("npc_other"),
+  responseTier: "friendly",
+  allowedFactIds: [asFactId("fact_shared")],
+  withheldFactIds: [asFactId("fact_other_secret")],
+  allowedFactCards: [{ factId: asFactId("fact_shared"), text: "抵达 NPC 可说的公开线索" }],
+  allowedInteractionActionIds: ["arrival_interaction_1"],
+  recentInteractions: [{
+    actionId: "arrival_interaction_1",
+    dialogueAct: "support",
+    topicSummary: "抵达后的交接",
+    outcome: "positive",
+    summary: "抵达 NPC 记得这次交接",
+  }],
+  identityAnchors: {
+    selfConcept: "抵达守夜人",
+    values: ["守信"],
+    speechStyle: "简短克制",
+    capabilityBoundaries: ["不替人定罪"],
+    taboos: ["不泄露他人秘密"],
+  },
+  activeGoals: ["确认来者是否可信"],
+  relationships: [{ targetId: PLAYER_ENTITY_ID, stage: "cooperative", trend: "improving", openCommitments: [] }],
+  relationship: { targetId: PLAYER_ENTITY_ID, stage: "cooperative", trend: "improving", openCommitments: [] },
+  evidenceKeys: ["arrival_evidence"],
+};
+
 function makePreparedStepDescriptors(): readonly PreparedStepDescriptor[] {
+  const arrivalNpc = {
+    id: asNpcId("npc_other"),
+    name: "赵四",
+    role: "码头脚夫",
+    publicProfile: "经常替人跑腿的码头脚夫",
+    knownFactCards: [{ factId: asFactId("fact_shared"), text: "抵达 NPC 可说的公开线索" }],
+    sceneVisibleFactIds: [asFactId("fact_shared")],
+    goals: ["确认来者是否可信"],
+    speechAuthority: ARRIVAL_AUTHORITY,
+  };
   return [
     {
       stepId: "prepared_arrival",
@@ -21,15 +59,7 @@ function makePreparedStepDescriptors(): readonly PreparedStepDescriptor[] {
         allowedEntityIds: ["loc_north_lane", "npc_other"],
         visibleFactIds: [asFactId("fact_shared")],
       },
-      arrivalNpc: {
-        id: asNpcId("npc_other"),
-        name: "赵四",
-        role: "码头脚夫",
-        publicProfile: "经常替人跑腿的码头脚夫",
-        knownFactCards: [],
-        sceneVisibleFactIds: [asFactId("fact_shared")],
-        goals: ["保住自己在码头的活路"],
-      },
+      arrivalNpc,
       choiceCandidates: [
         {
           candidateId: "prepared_arrival_choice_1",
@@ -260,6 +290,36 @@ function makeSceneContext(): SceneGenerationContext {
       name: "韩镖头",
       role: "旧镖局镖头",
       publicProfile: "受伤后隐居客栈的前任镖头",
+      identityAnchors: {
+        selfConcept: "守旧的镖头",
+        values: ["守信"],
+        speechStyle: "克制直接",
+        capabilityBoundaries: ["不替人定罪"],
+        taboos: ["不泄露无辜者秘密"],
+      },
+      speechAuthority: {
+        speakerNpcId: asNpcId("npc_focus"),
+        responseTier: "trusted",
+        allowedFactIds: [asFactId("fact_focus_1"), asFactId("fact_shared")],
+        withheldFactIds: [asFactId("fact_focus_secret")],
+        allowedFactCards: [
+          { factId: asFactId("fact_focus_1"), text: "韩镖头认得失踪当夜留下的镖旗断口。" },
+          { factId: asFactId("fact_shared"), text: "当前场景可见线索：后门锁孔残留松脂。" },
+        ],
+        allowedInteractionActionIds: ["interaction_1", "interaction_2", "interaction_3", "interaction_4", "interaction_5"],
+        recentInteractions: [],
+        identityAnchors: {
+          selfConcept: "守旧的镖头",
+          values: ["守信"],
+          speechStyle: "克制直接",
+          capabilityBoundaries: ["不替人定罪"],
+          taboos: ["不泄露无辜者秘密"],
+        },
+        activeGoals: ["查出吞镖内应", "保住旧镖局幸存者"],
+        relationships: [{ targetId: PLAYER_ENTITY_ID, stage: "cooperative", trend: "improving", openCommitments: [] }],
+        relationship: { targetId: PLAYER_ENTITY_ID, stage: "cooperative", trend: "improving", openCommitments: [] },
+        evidenceKeys: ["supported_fact"],
+      },
       responsePolicy: {
         tier: "friendly",
         toneInstruction: "先接玩家的话，再给可核验线索。",
@@ -386,6 +446,11 @@ describe("sceneNarrativeContext", () => {
     ]);
     expect(selectedById.get("scene:prepared-continuations")?.content).toContain("stepId=prepared_arrival");
     expect(selectedById.get("scene:prepared-continuations")?.content).toContain("stepId=prepared_followup");
+    expect(selectedById.get("scene:prepared-continuations")?.content).toContain("抵达守夜人");
+    expect(selectedById.get("scene:prepared-continuations")?.content).toContain("arrival_interaction_1");
+    expect(selectedById.get("scene:prepared-continuations")?.content).toContain("arrival_evidence");
+    expect(selectedById.get("scene:prepared-continuations")?.content).toContain("抵达 NPC 可说的公开线索");
+    expect(selectedById.get("scene:prepared-continuations")?.content).not.toContain("fact_other_secret");
     expect(compilation.prompt).not.toContain("linear-prefetch");
     expect(compilation.prompt).not.toContain("trigger");
     expect(compilation.prompt).not.toContain("consumptionGroupKey");
@@ -442,5 +507,73 @@ describe("sceneNarrativeContext", () => {
     expect(output?.content).toContain('"handoffAcknowledgement":"玩家对当前 NPC 的具体致意"');
     expect(output?.content).toContain("final handoff 必须返回零个当前 choices");
     expect(output?.content).not.toContain("final handoff 必须返回一个当前 choice");
+  });
+
+  it("fails closed when the focus speech authority is absent", () => {
+    const base = makeSceneContext();
+    if (base.focusNpcContext === undefined) throw new Error("fixture requires a focus NPC");
+    const injectedFactId = asFactId("fact_injected_secret");
+    const context: SceneGenerationContext = {
+      ...base,
+      focusNpcContext: {
+        ...base.focusNpcContext,
+        speechAuthority: undefined,
+        identityAnchors: undefined,
+        speakableFactCards: [{ factId: injectedFactId, text: "INJECTED_PRIVATE_FACT_BODY" }],
+        responsePolicy: {
+          ...base.focusNpcContext.responsePolicy,
+          allowedDisclosureFactIds: [injectedFactId],
+          privateKnowledgeIds: [injectedFactId],
+        },
+        thisTurn: { outcome: "positive", relationshipDelta: 999 },
+      },
+      previousDialogue: base.previousDialogue === undefined
+        ? undefined
+        : { ...base.previousDialogue, usedFactIds: [injectedFactId] },
+    };
+    const compilation = compileSceneNarrativeContext(context, buildSelectableSceneCandidates(context));
+    const focus = compilation.context.selected.find((block) => block.id === "scene:focus-npc");
+
+    expect(focus?.content).toContain("speech authority unavailable");
+    expect(compilation.prompt).not.toContain(String(injectedFactId));
+    expect(compilation.prompt).not.toContain("INJECTED_PRIVATE_FACT_BODY");
+    expect(compilation.prompt).not.toContain("relationshipDelta");
+    expect(compilation.prompt).not.toContain("999");
+  });
+
+  it("renders focus interactions only from the speech authority projection", () => {
+    const base = makeSceneContext();
+    const authority = base.focusNpcContext?.speechAuthority;
+    if (authority === undefined || base.focusNpcContext === undefined) throw new Error("fixture requires focus authority");
+    const context: SceneGenerationContext = {
+      ...base,
+      focusNpcContext: {
+        ...base.focusNpcContext,
+        speechAuthority: {
+          ...authority,
+          recentInteractions: [{
+            actionId: "authority_only_interaction",
+            dialogueAct: "ask",
+            topicSummary: "authority 允许的摘要",
+            outcome: "positive",
+            summary: "authority 允许的历史摘要",
+          }],
+        },
+        recentInteractions: [{
+          actionId: "legacy_private_interaction",
+          dialogueAct: "ask",
+          topicSummary: "LEGACY_PRIVATE_TOPIC",
+          outcome: "positive",
+          summary: "LEGACY_PRIVATE_SUMMARY",
+        }],
+      },
+    };
+    const compilation = compileSceneNarrativeContext(context, buildSelectableSceneCandidates(context));
+    const focus = compilation.context.selected.find((block) => block.id === "scene:focus-npc");
+
+    expect(focus?.content).toContain("authority_only_interaction");
+    expect(focus?.content).not.toContain("legacy_private_interaction");
+    expect(compilation.prompt).not.toContain("LEGACY_PRIVATE_TOPIC");
+    expect(compilation.prompt).not.toContain("LEGACY_PRIVATE_SUMMARY");
   });
 });

@@ -12,6 +12,11 @@ import type { AiGenerationFailure } from "@/game/domain/narrativeGenerationFailu
 import { compileWorldNarrativeContext } from "./narrativeContext";
 import type { NarrativePromptCompilation } from "./narrativeContext";
 import { parseStructuredJsonObject } from "@/game/core/json";
+import {
+  parseNpcCreationAnchors,
+  parseNpcGoalProposals,
+  parseNpcRelationshipSeedProposals,
+} from "@/game/domain/entity";
 
 // ---------------------------------------------------------------------------
 // WorldEvolution live source（Task 3）。
@@ -60,17 +65,25 @@ function validText(v: unknown): v is string {
   return t.length > 0 && t.length <= MAX_TEXT;
 }
 
-function strList(v: unknown): readonly string[] {
-  if (!Array.isArray(v)) return [];
-  return v.filter(isStr).map((s) => s.trim()).filter((s) => s.length > 0).slice(0, 8);
+function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const allowed = new Set(keys);
+  return Object.keys(value).every((key) => allowed.has(key))
+    && keys.every((key) => key in value);
+}
+
+function hasNoUnknownKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const allowed = new Set(keys);
+  return Object.keys(value).every((key) => allowed.has(key));
 }
 
 function parseLocationRef(v: unknown): { readonly kind: "existing"; readonly id: string } | { readonly kind: "new_location" } | null {
   if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
   const rec = v as Record<string, unknown>;
-  if (rec.kind === "new_location") return { kind: "new_location" };
+  if (rec.kind === "new_location") {
+    return hasExactKeys(rec, ["kind"]) ? { kind: "new_location" } : null;
+  }
   if (rec.kind === "existing" && isStr(rec.id) && rec.id.trim() !== "") {
-    return { kind: "existing", id: rec.id.trim() };
+    return hasExactKeys(rec, ["kind", "id"]) ? { kind: "existing", id: rec.id.trim() } : null;
   }
   return null;
 }
@@ -110,6 +123,7 @@ export function parseFactInvestigationApproaches(
   for (const item of raw) {
     if (typeof item !== "object" || item === null || Array.isArray(item)) return null;
     const entry = item as Record<string, unknown>;
+    if (!hasNoUnknownKeys(entry, ["approachId", "label", "hint", "evidenceQuality", "tensionDelta"])) return null;
     const approachId = typeof entry.approachId === "string" ? entry.approachId.trim() : "";
     const label = typeof entry.label === "string" ? entry.label.trim() : "";
     const hint = entry.hint === undefined ? undefined : typeof entry.hint === "string" ? entry.hint.trim() : "";
@@ -136,6 +150,10 @@ export function parseWorldDeltaProposal(
 ): { readonly proposal: WorldDeltaProposal; readonly logCategories: readonly string[] } | null {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
   const rec = raw as Record<string, unknown>;
+  if (!hasNoUnknownKeys(rec, [
+    "beatSummary", "newLocation", "newNpc", "newItem", "newEnemy", "newFact",
+    "nextMainQuest", "endingPair",
+  ])) return null;
   const beatSummary = isStr(rec.beatSummary) ? rec.beatSummary.trim().slice(0, MAX_TEXT) : "";
   if (beatSummary === "") return null;
 
@@ -143,6 +161,7 @@ export function parseWorldDeltaProposal(
   if (rec.newLocation !== null && rec.newLocation !== undefined) {
     if (typeof rec.newLocation !== "object" || Array.isArray(rec.newLocation)) return null;
     const l = rec.newLocation as Record<string, unknown>;
+    if (!hasNoUnknownKeys(l, ["name", "description", "scale", "placement", "connectFromLocationId"])) return null;
     const scale = l.scale;
     const placement: DynamicLocationPlacement | null = l.placement === "world"
       ? "world"
@@ -166,15 +185,22 @@ export function parseWorldDeltaProposal(
   if (rec.newNpc !== null && rec.newNpc !== undefined) {
     if (typeof rec.newNpc !== "object" || Array.isArray(rec.newNpc)) return null;
     const n = rec.newNpc as Record<string, unknown>;
+    if (!hasExactKeys(n, ["name", "role", "description", "locationRef", "anchors", "goals", "relationshipSeeds"])) return null;
     if (!validName(n.name) || !validText(n.role) || !validText(n.description)) return null;
     const locationRef = parseLocationRef(n.locationRef);
     if (locationRef === null) return null;
+    const anchors = parseNpcCreationAnchors(n.anchors);
+    const goals = parseNpcGoalProposals(n.goals);
+    const relationshipSeeds = parseNpcRelationshipSeedProposals(n.relationshipSeeds);
+    if (anchors === null || goals === null || relationshipSeeds === null) return null;
     newNpc = {
       name: n.name.trim(),
       role: n.role.trim(),
       description: n.description.trim(),
       locationRef,
-      goals: strList(n.goals),
+      anchors,
+      goals,
+      relationshipSeeds,
     };
   }
 
@@ -182,6 +208,7 @@ export function parseWorldDeltaProposal(
   if (rec.newItem !== null && rec.newItem !== undefined) {
     if (typeof rec.newItem !== "object" || Array.isArray(rec.newItem)) return null;
     const it = rec.newItem as Record<string, unknown>;
+    if (!hasNoUnknownKeys(it, ["name", "description", "locationRef"])) return null;
     if (!validName(it.name) || !validText(it.description)) return null;
     const locationRef = parseMountedRef(it.locationRef);
     if (locationRef === null) return null;
@@ -192,6 +219,7 @@ export function parseWorldDeltaProposal(
   if (rec.newEnemy !== null && rec.newEnemy !== undefined) {
     if (typeof rec.newEnemy !== "object" || Array.isArray(rec.newEnemy)) return null;
     const e = rec.newEnemy as Record<string, unknown>;
+    if (!hasNoUnknownKeys(e, ["name", "tier", "locationRef"])) return null;
     if (!validName(e.name)) return null;
     const tier = e.tier;
     if (tier !== "normal" && tier !== "boss") return null;
@@ -205,6 +233,7 @@ export function parseWorldDeltaProposal(
   if (rec.newFact !== null && rec.newFact !== undefined) {
     if (typeof rec.newFact !== "object" || Array.isArray(rec.newFact)) return null;
     const f = rec.newFact as Record<string, unknown>;
+    if (!hasNoUnknownKeys(f, ["text", "visibility", "investigationLabel", "investigationApproaches"])) return null;
     if (!validText(f.text)) return null;
     const visibility = f.visibility;
     if (visibility !== "public" && visibility !== "npc_private") return null;
@@ -231,6 +260,7 @@ export function parseWorldDeltaProposal(
   if (rec.nextMainQuest !== null && rec.nextMainQuest !== undefined) {
     if (typeof rec.nextMainQuest !== "object" || Array.isArray(rec.nextMainQuest)) return null;
     const q = rec.nextMainQuest as Record<string, unknown>;
+    if (!hasNoUnknownKeys(q, ["name", "description", "objectiveText"])) return null;
     if (!validName(q.name) || !validText(q.description) || !validText(q.objectiveText)) return null;
     nextMainQuest = {
       name: q.name.trim(),
@@ -246,6 +276,7 @@ export function parseWorldDeltaProposal(
     for (const item of rec.endingPair) {
       if (typeof item !== "object" || item === null || Array.isArray(item)) return null;
       const e = item as Record<string, unknown>;
+      if (!hasNoUnknownKeys(e, ["themeKey", "name", "description"])) return null;
       const themeKey = e.themeKey;
       if (themeKey !== "trust" && themeKey !== "doubt") return null;
       if (!validName(e.name) || !validText(e.description)) return null;
@@ -390,7 +421,12 @@ export function createLiveWorldEvolutionSource(deps: WorldEvolutionLiveDeps): Wo
           if (parsed.normalization === "json_fence") {
             logger?.warn("world_evolution_json_fence_normalized");
           }
-          const rawProposal = "proposal" in parsed.value ? parsed.value.proposal : parsed.value;
+          const isWrapped = "proposal" in parsed.value;
+          if (isWrapped && !hasExactKeys(parsed.value, ["proposal"])) {
+            logger?.warn("world_evolution_invalid_wrapper");
+            return failWorld("invalid_schema", "invalid_schema");
+          }
+          const rawProposal = isWrapped ? parsed.value.proposal : parsed.value;
           const parsedResult = parseWorldDeltaProposal(rawProposal, ctx.worldState.generation.gameType);
           if (parsedResult !== null) {
             // 解析层修复/降级类别（不含任何事实正文，安全入日志）。

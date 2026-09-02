@@ -1,16 +1,19 @@
-import { DIALOGUE_ACTS } from "../action";
-import { NARRATIVE_EMOTIONS } from "../narrative";
-import { RELATIONSHIP_MAX, RELATIONSHIP_MIN } from "../relationship";
 import type { TownBuildingSlotType } from "../townState";
 import type {
   EnemyTier, FactSource, ItemCategory, ItemRarity, LocationKind, LocationScale,
 } from "../worldEntity";
-import type {
-  InvestigationApproach, NpcInteraction, QuestObjective, QuestOutcome,
-} from "../worldEntries";
+import type { InvestigationApproach, QuestObjective, QuestOutcome } from "../worldEntries";
 import type { EntityKind, EntityLifecycle } from "./entityCore";
 import type { QuestComponent } from "./entityComponents";
 import type { EntityRecord } from "./entityRecord";
+import {
+  validateNpcDynamicState,
+  validateNpcHistory,
+  validateNpcIdentityAnchors,
+  validateNpcKnowledge,
+  validateNpcRelationships,
+  type NpcComponentValidationIssue,
+} from "./npcComponents";
 import { PLAYER_ENTITY_ID } from "../worldEntity";
 
 // ---------------------------------------------------------------------------
@@ -20,7 +23,7 @@ import { PLAYER_ENTITY_ID } from "../worldEntity";
 // ---------------------------------------------------------------------------
 
 export type EntityStore = Readonly<{
-  version: 1;
+  version: 2;
   records: readonly EntityRecord[];
 }>;
 
@@ -41,6 +44,8 @@ export type EntityStoreValidationCode =
 export type EntityStoreValidationIssue = Readonly<{
   code: EntityStoreValidationCode;
   entityId?: string;
+  /** 只含字段名与数组下标的定位（如 identity.anchors.values[0]），绝不含实体正文。 */
+  path?: string;
 }>;
 
 /** 稳定失败：错误对象只含 code/entityId，绝不包含实体正文。 */
@@ -77,9 +82,7 @@ const ITEM_RARITIES: readonly ItemRarity[] = ["common", "fine", "rare", "epic"];
 const QUEST_KINDS: readonly QuestComponent["kind"][] = ["main", "side"];
 const QUEST_STATUSES: readonly QuestComponent["status"][] = ["locked", "active", "completed", "failed", "closed"];
 const QUEST_OUTCOMES: readonly QuestOutcome["kind"][] = ["advance_story", "resolve_story", "closed"];
-const INTERACTION_OUTCOMES: readonly NpcInteraction["outcome"][] = ["positive", "negative", "neutral", "mixed"];
 const EVIDENCE_QUALITIES: readonly InvestigationApproach["evidenceQuality"][] = ["clean", "noisy"];
-const DIALOGUE_ACT_VALUES: readonly string[] = [...DIALOGUE_ACTS, "freeform"];
 const TOWN_BUILDING_SLOT_TYPES: readonly TownBuildingSlotType[] = [
   "tavern", "blacksmith", "house", "guild", "clinic", "market",
 ];
@@ -100,7 +103,7 @@ const OBJECTIVE_ID_FIELDS: Readonly<Record<QuestObjective["kind"], string>> = {
 /** 每个 kind 唯一合法的组件集合；缺成员是 invalid_record_shape，整体换了另一套是 kind_id_mismatch。 */
 const REQUIRED_COMPONENTS: Readonly<Record<EntityKind, readonly string[]>> = {
   player_character: ["identity", "position"],
-  npc: ["identity", "npcState", "position"],
+  npc: ["identity", "position", "dynamicState", "knowledge", "relationships", "history"],
   location: ["location"],
   item: ["possession", "presentation"],
   enemy: ["enemy", "position"],
@@ -128,8 +131,11 @@ const CORE_KEYS = ["id", "kind", "name", "createdAtTurn", "lifecycle"] as const;
 
 type UnknownRecord = Record<string, unknown>;
 
-function issue(code: EntityStoreValidationCode, entityId?: string): EntityStoreValidationIssue {
-  return entityId === undefined ? { code } : { code, entityId };
+function issue(code: EntityStoreValidationCode, entityId?: string, path?: string): EntityStoreValidationIssue {
+  const result: { code: EntityStoreValidationCode; entityId?: string; path?: string } = { code };
+  if (entityId !== undefined) result.entityId = entityId;
+  if (path !== undefined) result.path = path;
+  return result;
 }
 
 function isRecord(value: unknown): value is UnknownRecord {
@@ -230,86 +236,50 @@ function isPlayerIdentityValue(value: unknown): boolean {
 
 function isNpcIdentityValue(value: unknown): boolean {
   return (
-    component(value, ["role", "description", "tags"]) &&
+    component(value, ["role", "description", "tags", "anchors"]) &&
     isString(value.role) &&
     isString(value.description) &&
     isStringArray(value.tags)
   );
 }
 
-function isTopicValue(value: unknown): boolean {
-  if (!isRecord(value) || !isString(value.kind)) return false;
-  switch (value.kind) {
-    case "fact":
-      return component(value, ["kind", "factId"]) && isString(value.factId);
-    case "quest":
-      return component(value, ["kind", "questId"]) && isString(value.questId);
-    case "thread":
-      return component(value, ["kind", "threadId"]) && isString(value.threadId);
-    case "general":
-      return component(value, ["kind"]);
-    default:
-      return false;
+type NpcComponentValidator = (value: unknown) => readonly NpcComponentValidationIssue[];
+
+/** 分层组件的 validator 表：路径根已是组件名，无需再加前缀。 */
+const NPC_LAYERED_VALIDATORS: readonly (readonly [string, NpcComponentValidator])[] = [
+  ["dynamicState", validateNpcDynamicState],
+  ["knowledge", validateNpcKnowledge],
+  ["relationships", validateNpcRelationships],
+  ["history", validateNpcHistory],
+];
+
+/**
+ * 嵌套字段的稳定失败：只把 { code, path } 折叠成 invalid_component_value + 路径。
+ * anchors 的 validator 以 anchors 为根，挂到 record 上必须限定为 identity.anchors.*。
+ */
+function npcComponentIssues(record: UnknownRecord, entityId: string | undefined): EntityStoreValidationIssue[] {
+  const issues: EntityStoreValidationIssue[] = [];
+  const push = (path: string): void => { issues.push(issue("invalid_component_value", entityId, path)); };
+  if (isRecord(record.identity)) {
+    for (const entry of validateNpcIdentityAnchors(record.identity.anchors)) push(`identity.${entry.path}`);
   }
+  for (const [name, validate] of NPC_LAYERED_VALIDATORS) {
+    for (const entry of validate(record[name])) push(entry.path);
+  }
+  return issues;
 }
 
-function isInteractionValue(value: unknown): boolean {
-  if (
-    !component(
-      value,
-      [
-        "turnNumber", "actionId", "locationId", "dialogueAct", "topicSummary", "outcome",
-        "relationshipDelta", "learnedFactIds", "summary",
-      ],
-      [
-        "turnNumber", "actionId", "locationId", "dialogueAct", "topic", "topicSummary", "outcome",
-        "relationshipDelta", "learnedFactIds", "summary",
-      ],
-    )
-  ) {
-    return false;
-  }
-  return (
-    isNonNegativeInteger(value.turnNumber) &&
-    isString(value.actionId) &&
-    isString(value.locationId) &&
-    isString(value.topicSummary) &&
-    isNumber(value.relationshipDelta) &&
-    isStringArray(value.learnedFactIds) &&
-    isString(value.summary) &&
-    isString(value.dialogueAct) &&
-    DIALOGUE_ACT_VALUES.includes(value.dialogueAct) &&
-    matchesEnum(value.outcome, INTERACTION_OUTCOMES) &&
-    optionalIs(value, "topic", isTopicValue)
-  );
-}
-
-/** memory.npcId 必须等于 core.id：shapeOk 通过后才比较 ID，避免复合失败原因。 */
-function checkNpcState(value: unknown, coreId: string | undefined): { readonly shapeOk: boolean; readonly idOk: boolean } {
-  if (!component(value, ["isCompanion", "met", "memory"])) return { shapeOk: false, idOk: true };
-  if (!isBoolean(value.isCompanion) || !isBoolean(value.met)) return { shapeOk: false, idOk: true };
-  const memory = value.memory;
-  if (
-    !component(
-      memory,
-      ["npcId", "knownFactIds", "hiddenFactIds", "interactionHistory", "relationship", "emotion", "goals"],
-    )
-  ) {
-    return { shapeOk: false, idOk: true };
-  }
-  const shapeOk =
-    isString(memory.npcId) &&
-    isStringArray(memory.knownFactIds) &&
-    isStringArray(memory.hiddenFactIds) &&
-    Array.isArray(memory.interactionHistory) &&
-    memory.interactionHistory.every(isInteractionValue) &&
-    component(memory.relationship, ["affinity"]) &&
-    isNumber(memory.relationship.affinity) &&
-    memory.relationship.affinity >= RELATIONSHIP_MIN &&
-    memory.relationship.affinity <= RELATIONSHIP_MAX &&
-    matchesEnum(memory.emotion, NARRATIVE_EMOTIONS) &&
-    isStringArray(memory.goals);
-  return { shapeOk, idOk: isString(memory.npcId) && memory.npcId === coreId };
+/** 关系边不得指向自己：旧 memory.npcId === core.id 不变量在分层形状下的等价形式。 */
+function npcSelfEdgeIssues(record: UnknownRecord, entityId: string | undefined): EntityStoreValidationIssue[] {
+  const outgoing = isRecord(record.relationships) ? record.relationships.outgoing : undefined;
+  if (!Array.isArray(outgoing) || entityId === undefined) return [];
+  const issues: EntityStoreValidationIssue[] = [];
+  outgoing.forEach((edge, index) => {
+    if (isRecord(edge) && edge.targetId === entityId) {
+      issues.push(issue("component_id_mismatch", entityId, `relationships.outgoing[${index}].targetId`));
+    }
+  });
+  return issues;
 }
 
 function isTownValue(value: unknown): boolean {
@@ -577,11 +547,7 @@ function validateRecord(record: unknown): readonly EntityStoreValidationIssue[] 
   }
 
   const check = COMPONENT_CHECKS[kind];
-  const npcStateIssue = kind === "npc" ? checkNpcState(record.npcState, entityId) : undefined;
-  if (npcStateIssue !== undefined) {
-    if (!npcStateIssue.shapeOk) issues.push(issue("invalid_component_value", entityId));
-    else if (!npcStateIssue.idOk) issues.push(issue("component_id_mismatch", entityId));
-  }
+  if (kind === "npc") issues.push(...npcComponentIssues(record, entityId), ...npcSelfEdgeIssues(record, entityId));
   if (check === undefined || !check(record)) issues.push(issue("invalid_component_value", entityId));
   if (kind === "location" && isLocationValue(record.location) && !townLocationIdMatches(record.location, entityId)) {
     issues.push(issue("component_id_mismatch", entityId));
@@ -599,7 +565,7 @@ function validateRecord(record: unknown): readonly EntityStoreValidationIssue[] 
 export function validateEntityStoreStructure(value: unknown): readonly EntityStoreValidationIssue[] {
   if (!component(value, ["version", "records"])) return [issue("invalid_record_shape")];
   const issues: EntityStoreValidationIssue[] = [];
-  if (value.version !== 1) issues.push(issue("invalid_store_version"));
+  if (value.version !== 2) issues.push(issue("invalid_store_version"));
   if (!Array.isArray(value.records)) return [...issues, issue("invalid_record_shape")];
   const seen = new Set<string>();
   let playerCount = 0;
@@ -618,7 +584,7 @@ export function validateEntityStoreStructure(value: unknown): readonly EntitySto
 }
 
 export function createEntityStore(records: readonly EntityRecord[]): EntityStore {
-  const store: EntityStore = { version: 1, records: [...records] };
+  const store: EntityStore = { version: 2, records: [...records] };
   const [first] = validateEntityStoreStructure(store);
   if (first !== undefined) throw new EntityStoreInvariantError(first);
   return store;
@@ -627,10 +593,10 @@ export function createEntityStore(records: readonly EntityRecord[]): EntityStore
 export function parseEntityStore(value: unknown): ParseEntityStoreResult {
   const issues = validateEntityStoreStructure(value);
   if (issues.length > 0) return { ok: false, issues };
-  // 通过全量 exact-key/值域检查后，value 的形状必为 { version: 1, records: 合法 record }；
+  // 通过全量 exact-key/值域检查后，value 的形状必为 { version: 2, records: 合法 record }；
   // 这里只做公开类型收敛，不跳过任何一项校验。
   const { records } = value as Readonly<{ records: readonly EntityRecord[] }>;
-  return { ok: true, store: { version: 1, records } };
+  return { ok: true, store: { version: 2, records } };
 }
 
 export function getEntity(store: EntityStore, id: string): EntityRecord | undefined {

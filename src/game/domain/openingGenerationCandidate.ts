@@ -3,6 +3,11 @@ import type { StoryContract } from "./storyContract";
 import type { InvestigationApproach } from "./worldState";
 import { parseOpeningVariationProfile, type OpeningVariationProfile } from "./openingNovelty";
 import type { NarrativeEmotion } from "./narrative";
+import {
+  parseNpcCreationAnchors,
+  parseNpcGoalProposals,
+} from "./entity/npcComponents";
+import type { NpcGoalProposal, NpcIdentityAnchors } from "./entity/npcComponents";
 
 // ---------------------------------------------------------------------------
 // Task 2：开局切片候选——AI/确定性 fallback 只产出这一份材料：
@@ -47,7 +52,8 @@ export type OpeningGenerationCandidate = {
       readonly description: string;
       readonly knownFactKeys: readonly string[];
       readonly privateFactKeys: readonly string[];
-      readonly goals: readonly string[];
+      readonly anchors: NpcIdentityAnchors;
+      readonly goals: readonly NpcGoalProposal[];
     };
     /** 描述开局结构的抽象标签，不包含实体名称。 */
     readonly variationProfile?: OpeningVariationProfile;
@@ -206,13 +212,16 @@ export function parseOpeningGenerationCandidate(
       : null;
   if (buildingName === null) return { ok: false, code: "INVALID_OPENING_LOCATION" };
   if (!isRecord(opening.npc)) return { ok: false, code: "INVALID_OPENING_NPC" };
+  const anchors = parseNpcCreationAnchors(opening.npc.anchors);
+  const goals = parseNpcGoalProposals(opening.npc.goals);
   if (
     typeof opening.npc.name !== "string"
     || typeof opening.npc.role !== "string"
     || typeof opening.npc.description !== "string"
     || !isStringArray(opening.npc.knownFactKeys)
     || !isStringArray(opening.npc.privateFactKeys)
-    || !isStringArray(opening.npc.goals)
+    || anchors === null
+    || goals === null
   ) {
     return { ok: false, code: "INVALID_OPENING_NPC" };
   }
@@ -310,7 +319,8 @@ export function parseOpeningGenerationCandidate(
         description: opening.npc.description as string,
         knownFactKeys: opening.npc.knownFactKeys,
         privateFactKeys: opening.npc.privateFactKeys,
-        goals: opening.npc.goals,
+        anchors,
+        goals,
       },
       quest: {
         name: opening.quest.name as string,

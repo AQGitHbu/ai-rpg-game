@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { approvePreparedContinuation } from "./approvePreparedContinuation";
 import { asNarrativeJobId } from "@/game/domain/events";
-import { asLocationId, asNpcId, asQuestId } from "@/game/domain/worldEntity";
+import { asFactId, asLocationId, asNpcId, asQuestId } from "@/game/domain/worldEntity";
 import type { PreparedStepDescriptor } from "@/game/gameplay/rpg/preparedContinuation";
 
-function descriptor(): PreparedStepDescriptor {
+function descriptor(): Parameters<typeof approvePreparedContinuation>[0]["descriptors"][number] {
   const locationId = asLocationId("loc_temple");
   const npcId = asNpcId("npc_beggar");
   return {
@@ -26,6 +26,25 @@ function descriptor(): PreparedStepDescriptor {
       knownFactCards: [],
       sceneVisibleFactIds: [],
       goals: ["确认来者是否可信"],
+      speechAuthority: {
+        speakerNpcId: npcId,
+        responseTier: "neutral",
+        allowedFactIds: [],
+        withheldFactIds: [],
+        allowedFactCards: [],
+        allowedInteractionActionIds: [],
+        recentInteractions: [],
+        identityAnchors: {
+          selfConcept: "破庙守夜人",
+          values: [],
+          speechStyle: "克制",
+          capabilityBoundaries: [],
+          taboos: [],
+        },
+        activeGoals: [],
+        relationships: [],
+        evidenceKeys: [],
+      },
     },
     choiceCandidates: [
       { candidateId: "prepared_1_choice_1", action: { type: "talk", npcId, dialogueAct: "support" } },
@@ -33,6 +52,15 @@ function descriptor(): PreparedStepDescriptor {
     ],
     nextStepIds: [],
   };
+}
+
+function descriptorWithoutSpeechAuthority(): PreparedStepDescriptor {
+  const base = descriptor();
+  const arrivalNpc = base.arrivalNpc;
+  if (arrivalNpc === undefined) throw new Error("fixture requires an arrival NPC");
+  const { speechAuthority, ...legacyArrivalNpc } = arrivalNpc;
+  void speechAuthority;
+  return { ...base, arrivalNpc: legacyArrivalNpc };
 }
 
 function proposal(step: PreparedStepDescriptor["stepId"] = "prepared_1") {
@@ -72,6 +100,60 @@ describe("approvePreparedContinuation", () => {
     expect(result.prepared.steps[0]?.scene.event).toEqual({ kind: "travel", locationId: asLocationId("loc_temple") });
   });
 
+  it("fails closed when the prepared speaker has no real speech authority", () => {
+    const result = approvePreparedContinuation({
+      originJobId: asNarrativeJobId("job_dialogue_2"),
+      proposals: [proposal()],
+      descriptors: [descriptorWithoutSpeechAuthority()],
+      activeStepIds: ["prepared_1"],
+    });
+
+    expect(result).toEqual({ ok: false, code: "invalid_entity_reference" });
+  });
+
+  it("does not treat descriptor visible facts as speech authority", () => {
+    const baseDescriptor = descriptorWithoutSpeechAuthority();
+    const descriptorWithVisibleFact = {
+      ...baseDescriptor,
+      authority: { ...baseDescriptor.authority, visibleFactIds: [asFactId("fact_secret")] },
+    };
+    const invalid = {
+      ...proposal(),
+      npcLine: { ...proposal().npcLine!, usedFactIds: ["fact_secret"] },
+    };
+
+    expect(approvePreparedContinuation({
+      originJobId: asNarrativeJobId("job_dialogue_2"),
+      proposals: [invalid],
+      descriptors: [descriptorWithVisibleFact],
+      activeStepIds: ["prepared_1"],
+    })).toEqual({ ok: false, code: "invalid_entity_reference" });
+  });
+
+  it("rejects wrong speakers and other-NPC interaction references atomically", () => {
+    const wrongSpeaker = {
+      ...proposal(),
+      npcLine: { ...proposal().npcLine!, npcId: "npc_other" },
+    };
+    const otherNpcInteraction = {
+      ...proposal(),
+      npcLine: { ...proposal().npcLine!, usedInteractionActionIds: ["npc_other:trade"] },
+    };
+
+    expect(approvePreparedContinuation({
+      originJobId: asNarrativeJobId("job_dialogue_2"),
+      proposals: [wrongSpeaker],
+      descriptors: [descriptor()],
+      activeStepIds: ["prepared_1"],
+    })).toEqual({ ok: false, code: "invalid_entity_reference" });
+    expect(approvePreparedContinuation({
+      originJobId: asNarrativeJobId("job_dialogue_2"),
+      proposals: [otherNpcInteraction],
+      descriptors: [descriptor()],
+      activeStepIds: ["prepared_1"],
+    })).toEqual({ ok: false, code: "invalid_interaction_reference" });
+  });
+
   it("rejects a provider candidate that is not present in the server descriptor", () => {
     const invalid = { ...proposal(), choices: [{ candidateId: "invented", label: "越权" }, proposal().choices[1]!] };
     expect(approvePreparedContinuation({
@@ -80,6 +162,44 @@ describe("approvePreparedContinuation", () => {
       descriptors: [descriptor()],
       activeStepIds: ["prepared_1"],
     })).toEqual({ ok: false, code: "invalid_choice_candidate" });
+  });
+
+  it("rejects a prepared NPC line with an unauthorized fact reference atomically", () => {
+    const invalid = {
+      ...proposal(),
+      npcLine: { ...proposal().npcLine!, usedFactIds: ["fact_secret"] },
+    };
+    const result = approvePreparedContinuation({
+      originJobId: asNarrativeJobId("job_dialogue_2"),
+      proposals: [invalid],
+      descriptors: [descriptor()],
+      activeStepIds: ["prepared_1"],
+    });
+    expect(result).toEqual({ ok: false, code: "invalid_fact_reference" });
+  });
+
+  it("reports duplicate speech references with their own rejection code", () => {
+    const duplicatedFacts = {
+      ...proposal(),
+      npcLine: { ...proposal().npcLine!, usedFactIds: ["fact_secret", "fact_secret"] },
+    };
+    expect(approvePreparedContinuation({
+      originJobId: asNarrativeJobId("job_dialogue_2"),
+      proposals: [duplicatedFacts],
+      descriptors: [descriptor()],
+      activeStepIds: ["prepared_1"],
+    })).toEqual({ ok: false, code: "duplicate_npc_reference" });
+
+    const duplicatedInteractions = {
+      ...proposal(),
+      npcLine: { ...proposal().npcLine!, usedInteractionActionIds: ["npc_beggar:trade", "npc_beggar:trade"] },
+    };
+    expect(approvePreparedContinuation({
+      originJobId: asNarrativeJobId("job_dialogue_2"),
+      proposals: [duplicatedInteractions],
+      descriptors: [descriptor()],
+      activeStepIds: ["prepared_1"],
+    })).toEqual({ ok: false, code: "duplicate_npc_reference" });
   });
 
   it("rejects missing or unknown graph nodes atomically", () => {

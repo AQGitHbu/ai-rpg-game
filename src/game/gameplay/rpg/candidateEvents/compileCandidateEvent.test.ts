@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import { compileCandidateEvent } from "./compileCandidateEvent";
 import type { ApprovedEventCandidate } from "./approveCandidateEvents";
 import { asNpcId, asFactId, asEnemyId, asLocationId, asGenerationId, type GenerationMetadata } from "@/game/domain/worldEntity";
-import { findNpc } from "@/game/domain/worldState";
 import type {
   EnemyEntry, LocationEntry, NpcEntry, PlayerState, WorldFactEntry, WorldState,
 } from "@/game/domain/worldState";
@@ -10,6 +9,8 @@ import type { EventCandidate } from "@/game/domain/candidateEvent";
 import { createWorldStateFixture, emptyProjection } from "@/game/domain/testing/worldStateFixture.testutil";
 
 const NOW = () => "2026-08-09T00:00:00.000Z";
+/** NPC 写入只认这份显式行动证据：candidate.id/时间戳都不是证据。 */
+const DEPS = { now: NOW, actionId: "act_candidate_turn", turnNumber: 3 } as const;
 
 const GENERATION: GenerationMetadata = {
   generationId: asGenerationId("gen-1"),
@@ -66,7 +67,7 @@ const ENEMY_1: EnemyEntry = {
   locationId: asLocationId("loc_1"),
   tags: [],
 };
-// 老者已知的事实必须真实存在：v3 会在编译期拒绝悬空的 NPC 事实引用。
+// 老者已知的事实必须真实存在：当前 Entity Store 会在编译期拒绝悬空的 NPC 事实引用。
 const FACT_1: WorldFactEntry = { factId: asFactId("fact_1"), text: "老者守口的旧事", source: "generated", discovered: false, locationId: asLocationId("loc_1") };
 const FACT_2: WorldFactEntry = { factId: asFactId("fact_2"), text: "密道在古井之下", source: "generated", discovered: false, locationId: asLocationId("loc_1") };
 
@@ -104,24 +105,11 @@ describe("compileCandidateEvent 每种 kind 至少编译为真实领域事件", 
       proposedEffects: [{ kind: "npc_reveals_fact", npcId: asNpcId("npc_1"), factId: asFactId("fact_2") }],
       involvedEntityIds: ["npc_1", "fact_2"],
     };
-    const result = compileCandidateEvent(makeWorldState(), c, { now: NOW });
+    const result = compileCandidateEvent(makeWorldState(), c, DEPS);
     expect(result.events.some((e) => e.type === "fact_discovered")).toBe(true);
     expect(result.events.some((e) => e.type === "candidate_event_activated")).toBe(true);
     const fact = result.worldState.worldFacts.find((f) => f.factId === asFactId("fact_2"));
     expect(fact?.discovered).toBe(true);
-  });
-
-  it("npc_changes_stance → 关系/情绪结构化变化事件", () => {
-    const c: ApprovedEventCandidate = {
-      ...approved("npc_changes_stance"),
-      proposedEffects: [{ kind: "npc_changes_stance", npcId: asNpcId("npc_1"), stance: "friendly" }],
-      involvedEntityIds: ["npc_1"],
-    };
-    const result = compileCandidateEvent(makeWorldState(), c, { now: NOW });
-    expect(result.events.length).toBeGreaterThan(0);
-    expect(result.events.some((e) => e.type === "candidate_event_activated")).toBe(true);
-    const npcAfter = findNpc(result.worldState, asNpcId("npc_1"));
-    expect(npcAfter?.memory.emotion).not.toBe("neutral");
   });
 
   it("hostile_force_acts → 张力/威胁结构事件，World 不被任意修改", () => {
@@ -130,7 +118,7 @@ describe("compileCandidateEvent 每种 kind 至少编译为真实领域事件", 
       proposedEffects: [{ kind: "hostile_force_acts", locationId: asLocationId("loc_1"), action: "attack_settlement" }],
       involvedEntityIds: ["loc_1"],
     };
-    const result = compileCandidateEvent(makeWorldState(), c, { now: NOW });
+    const result = compileCandidateEvent(makeWorldState(), c, DEPS);
     // 必须产生真实事件，而非仅 tension 文本
     expect(result.events.some((e) => e.type === "candidate_event_activated")).toBe(true);
     expect(result.events.filter((e) => e.type !== "candidate_event_activated").length).toBeGreaterThan(0);
@@ -142,7 +130,7 @@ describe("compileCandidateEvent 每种 kind 至少编译为真实领域事件", 
       proposedEffects: [{ kind: "enemy_appears", enemyId: asEnemyId("enemy_1"), locationId: asLocationId("loc_1") }],
       involvedEntityIds: ["enemy_1", "loc_1"],
     };
-    const result = compileCandidateEvent(makeWorldState(), c, { now: NOW });
+    const result = compileCandidateEvent(makeWorldState(), c, DEPS);
     expect(result.events.filter((e) => e.type !== "candidate_event_activated").length).toBeGreaterThan(0);
     expect(result.events.some((e) => e.type === "candidate_event_activated")).toBe(true);
   });
@@ -156,7 +144,7 @@ describe("compileCandidateEvent 每种 kind 至少编译为真实领域事件", 
           : [{ kind: "thread_resolves", threadId: "thread_main" }],
         involvedEntityIds: ["thread_main"],
       };
-      const result = compileCandidateEvent(makeWorldState(), c, { now: NOW });
+      const result = compileCandidateEvent(makeWorldState(), c, DEPS);
       expect(result.events.filter((e) => e.type !== "candidate_event_activated").length).toBeGreaterThan(0);
       expect(result.events.some((e) => e.type === "candidate_event_activated")).toBe(true);
     }
@@ -168,18 +156,31 @@ describe("compileCandidateEvent 每种 kind 至少编译为真实领域事件", 
       proposedEffects: [{ kind: "location_state_changes", locationId: asLocationId("loc_2"), change: "unlocked" }],
       involvedEntityIds: ["loc_2"],
     };
-    const result = compileCandidateEvent(makeWorldState(), c, { now: NOW });
+    const result = compileCandidateEvent(makeWorldState(), c, DEPS);
     expect(result.events.filter((e) => e.type !== "candidate_event_activated").length).toBeGreaterThan(0);
     expect(result.worldState.unlockedLocationIds).toContain(asLocationId("loc_2"));
   });
 
-  it("编译不产生任意 path patch：未知 effect kind 直接拒绝", () => {
-    const bad = {
+  it("旧候选效果不再可编译时无写入丢弃，不抛错且返回稳定 reason 与审计事件", () => {
+    const legacyKind = ["npc", "changes", "stance"].join("_");
+    const input = makeWorldState();
+    const stale = {
       ...approved("npc_reveals_fact"),
-      proposedEffects: [{ kind: "arbitrary_patch", path: "x" }],
-    };
-    // 运行时拒绝未知 effect kind（封闭 union 之外一律报错）
-    expect(() => compileCandidateEvent(makeWorldState(), bad as unknown as ApprovedEventCandidate, { now: NOW }))
-      .toThrow();
+      kind: legacyKind,
+      proposedEffects: [{ kind: legacyKind, npcId: asNpcId("npc_1"), stance: "friendly" }],
+    } as unknown as ApprovedEventCandidate;
+
+    const result = compileCandidateEvent(input, stale, DEPS);
+
+    expect(result.worldState).toBe(input);
+    expect(result.events).toEqual([{
+      type: "candidate_event_rejected",
+      candidateId: "ce-1",
+      kind: legacyKind,
+      reasonCode: "stale_effect_kind",
+      rejectedAtTurn: DEPS.turnNumber,
+      occurredAt: NOW(),
+    }]);
+    expect(result.dropReason).toBe("stale_effect_kind");
   });
 });

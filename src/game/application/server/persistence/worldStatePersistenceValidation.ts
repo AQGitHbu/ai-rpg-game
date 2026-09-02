@@ -1,10 +1,23 @@
-import { parseEntityStore, projectEntityStore, validateEntityCompatibilityProjection, validateEntityReferences } from "@/game/domain/entity";
-import type { EntityCompatibilityProjection } from "@/game/domain/entity";
+import { entitiesOfKind, parseEntityStore, projectEntityStore, validateEntityCompatibilityProjection, validateEntityReferences } from "@/game/domain/entity";
+import type { EntityCompatibilityProjection, EntityStore } from "@/game/domain/entity";
 import type { GameEvent } from "@/game/domain/events";
 import type { GenerationMetadata } from "@/game/domain/worldEntity";
-import type { BattleState, EndingState, WorldState } from "@/game/domain/worldState";
+import { WORLD_STATE_SCHEMA_VERSION, type BattleState, type EndingState, type WorldState } from "@/game/domain/worldState";
 import type { EndingEntry } from "@/game/domain/worldEntries";
 import { validateWorldStateEntityReferences } from "@/game/domain/worldStateValidation";
+import {
+  MODERN_BATTLE_KEYS,
+  hasExactKeys,
+  hasRequiredAndOptionalKeys,
+  isCombatResult,
+  isCombatant,
+  isEnemyIntent,
+  isFiniteNumber,
+  isNonEmptyString,
+  isNonEmptyStringArray,
+  isPlainRecord as isObject,
+  optionalMatches,
+} from "../../battleShapeValidation";
 
 export type PersistableWorldStateValidationResult =
   | { readonly ok: true; readonly value: WorldState }
@@ -14,25 +27,9 @@ type JsonObject = Record<string, unknown>;
 const PROJECTION_KEYS = ["player", "locations", "currentLocationId", "unlockedLocationIds", "visitedLocationIds", "npcs", "items", "inventory", "worldFacts", "quests", "enemies", "defeatedEnemyIds", "factions"] as const;
 const WORLD_KEYS = ["version", "generation", "entityStore", ...PROJECTION_KEYS, "battle", "endings", "ending", "eventLedger"] as const;
 
-function isObject(value: unknown): value is JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function hasExactKeys(value: JsonObject, keys: readonly string[]): boolean {
-  return Object.keys(value).length === keys.length && keys.every((key) => key in value);
-}
-
-function hasRequiredAndOptionalKeys(value: JsonObject, required: readonly string[], optional: readonly string[] = []): boolean {
-  const allowed = new Set([...required, ...optional]);
-  return required.every((key) => key in value) && Object.keys(value).every((key) => allowed.has(key));
-}
-
-function isStringArray(value: unknown): boolean {
+/** 持久化专用宽松数组判定：允许空字符串元素（战斗形状守卫用的是共享的非空版本）。 */
+function isStringArray(value: unknown): value is readonly string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === "string");
-}
-
-function optionalMatches(value: JsonObject, key: string, predicate: (entry: unknown) => boolean): boolean {
-  return !(key in value) || value[key] === undefined || predicate(value[key]);
 }
 
 function isGeneration(value: unknown): value is GenerationMetadata {
@@ -63,60 +60,102 @@ function isGeneration(value: unknown): value is GenerationMetadata {
     && (setup.contentIntensity === "normal" || setup.contentIntensity === "dark");
 }
 
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
-}
-
 function isBattleSnapshot(value: unknown): boolean {
   if (!isObject(value) || !hasExactKeys(value, ["entityStore", "eventLedger"]) || !Array.isArray(value.eventLedger)) return false;
   return parseEntityStore(value.entityStore).ok && value.eventLedger.every(isGameEvent);
 }
 
-function isCombatSource(value: unknown): boolean {
-  if (!isObject(value)) return false;
-  if (value.kind === "protagonist") return hasExactKeys(value, ["kind"]);
-  if (value.kind === "companion") return hasExactKeys(value, ["kind", "npcId"]) && typeof value.npcId === "string";
-  if (value.kind === "enemy") return hasExactKeys(value, ["kind", "enemyId"]) && typeof value.enemyId === "string";
-  return false;
+function findUnknownBattleCompanionReference(
+  battle: BattleState,
+  entityStore: EntityStore,
+): { readonly issueCode: "unknown_battle_combatant_companion_ref"; readonly entityId: string } | undefined {
+  if (battle.status !== "active") return undefined;
+  const npcIds = new Set(entitiesOfKind(entityStore, "npc").map((record) => String(record.core.id)));
+  for (const combatant of battle.combatants ?? []) {
+    if (combatant.source.kind === "companion" && !npcIds.has(String(combatant.source.npcId))) {
+      return { issueCode: "unknown_battle_combatant_companion_ref", entityId: String(combatant.combatantId) };
+    }
+  }
+  return undefined;
 }
 
-function isCombatStats(value: unknown): boolean {
-  return isObject(value) && hasExactKeys(value, ["maxHp", "maxEnergy", "attack", "defense", "speed"])
-    && [value.maxHp, value.maxEnergy, value.attack, value.defense, value.speed].every(isFiniteNumber);
-}
+function isCompleteModernBattle(value: JsonObject): boolean {
+  if (!MODERN_BATTLE_KEYS.every((key) => key in value && value[key] !== undefined)) return false;
+  if (!Array.isArray(value.combatants) || value.combatants.length === 0 || !value.combatants.every(isCombatant)) return false;
+  const combatants = value.combatants as readonly JsonObject[];
+  const combatantIds = combatants.map((combatant) => String(combatant.combatantId));
+  if (new Set(combatantIds).size !== combatantIds.length) return false;
+  const combatantById = new Map(combatants.map((combatant) => [String(combatant.combatantId), combatant]));
+  const enemyIds = new Set<string>();
+  const enemySourceIds: string[] = [];
+  let protagonistCount = 0;
+  for (const combatant of combatants) {
+    const source = combatant.source as JsonObject;
+    if (source.kind === "protagonist") protagonistCount += 1;
+    if (source.kind === "enemy") {
+      enemySourceIds.push(String(source.enemyId));
+      enemyIds.add(String(source.enemyId));
+    }
+  }
+  if (protagonistCount !== 1 || !enemyIds.has(String(value.enemyId)) || new Set(enemySourceIds).size !== enemySourceIds.length) return false;
+  if (value.enemyIds !== undefined
+    && (!isNonEmptyStringArray(value.enemyIds)
+      || new Set(value.enemyIds).size !== value.enemyIds.length
+      || value.enemyIds.length !== enemyIds.size
+      || !value.enemyIds.every((enemyId) => enemyIds.has(enemyId)))) return false;
 
-function isCombatant(value: unknown): boolean {
-  return isObject(value)
-    && hasExactKeys(value, ["combatantId", "side", "controller", "source", "name", "stats", "hp", "energy", "guarding"])
-    && typeof value.combatantId === "string"
-    && (value.side === "allies" || value.side === "enemies")
-    && (value.controller === "player" || value.controller === "rule")
-    && isCombatSource(value.source)
-    && typeof value.name === "string"
-    && isCombatStats(value.stats)
-    && isFiniteNumber(value.hp) && isFiniteNumber(value.energy) && typeof value.guarding === "boolean";
-}
+  if (!isNonEmptyStringArray(value.turnOrder)
+    || new Set(value.turnOrder).size !== value.turnOrder.length
+    || !value.turnOrder.every((id) => combatantById.get(id)?.hp !== undefined && (combatantById.get(id)?.hp as number) > 0)
+    || value.turnOrder.length !== combatants.filter((combatant) => (combatant.hp as number) > 0).length
+    || !Number.isInteger(value.turnIndex)
+    || (value.turnIndex as number) < 0
+    || (value.turnIndex as number) >= value.turnOrder.length) return false;
 
-function isCombatAction(value: unknown): boolean {
-  return value === "attack" || value === "skill" || value === "guard" || value === "flee";
-}
+  if (!Array.isArray(value.enemyIntents) || !value.enemyIntents.every(isEnemyIntent)) return false;
+  const intentActors = new Set<string>();
+  if (!value.enemyIntents.every((intent) => {
+    const actorId = String(intent.actorId);
+    const targetId = intent.targetId;
+    const actor = combatantById.get(actorId);
+    const target = targetId === undefined ? undefined : combatantById.get(String(targetId));
+    if (intentActors.has(actorId)) return false;
+    intentActors.add(actorId);
+    return actor?.side === "enemies"
+      && actor.hp !== undefined && (actor.hp as number) > 0
+      && (targetId === undefined || (target !== undefined && target.side === "allies" && (target.hp as number) > 0));
+  })) return false;
 
-function isCombatResult(value: unknown): boolean {
-  return isObject(value)
-    && hasRequiredAndOptionalKeys(value, ["round", "sequence", "actorId", "kind", "damage", "actorEnergyAfter"], ["targetId", "targetHpAfter"])
-    && Number.isInteger(value.round) && (value.round as number) >= 0
-    && Number.isInteger(value.sequence) && (value.sequence as number) >= 0
-    && typeof value.actorId === "string" && optionalMatches(value, "targetId", (entry) => typeof entry === "string")
-    && isCombatAction(value.kind) && isFiniteNumber(value.damage) && isFiniteNumber(value.actorEnergyAfter)
-    && optionalMatches(value, "targetHpAfter", isFiniteNumber);
-}
+  if (!isStringArray(value.downedEnemyIds) || new Set(value.downedEnemyIds).size !== value.downedEnemyIds.length) return false;
+  const downedEnemySourceIds = combatants
+    .filter((combatant) => (combatant.source as JsonObject).kind === "enemy" && (combatant.hp as number) <= 0)
+    .map((combatant) => String((combatant.source as JsonObject).enemyId));
+  const downedEnemySet = new Set(downedEnemySourceIds);
+  if (downedEnemySet.size !== downedEnemySourceIds.length
+    || value.downedEnemyIds.length !== downedEnemySet.size
+    || !value.downedEnemyIds.every((enemyId) => downedEnemySet.has(enemyId))) return false;
 
-function isEnemyIntent(value: unknown): boolean {
-  return isObject(value)
-    && hasRequiredAndOptionalKeys(value, ["actorId", "kind"], ["targetId"])
-    && typeof value.actorId === "string"
-    && (value.kind === "attack" || value.kind === "skill" || value.kind === "guard")
-    && optionalMatches(value, "targetId", (entry) => typeof entry === "string");
+  return Array.isArray(value.lastAdvance)
+    && value.lastAdvance.every(isCombatResult)
+    && new Set(value.lastAdvance.map((result) => String(result.sequence))).size === value.lastAdvance.length
+    && value.lastAdvance.every((result) => {
+      const actorId = String(result.actorId);
+      const targetId = result.targetId;
+      const actor = combatantById.get(actorId);
+      const target = targetId === undefined ? undefined : combatantById.get(String(targetId));
+      const actorMaxEnergy = actor !== undefined && isObject(actor.stats) && isFiniteNumber(actor.stats.maxEnergy)
+        ? actor.stats.maxEnergy
+        : undefined;
+      const targetMaxHp = target !== undefined && isObject(target.stats) && isFiniteNumber(target.stats.maxHp)
+        ? target.stats.maxHp
+        : undefined;
+      return actor !== undefined
+        && actorMaxEnergy !== undefined
+        && result.actorEnergyAfter <= actorMaxEnergy
+        && (targetId === undefined || target !== undefined)
+        && (result.targetHpAfter === undefined
+          || (targetMaxHp !== undefined && result.targetHpAfter <= targetMaxHp));
+    });
 }
 
 function isBattle(value: unknown): value is BattleState {
@@ -134,20 +173,18 @@ function isBattle(value: unknown): value is BattleState {
     ["status", "enemyId", "playerHp", "enemyHp", "round", "preBattleSnapshot"],
     ["enemyIds", "battleKey", "combatants", "turnOrder", "turnIndex", "enemyIntents", "downedEnemyIds", "lastAdvance"],
   )) return false;
-  return typeof value.enemyId === "string"
-    && typeof value.enemyId === "string"
+  const baseValid = isNonEmptyString(value.enemyId)
     && isFiniteNumber(value.playerHp)
+    && value.playerHp >= 0
     && isFiniteNumber(value.enemyHp)
+    && value.enemyHp >= 0
     && typeof value.round === "number" && Number.isInteger(value.round) && value.round >= 0
     && isBattleSnapshot(value.preBattleSnapshot)
     && optionalMatches(value, "enemyIds", isStringArray)
-    && optionalMatches(value, "battleKey", (entry) => typeof entry === "string")
-    && optionalMatches(value, "combatants", (entry) => Array.isArray(entry) && entry.every(isCombatant))
-    && optionalMatches(value, "turnOrder", isStringArray)
-    && optionalMatches(value, "turnIndex", (entry) => Number.isInteger(entry) && (entry as number) >= 0)
-    && optionalMatches(value, "enemyIntents", (entry) => Array.isArray(entry) && entry.every(isEnemyIntent))
-    && optionalMatches(value, "downedEnemyIds", isStringArray)
-    && optionalMatches(value, "lastAdvance", (entry) => Array.isArray(entry) && entry.every(isCombatResult));
+    && optionalMatches(value, "battleKey", (entry) => typeof entry === "string");
+  if (!baseValid) return false;
+  if (!MODERN_BATTLE_KEYS.some((key) => key in value)) return true;
+  return isCompleteModernBattle(value);
 }
 
 function isEndingState(value: unknown): value is EndingState {
@@ -195,7 +232,9 @@ function isGameEvent(value: unknown): value is GameEvent {
         && typeof value.npcId === "string"
         && optionalMatches(value, "interactionKind", (entry) => entry === "greet" || entry === "ask_main_quest");
     case "npc_dialogue_completed":
-      return eventWithOccurredAt(value, ["npcId"]) && typeof value.npcId === "string";
+      return eventWithOccurredAt(value, ["npcId"], ["actionId"])
+        && typeof value.npcId === "string"
+        && optionalMatches(value, "actionId", (entry) => typeof entry === "string");
     case "fact_discovered":
       return eventWithOccurredAt(value, ["factId"], ["witnessNpcIds", "approachId", "evidenceQuality", "tensionDelta"])
         && typeof value.factId === "string"
@@ -211,8 +250,9 @@ function isGameEvent(value: unknown): value is GameEvent {
       return eventWithOccurredAt(value, ["itemId", "locationId"])
         && typeof value.itemId === "string" && typeof value.locationId === "string";
     case "item_given":
-      return eventWithOccurredAt(value, ["itemId", "npcId", "locationId"])
-        && typeof value.itemId === "string" && typeof value.npcId === "string" && typeof value.locationId === "string";
+      return eventWithOccurredAt(value, ["itemId", "npcId", "locationId"], ["actionId"])
+        && typeof value.itemId === "string" && typeof value.npcId === "string" && typeof value.locationId === "string"
+        && optionalMatches(value, "actionId", (entry) => typeof entry === "string");
     case "battle_started":
       return eventWithOccurredAt(value, ["enemyId"], ["enemyIds"])
         && typeof value.enemyId === "string" && optionalMatches(value, "enemyIds", isStringArray);
@@ -220,7 +260,7 @@ function isGameEvent(value: unknown): value is GameEvent {
       return eventWithOccurredAt(value, ["enemyId", "round", "playerHp", "enemyHp", "action"], ["results"])
         && typeof value.enemyId === "string" && Number.isInteger(value.round) && (value.round as number) >= 0
         && isFiniteNumber(value.playerHp) && isFiniteNumber(value.enemyHp)
-        && (isCombatAction(value.action) || value.action === "withdraw")
+        && (value.action === "attack" || value.action === "skill" || value.action === "guard" || value.action === "flee" || value.action === "withdraw")
         && optionalMatches(value, "results", (entry) => Array.isArray(entry) && entry.every(isCombatResult));
     case "battle_resolved":
       return eventWithOccurredAt(value, ["enemyId", "outcome"], ["enemyIds"])
@@ -275,10 +315,10 @@ function isGameEvent(value: unknown): value is GameEvent {
   }
 }
 
-/** SQLite 边界唯一接受的 WorldState v3 解析器；兼容投影始终由 store 重建。 */
+/** SQLite 边界唯一接受的 WorldState 解析器（版本与 WORLD_STATE_SCHEMA_VERSION 同源）；兼容投影始终由 store 重建。 */
 export function validatePersistableWorldState(value: unknown): PersistableWorldStateValidationResult {
   if (!isObject(value)) return { ok: false, code: "invalid_world_envelope" };
-  if (value.version !== 3) return { ok: false, code: "wrong_world_version" };
+  if (value.version !== WORLD_STATE_SCHEMA_VERSION) return { ok: false, code: "wrong_world_version" };
   if (!hasExactKeys(value, WORLD_KEYS) || !isGeneration(value.generation) || !isBattle(value.battle) || !Array.isArray(value.endings) || !value.endings.every(isEndingEntry) || !isEndingState(value.ending) || !Array.isArray(value.eventLedger) || !value.eventLedger.every(isGameEvent)) {
     return { ok: false, code: "invalid_world_envelope" };
   }
@@ -289,11 +329,13 @@ export function validatePersistableWorldState(value: unknown): PersistableWorldS
   }
   const referenceIssue = validateEntityReferences(parsedStore.store)[0];
   if (referenceIssue !== undefined) return { ok: false, code: "invalid_entity_reference", issueCode: referenceIssue.code, entityId: referenceIssue.entityId };
+  const battleCompanionIssue = findUnknownBattleCompanionReference(value.battle, parsedStore.store);
+  if (battleCompanionIssue !== undefined) return { ok: false, code: "invalid_entity_reference", issueCode: battleCompanionIssue.issueCode, entityId: battleCompanionIssue.entityId };
   const projection = Object.fromEntries(PROJECTION_KEYS.map((key) => [key, value[key]])) as EntityCompatibilityProjection;
   const projectionIssue = validateEntityCompatibilityProjection(parsedStore.store, projection)[0];
   if (projectionIssue !== undefined) return { ok: false, code: "projection_mismatch", issueCode: projectionIssue.code };
   const normalized: WorldState = {
-    version: 3,
+    version: WORLD_STATE_SCHEMA_VERSION,
     generation: value.generation,
     entityStore: parsedStore.store,
     ...projectEntityStore(parsedStore.store),

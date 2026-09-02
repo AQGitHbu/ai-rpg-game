@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-23-long-form-narrative-entity-memory-architecture.md`（Plan 3；§7；NAR-06、NAR-07、NAR-14、NAR-17）
 
-> 状态：待执行
+> 状态：已完成、已验收并合入 main（2026-09-02）
 
 ## Global Constraints
 
@@ -29,6 +29,19 @@
 - 不引入 Episode、语义向量检索、稳定 Event ID（Plan 4），不引入 Living Outline / Arc / Story Thread（Plan 5），不引入分段 ledger、归档或十小时存档容量承诺（后续长篇存储 Plan）。
 - `WorldState.version` 从 3 升到 4，`EntityStore.version` 从 1 升到 2；旧 v3 / store v1 开发存档返回 `UNSUPPORTED_RECORD`，不做隐式迁移、不静默重置。SQLite 表与 `record_version` 不变。
 - 每个任务先写失败测试并运行 targeted tests；实现与同目录测试一起提交。完成完整门禁并合并 main 前，不得把阶段状态写为 `completed/merged`。
+
+## 明确边界
+
+本 Plan 排除以下内容，即使总 Spec 描述了它们：
+
+- **排除** Episode、语义向量检索、稳定 `eventId` 与因果事件模型（Plan 4）；关系与知识证据只引用真实 `actionId + turnNumber` 或 `initial_world`。
+- **排除** NPC 主观错误事实 / misinformation 模型；knowledge 只有 `known`/`suspected` 两档 certainty 与三级 disclosure。
+- **排除** Living Outline、Story Thread、Milestone、Arc 与 `NarrativeRoleComponent`（Plan 5/6）。
+- **排除** Identity Anchors 的任何运行期更新通道：不新增 `replace_npc_identity` mutation，`ProposedEntityCommand` 不获得人格、知识或关系直写权限。
+- **排除** `dynamicState` 中的健康/战斗数值字段；战斗状态仍只存在于 combat runtime 并随战前快照整体回滚。
+- **排除** 分段 event ledger、快照归档与十小时存档容量承诺（Plan 7/8）；`GameRecord` 仍是单条 JSON 存档。
+- **排除** 新增 npm 依赖、外部服务、provider 调用、`/api/game/**` 路由、CAS 边界与玩家可见行动种类。
+- **排除** foundation 与任何 `@ai-game/*` 共享 package 改动；NPC Component 具有 RPG 业务语义。
 
 ## Canonical NPC Model
 
@@ -204,13 +217,15 @@ src/game/application/
 
 ## 执行启动（Task 1 前，只在 main 主工作区执行）
 
+> **执行偏差（2026-08-31）**：本次执行要求 main 工作区零改动，因此 Steps 2–4 的阶段元数据提交与 worktree 创建全部改在目标分支内完成：worktree 由 `git worktree add -b codex/npc-personality-knowledge-relationship-graph .worktrees/npc-personality-knowledge-relationship-graph main` 直接创建，随后在 worktree 内执行 `npm run setup`、`npm run handoff:check`，并把 `current-phase.json` / `当前开发阶段.md` / `Agent文档索引.md` 的 Plan 3 元数据提交在功能分支上。`npm run phase:start`（只能从干净的 main 执行）因此未运行。main 的阶段指针在分支合并前仍指向 Plan 2 `completed / merged`。
+
 **Files:**
 
 - Modify: `docs/agent/current-phase.json`
 - Modify: `docs/agent/当前开发阶段.md`
 - Modify: `docs/Agent文档索引.md`
 
-- [ ] **Step 1: 确认 Plan 2 已完成、合并并收尾**
+- [x] **Step 1: 确认 Plan 2 已完成、合并并收尾**
 
 Run:
 
@@ -222,7 +237,7 @@ git worktree list
 
 Expected: 当前分支为 `main`；Plan 2 为 `completed / merged`；旧 Plan 2 worktree/branch 已按仓库流程清理；除本 Plan 文档外主工作区无修改。
 
-- [ ] **Step 2: 把机器可读阶段切到 Plan 3 planned/not_started**
+- [x] **Step 2: 把机器可读阶段切到 Plan 3 planned/not_started**
 
 更新 `docs/agent/current-phase.json`：
 
@@ -268,11 +283,11 @@ Expected: 当前分支为 `main`；Plan 2 为 `completed / merged`；旧 Plan 2 
 }
 ```
 
-- [ ] **Step 3: 更新人读入口但不提前写实现事实**
+- [x] **Step 3: 更新人读入口但不提前写实现事实**
 
 `docs/agent/当前开发阶段.md` 顶部改为“NPC 人格、知识与关系图 / 待执行”；唯一 Plan 指向本文件。索引只写目标与明确排除，不声称组件或 journey 已存在。
 
-- [ ] **Step 4: 验证、提交并创建 worktree**
+- [x] **Step 4: 验证、提交并创建 worktree**
 
 ```bash
 npm run handoff:check:docs
@@ -852,12 +867,14 @@ Expected: main 干净；Plan 3 分支/worktree 已按仓库安全工具清理；
 
 ## Acceptance Checklist
 
+> **执行偏差（2026-09-01，code review 记录）**：下方统一读取项的原始措辞要求五个玩法面“读取同一个 `projectNpcRuntimeProfile`”。实际实现中所有玩法面共享同一权威事实源（Entity Store 分层组件）：规则裁决读取面（`dialogueResolution`、`resolveByType` 的 give_item 去重等）消费 projector 每次提交都重建的 `NpcEntry.memory` 兼容 read model，台词与 prompt 读取面经 `NpcSpeechAuthority` 与同源可见性分区规则。`projectNpcRuntimeProfile` 已实现并由单测锁定，但规则路径不直接调用它。兼容投影始终由同一组件重建，行为等价且不存在第二状态源，故按“兼容桥是既定迁移读取路径”修正条目措辞而非改线。
+
 - [ ] `NpcEntityRecord` 的 identity/dynamic/knowledge/relationships/history 分层是唯一权威事实，legacy `NpcMemory` 仅为 projector 读模型。
 - [ ] 普通场景无法更新 identity anchors；opening 和动态 NPC 都有经过审批的稳定 anchors 与 typed goals。
 - [ ] 知识记录 FactId、披露策略、真实 actionId/turn 来源；没有 audience 不扩散，NPC 私密知识不进入其他 NPC Prompt。
 - [ ] NPC→玩家与 NPC→NPC 都是有向边；数值变化只来自规则 signal，有 cap、阈值、证据、幂等和每 action 一档的速度限制。
 - [ ] debt/promise 有稳定 ID、方向、状态与来源；AI 不能提交数值关系或直接 patch commitment。
-- [ ] 对话、调查、赠物、明确 NPC 任务和共同战斗读取同一个 `projectNpcRuntimeProfile`；无明确参与者时不猜关系后果。
+- [ ] 对话、调查、赠物、明确 NPC 任务和共同战斗都从同一权威事实源（Entity Store 分层组件）读取：规则裁决经 projector 重建的兼容 read model，台词与 prompt 经 `NpcSpeechAuthority` 同源可见性规则；无明确参与者时不猜关系后果。
 - [ ] 所有生成/预备/开局 NPC 台词都以同一 `NpcSpeechAuthority` 审批 Fact 与 Interaction 引用。
 - [ ] 同地点同伴可按确定性规则参战；失败/撤退恢复全部 NPC 组件，胜利才写共同作战证据。
 - [ ] provider 调用数、路由、CAS、一次生成逐步消费和战败恢复语义不变。

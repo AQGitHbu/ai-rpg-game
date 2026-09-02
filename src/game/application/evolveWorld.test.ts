@@ -72,14 +72,20 @@ describe("evolveWorld content repair 重试", () => {
       newLocation: { name: "青山别院", description: "独立的别院。", scale: "scene", placement: "world", connectFromLocationId: "loc_0" },
       newNpc: {
         name: "新出现的信使", role: "传话人", description: "风尘仆仆的赶路人。",
-        locationRef: { kind: "existing", id: "loc_missing" }, goals: [],
+        locationRef: { kind: "existing", id: "loc_missing" },
+        anchors: { selfConcept: "替人传话的信使", values: ["守信"], speechStyle: "谨慎而直接", capabilityBoundaries: ["只知道亲身见闻"], taboos: [] },
+        goals: [{ horizon: "short", description: "送达密信", priority: 3, reason: "必须完成传递" }],
+        relationshipSeeds: [],
       },
     });
     const good: WorldDeltaProposal = proposalWith({
       newLocation: bad.newLocation!,
       newNpc: {
         name: "新出现的信使", role: "传话人", description: "风尘仆仆的赶路人。",
-        locationRef: { kind: "new_location" }, goals: [],
+        locationRef: { kind: "new_location" },
+        anchors: { selfConcept: "替人传话的信使", values: ["守信"], speechStyle: "谨慎而直接", capabilityBoundaries: ["只知道亲身见闻"], taboos: [] },
+        goals: [{ horizon: "short", description: "送达密信", priority: 3, reason: "必须完成传递" }],
+        relationshipSeeds: [],
       },
     });
     const source: WorldEvolutionSource = {

@@ -1,9 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { resolveDialogue } from "./dialogueResolution";
+import { resolveDialogue, emotionForOutcome } from "./dialogueResolution";
 import type { WorldState, NpcEntry } from "@/game/domain/worldState";
 import { createInitialWorldState } from "@/game/domain/worldState";
-import { asNpcId, asLocationId, asFactId, asGenerationId, asQuestId } from "@/game/domain/worldEntity";
-import type { TalkAction } from "@/game/domain/action";
+import { asNpcId, asLocationId, asFactId, asGenerationId } from "@/game/domain/worldEntity";
+import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
+import type { DialogueAct, TalkAction } from "@/game/domain/action";
 
 const FACT_KNOWN = asFactId("fact_known");
 const FACT_UNKNOWN = asFactId("fact_unknown");
@@ -52,177 +53,130 @@ function talkOf(action: {
   return { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: action.act, topic: action.topic, utterance: action.utterance };
 }
 
-const deps = { now: () => "2026-01-01", actionId: "act_1", turnNumber: 7 };
+function deps(actionId = "act_1") {
+  return { now: () => "2026-01-01", actionId, turnNumber: 7 };
+}
 
-describe("resolveDialogue — 行为语义", () => {
-  it("首次 ask 与重复 ask 的关系变化不同", () => {
-    const npc = makeNpc();
-    const first = resolveDialogue(makeWs(), npc, talkOf({ act: "ask" }), deps);
-    const repeat = resolveDialogue(makeWs(), first.npcAfter, talkOf({ act: "ask" }), deps);
-    expect(first.relationshipDelta).not.toBe(repeat.relationshipDelta);
-    expect(repeat.relationshipDelta).toBeLessThan(first.relationshipDelta);
-    expect(repeat.interaction.summary).not.toBe(first.interaction.summary);
+function mutationKinds(resolution: ReturnType<typeof resolveDialogue>): readonly string[] {
+  return resolution.mutations.map((mutation) => mutation.kind);
+}
+
+describe("resolveDialogue — qualitative signal 与原子批次", () => {
+  it("八种 dialogue act 映射到固定关系 signal，并写 NPC→player 边", () => {
+    const expected: Readonly<Record<DialogueAct, string>> = {
+      ask: "shared_fact",
+      support: "supported",
+      challenge: "challenged",
+      threaten: "threatened",
+      deceive: "deceived",
+      offer: "offered_help",
+      refuse: "refused",
+      reassure: "reassured",
+    };
+    for (const [act, signal] of Object.entries(expected) as [DialogueAct, string][]) {
+      const topic = act === "ask" ? { kind: "fact" as const, factId: FACT_KNOWN } : undefined;
+      const resolution = resolveDialogue(makeWs(), makeNpc(), talkOf({ act, topic }), deps(act));
+      expect(resolution.mutations[0]).toMatchObject({
+        kind: "apply_relationship_signal",
+        fromNpcId: asNpcId("npc_1"),
+        targetId: PLAYER_ENTITY_ID,
+        signal,
+        source: { kind: "action", actionId: act, turnNumber: 7 },
+      });
+    }
   });
 
-  it("同一固定选择重复点击不重复获得首次见面奖励", () => {
-    const npc = makeNpc();
-    const first = resolveDialogue(makeWs(), npc, talkOf({ act: "ask" }), deps);
-    expect(first.relationshipDelta).toBe(6); // GREET_FIRST_MEET(5) + ask(1)
-    const repeated = resolveDialogue(makeWs(), first.npcAfter, talkOf({ act: "ask" }), deps);
-    expect(repeated.relationshipDelta).toBe(1); // 仅 ask(1)，无首次奖励
-    expect(first.npcAfter.memory.interactionHistory).toHaveLength(1);
+  it("ask 披露事实时使用 shared_fact，不披露时没有 signal 且 outcome 为 neutral", () => {
+    const disclosed = resolveDialogue(makeWs(), makeNpc(), talkOf({ act: "ask", topic: { kind: "fact", factId: FACT_KNOWN } }), deps("disclosed"));
+    const withheld = resolveDialogue(makeWs(), makeNpc(), talkOf({ act: "ask" }), deps("withheld"));
+    expect(disclosed.signal).toBe("shared_fact");
+    expect(disclosed.outcome).toBe("positive");
+    expect(withheld.signal).toBeNull();
+    expect(withheld.outcome).toBe("neutral");
+    expect(mutationKinds(withheld)).not.toContain("apply_relationship_signal");
   });
 
-  it("support/challenge/threaten 对同一 NPC 产生不同结构化结果", () => {
+  it("对话解析不再暴露任何自算数字", () => {
+    const resolution = resolveDialogue(makeWs(), makeNpc(), talkOf({ act: "support" }), deps());
+    // @ts-expect-error relationshipDelta 已由对话契约删除，真实数字只由实体层盖章
+    expect(resolution.relationshipDelta).toBeUndefined();
+    expect(resolution).not.toHaveProperty("relationshipDelta");
+    expect(resolution.interaction).not.toHaveProperty("relationshipDelta");
+    expect(resolution.interaction).not.toHaveProperty("summary");
+    // 维护闸门：旧对话数值常量的 rg 检查必须为空。
+  });
+
+  it("首次见面只由 set_npc_met 标记，已 met 的 NPC 不再提交该写入", () => {
+    const first = resolveDialogue(makeWs(), makeNpc(), talkOf({ act: "support" }), deps());
+    const repeated = resolveDialogue(makeWs(), makeNpc({ met: true }), talkOf({ act: "support" }), deps("repeat"));
+    expect(mutationKinds(first)).toContain("set_npc_met");
+    expect(mutationKinds(first).filter((kind) => kind === "set_npc_met")).toHaveLength(1);
+    expect(mutationKinds(repeated)).not.toContain("set_npc_met");
+  });
+
+  it("批次顺序固定为 signal、interaction、emotion、met", () => {
+    const resolution = resolveDialogue(makeWs(), makeNpc(), talkOf({ act: "support" }), deps());
+    expect(resolution.mutations[0]?.kind).toBe("apply_relationship_signal");
+    expect(resolution.mutations.findIndex(({ kind }) => kind === "record_npc_interaction"))
+      .toBeLessThan(resolution.mutations.findIndex(({ kind }) => kind === "set_npc_met"));
+    // met 必须最后：interaction 的摘要在 append 时读取 met，才能记录「首次见面」。
+    expect(resolution.mutations.at(-1)?.kind).toBe("set_npc_met");
+  });
+
+  it("interaction 与 record mutation 只保留锁定字段，不携带 delta 或 summary", () => {
+    const resolution = resolveDialogue(makeWs(), makeNpc(), talkOf({ act: "support" }), deps());
+    const interaction = resolution.interaction;
+    expect(Object.keys(interaction).sort()).toEqual([
+      "actionId", "dialogueAct", "learnedFactIds", "locationId", "outcome", "topic", "topicSummary", "turnNumber",
+    ]);
+    expect(Object.keys(resolution.mutations[1]!).sort()).toEqual([
+      "actionId", "dialogueAct", "kind", "learnedFactIds", "locationId", "npcId", "outcome", "topic", "topicSummary", "turnNumber",
+    ]);
+    expect(interaction).not.toHaveProperty("relationshipDelta");
+    expect(interaction).not.toHaveProperty("summary");
+  });
+
+  it("emotionForOutcome 负责 positive/negative/mixed，重复情绪不提交写入", () => {
+    expect(emotionForOutcome("positive", "neutral")).toBe("warm");
+    expect(emotionForOutcome("negative", "neutral")).toBe("guarded");
+    expect(emotionForOutcome("mixed", "angry")).toBe("neutral");
+    expect(emotionForOutcome("mixed", "warm")).toBe("warm");
+    const unchanged = resolveDialogue(makeWs(), makeNpc(), talkOf({ act: "ask" }), deps("unchanged"));
+    expect(unchanged.outcome).toBe("neutral");
+    expect(mutationKinds(unchanged)).not.toContain("set_npc_emotion");
+  });
+
+  it("utterance 不参与规则：不同原文生成完全相同的 mutations", () => {
     const npc = makeNpc({ met: true });
-    const support = resolveDialogue(makeWs(), npc, talkOf({ act: "support" }), deps);
-    const challenge = resolveDialogue(makeWs(), npc, talkOf({ act: "challenge" }), deps);
-    const threaten = resolveDialogue(makeWs(), npc, talkOf({ act: "threaten" }), deps);
-
-    expect(new Set([support.relationshipDelta, challenge.relationshipDelta, threaten.relationshipDelta]).size).toBe(3);
-    expect(support.relationshipDelta).toBeGreaterThan(0);
-    expect(challenge.relationshipDelta).toBeLessThan(0);
-    expect(threaten.relationshipDelta).toBeLessThan(challenge.relationshipDelta);
-    expect(support.outcome).toBe("positive");
-    expect(challenge.outcome).toBe("negative");
-    expect(threaten.outcome).toBe("negative");
+    const a = resolveDialogue(makeWs(), npc, talkOf({ act: "ask", topic: { kind: "fact", factId: FACT_KNOWN }, utterance: "你知道什么吗？" }), deps());
+    const b = resolveDialogue(makeWs(), npc, talkOf({ act: "ask", topic: { kind: "fact", factId: FACT_KNOWN }, utterance: "快告诉我！" }), deps());
+    expect(a.mutations).toEqual(b.mutations);
   });
 
-  it("hostile/trusted 档位影响 willingness 与关系变化", () => {
-    const trusted = makeNpc({
-      met: true,
-      memory: {
-        npcId: asNpcId("npc_1"), knownFactIds: [FACT_KNOWN], hiddenFactIds: [],
-        interactionHistory: [], relationship: { affinity: 80 }, emotion: "neutral", goals: [],
-      },
-    });
-    const hostile = makeNpc({
-      met: true,
-      memory: {
-        npcId: asNpcId("npc_1"), knownFactIds: [FACT_KNOWN], hiddenFactIds: [],
-        interactionHistory: [], relationship: { affinity: -70 }, emotion: "neutral", goals: [],
-      },
-    });
-    const trustedRes = resolveDialogue(makeWs(), trusted, talkOf({ act: "ask", topic: { kind: "fact", factId: FACT_KNOWN } }), deps);
-    const hostileRes = resolveDialogue(makeWs(), hostile, talkOf({ act: "ask", topic: { kind: "fact", factId: FACT_KNOWN } }), deps);
-    expect(trustedRes.disclosure.kind).toBe("revealed");
-    expect(hostileRes.disclosure.kind).toBe("withheld");
-    expect(trustedRes.relationshipDelta).toBeGreaterThan(hostileRes.relationshipDelta);
-    expect(hostileRes.status).toBe("partial_success");
+  it("未知或隐藏事实 withheld，ask 不产生 signal 或 knowledge mutation", () => {
+    const unknown = resolveDialogue(makeWs(), makeNpc(), talkOf({ act: "ask", topic: { kind: "fact", factId: FACT_UNKNOWN } }), deps("unknown"));
+    const hidden = resolveDialogue(makeWs(), makeNpc({ memory: { ...makeNpc().memory, hiddenFactIds: [FACT_KNOWN] } }), talkOf({ act: "ask", topic: { kind: "fact", factId: FACT_KNOWN } }), deps("hidden"));
+    for (const resolution of [unknown, hidden]) {
+      expect(resolution.disclosure.kind).toBe("withheld");
+      expect(resolution.signal).toBeNull();
+      expect(resolution.mutations.some(({ kind }) => kind.includes("knowledge"))).toBe(false);
+    }
   });
 
-  it("NPC 不知道 topic fact 时不能直接透露（含最大威压）", () => {
-    const npc = makeNpc({
-      met: true,
-      memory: {
-        npcId: asNpcId("npc_1"), knownFactIds: [FACT_KNOWN], hiddenFactIds: [],
-        interactionHistory: [], relationship: { affinity: 90 }, emotion: "neutral", goals: [],
-      },
-    });
-    const asked = resolveDialogue(makeWs(), npc, talkOf({ act: "ask", topic: { kind: "fact", factId: FACT_UNKNOWN } }), deps);
-    const threatened = resolveDialogue(makeWs(), npc, talkOf({ act: "threaten", topic: { kind: "fact", factId: FACT_UNKNOWN } }), deps);
-    expect(asked.disclosure.kind).toBe("withheld");
-    expect(threatened.disclosure.kind).toBe("withheld");
-    expect(asked.npcAfter.memory.knownFactIds).not.toContain(FACT_UNKNOWN);
+  it("hostile NPC 的 threaten/deceive 即使 failure 仍提交关系 signal", () => {
+    const hostile = makeNpc({ met: true, memory: { ...makeNpc().memory, relationship: { affinity: -70 } } });
+    for (const act of ["threaten", "deceive"] as const) {
+      const resolution = resolveDialogue(makeWs(), hostile, talkOf({ act }), deps(act));
+      expect(resolution.status).toBe("failure");
+      expect(resolution.signal).not.toBeNull();
+      expect(resolution.mutations[0]?.kind).toBe("apply_relationship_signal");
+    }
   });
 
-  it("对敌意 NPC 威胁 → failure；敌意 NPC 交谈 → partial_success", () => {
-    const hostile = makeNpc({
-      met: true,
-      memory: {
-        npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [],
-        interactionHistory: [], relationship: { affinity: -70 }, emotion: "angry", goals: [],
-      },
-    });
-    const threatened = resolveDialogue(makeWs(), hostile, talkOf({ act: "threaten" }), deps);
-    expect(threatened.status).toBe("failure");
-    const asked = resolveDialogue(makeWs(), hostile, talkOf({ act: "ask" }), deps);
-    expect(asked.status).toBe("partial_success");
-  });
-
-  it("utterance 不参与规则：不同 utterance 产出完全相同的结构化结果", () => {
-    const npc = makeNpc({ met: true });
-    const a = resolveDialogue(makeWs(), npc, talkOf({ act: "ask", topic: { kind: "fact", factId: FACT_KNOWN }, utterance: "你知道什么吗？" }), deps);
-    const b = resolveDialogue(makeWs(), npc, talkOf({ act: "ask", topic: { kind: "fact", factId: FACT_KNOWN }, utterance: "快告诉我！" }), deps);
-    expect(a.relationshipDelta).toBe(b.relationshipDelta);
-    expect(a.disclosure).toEqual(b.disclosure);
-    expect(a.interaction).toEqual(b.interaction);
-    expect(a.status).toBe(b.status);
-  });
-
-  it("规则生成稳定 NpcInteraction 摘要（确定性、不含原文）", () => {
-    const npc = makeNpc();
-    const r1 = resolveDialogue(makeWs(), npc, talkOf({ act: "support", utterance: "说的在理" }), deps);
-    const r2 = resolveDialogue(makeWs(), npc, talkOf({ act: "support", utterance: "说的在理" }), deps);
-    expect(r2.interaction).toEqual(r1.interaction);
-    expect(r1.interaction.dialogueAct).toBe("support");
-    expect(r1.interaction.turnNumber).toBe(7);
-    expect(r1.interaction.actionId).toBe("act_1");
-    expect(r1.interaction.locationId).toBe(asLocationId("loc_1"));
-    expect(r1.interaction.topicSummary).toBe("闲谈");
-    expect(r1.interaction.learnedFactIds).toEqual([]);
-    expect(r1.interaction.outcome).toBe("positive");
-    expect(r1.interaction.relationshipDelta).toBe(r1.relationshipDelta);
-    expect(r1.interaction.summary).toContain("首次见面");
-    expect(r1.interaction.summary).not.toContain("说的在理");
-    const repeated = resolveDialogue(makeWs(), r1.npcAfter, talkOf({ act: "support" }), deps);
-    expect(repeated.interaction.summary).toContain("再次交谈");
-  });
-
-  it("NPC 披露 fact 时 learnedFactIds 记录该 fact，且同 actionId 不重复追加", () => {
-    const npc = makeNpc({ met: true });
-    const res = resolveDialogue(makeWs(), npc, talkOf({ act: "ask", topic: { kind: "fact", factId: FACT_KNOWN } }), deps);
-    expect(res.disclosure.kind).toBe("revealed");
-    expect(res.interaction.learnedFactIds).toContain(FACT_KNOWN);
-    expect(res.npcAfter.memory.interactionHistory).toHaveLength(1);
-    // 同 actionId 重试：CAS 失败路径零写入
-    const retry = resolveDialogue(makeWs(), res.npcAfter, talkOf({ act: "ask", topic: { kind: "fact", factId: FACT_KNOWN } }), deps);
-    expect(retry.npcAfter.memory.interactionHistory).toHaveLength(1);
-  });
-
-  it("support/challenge/threaten/freeform 产生稳定不同的 topicSummary/summary 语义", () => {
-    const npc = makeNpc({ met: true });
-    const support = resolveDialogue(makeWs(), npc, talkOf({ act: "support" }), deps);
-    const threaten = resolveDialogue(makeWs(), npc, talkOf({ act: "threaten" }), deps);
-    expect(support.interaction.summary).toContain("support");
-    expect(threaten.interaction.summary).toContain("threaten");
-    expect(support.interaction.summary).not.toBe(threaten.interaction.summary);
-  });
-
-  it("NPC 披露已知 topic fact 时返回结构化 disclosure", () => {
-    const npc = makeNpc({ met: true });
-    const res = resolveDialogue(makeWs(), npc, talkOf({ act: "ask", topic: { kind: "fact", factId: FACT_KNOWN } }), deps);
-    expect(res.disclosure).toEqual({ kind: "revealed", factId: FACT_KNOWN });
-  });
-
-  it("结构化 topic 持久化进 NpcInteraction（fact/quest/thread/general 与规则裁决同源）", () => {
-    const npc = makeNpc({ met: true });
-    const fact = resolveDialogue(makeWs(), npc, talkOf({ act: "ask", topic: { kind: "fact", factId: FACT_KNOWN } }), deps);
-    expect(fact.interaction.topic).toEqual({ kind: "fact", factId: FACT_KNOWN });
-    expect(fact.interaction.topicSummary).toBe("询问线索");
-
-    const quest = resolveDialogue(makeWs(), npc, talkOf({ act: "ask", topic: { kind: "quest", questId: asQuestId("quest_0") } }), deps);
-    expect(quest.interaction.topic).toEqual({ kind: "quest", questId: asQuestId("quest_0") });
-    expect(quest.interaction.topicSummary).toBe("谈论任务");
-
-    const thread = resolveDialogue(makeWs(), npc, talkOf({ act: "support", topic: { kind: "thread", threadId: "main_thread" } }), deps);
-    expect(thread.interaction.topic).toEqual({ kind: "thread", threadId: "main_thread" });
-    expect(thread.interaction.topicSummary).toBe("延续话题");
-
-    const general = resolveDialogue(makeWs(), npc, talkOf({ act: "ask" }), deps);
-    expect(general.interaction.topic).toEqual({ kind: "general" });
-    expect(general.interaction.topicSummary).toBe("闲谈");
-  });
-
-  it("持久化的 interaction 只含结构化 topic 与摘要，绝不包含玩家原话", () => {
-    const npc = makeNpc({ met: true });
-    const res = resolveDialogue(makeWs(), npc, talkOf({
-      act: "ask",
-      topic: { kind: "fact", factId: FACT_KNOWN },
-      utterance: "你能告诉我矿坑的秘密吗？",
-    }), deps);
-    expect(res.interaction.topic).toEqual({ kind: "fact", factId: FACT_KNOWN });
-    expect(res.interaction.topicSummary).toBe("询问线索");
-    expect(res.interaction).not.toMatchObject({ utterance: expect.anything() });
+  it("hostile NPC 的 offer 由 improving signal 判为 positive", () => {
+    const hostile = makeNpc({ met: true, memory: { ...makeNpc().memory, relationship: { affinity: -70 } } });
+    const resolution = resolveDialogue(makeWs(), hostile, talkOf({ act: "offer" }), deps("offer"));
+    expect(resolution.outcome).toBe("positive");
+    expect(resolution.status).toBe("success");
   });
 });

@@ -10,6 +10,7 @@ import {
   type BundleStepProposal,
   type NarrativeBundleProposal,
   type NarrativeBundleState,
+  type ScenePerformanceNpcDialogue,
 } from "./narrativeBundle";
 import type { PreparedSceneSeedState } from "./preparedContinuation";
 
@@ -64,9 +65,58 @@ function makeValidBundleState(): NarrativeBundleState {
 }
 
 describe("NarrativeBundleProposal parser", () => {
+  it("requires speech reference arrays in the provider DTO construction type", () => {
+    // @ts-expect-error v4 provider dialogue construction must include both arrays.
+    const missingReferences: ScenePerformanceNpcDialogue = {
+      npcId: "npc_2",
+      text: "路过喝口茶。",
+    };
+    void missingReferences;
+    expect(true).toBe(true);
+  });
+
   it("accepts a valid current_scene terminal with empty continuation", () => {
     const result = parseNarrativeBundleProposal(makeValidBundle());
     expect(result.ok).toBe(true);
+  });
+
+  it("rejects NPC lines and ambient dialogues without exact reference arrays", () => {
+    const missingInteractionIds = {
+      ...makeValidScene(),
+      npcLine: {
+        ...makeValidScene().npcLine!,
+        usedInteractionActionIds: undefined,
+      },
+    };
+    expect(parseNarrativeBundleProposal({
+      ...makeValidBundle(),
+      currentScene: missingInteractionIds,
+    }).ok).toBe(false);
+
+    expect(parseNarrativeBundleProposal({
+      ...makeValidBundle(),
+      currentScene: {
+        ...makeValidScene(),
+        npcDialogues: [{ npcId: "npc_2", text: "路过喝口茶。" }],
+      },
+    }).ok).toBe(false);
+  });
+
+  it("rejects duplicate or malformed speech reference IDs", () => {
+    expect(parseNarrativeBundleProposal({
+      ...makeValidBundle(),
+      currentScene: {
+        ...makeValidScene(),
+        npcLine: { ...makeValidScene().npcLine!, usedFactIds: ["fact_1", "fact_1"] },
+      },
+    }).ok).toBe(false);
+    expect(parseNarrativeBundleProposal({
+      ...makeValidBundle(),
+      currentScene: {
+        ...makeValidScene(),
+        npcLine: { ...makeValidScene().npcLine!, usedInteractionActionIds: ["bad action id"] },
+      },
+    }).ok).toBe(false);
   });
 
   it("rejects current_scene terminal with continuation scenes", () => {

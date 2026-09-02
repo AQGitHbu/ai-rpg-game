@@ -86,6 +86,143 @@ function structuralSignature(record: GameRecord) {
 }
 
 describe("createGame", () => {
+  it("authority-rejects an opening line that cites the NPC's undisclosed fact before persistence", async () => {
+    const { repo: repository } = createInMemoryRepo();
+    const fixture = createFixtureOpeningSource();
+    const source = {
+      async generate(input: Parameters<typeof fixture.generate>[0]) {
+        const result = await fixture.generate(input);
+        if (!result.ok) return result;
+        if (result.kind !== "opening") return result;
+        const proposal = {
+          ...result.proposal,
+          opening: {
+            ...result.proposal.opening,
+            opening: {
+              ...result.proposal.opening.opening,
+              npc: {
+                ...result.proposal.opening.opening.npc,
+                privateFactKeys: [result.proposal.opening.world.publicFacts[0]!.key],
+              },
+            },
+          },
+        } as typeof result.proposal;
+        return { ...result, proposal };
+      },
+    };
+    const result = await createGame(
+      { gameId: "game-opening-authority" as never, gameType: "wuxia", gameLength: "short", seed: "opening-authority" },
+      { repository, source, now: () => "2026-01-01" },
+    );
+    expect(result).toMatchObject({ ok: false, code: "AI_GENERATION_FAILED" });
+    expect(await repository.getCurrentGame()).toMatchObject({ status: "none" });
+  });
+
+  it("authority-rejects an opening line with a foreign interaction before persistence", async () => {
+    const { repo: repository } = createInMemoryRepo();
+    const fixture = createFixtureOpeningSource();
+    const source = {
+      async generate(input: Parameters<typeof fixture.generate>[0]) {
+        const result = await fixture.generate(input);
+        if (!result.ok || result.kind !== "opening") return result;
+        return {
+          ...result,
+          proposal: {
+            ...result.proposal,
+            currentScene: {
+              ...result.proposal.currentScene,
+              npcLine: {
+                ...result.proposal.currentScene.npcLine!,
+                usedInteractionActionIds: ["npc_other:trade"],
+              },
+            },
+          },
+        } as typeof result;
+      },
+    };
+
+    const result = await createGame(
+      { gameId: "game-opening-interaction-authority" as never, gameType: "wuxia", gameLength: "short", seed: "opening-interaction-authority" },
+      { repository, source, now: () => "2026-01-01" },
+    );
+
+    expect(result).toMatchObject({ ok: false, code: "AI_GENERATION_FAILED" });
+    expect(await repository.getCurrentGame()).toMatchObject({ status: "none" });
+  });
+
+  it("opening authority runs before novelty and persists the same preview without extra provider calls", async () => {
+    const { repo, getRecord } = createInMemoryRepo();
+    const fixture = createFixtureOpeningSource();
+    const events: string[] = [];
+    let calls = 0;
+    let nowCalls = 0;
+    let persistedWorldState: GameRecord["worldState"] | undefined;
+    const source = {
+      async generate(context: NarrativeBundleSourceContext) {
+        calls += 1;
+        events.push(`provider:${calls}`);
+        const result = await fixture.generate(context);
+        if (!result.ok || result.kind !== "opening") return result;
+        if (calls !== 1) return result;
+        const authorityOnlyFactIds = new Proxy(["fact_1"], {
+          get(target, property, receiver) {
+            if (property === "every") events.push("fact-array-validation");
+            return Reflect.get(target, property, receiver);
+          },
+        });
+        return {
+          ...result,
+          proposal: {
+            ...result.proposal,
+            currentScene: {
+              ...result.proposal.currentScene,
+              npcLine: {
+                ...result.proposal.currentScene.npcLine!,
+                // fact_1 is a valid candidate-world ID but is private to the
+                // opening NPC, so only the preview authority can reject it.
+                usedFactIds: authorityOnlyFactIds,
+              },
+            },
+          },
+        };
+      },
+    };
+    const repository: GameRepository = {
+      ...repo,
+      async createInitialGame(input) {
+        events.push("persist");
+        persistedWorldState = input.worldState;
+        return repo.createInitialGame(input);
+      },
+    };
+
+    const result = await createGame(
+      { gameId: asGameId("opening-preview-order"), gameType: "wuxia", gameLength: "short", seed: "opening-preview-order" },
+      {
+        repository,
+        source,
+        now: () => {
+          nowCalls += 1;
+          events.push(`now:${nowCalls}`);
+          return "2026-01-01";
+        },
+      },
+    );
+
+    expect(result).toEqual({ ok: true, revision: 0 });
+    expect(calls).toBe(2);
+    expect(events).toEqual([
+      "provider:1",
+      "fact-array-validation",
+      "provider:2",
+      "now:1",
+      "now:2",
+      "persist",
+    ]);
+    expect(persistedWorldState).toBe(getRecord()!.worldState);
+    expect(persistedWorldState?.generation.openingAttempt).toBe(1);
+  });
+
   it("检测到近期故事过于相似时重新请求，而不是覆盖 AI 的实体名称", async () => {
     const { repo, getRecord } = createInMemoryRepo();
     const fixture = createFixtureOpeningSource();
@@ -223,6 +360,34 @@ describe("createGame", () => {
     expect(structuralSignature(replay)).toEqual(structuralSignature(compiled[3]!));
     for (let index = 0; index < compiled.length; index += 1) {
       expect(compiled[index]!.worldState.generation.gameType).toBe(gameTypes[index]);
+    }
+  });
+
+  it("为每个题材的 stock contact 提供与开场地点一致的显式 anchors 与 typed goal", async () => {
+    const source = createFixtureOpeningCandidateSource();
+    const gameTypes: readonly GameTypeId[] = [
+      "wuxia", "xianxia", "fantasy", "science_fiction", "urban", "alternate_history", "post_apocalypse",
+    ];
+
+    for (const gameType of gameTypes) {
+      const candidate = await source.generate({ gameType, gameLength: "short", seed: `stock-${gameType}` });
+      const npc = candidate.opening.npc;
+      const buildingName = candidate.opening.location.buildingName ?? candidate.opening.location.name;
+
+      expect(npc.anchors.selfConcept).toContain(candidate.opening.location.name);
+      expect(npc.anchors.values.length).toBeGreaterThanOrEqual(1);
+      expect(npc.anchors.speechStyle.length).toBeGreaterThan(0);
+      expect(npc.anchors.capabilityBoundaries.length).toBeGreaterThanOrEqual(1);
+      expect(npc.anchors.taboos.length).toBeGreaterThanOrEqual(0);
+      expect(npc.goals.length).toBeGreaterThanOrEqual(1);
+      expect(npc.goals[0]).toEqual(expect.objectContaining({
+        horizon: expect.any(String),
+        description: expect.any(String),
+        priority: expect.any(Number),
+        reason: expect.stringContaining(buildingName),
+      }));
+      expect(npc.goals[0]).not.toHaveProperty("goalId");
+      expect(npc.goals[0]).not.toHaveProperty("status");
     }
   });
 

@@ -21,6 +21,7 @@ import {
   parseNarrativeBundleState,
   type NarrativeBundleState,
 } from "./narrativeBundle";
+import { areUniqueNpcSpeechReferenceIds } from "./npcSpeechReferences";
 
 export const NARRATIVE_EMOTIONS = [
   "neutral", "warm", "guarded", "afraid", "angry", "sad"
@@ -61,6 +62,8 @@ export type NarrativeNpcLineState = {
   readonly text: string;
   readonly emotion: NarrativeEmotion;
   readonly usedFactIds: readonly FactId[];
+  /** Authority-checked interaction history references used by this line. */
+  readonly usedInteractionActionIds: readonly string[];
   /** Task 5：该台词应答的强制节拍 ID 列表（player_utterance 节拍必须命中）。 */
   readonly answeredBeatIds?: readonly string[];
 };
@@ -72,6 +75,10 @@ export type NpcDialogueInScene = {
   readonly npcRole: string;
   /** 复用现有分页机制（paginateSpeechText）。 */
   readonly speechPages: readonly string[];
+  /** Authority-checked fact references used by this dialogue. */
+  readonly usedFactIds: readonly FactId[];
+  /** Authority-checked interaction references used by this dialogue. */
+  readonly usedInteractionActionIds: readonly string[];
   /** 台词来源；旧存档缺失时由 read model 按兼容规则推断。 */
   readonly speechSource?: "generated" | "fixture";
   /**
@@ -132,7 +139,9 @@ export type BattleNarrativeCheckpointState = {
   readonly currentScene: NarrativeSceneState;
   readonly choiceRegistry: readonly ApprovedChoice[];
   readonly bundle?: NarrativeBundleState;
+  readonly preparedContinuation?: PreparedContinuationState;
   readonly dialogueSession?: DialogueSessionState;
+  readonly dialogueResume?: DialogueResumeState;
 };
 
 /** Runtime AI is opt-in per save. Offline development presets never call it. */
@@ -215,11 +224,14 @@ function isNarrativeEvent(value: unknown): value is NarrativeEventState {
 
 function isNarrativeNpcLine(value: unknown): value is NarrativeNpcLineState {
   return isRecord(value)
-    && hasOnlyKeys(value, ["npcId", "text", "emotion", "usedFactIds", "answeredBeatIds"])
+    && hasOnlyKeys(value, ["npcId", "text", "emotion", "usedFactIds", "usedInteractionActionIds", "answeredBeatIds"])
     && isNonEmptyString(value.npcId)
     && isNonEmptyString(value.text)
     && (NARRATIVE_EMOTIONS as readonly unknown[]).includes(value.emotion)
     && isStringArray(value.usedFactIds)
+    && isStringArray(value.usedInteractionActionIds)
+    && areUniqueNpcSpeechReferenceIds(value.usedFactIds)
+    && areUniqueNpcSpeechReferenceIds(value.usedInteractionActionIds)
     && (value.answeredBeatIds === undefined || isStringArray(value.answeredBeatIds));
 }
 
@@ -235,11 +247,16 @@ function isNpcDialogue(value: unknown): value is NpcDialogueInScene {
   return isRecord(value)
     && hasOnlyKeys(value, [
       "npcId", "npcName", "npcRole", "speechPages", "speechSource", "speechPurpose", "smallTalk",
+      "usedFactIds", "usedInteractionActionIds",
     ])
     && isNonEmptyString(value.npcId)
     && typeof value.npcName === "string"
     && typeof value.npcRole === "string"
     && isStringArray(value.speechPages)
+    && isStringArray(value.usedFactIds)
+    && isStringArray(value.usedInteractionActionIds)
+    && areUniqueNpcSpeechReferenceIds(value.usedFactIds)
+    && areUniqueNpcSpeechReferenceIds(value.usedInteractionActionIds)
     && (value.speechSource === undefined
       || value.speechSource === "generated"
       || value.speechSource === "fixture")
@@ -300,13 +317,15 @@ function isDialogueResume(value: unknown): value is DialogueResumeState {
 
 function isBattleCheckpoint(value: unknown): value is BattleNarrativeCheckpointState {
   return isRecord(value)
-    && hasOnlyKeys(value, ["storySnapshot", "currentScene", "choiceRegistry", "bundle", "dialogueSession"])
+    && hasOnlyKeys(value, ["storySnapshot", "currentScene", "choiceRegistry", "bundle", "preparedContinuation", "dialogueSession", "dialogueResume"])
     && isRecord(value.storySnapshot)
     && isNarrativeScene(value.currentScene)
     && Array.isArray(value.choiceRegistry)
     && value.choiceRegistry.every(isApprovedChoice)
     && (value.bundle === undefined || parseNarrativeBundleState(value.bundle).ok)
-    && (value.dialogueSession === undefined || isDialogueSession(value.dialogueSession));
+    && (value.preparedContinuation === undefined || parsePreparedContinuationState(value.preparedContinuation).ok)
+    && (value.dialogueSession === undefined || isDialogueSession(value.dialogueSession))
+    && (value.dialogueResume === undefined || isDialogueResume(value.dialogueResume));
 }
 
 function isApprovedChoice(value: unknown): value is ApprovedChoice {
@@ -472,6 +491,8 @@ export function buildNpcDialoguePages(
       npcName: npc.name,
       npcRole: npc.role,
       speechPages: paginateSpeechText(text, NPC_SCENE_PAGE_CHAR_BUDGET),
+      usedFactIds: [],
+      usedInteractionActionIds: [],
       speechSource: isFocus ? focusSpeechSource : hasGeneratedLine ? "generated" : "fixture",
       speechPurpose: isFocus ? "focus" : "ambient",
       ...(smallTalk ? { smallTalk } : {}),

@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { repairOpeningGenerationCandidate, createOpeningGenerationSource, sanitizeOpeningFactReferences } from "./openingGenerationSource";
 import type { OpeningGenerationCandidate } from "@/game/domain/openingGenerationCandidate";
 import type { AiTransport } from "@ai-game/ai-transport";
@@ -36,7 +38,9 @@ function validCandidate(): OpeningGenerationCandidate {
       location: { name: "听雨客栈", description: "一座临近青石古道的落脚点。", scale: "town" },
       npc: {
         name: "沈掌柜", role: "关键线人", description: "掌握沿途消息的知情人。",
-        knownFactKeys: ["fact_inn"], privateFactKeys: ["fact_pact"], goals: ["查明幕后势力"],
+        knownFactKeys: ["fact_inn"], privateFactKeys: ["fact_pact"],
+        anchors: { selfConcept: "守住客栈秘密的人", values: ["守诺"], speechStyle: "短句", capabilityBoundaries: ["不会伪证"], taboos: [] },
+        goals: [{ horizon: "short", description: "查明幕后势力", priority: 4, reason: "客栈的线索正在消失" }],
       },
       quest: {
         name: "取得沈掌柜的信任", description: "从关键线人口中确认追索方向。",
@@ -53,15 +57,13 @@ describe("repairOpeningGenerationCandidate", () => {
     expect(candidate).not.toBeNull();
   });
 
-  it("数组字段为 null/非数组时机械修复为空数组", () => {
+  it("required NPC goals 被机械修复为空数组后仍因缺少创建材料而拒绝", () => {
     const raw = JSON.parse(JSON.stringify(validCandidate())) as Record<string, unknown>;
     (raw.world as Record<string, unknown>).publicFacts = null;
     (raw.opening as Record<string, unknown>).npc = { ...(raw.opening as Record<string, unknown>).npc as object, goals: "x" };
     const { candidate, repaired } = repairOpeningGenerationCandidate(raw);
     expect(repaired).toBe(true);
-    expect(candidate).not.toBeNull();
-    expect(candidate?.world.publicFacts).toEqual([]);
-    expect(candidate?.opening.npc.goals).toEqual([]);
+    expect(candidate).toBeNull();
   });
 
   it("字符串字段被修复为空字符串后仍经 parse 拒绝（不伪装）", () => {
@@ -130,6 +132,75 @@ describe("createOpeningGenerationSource", () => {
     const candidate = await source.generate({ gameType: "wuxia", seed: "s", gameLength: "short" });
     expect(candidate.opening.npc.name).toBe("沈掌柜");
     expect(candidate.opening.location.scale).toBe("town");
+  });
+
+  it("opening prompt requires five anchors and typed server-completed goal proposals", async () => {
+    let prompt = "";
+    const transport = {
+      complete: async (_config: unknown, messages: readonly { content: string }[]) => {
+        prompt = messages.map((message) => message.content).join("\n");
+        return { ok: true, content: JSON.stringify(validCandidate()), latencyMs: 1 };
+      },
+    } as unknown as AiTransport;
+    const source = createOpeningGenerationSource({ transport, config: { baseUrl: "x", apiKey: "k", model: "m" } });
+
+    await source.generate({ gameType: "wuxia", seed: "typed-opening", gameLength: "short" });
+
+    for (const field of ["selfConcept", "values", "speechStyle", "capabilityBoundaries", "taboos"]) {
+      expect(prompt).toContain(`\"${field}\"`);
+    }
+    for (const field of ["horizon", "description", "priority", "reason"]) {
+      expect(prompt).toContain(`\"${field}\"`);
+    }
+    expect(prompt).not.toContain('\"goals\": []');
+    expect(prompt).toContain("goalId/status 由服务端生成");
+  });
+
+  it("provider-shaped opening without anchors or typed goals stays an invalid response", async () => {
+    const raw = JSON.parse(JSON.stringify(validCandidate())) as Record<string, unknown>;
+    const npc = (raw.opening as Record<string, unknown>).npc as Record<string, unknown>;
+    delete npc.anchors;
+    delete npc.goals;
+    let calls = 0;
+    const transport = {
+      complete: async () => {
+        calls += 1;
+        return { ok: true, content: JSON.stringify(raw), latencyMs: 1 };
+      },
+    } as unknown as AiTransport;
+    const source = createOpeningGenerationSource({ transport, config: { baseUrl: "x", apiKey: "k", model: "m" } });
+
+    await expect(source.generate({ gameType: "wuxia", seed: "missing-creation", gameLength: "short" }))
+      .rejects.toMatchObject({ kind: "AI_RESPONSE_INVALID", phase: "opening" });
+    expect(calls).toBe(1);
+  });
+
+  it("live opening rejects unknown outer, NPC, and runtime relationship fields", async () => {
+    const mutations: readonly ((raw: Record<string, unknown>) => void)[] = [
+      (raw) => { raw.extra = true; },
+      (raw) => { ((raw.opening as Record<string, unknown>).npc as Record<string, unknown>).relationshipSeeds = [{ targetNpcId: "npc_1", stance: "ally", reason: "旧识" }]; },
+      (raw) => { ((raw.opening as Record<string, unknown>).npc as Record<string, unknown>).stage = "trusted"; },
+      (raw) => { ((raw.opening as Record<string, unknown>).npc as Record<string, unknown>).affinity = 10; },
+      (raw) => { ((raw.opening as Record<string, unknown>).npc as Record<string, unknown>).evidence = []; },
+      (raw) => { ((raw.opening as Record<string, unknown>).npc as Record<string, unknown>).actionId = "action_1"; },
+    ];
+
+    for (const mutate of mutations) {
+      const raw = JSON.parse(JSON.stringify(validCandidate())) as Record<string, unknown>;
+      mutate(raw);
+      let calls = 0;
+      const transport = {
+        complete: async () => {
+          calls += 1;
+          return { ok: true, content: JSON.stringify(raw), latencyMs: 1 };
+        },
+      } as unknown as AiTransport;
+      const source = createOpeningGenerationSource({ transport, config: { baseUrl: "x", apiKey: "k", model: "m" } });
+
+      await expect(source.generate({ gameType: "wuxia", seed: "unknown-opening-field", gameLength: "short" }))
+        .rejects.toMatchObject({ kind: "AI_RESPONSE_INVALID", phase: "opening" });
+      expect(calls).toBe(1);
+    }
   });
 
   it("接受 fenced JSON 并记录规范化，而不是各 source 自己解析 fence", async () => {
@@ -369,5 +440,20 @@ describe("createOpeningGenerationSource", () => {
       .rejects.toMatchObject({ kind: "AI_CALL_FAILED", phase: "opening" });
     const allLog = JSON.stringify(warns);
     expect(allLog).not.toContain("SECRET_KEY");
+  });
+
+  it("keeps production NPC creation explicit and free of legacy_import or untyped goal contracts", () => {
+    const productionSources = [
+      "src/game/application/createGame.ts",
+      "src/game/application/server/ai/openingGenerationSource.ts",
+      "src/game/application/server/ai/liveNarrativeBundleSource.ts",
+      "src/game/application/server/ai/liveWorldEvolutionSource.ts",
+    ].map((file) => readFileSync(resolve(process.cwd(), file), "utf8"));
+
+    for (const source of productionSources) {
+      expect(source).not.toContain("legacy_import");
+      expect(source).not.toMatch(/goals\s*:\s*(?:readonly\s+)?string\[\]/u);
+    }
+    expect(productionSources[2]).toContain("parseWorldDeltaProposal");
   });
 });

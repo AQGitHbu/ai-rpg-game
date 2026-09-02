@@ -160,14 +160,14 @@ function buildFocusedDialogueStoryState(focusNpcId = asNpcId("npc_1")): StorySta
         turn: 0,
         narration: "老板等着你的回应。",
         usedFactIds: [],
-        npcLine: { npcId: focusNpcId, text: "你怎么看？", emotion: "neutral", usedFactIds: [] },
+        npcLine: { npcId: focusNpcId, text: "你怎么看？", emotion: "neutral", usedFactIds: [], usedInteractionActionIds: [] },
         choices: [
           { choiceToken: support.choice.choiceToken, label: support.choice.label },
           { choiceToken: challenge.choice.choiceToken, label: challenge.choice.label },
         ],
         source: "fixture",
         event: { kind: "dialogue", focusNpcId },
-        npcDialogues: [{ npcId: focusNpcId, npcName: "老板", npcRole: "路人", speechPages: ["你怎么看？"] }],
+        npcDialogues: [{ npcId: focusNpcId, npcName: "老板", npcRole: "路人", speechPages: ["你怎么看？"], usedFactIds: [], usedInteractionActionIds: [] }],
       },
       choiceRegistry: [support.choice, challenge.choice],
     },
@@ -458,6 +458,159 @@ describe("performTurn 单次 CAS 提交", () => {
     expect(saved?.worldState.eventLedger).toBe(beforeLedger);
   });
 
+  it.each([
+    { label: "prepared continuation", source: "prepared" as const, terminalAction: { type: "battle_action", action: "guard" } as const },
+    { label: "narrative bundle", source: "bundle" as const, terminalAction: { type: "battle_action", action: "flee" } as const },
+  ])("真实 performTurn 战斗 checkpoint 恢复 $label 的完整 ready narrative", async ({ source, terminalAction }) => {
+    const enemy = {
+      id: asEnemyId("enemy_checkpoint"), name: "灰狼", tier: "normal" as const,
+      stats: toStatBlock(ENEMY_COMBAT_STATS.normal), locationId: loc1.id, tags: [],
+    };
+    const world = buildWorldState({
+      player: { name: "p", identity: "i", stats: toStatBlock(PLAYER_COMBAT_STATS) },
+      enemies: [enemy],
+    });
+    const baseStory = buildStoryState();
+    if (baseStory.narrative.status !== "ready") throw new Error("fixture narrative must be ready");
+    const choice = createApprovedChoice({
+      sceneId: "scene-before-checkpoint-battle",
+      basedOnRevision: 0,
+      label: "迎战",
+      action: { type: "attack", enemyId: enemy.id },
+    });
+    if (!choice.ok) throw new Error("checkpoint choice fixture invalid");
+    const beforeScene = {
+      ...baseStory.narrative.currentScene,
+      sceneId: "scene-before-checkpoint-battle",
+      choices: [{ choiceToken: choice.choice.choiceToken, label: choice.choice.label }],
+      event: { kind: "observe" as const, locationId: loc1.id },
+    };
+    const preparedContinuation = {
+      originJobId: asNarrativeJobId("job-battle-checkpoint-prepared"),
+      steps: [{
+        stepId: "battle-start",
+        objectiveKey: "battle",
+        consumptionGroupKey: "battle",
+        trigger: { kind: "battle_started" as const, enemyId: enemy.id },
+        scene: {
+          segments: [{ beatId: "battle", text: "灰狼扑来。" }],
+          event: { kind: "battle" as const, enemyId: enemy.id },
+          npcLine: null,
+          objectiveLink: null,
+          choiceSeeds: [],
+          source: "fixture" as const,
+        },
+        nextStepIds: [],
+      }],
+      activeStepIds: ["battle-start"],
+    };
+    const narrativeBundle = {
+      contractVersion: 1 as const,
+      originJobId: asNarrativeJobId("job-battle-checkpoint-bundle"),
+      steps: [{
+        stepId: "battle-start",
+        objectiveKey: "battle",
+        consumptionGroupKey: "battle",
+        trigger: { kind: "battle_started" as const, enemyId: enemy.id },
+        scene: {
+          segments: [{ beatId: "battle", text: "灰狼扑来。" }],
+          event: { kind: "battle" as const, enemyId: enemy.id },
+          npcLine: null,
+          objectiveLink: null,
+          choiceSeeds: [],
+          source: "fixture" as const,
+        },
+        nextStepIds: [],
+      }],
+      activeStepIds: ["battle-start"],
+      terminal: { kind: "next_decision" as const, target: { kind: "continuation_step" as const, stepId: "battle-start" } },
+    };
+    const dialogueResume = {
+      objectiveKey: "quest_0:0",
+      npcId: npc1.id,
+      locationId: loc1.id,
+      scene: beforeScene,
+      choiceRegistry: [choice.choice],
+    };
+    const story: StoryState = {
+      ...baseStory,
+      // The repository's commit boundary keeps the materialized cursor aligned
+      // with the authoritative ledger. Keep this real-game fixture consistent
+      // before asserting an exact rollback snapshot.
+      reducedThroughEventCount: world.eventLedger.length,
+      narrative: {
+        ...baseStory.narrative,
+        currentScene: beforeScene,
+        choiceRegistry: [choice.choice],
+        dialogueSession: { npcId: npc1.id, turnCount: 1, requiredTurns: 2, completed: false },
+        dialogueResume,
+        ...(source === "prepared"
+          ? { preparedContinuation }
+          : { mode: "ai" as const, narrativeBundle }),
+      },
+    };
+    const { repo, record } = createSpyRepo(world, story);
+    const opening = await performTurn({
+      gameId: asGameId("g1"),
+      actionId: `open-${source}-checkpoint-battle`,
+      interaction: { kind: "fixed_choice", choiceToken: choice.choice.choiceToken },
+      expectedRevision: 0,
+      choiceMap: new Map([[choice.choice.choiceToken, choice.choice.action]]),
+    }, { repository: repo, now: () => "2026-01-02" });
+    expect(opening.ok).toBe(true);
+    const opened = record();
+    if (opened === null || opened.worldState.battle.status !== "active" || opened.storyState.narrative.status !== "ready") {
+      throw new Error("performTurn must create an active battle with ready narrative");
+    }
+    const checkpoint = opened.storyState.narrative.battleCheckpoint;
+    if (checkpoint === undefined) throw new Error("battle checkpoint must be persisted");
+    expect(checkpoint.choiceRegistry).toEqual([choice.choice]);
+    expect(checkpoint.dialogueResume).toEqual(dialogueResume);
+    if (source === "prepared") expect(checkpoint.preparedContinuation).toEqual(preparedContinuation);
+    else expect(checkpoint.bundle).toEqual(narrativeBundle);
+
+    const activeBattle = opened.worldState.battle;
+    if (activeBattle.preBattleSnapshot === undefined || activeBattle.combatants === undefined) {
+      throw new Error("modern battle must retain its world snapshot");
+    }
+    const midBattle = {
+      ...activeBattle,
+      playerHp: 1,
+      combatants: activeBattle.combatants.map((unit) => unit.source.kind === "protagonist" ? { ...unit, hp: 1 } : unit),
+    };
+    const midNarrative = {
+      ...opened.storyState.narrative,
+      currentScene: { ...opened.storyState.narrative.currentScene, narration: "战中暂态" },
+      choiceRegistry: [],
+      dialogueSession: { npcId: npc1.id, turnCount: 2, requiredTurns: 2, completed: true },
+      dialogueResume: { ...dialogueResume, objectiveKey: "mutated-during-battle" },
+    };
+    await repo.applyState({
+      gameId: asGameId("g1"),
+      expectedRevision: opened.revision,
+      nextWorldState: {
+        ...opened.worldState,
+        battle: midBattle,
+        eventLedger: [...opened.worldState.eventLedger, {
+          type: "npc_dialogue_completed", npcId: npc1.id, actionId: "mid-battle-action-evidence", occurredAt: "2026-01-02",
+        }],
+      },
+      nextStoryState: { ...opened.storyState, narrative: midNarrative },
+    });
+    const ended = await performTurn({
+      gameId: asGameId("g1"),
+      actionId: `end-${source}-checkpoint-battle`,
+      interaction: { kind: "fixed_choice", choiceToken: choice.choice.choiceToken },
+      expectedRevision: opened.revision + 1,
+      choiceMap: new Map([[choice.choice.choiceToken, terminalAction]]),
+    }, { repository: repo, now: () => "2026-01-02" });
+    expect(ended).toMatchObject({ ok: true });
+    const restored = record();
+    if (restored === null) throw new Error("restored record must persist");
+    expect(restored.storyState).toEqual(story);
+    expect(restored.worldState.eventLedger).toEqual(world.eventLedger);
+  });
+
   it("非决策行动没有 bundle step 时零写入", async () => {
     const store = createSpyRepo(buildWorldState(), buildStoryState());
     const result = await performTurn(
@@ -596,7 +749,7 @@ describe("performTurn 单次 CAS 提交", () => {
             scene: {
               segments: [{ beatId: "arrival", text: "守夜人站在门前。" }],
               event: { kind: "travel", locationId: loc2.id },
-              npcLine: { npcId: npc2.id, text: "来者何人？", emotion: "guarded", usedFactIds: [], answeredBeatIds: [] },
+              npcLine: { npcId: npc2.id, text: "来者何人？", emotion: "guarded", usedFactIds: [], usedInteractionActionIds: [], answeredBeatIds: [] },
               objectiveLink: null,
               choiceSeeds: [
                 { label: "表明身份", action: { type: "talk", npcId: npc2.id, dialogueAct: "support" } },
@@ -968,7 +1121,7 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
             turn: 1,
             narration: "老板等着你的下一句话。",
             usedFactIds: [],
-            npcLine: { npcId: asNpcId("npc_1"), text: "请继续。", emotion: "neutral", usedFactIds: [] },
+            npcLine: { npcId: asNpcId("npc_1"), text: "请继续。", emotion: "neutral", usedFactIds: [], usedInteractionActionIds: [] },
             choices: [
               { choiceToken: "tok-1", label: "继续询问" },
               { choiceToken: "tok-2", label: "提出质疑" },
@@ -1041,10 +1194,10 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
     const npc = saved.worldState.npcs.find((n) => n.id === asNpcId("npc_1"))!;
     expect(npc.met).toBe(true);
     // 自定义输入不在本地解析情感/意图；按中性 ask 结算。
-    expect(npc.memory.relationship.affinity).toBe(6);
-    expect(npc.memory.emotion).toBe("warm");
-    expect(npc.memory.interactionHistory[0]!.relationshipDelta).toBe(6);
-    expect(npc.memory.interactionHistory[0]!.summary).toContain("关系+6");
+    expect(npc.memory.relationship.affinity).toBe(0);
+    expect(npc.memory.emotion).toBe("neutral");
+    expect(npc.memory.interactionHistory[0]!.relationshipDelta).toBe(0);
+    expect(npc.memory.interactionHistory[0]!.summary).toContain("关系+0");
 
     const generation = pendingNarrative(saved.storyState.narrative);
     expect(generation.status).toBe("provider_pending");
@@ -1072,10 +1225,10 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
 
     const supportNpc = supportRepo.record()!.worldState.npcs.find((n) => n.id === asNpcId("npc_1"))!;
     const challengeNpc = challengeRepo.record()!.worldState.npcs.find((n) => n.id === asNpcId("npc_1"))!;
-    expect(challengeNpc.memory.relationship.affinity).toBe(6);
+    expect(challengeNpc.memory.relationship.affinity).toBe(0);
     expect(challengeNpc.memory.relationship.affinity).toBe(supportNpc.memory.relationship.affinity);
-    expect(challengeNpc.memory.interactionHistory[0]!.relationshipDelta).toBe(6);
-    expect(supportNpc.memory.interactionHistory[0]!.relationshipDelta).toBe(6);
+    expect(challengeNpc.memory.interactionHistory[0]!.relationshipDelta).toBe(0);
+    expect(supportNpc.memory.interactionHistory[0]!.relationshipDelta).toBe(0);
     const chaGen = pendingNarrative(challengeRepo.record()!.storyState.narrative);
     expect(chaGen.status).toBe("provider_pending");
     if (chaGen.status !== "provider_pending") return;
