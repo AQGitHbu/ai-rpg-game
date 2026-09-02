@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CommittedNarrativeEvent, NarrativeEventPayload } from "@/game/domain/events";
+import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
 import { createWorldStateFixtureWith, emptyProjection, updateWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 import { WORLD_STATE_SCHEMA_VERSION } from "@/game/domain/worldState";
 import { asEnemyId, asGenerationId, asLocationId } from "@/game/domain/worldEntity";
@@ -244,9 +245,9 @@ describe("validatePersistableWorldState", () => {
     const result = validatePersistableWorldState({
       ...valid,
       eventLedger: [
-        { type: "npc_dialogue_completed", npcId: "npc_1", occurredAt: "now" } as unknown as CommittedNarrativeEvent,
-        { type: "npc_dialogue_completed", npcId: "npc_1", actionId: "dialogue_action", occurredAt: "now" } as unknown as CommittedNarrativeEvent,
-        { type: "item_given", itemId: "item_1", npcId: "npc_1", locationId: "loc", actionId: "give_action", occurredAt: "now" } as unknown as CommittedNarrativeEvent,
+        makeCommittedEvent({ type: "npc_dialogue_completed", npcId: "npc_1" as any } as unknown as NarrativeEventPayload),
+        makeCommittedEvent({ type: "npc_dialogue_completed", npcId: "npc_1" as any } as unknown as NarrativeEventPayload, { actionId: "dialogue_action" } as Partial<CommittedNarrativeEvent>),
+        makeCommittedEvent({ type: "item_given", itemId: "item_1" as any, npcId: "npc_1" as any, locationId: "loc" as any } as unknown as NarrativeEventPayload, { actionId: "give_action" } as Partial<CommittedNarrativeEvent>),
       ],
     });
     expect(result).toMatchObject({ ok: true });

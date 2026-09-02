@@ -7,6 +7,7 @@ import { createInitialWorldState, type LocationEntry } from "@/game/domain/world
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { asLocationId, asNpcId, asGenerationId, asQuestId } from "@/game/domain/worldEntity";
 import { asNarrativeJobId, asTurnId, CommittedNarrativeEvent, type NarrativeEventPayload } from "@/game/domain/events";
+import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
@@ -94,7 +95,7 @@ describe("commitState", () => {
       ...worldState,
       eventLedger: [
         ...worldState.eventLedger,
-        { type: "quest_completed", questId: asQuestId("q1"), occurredAt: "2026-01-02" } as unknown as CommittedNarrativeEvent,
+        makeCommittedEvent({ type: "quest_completed", questId: asQuestId("q1") } as unknown as NarrativeEventPayload, { committedAt: "2026-01-02" }),
       ],
     };
 

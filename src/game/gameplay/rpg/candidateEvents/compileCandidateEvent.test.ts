@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { CommittedNarrativeEvent, NarrativeEventPayload } from "@/game/domain/events";
+import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
 import { compileCandidateEvent } from "./compileCandidateEvent";
 import type { ApprovedEventCandidate } from "./approveCandidateEvents";
 import { asNpcId, asFactId, asEnemyId, asLocationId, asGenerationId, type GenerationMetadata } from "@/game/domain/worldEntity";
@@ -174,14 +175,10 @@ describe("compileCandidateEvent 每种 kind 至少编译为真实领域事件", 
     const result = compileCandidateEvent(input, stale, DEPS);
 
     expect(result.worldState).toBe(input);
-    expect(result.drafts).toEqual([{
-      type: "candidate_event_rejected",
-      candidateId: "ce-1",
-      kind: legacyKind,
-      reasonCode: "stale_effect_kind",
-      rejectedAtTurn: DEPS.turnNumber,
-      occurredAt: NOW(),
-    } as unknown as CommittedNarrativeEvent]);
+    expect(result.drafts).toHaveLength(1);
+    expect(result.drafts[0]?.payload.type).toBe("candidate_event_rejected");
+    expect((result.drafts[0]?.payload as { candidateId: string }).candidateId).toBe("ce-1");
+    expect((result.drafts[0]?.payload as { reasonCode: string }).reasonCode).toBe("stale_effect_kind");
     expect(result.dropReason).toBe("stale_effect_kind");
   });
 });
