@@ -1,4 +1,4 @@
-import type { GameEvent } from "@/game/domain/events";
+import type { CommittedNarrativeEvent } from "@/game/domain/events";
 import {
   projectEntityStore,
   type EntityCompatibilityProjection,
@@ -78,7 +78,7 @@ const BASE_PROJECTION: EntityCompatibilityProjection = {
 };
 
 /** 与 createInitialWorldState 一致：开局事件仍在账本里。 */
-const INITIALIZED_LEDGER: readonly GameEvent[] = [{ type: "game_initialized", generation: GENERATION }];
+const INITIALIZED_LEDGER: readonly CommittedNarrativeEvent[] = [{ type: "game_initialized", generation: GENERATION }];
 
 /** 基础世界：客栈 + 老板 + 盟誓印谱 + 野狼 + 未发现事实（外加 loc_1 连通的山道）。 */
 export function baseWorld(overrides: WorldStateFixtureOverrides = {}): WorldState {

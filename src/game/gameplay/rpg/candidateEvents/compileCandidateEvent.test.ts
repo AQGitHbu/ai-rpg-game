@@ -106,8 +106,8 @@ describe("compileCandidateEvent 每种 kind 至少编译为真实领域事件", 
       involvedEntityIds: ["npc_1", "fact_2"],
     };
     const result = compileCandidateEvent(makeWorldState(), c, DEPS);
-    expect(result.events.some((e) => e.type === "fact_discovered")).toBe(true);
-    expect(result.events.some((e) => e.type === "candidate_event_activated")).toBe(true);
+    expect(result.drafts.some((e) => e.payload.type === "fact_discovered")).toBe(true);
+    expect(result.drafts.some((e) => e.payload.type === "candidate_event_activated")).toBe(true);
     const fact = result.worldState.worldFacts.find((f) => f.factId === asFactId("fact_2"));
     expect(fact?.discovered).toBe(true);
   });
@@ -120,8 +120,8 @@ describe("compileCandidateEvent 每种 kind 至少编译为真实领域事件", 
     };
     const result = compileCandidateEvent(makeWorldState(), c, DEPS);
     // 必须产生真实事件，而非仅 tension 文本
-    expect(result.events.some((e) => e.type === "candidate_event_activated")).toBe(true);
-    expect(result.events.filter((e) => e.type !== "candidate_event_activated").length).toBeGreaterThan(0);
+    expect(result.drafts.some((e) => e.payload.type === "candidate_event_activated")).toBe(true);
+    expect(result.drafts.filter((e) => e.payload.type !== "candidate_event_activated").length).toBeGreaterThan(0);
   });
 
   it("enemy_appears → 敌人地点遭遇结构化事件", () => {
@@ -131,8 +131,8 @@ describe("compileCandidateEvent 每种 kind 至少编译为真实领域事件", 
       involvedEntityIds: ["enemy_1", "loc_1"],
     };
     const result = compileCandidateEvent(makeWorldState(), c, DEPS);
-    expect(result.events.filter((e) => e.type !== "candidate_event_activated").length).toBeGreaterThan(0);
-    expect(result.events.some((e) => e.type === "candidate_event_activated")).toBe(true);
+    expect(result.drafts.filter((e) => e.payload.type !== "candidate_event_activated").length).toBeGreaterThan(0);
+    expect(result.drafts.some((e) => e.payload.type === "candidate_event_activated")).toBe(true);
   });
 
   it("thread_complicates / thread_resolves 产生结构化事件", () => {
@@ -145,8 +145,8 @@ describe("compileCandidateEvent 每种 kind 至少编译为真实领域事件", 
         involvedEntityIds: ["thread_main"],
       };
       const result = compileCandidateEvent(makeWorldState(), c, DEPS);
-      expect(result.events.filter((e) => e.type !== "candidate_event_activated").length).toBeGreaterThan(0);
-      expect(result.events.some((e) => e.type === "candidate_event_activated")).toBe(true);
+      expect(result.drafts.filter((e) => e.payload.type !== "candidate_event_activated").length).toBeGreaterThan(0);
+      expect(result.drafts.some((e) => e.payload.type === "candidate_event_activated")).toBe(true);
     }
   });
 
@@ -157,7 +157,7 @@ describe("compileCandidateEvent 每种 kind 至少编译为真实领域事件", 
       involvedEntityIds: ["loc_2"],
     };
     const result = compileCandidateEvent(makeWorldState(), c, DEPS);
-    expect(result.events.filter((e) => e.type !== "candidate_event_activated").length).toBeGreaterThan(0);
+    expect(result.drafts.filter((e) => e.payload.type !== "candidate_event_activated").length).toBeGreaterThan(0);
     expect(result.worldState.unlockedLocationIds).toContain(asLocationId("loc_2"));
   });
 
@@ -173,7 +173,7 @@ describe("compileCandidateEvent 每种 kind 至少编译为真实领域事件", 
     const result = compileCandidateEvent(input, stale, DEPS);
 
     expect(result.worldState).toBe(input);
-    expect(result.events).toEqual([{
+    expect(result.drafts).toEqual([{
       type: "candidate_event_rejected",
       candidateId: "ce-1",
       kind: legacyKind,

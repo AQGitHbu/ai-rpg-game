@@ -1,5 +1,5 @@
 import type { Action } from "@/game/domain/action";
-import type { GameEvent } from "@/game/domain/events";
+import type { CommittedNarrativeEvent } from "@/game/domain/events";
 import type { ResolvedEvent } from "@/game/domain/resolvedEvent";
 import type { NarrativeSceneState } from "@/game/domain/narrative";
 import type { StoryState } from "@/game/domain/storyState";
@@ -22,16 +22,16 @@ export type ConsumePreparedContinuationResult =
   | { readonly ok: false; readonly code: PreparedContinuationErrorCode };
 
 function battleEventFor(
-  events: readonly GameEvent[],
-): Extract<GameEvent, { readonly type: "battle_started" | "battle_resolved" }> | undefined {
-  return events.find((event): event is Extract<GameEvent, { readonly type: "battle_started" | "battle_resolved" }> =>
-    event.type === "battle_started" || event.type === "battle_resolved");
+  events: readonly CommittedNarrativeEvent[],
+): CommittedNarrativeEvent | undefined {
+  return events.find((event) =>
+    event.kind === "battle_started" || event.kind === "battle_resolved");
 }
 
 function triggerFor(
   action: Action,
   resolvedEvent: ResolvedEvent,
-  events: readonly GameEvent[],
+  events: readonly CommittedNarrativeEvent[],
 ): PreparedContinuationTrigger | null {
   if (action.type === "move") return { kind: "move", locationId: action.locationId as LocationId };
   if (action.type === "investigate") {
@@ -40,13 +40,15 @@ function triggerFor(
   if (resolvedEvent.eventKind !== "battle") return null;
   const battleEvent = battleEventFor(events);
   if (battleEvent === undefined) return null;
-  if (battleEvent.type === "battle_started") {
-    return { kind: "battle_started", enemyId: battleEvent.enemyId as EnemyId };
+  if (battleEvent.kind === "battle_started") {
+    const p = battleEvent.payload as { enemyId: EnemyId };
+    return { kind: "battle_started", enemyId: p.enemyId };
   }
+  const p = battleEvent.payload as { enemyId: EnemyId; outcome: "victory" | "defeat" | "withdraw" };
   return {
     kind: "battle_resolved",
-    enemyId: battleEvent.enemyId as EnemyId,
-    outcome: battleEvent.outcome,
+    enemyId: p.enemyId,
+    outcome: p.outcome,
   };
 }
 
@@ -54,7 +56,7 @@ export function hasPreparedContinuationMatch(input: {
   readonly storyState: StoryState;
   readonly action: Action;
   readonly resolvedEvent: ResolvedEvent;
-  readonly domainEvents: readonly GameEvent[];
+  readonly domainEvents: readonly CommittedNarrativeEvent[];
 }): boolean {
   if (input.storyState.narrative.status !== "ready") return false;
   const prepared = input.storyState.narrative.preparedContinuation;
@@ -158,7 +160,7 @@ export function consumePreparedContinuation(input: {
   readonly action: Action;
   readonly postCommitRevision: number;
   readonly resolvedEvent: ResolvedEvent;
-  readonly domainEvents: readonly GameEvent[];
+  readonly domainEvents: readonly CommittedNarrativeEvent[];
   readonly now: () => string;
 }): ConsumePreparedContinuationResult {
   void input.beforeWorldState;

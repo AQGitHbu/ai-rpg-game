@@ -291,7 +291,7 @@ describe("调查选择旅程（Task 6 端到端）", () => {
     const firstRecord = first.record();
     const secondRecord = second.record();
     expect(firstRecord.worldState.eventLedger).toEqual(secondRecord.worldState.eventLedger);
-    expect(firstRecord.worldState.eventLedger.some((event) => event.type === "fact_discovered")).toBe(false);
+    expect(firstRecord.worldState.eventLedger.some((event) => event.kind === "fact_discovered")).toBe(false);
     expect(firstRecord.storyState.tension).toBe(secondRecord.storyState.tension);
   });
 });

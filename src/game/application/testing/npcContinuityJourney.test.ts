@@ -462,7 +462,7 @@ describe("NPC continuity long-form journey", () => {
         if (returned.ok) {
           const returnedNpc = npcById(returned.nextWorldState, dynamicNpcId);
           const returnedEdge = playerEdge(returnedNpc);
-          expect(returned.events).toContainEqual(expect.objectContaining({ type: "item_given", itemId: returnGift.id }));
+          expect(returned.drafts).toContainEqual(expect.objectContaining({ type: "item_given", itemId: returnGift.id }));
           expect(returnedEdge.evidence.at(-1)).toMatchObject({ signal: "gave_item", actionId: giftDeps.actionId });
           expect(returnedEdge.commitments).toEqual([expect.objectContaining({
             kind: "debt",

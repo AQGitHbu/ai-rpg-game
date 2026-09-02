@@ -7,7 +7,7 @@ import {
 } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { asLocationId, asNpcId, asGenerationId, asEnemyId, asQuestId, asFactId, type GenerationMetadata, type QuestId, type EndingId, type FactId } from "@/game/domain/worldEntity";
-import { asTurnId, type GameEvent } from "@/game/domain/events";
+import { asTurnId, type CommittedNarrativeEvent } from "@/game/domain/events";
 import {
   createWorldStateFixtureWith,
   emptyProjection,
@@ -32,7 +32,7 @@ const BASE = emptyProjection({
   currentLocationId: LOC_1.id,
   unlockedLocationIds: [LOC_1.id, LOC_2.id],
 });
-const INITIALIZED_LEDGER: readonly GameEvent[] = [{ type: "game_initialized", generation: GENERATION }];
+const INITIALIZED_LEDGER: readonly CommittedNarrativeEvent[] = [{ type: "game_initialized", generation: GENERATION }];
 
 /** 一次传入完整兼容投影：覆盖项与 entityStore 由同一组装点重建。 */
 function makeWorld(overrides: WorldStateFixtureOverrides = {}): WorldState {
@@ -112,7 +112,7 @@ describe("ruleEngine facade", () => {
     expect(first.ok).toBe(true);
     if (!first.ok) throw new Error("第一轮对话不应失败");
     expect(first.resolution.nextWorldState.quests[0]?.status).toBe("active");
-    expect(first.resolution.domainEvents.map((event) => event.type)).not.toContain("quest_completed");
+    expect(first.resolution.domainEvents.map((event) => event.kind)).not.toContain("quest_completed");
     expect(first.resolution.nextStoryState.narrative.dialogueSession).toMatchObject({ turnCount: 1, completed: false });
 
     const second = resolveTurn(
@@ -128,7 +128,7 @@ describe("ruleEngine facade", () => {
     expect(second.ok).toBe(true);
     if (!second.ok) throw new Error("第二轮对话不应失败");
     expect(second.resolution.nextWorldState.quests[0]?.status).toBe("completed");
-    expect(second.resolution.domainEvents.map((event) => event.type)).toContain("quest_completed");
+    expect(second.resolution.domainEvents.map((event) => event.kind)).toContain("quest_completed");
     expect(second.resolution.domainEvents).toContainEqual(expect.objectContaining({
       type: "npc_dialogue_completed",
       npcId: npc.id,
@@ -234,7 +234,7 @@ describe("ruleEngine facade", () => {
       completed: false,
     });
     expect(result.resolution.nextWorldState.quests[0]?.status).toBe("active");
-    expect(result.resolution.domainEvents.map((event) => event.type)).not.toContain("quest_completed");
+    expect(result.resolution.domainEvents.map((event) => event.kind)).not.toContain("quest_completed");
   });
 });
 
@@ -299,7 +299,7 @@ describe("resolveTurn facade", () => {
     expect(r.nextStoryState.turnNumber).toBe(r.turnNumber);
     expect(r.primaryResult.status).toBe("success");
     expect(r.primaryResult.eventKind).toBe("travel");
-    expect(r.domainEvents.map((e) => e.type)).toEqual(["location_visited"]);
+    expect(r.domainEvents.map((e) => e.kind)).toEqual(["location_visited"]);
     expect(r.nextWorldState.eventLedger).toEqual([...ws.eventLedger, ...r.domainEvents]);
   });
 
@@ -315,7 +315,7 @@ describe("resolveTurn facade", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unexpected rejection");
     // Spec §13.5：freeform 不产生实质世界变化，但必须以结构化 player_intent_expressed 事件落账意图。
-    expect(result.resolution.domainEvents.map((e) => e.type)).toEqual(["player_intent_expressed"]);
+    expect(result.resolution.domainEvents.map((e) => e.kind)).toEqual(["player_intent_expressed"]);
     expect(result.resolution.nextWorldState).not.toBe(ws);
     expect(result.resolution.nextWorldState.eventLedger).toEqual([
       ...ws.eventLedger,
@@ -336,7 +336,7 @@ describe("resolveTurn facade", () => {
     const r = result.resolution;
     expect(r.primaryResult.status).toBe("partial_success");
     expect(r.primaryResult.eventKind).toBe("dialogue");
-    expect(r.domainEvents.map((e) => e.type)).toEqual(["npc_met"]);
+    expect(r.domainEvents.map((e) => e.kind)).toEqual(["npc_met"]);
     expect(r.nextWorldState.eventLedger).toEqual([...wsWithHostile.eventLedger, ...r.domainEvents]);
   });
 
@@ -368,7 +368,7 @@ describe("resolveTurn facade", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unexpected failure");
     const r = result.resolution;
-    expect(r.domainEvents.map((e) => e.type)).toEqual([
+    expect(r.domainEvents.map((e) => e.kind)).toEqual([
       "location_visited",
       "quest_completed",
     ]);
@@ -426,7 +426,7 @@ describe("resolveTurn facade", () => {
     );
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unexpected failure");
-    expect(result.resolution.domainEvents.map((event) => event.type)).toContain("ending_reached");
+    expect(result.resolution.domainEvents.map((event) => event.kind)).toContain("ending_reached");
     expect(result.resolution.nextWorldState.ending).toEqual({ endingId: "ending_trust", outcome: "success" });
   });
 
@@ -479,7 +479,7 @@ describe("resolveTurn facade", () => {
     expect(first.ok).toBe(true);
     if (!first.ok) throw new Error("battle start unexpectedly rejected");
     expect(first.resolution.primaryResult.status).toBe("success");
-    expect(first.resolution.domainEvents.map((e) => e.type)).toEqual(["battle_started"]);
+    expect(first.resolution.domainEvents.map((e) => e.kind)).toEqual(["battle_started"]);
     expect(first.resolution.nextWorldState.eventLedger).toEqual([...attackWs.eventLedger, ...first.resolution.domainEvents]);
 
     const second = resolveTurn(
@@ -493,7 +493,7 @@ describe("resolveTurn facade", () => {
     const r = second.resolution;
     expect(r.primaryResult.status).toBe("success");
     expect(r.primaryResult.eventKind).toBe("battle");
-    expect(r.domainEvents.map((e) => e.type)).toEqual([
+    expect(r.domainEvents.map((e) => e.kind)).toEqual([
       "battle_round_resolved",
       "battle_resolved",
       "enemy_defeated",
@@ -545,7 +545,7 @@ describe("candidate reaction events integrate after player action (Task 20)", ()
     if (!result.ok) throw new Error("move should not be invalidated by candidate");
     const r = result.resolution;
     // 玩家事件（location_visited）必须先于反应事件（battle_started）与激活审计。
-    const types = r.domainEvents.map((e) => e.type);
+    const types = r.domainEvents.map((e) => e.kind);
     expect(types[0]).toBe("location_visited");
     expect(types).toContain("battle_started");
     expect(types).toContain("candidate_event_activated");
@@ -576,10 +576,10 @@ describe("candidate reaction events integrate after player action (Task 20)", ()
     if (!result.ok) throw new Error("explore should succeed");
     const r = result.resolution;
     // 最多批准 1 条（ce-a 或 ce-b）
-    const activated = r.domainEvents.filter((e) => e.type === "candidate_event_activated");
+    const activated = r.domainEvents.filter((e) => e.kind === "candidate_event_activated");
     expect(activated.length).toBe(1);
     // 过期候选从池移除并记录 expired 审计
-    expect(r.domainEvents.some((e) => e.type === "candidate_event_expired" && e.candidateId === "ce-old")).toBe(true);
+    expect(r.domainEvents.some((e) => e.kind === "candidate_event_expired" && e.candidateId === "ce-old")).toBe(true);
     const remainingIds = r.nextStoryState.candidateEventPool.map((c) => c.id);
     expect(remainingIds).not.toContain("ce-old");
     // 未批准者保留在池（ce-a 或 ce-b 之一）
@@ -618,10 +618,10 @@ describe("resolveTurn — 自动揭示无 approach 的必经事实 (Task 3)", ()
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("explore should succeed");
     const r = result.resolution;
-    const types = r.domainEvents.map((e) => e.type);
+    const types = r.domainEvents.map((e) => e.kind);
     expect(types).toContain("fact_discovered");
     expect(types).toContain("quest_completed");
-    expect(r.domainEvents.find((e) => e.type === "fact_discovered")).toMatchObject({ type: "fact_discovered", factId: FACT_1_ID });
+    expect(r.domainEvents.find((e) => e.kind === "fact_discovered")).toMatchObject({ type: "fact_discovered", factId: FACT_1_ID });
     expect(r.nextWorldState.worldFacts[0]?.discovered).toBe(true);
     expect(r.nextWorldState.quests[0]?.status).toBe("completed");
     expect(r.nextStoryState.tension).toBe(50); // 30 + 12 (fact_discovered) + 8 (quest_completed)
@@ -640,7 +640,7 @@ describe("resolveTurn — 自动揭示无 approach 的必经事实 (Task 3)", ()
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("explore should succeed");
     const r = result.resolution;
-    expect(r.domainEvents.filter((e) => e.type === "fact_discovered")).toHaveLength(1);
+    expect(r.domainEvents.filter((e) => e.kind === "fact_discovered")).toHaveLength(1);
     expect(r.nextWorldState.quests[0]?.status).toBe("active");
     expect(r.nextWorldState.worldFacts[1]?.discovered).toBe(false);
   });
@@ -660,7 +660,7 @@ describe("resolveTurn — 自动揭示无 approach 的必经事实 (Task 3)", ()
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("explore should succeed");
     const r = result.resolution;
-    expect(r.domainEvents.some((e) => e.type === "fact_discovered")).toBe(true);
+    expect(r.domainEvents.some((e) => e.kind === "fact_discovered")).toBe(true);
     expect(r.nextWorldState.worldFacts[0]?.discovered).toBe(true);
     expect(r.nextWorldState.quests[0]?.status).toBe("completed");
   });
@@ -704,7 +704,7 @@ describe("resolveTurn — 自动揭示无 approach 的必经事实 (Task 3)", ()
     if (!result.ok) throw new Error("move should succeed");
     expect(result.resolution.nextWorldState.currentLocationId).toBe(asLocationId("loc_2"));
     expect(result.resolution.nextWorldState.worldFacts[0]?.discovered).toBe(true);
-    expect(result.resolution.domainEvents.map((event) => event.type)).toContain("fact_discovered");
+    expect(result.resolution.domainEvents.map((event) => event.kind)).toContain("fact_discovered");
     expect(result.resolution.nextStoryState.reveal).toEqual({
       questId: asQuestId("quest_move_fact"), visibleObjectiveIndex: 1,
     });
@@ -724,7 +724,7 @@ describe("resolveTurn — 自动揭示无 approach 的必经事实 (Task 3)", ()
     const result = resolveTurn(autoWs, ss, { type: "explore" }, "act_auto4", 0, asTurnId("turn_auto4"), "fixed_choice", deps);
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("explore should succeed");
-    expect(result.resolution.domainEvents.some((e) => e.type === "fact_discovered")).toBe(false);
+    expect(result.resolution.domainEvents.some((e) => e.kind === "fact_discovered")).toBe(false);
   });
 
   it("其它地点的事实不自动揭示", () => {
@@ -735,7 +735,7 @@ describe("resolveTurn — 自动揭示无 approach 的必经事实 (Task 3)", ()
     const result = resolveTurn(autoWs, ss, { type: "explore" }, "act_auto5", 0, asTurnId("turn_auto5"), "fixed_choice", deps);
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("explore should succeed");
-    expect(result.resolution.domainEvents.some((e) => e.type === "fact_discovered")).toBe(false);
+    expect(result.resolution.domainEvents.some((e) => e.kind === "fact_discovered")).toBe(false);
     expect(result.resolution.nextWorldState.worldFacts[0]?.discovered).toBe(false);
   });
 });

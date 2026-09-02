@@ -1,7 +1,10 @@
 import type {
   LocationId, NpcId, ItemId, QuestId, EnemyId, EndingId, GenerationMetadata,
 } from "./worldEntity";
-import type { GameEvent } from "./events";
+import { PLAYER_ENTITY_ID } from "./worldEntity";
+import type { CommittedNarrativeEvent, NarrativeEventDraft, NarrativeEventPayload, EventId, TurnId } from "./events";
+import { asTurnId, eventIdFor, episodeIdForTurn } from "./events";
+import { commitEventDrafts, type EventCommitSource } from "./eventLedger";
 import type { ActiveBattleCombatState } from "./combat";
 import type {
   EnemyEntry, FactionEntry, EndingEntry, ItemEntry, LocationEntry, NpcEntry,
@@ -33,15 +36,39 @@ export type BattleState =
 
 export type BattleStartSnapshot = Readonly<{
   readonly entityStore: EntityStore;
-  readonly eventLedger: readonly GameEvent[];
-}>;
+  readonly eventLedger: readonly CommittedNarrativeEvent[];
+}>
 
 export type EndingState = { readonly endingId: EndingId; readonly outcome: "success" | "failure" } | null;
 
 // ── World State ──
 
-/** 世界存档 schema 版本唯一来源：v4 起 NPC record 携带分层组件，v3 及更早一律按不支持处理。 */
-export const WORLD_STATE_SCHEMA_VERSION = 4 as const;
+/** 世界存档 schema 版本唯一来源：v5 起 eventLedger 保存 CommittedNarrativeEvent envelope，v4 及更早一律按不支持处理。 */
+export const WORLD_STATE_SCHEMA_VERSION = 5 as const;
+
+export type WorldStateSchemaVersionErrorCode =
+  | "UNSUPPORTED_RECORD"
+  | "UNSUPPORTED_WORLD_STATE_VERSION";
+
+export type WorldStateSchemaVersionClassification =
+  | { readonly ok: true; readonly version: typeof WORLD_STATE_SCHEMA_VERSION }
+  | { readonly ok: false; readonly code: WorldStateSchemaVersionErrorCode };
+
+/**
+ * 只分类存档 schema，不执行迁移。DB revision 与回合号由各自契约维护。
+ * v1–v4 均按旧 record 分类，不提供迁移或兼容读取。
+ */
+export function classifyWorldStateSchemaVersion(
+  version: unknown,
+): WorldStateSchemaVersionClassification {
+  if (version === WORLD_STATE_SCHEMA_VERSION) {
+    return { ok: true, version: WORLD_STATE_SCHEMA_VERSION };
+  }
+  if (version === 1 || version === 2 || version === 3 || version === 4) {
+    return { ok: false, code: "UNSUPPORTED_RECORD" };
+  }
+  return { ok: false, code: "UNSUPPORTED_WORLD_STATE_VERSION" };
+}
 
 export type WorldState = {
   readonly version: typeof WORLD_STATE_SCHEMA_VERSION;
@@ -66,7 +93,7 @@ export type WorldState = {
   readonly battle: BattleState;
   readonly endings: readonly EndingEntry[];
   readonly ending: EndingState;
-  readonly eventLedger: readonly GameEvent[];
+  readonly eventLedger: readonly CommittedNarrativeEvent[];
 };
 
 /** 稳定构造错误：调用方按 code 分支，不用字符串 message 充当协议。 */
@@ -91,7 +118,7 @@ export function createWorldStateFromProjection(input: {
   readonly battle?: BattleState;
   readonly endings?: readonly EndingEntry[];
   readonly ending?: EndingState;
-  readonly eventLedger?: readonly GameEvent[];
+  readonly eventLedger?: readonly CommittedNarrativeEvent[];
 }): WorldState {
   const entityStore = compileEntityStoreFromCompatibilityProjection({
     projection: input.projection,
@@ -100,7 +127,7 @@ export function createWorldStateFromProjection(input: {
     ...(input.npcCreationComponentsById === undefined ? {} : { npcCreationComponentsById: input.npcCreationComponentsById }),
   });
   return {
-    version: 4,
+    version: WORLD_STATE_SCHEMA_VERSION,
     generation: input.generation,
     entityStore,
     ...projectEntityStore(entityStore),
@@ -116,10 +143,33 @@ export function createInitialWorldState(input: {
   player: PlayerState;
   startingLocation: LocationEntry;
   startingItemIds: readonly ItemId[];
+  committedAt?: string;
 }): WorldState {
   // 最小开局状态——只有玩家与起始地点两条 record；其余实体由开局编译追加。
   if (input.startingItemIds.length > 0) throw new InitialWorldStateInvariantError();
-  return createWorldStateFromProjection({
+
+  // 使用 commitEventDrafts 构造唯一 initialization Event
+  const turnId = asTurnId(`init:${input.generation.generationId}`);
+  const initDraft: NarrativeEventDraft = {
+    eventKey: "game_initialized",
+    episodeKey: "initialization",
+    actorIds: [PLAYER_ENTITY_ID],
+    targetIds: [PLAYER_ENTITY_ID],
+    locationId: input.startingLocation.id,
+    causeKeys: [],
+    factIds: [],
+    questIds: [],
+    outcome: "neutral",
+    salience: 100,
+    payload: { type: "game_initialized", generation: input.generation },
+  };
+  const source: EventCommitSource = {
+    turnId,
+    turnNumber: 0,
+    committedAt: input.committedAt ?? "1970-01-01T00:00:00Z",
+  };
+
+  const ws = createWorldStateFromProjection({
     generation: input.generation,
     projection: {
       player: input.player,
@@ -136,8 +186,18 @@ export function createInitialWorldState(input: {
       defeatedEnemyIds: [],
       factions: [],
     },
-    eventLedger: [{ type: "game_initialized", generation: input.generation }],
+    eventLedger: [],
   });
+
+  const commitResult = commitEventDrafts({
+    ledger: [],
+    drafts: [initDraft],
+    source,
+    entityStore: ws.entityStore,
+  });
+  if (!commitResult.ok) throw new InitialWorldStateInvariantError();
+
+  return { ...ws, eventLedger: commitResult.ledger };
 }
 
 // ── 只读 selector ──

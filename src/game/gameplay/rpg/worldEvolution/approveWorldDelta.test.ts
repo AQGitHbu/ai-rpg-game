@@ -10,7 +10,7 @@ import {
 import type { WorldState, LocationEntry, NpcEntry, InvestigationApproach } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import { createInitialStoryState } from "@/game/domain/storyState";
-import type { GameEvent } from "@/game/domain/events";
+import type { CommittedNarrativeEvent } from "@/game/domain/events";
 import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
 import {
   createWorldStateFixtureWith,
@@ -96,7 +96,7 @@ function makeWorld(overrides: WorldStateFixtureOverrides = {}, seed = "seed-a"):
     generationId: asGenerationId("g1"), seed, templateVersion: "v2", inputDigest: "", gameType: "wuxia",
   };
   // 与 createInitialWorldState 一致：账本首条为 game_initialized。
-  const eventLedger: readonly GameEvent[] = [{ type: "game_initialized", generation }];
+  const eventLedger: readonly CommittedNarrativeEvent[] = [{ type: "game_initialized", generation }];
   return createWorldStateFixtureWith({ generation, base: BASE_PROJECTION }, { eventLedger, ...overrides });
 }
 

@@ -21,7 +21,7 @@ import {
   asFactId,
   type GenerationMetadata,
 } from "@/game/domain/worldEntity";
-import { asNarrativeJobId, asTurnId, type GameEvent } from "@/game/domain/events";
+import { asNarrativeJobId, asTurnId, type CommittedNarrativeEvent } from "@/game/domain/events";
 import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
 import {
   createWorldStateFixtureWith,
@@ -70,7 +70,7 @@ const BASE_PROJECTION: EntityCompatibilityProjection = {
   factions: [],
 };
 
-const INITIALIZED_LEDGER: readonly GameEvent[] = [{ type: "game_initialized", generation: GENERATION }];
+const INITIALIZED_LEDGER: readonly CommittedNarrativeEvent[] = [{ type: "game_initialized", generation: GENERATION }];
 
 function makeWorld(overrides: WorldStateFixtureOverrides = {}): WorldState {
   return createWorldStateFixtureWith(

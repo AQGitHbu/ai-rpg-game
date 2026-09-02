@@ -182,7 +182,7 @@ describe("approveCandidateEvents 成功路径", () => {
     expect(result.approvedCandidates.length).toBe(1);
     expect(result.approvedCandidates[0]!.id).toBe("ce-1");
     expect(result.approvedCandidates[0]!.approvedAtTurn).toBe(ss.turnNumber);
-    expect(result.events.some((e) => e.type === "candidate_event_approved")).toBe(true);
+    expect(result.drafts.some((e) => e.payload.type === "candidate_event_approved")).toBe(true);
     expect(result.nextStoryState.budget.events.expanded).toBe(ss.budget.events.expanded + 1);
     // 批准的候选从池移除
     expect(result.nextStoryState.candidateEventPool.map((c) => c.id)).not.toContain("ce-1");

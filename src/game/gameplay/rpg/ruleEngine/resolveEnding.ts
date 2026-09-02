@@ -1,11 +1,12 @@
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
-import type { GameEvent } from "@/game/domain/events";
+import type { NarrativeEventDraft } from "@/game/domain/events";
+import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 
 export type EndingResolveResult = {
   readonly nextWorldState: WorldState;
   readonly nextStoryState: StoryState;
-  readonly events: readonly GameEvent[];
+  readonly drafts: readonly NarrativeEventDraft[];
 };
 
 function isRequirementMet(ws: WorldState, req: WorldState["endings"][number]["requirements"][number]): boolean {
@@ -26,9 +27,9 @@ function themeFromRequirements(
   return null;
 }
 
-export function resolveEnding(ws: WorldState, ss: StoryState, deps: { readonly now: () => string }): EndingResolveResult {
+export function resolveEnding(ws: WorldState, ss: StoryState): EndingResolveResult {
   if (!ss.endingAllowed || ws.ending !== null) {
-    return { nextWorldState: ws, nextStoryState: ss, events: [] };
+    return { nextWorldState: ws, nextStoryState: ss, drafts: [] };
   }
 
   // 终幕最后一次 support/challenge 是玩家刚做出的明确分歧，优先于旧的
@@ -48,22 +49,28 @@ export function resolveEnding(ws: WorldState, ss: StoryState, deps: { readonly n
   const matchingEnding = explicitEnding
     ?? [...candidates].sort((left, right) => left.id.localeCompare(right.id))[0];
   if (matchingEnding) {
-      const event: GameEvent = {
-        type: "ending_reached",
-        endingId: matchingEnding.id,
-        outcome: "success",
-        occurredAt: deps.now(),
-      };
-      return {
-        nextWorldState: {
-          ...ws,
-          ending: { endingId: matchingEnding.id, outcome: "success" },
-          eventLedger: [...ws.eventLedger, event],
-        },
-        nextStoryState: ss,
-        events: [event],
-      };
+    const draft: NarrativeEventDraft = {
+      eventKey: `ending_reached:${matchingEnding.id}`,
+      episodeKey: "turn",
+      actorIds: [PLAYER_ENTITY_ID],
+      targetIds: [PLAYER_ENTITY_ID],
+      locationId: ws.currentLocationId,
+      causeKeys: [],
+      factIds: [],
+      questIds: [],
+      outcome: "success",
+      salience: 100,
+      payload: { type: "ending_reached", endingId: matchingEnding.id, outcome: "success" },
+    };
+    return {
+      nextWorldState: {
+        ...ws,
+        ending: { endingId: matchingEnding.id, outcome: "success" },
+      },
+      nextStoryState: ss,
+      drafts: [draft],
+    };
   }
 
-  return { nextWorldState: ws, nextStoryState: ss, events: [] };
+  return { nextWorldState: ws, nextStoryState: ss, drafts: [] };
 }

@@ -5,7 +5,7 @@ import { createInitialStoryState } from "@/game/domain/storyState";
 import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
 import { createWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 import type { WorldState } from "@/game/domain/worldState";
-import type { GameEvent } from "@/game/domain/events";
+import type { CommittedNarrativeEvent } from "@/game/domain/events";
 import { asQuestId, asLocationId, asGenerationId } from "@/game/domain/worldEntity";
 
 const LOC_1 = asLocationId("loc_1");
@@ -50,7 +50,7 @@ describe("advanceStoryProgression", () => {
 
   it("does not advance act when no main quest completed", () => {
     const ws = makeWorld();
-    const events: GameEvent[] = [];
+    const events: CommittedNarrativeEvent[] = [];
     const result = advanceStoryProgression(ws, ss, events);
     expect(result.nextStoryState.currentAct).toBe(1);
   });
@@ -70,7 +70,7 @@ describe("advanceStoryProgression", () => {
         status: "completed",
       }],
     });
-    const events: GameEvent[] = [
+    const events: CommittedNarrativeEvent[] = [
       { type: "quest_completed", questId: asQuestId("q_main_1"), occurredAt: "t" },
     ];
     const result = advanceStoryProgression(ws, ss, events);
@@ -86,7 +86,7 @@ describe("advanceStoryProgression", () => {
         kind: "main", stage: 1, status: "completed",
       }],
     });
-    const events: GameEvent[] = [
+    const events: CommittedNarrativeEvent[] = [
       { type: "quest_completed", questId: asQuestId("q_main_1"), occurredAt: "t" },
     ];
     const result = advanceStoryProgression(ws, ss, events);
@@ -102,7 +102,7 @@ describe("advanceStoryProgression", () => {
         kind: "main", stage: 3, status: "completed",
       }],
     });
-    const events: GameEvent[] = [
+    const events: CommittedNarrativeEvent[] = [
       { type: "quest_completed", questId: asQuestId("q_final"), occurredAt: "t" },
     ];
     const finalAct = { ...ss, currentAct: 3, targetActs: 3 };
@@ -189,7 +189,7 @@ describe("advanceStoryProgression", () => {
         },
       ],
     });
-    const events: GameEvent[] = [
+    const events: CommittedNarrativeEvent[] = [
       { type: "quest_completed", questId: asQuestId("q_main_1"), occurredAt: "t" },
     ];
     const finalAct = { ...ss, currentAct: 3, targetActs: 3, unresolvedThreads: ["thread_main"] };

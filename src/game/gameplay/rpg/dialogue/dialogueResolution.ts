@@ -4,7 +4,7 @@ import { relationshipTierOf, type RelationshipTier } from "@/game/domain/relatio
 import type { NarrativeEmotion } from "@/game/domain/narrative";
 import type { RelationshipSignal } from "@/game/domain/entity";
 import { PLAYER_ENTITY_ID, type FactId } from "@/game/domain/worldEntity";
-import type { GameEvent } from "@/game/domain/events";
+import type { NarrativeEventDraft } from "@/game/domain/events";
 import type { StateChange } from "@/game/domain/resolvedEvent";
 import { RELATIONSHIP_SIGNAL_POLICY } from "@/game/gameplay/rpg/npcMemory";
 import type { EntityMutation, NpcInteractionPayload } from "@/game/gameplay/rpg/entityWorld/entityMutation";
@@ -38,7 +38,7 @@ export type DialogueResolution = {
   readonly signal: RelationshipSignal | null;
   readonly interaction: NpcInteractionPayload;
   readonly mutations: readonly EntityMutation[];
-  readonly event: GameEvent;
+  readonly draft: NarrativeEventDraft;
   readonly feedback: string;
   readonly stateChanges: readonly StateChange[];
 };
@@ -185,7 +185,19 @@ export function resolveDialogue(
   if (emotion !== npc.memory.emotion) mutations.push({ kind: "set_npc_emotion", npcId: npc.id, emotion });
   // met 写在最后：interaction append 时仍能读到 false，摘要才会记录「首次见面」。
   if (!npc.met) mutations.push({ kind: "set_npc_met", npcId: npc.id, met: true });
-  const event: GameEvent = { type: "npc_met", npcId: action.npcId, occurredAt: deps.now(), interactionKind: "greet" };
+  const draft: NarrativeEventDraft = {
+    eventKey: `npc_met:${action.npcId}`,
+    episodeKey: "turn",
+    actorIds: [PLAYER_ENTITY_ID],
+    targetIds: [action.npcId],
+    locationId: ws.currentLocationId,
+    causeKeys: [],
+    factIds: [],
+    questIds: [],
+    outcome: "success",
+    salience: 50,
+    payload: { type: "npc_met", npcId: action.npcId, interactionKind: "greet" },
+  };
 
   // 与既有 talk 裁决的 stateChanges 契约保持一致：met 变化必有；关系变化仅在部分成功时显式声明
   const stateChanges: StateChange[] = [
@@ -206,7 +218,7 @@ export function resolveDialogue(
     signal,
     interaction,
     mutations,
-    event,
+    draft,
     feedback: feedbackFor(npc.name, status, disclosure),
     stateChanges,
   };

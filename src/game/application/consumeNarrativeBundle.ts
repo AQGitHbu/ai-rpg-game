@@ -1,5 +1,5 @@
 import type { Action } from "@/game/domain/action";
-import type { GameEvent } from "@/game/domain/events";
+import type { CommittedNarrativeEvent } from "@/game/domain/events";
 import type { ResolvedEvent } from "@/game/domain/resolvedEvent";
 import type { NarrativeSceneState } from "@/game/domain/narrative";
 import type { StoryState } from "@/game/domain/storyState";
@@ -17,17 +17,18 @@ export type ConsumeNarrativeBundleResult =
   | { readonly ok: true; readonly nextWorldState: WorldState; readonly nextStoryState: StoryState }
   | { readonly ok: false; readonly code: "NARRATIVE_CONTINUATION_MISSING" | "NARRATIVE_CONTINUATION_INVALID" };
 
-function triggerFor(action: Action, worldState: WorldState, events: readonly GameEvent[]): NarrativeBundleTrigger | null {
+function triggerFor(action: Action, worldState: WorldState, events: readonly CommittedNarrativeEvent[]): NarrativeBundleTrigger | null {
   if (action.type === "move") return { kind: "move", locationId: action.locationId as LocationId };
   if (action.type === "explore") return { kind: "explore", locationId: worldState.currentLocationId as LocationId };
   if (action.type === "investigate") return { kind: "investigate", factId: action.factId as FactId, ...(action.approachId === undefined ? {} : { approachId: action.approachId }) };
   if (action.type === "take_item") return { kind: "take_item", itemId: action.itemId as ItemId };
   if (action.type === "give_item") return { kind: "give_item", itemId: action.itemId as ItemId, npcId: action.npcId as NpcId };
-  const battle = events.find((candidate): candidate is Extract<GameEvent, { readonly type: "battle_started" | "battle_resolved" }> =>
-    candidate.type === "battle_started" || candidate.type === "battle_resolved");
-  if (battle?.type === "battle_started") return { kind: "battle_started", enemyId: battle.enemyId as EnemyId };
-  if (battle?.type === "battle_resolved" && battle.outcome === "victory") {
-    return { kind: "battle_resolved", enemyId: battle.enemyId as EnemyId, outcome: "victory" };
+  const battle = events.find((candidate): candidate is CommittedNarrativeEvent =>
+    candidate.kind === "battle_started" || candidate.kind === "battle_resolved");
+  if (battle?.kind === "battle_started") { const p = battle.payload as { enemyId: EnemyId }; return { kind: "battle_started", enemyId: p.enemyId }; }
+  if (battle?.kind === "battle_resolved" && (battle.payload as { outcome: string }).outcome === "victory") {
+    const p = battle.payload as { enemyId: EnemyId };
+    return { kind: "battle_resolved", enemyId: p.enemyId, outcome: "victory" };
   }
   return null;
 }
@@ -37,7 +38,7 @@ export function hasNarrativeBundleMatch(input: {
   readonly storyState: StoryState;
   readonly action: Action;
   readonly resolvedEvent: ResolvedEvent;
-  readonly domainEvents: readonly GameEvent[];
+  readonly domainEvents: readonly CommittedNarrativeEvent[];
 }): boolean {
   if (input.storyState.narrative.status !== "ready") return false;
   const bundle = input.storyState.narrative.narrativeBundle;
@@ -107,7 +108,7 @@ export function consumeNarrativeBundle(input: {
   readonly actionId: string;
   readonly postCommitRevision: number;
   readonly resolvedEvent: ResolvedEvent;
-  readonly domainEvents: readonly GameEvent[];
+  readonly domainEvents: readonly CommittedNarrativeEvent[];
 }): ConsumeNarrativeBundleResult {
   if (input.beforeStoryState.narrative.status !== "ready" || input.resolvedStoryState.narrative.status !== "ready") {
     return { ok: false, code: "NARRATIVE_CONTINUATION_INVALID" };

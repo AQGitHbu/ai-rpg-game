@@ -1,11 +1,11 @@
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
-import type { GameEvent } from "@/game/domain/events";
+import type { NarrativeEventDraft } from "@/game/domain/events";
 import { derivePacingNeed } from "@/game/domain/storyState";
 
 export type StoryProgressionResult = {
   readonly nextStoryState: StoryState;
-  readonly events: readonly GameEvent[];
+  readonly drafts: readonly NarrativeEventDraft[];
 };
 
 // 主线 thread 的固定命名（Spec §13.3：开局 thread ID 与主线一致，不得出现
@@ -19,10 +19,10 @@ function actProgressThreshold(act: number, targetActs: number): number {
   return Math.floor((act - 1) / targetActs * 100);
 }
 
-function shouldAdvanceAct(ws: WorldState, ss: StoryState, events: readonly GameEvent[]): boolean {
-  const mainQuestCompleted = events.some(
-    (e) => e.type === "quest_completed" &&
-    ws.quests.find((q) => q.id === e.questId)?.kind === "main",
+function shouldAdvanceAct(ws: WorldState, ss: StoryState, drafts: readonly NarrativeEventDraft[]): boolean {
+  const mainQuestCompleted = drafts.some(
+    (e) => e.payload.type === "quest_completed" &&
+    ws.quests.find((q) => q.id === (e.payload as { questId: string }).questId)?.kind === "main",
   );
   if (!mainQuestCompleted) return false;
 
@@ -45,7 +45,7 @@ function hasCurrentActMainQuest(ws: WorldState, currentAct: number): boolean {
 export function advanceStoryProgression(
   ws: WorldState,
   ss: StoryState,
-  newEvents: readonly GameEvent[],
+  newDrafts: readonly NarrativeEventDraft[],
 ): StoryProgressionResult {
   let currentAct = ss.currentAct;
   let storyProgress = ss.storyProgress;
@@ -54,7 +54,7 @@ export function advanceStoryProgression(
   const thread = mainThreadId(ss);
 
   // 主线 thread 始终以主线 ID 命名，随幕推进保持 unresolved；最终幕完成主线后回收。
-  const advanced = shouldAdvanceAct(ws, ss, newEvents) && currentAct < ss.targetActs;
+  const advanced = shouldAdvanceAct(ws, ss, newDrafts) && currentAct < ss.targetActs;
   if (advanced) {
     currentAct += 1;
     storyProgress = Math.max(storyProgress, actProgressThreshold(currentAct, ss.targetActs));
@@ -118,6 +118,6 @@ export function advanceStoryProgression(
       nextPacingNeed,
       evolution: { ...ss.evolution, status: evolutionStatus },
     },
-    events: [],
+    drafts: [],
   };
 }

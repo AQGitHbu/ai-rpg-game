@@ -14,7 +14,7 @@ import { asTurnId } from "@/game/domain/events";
 import { createInitialWorldState } from "@/game/domain/worldState";
 import { npcCreationComponentsForProjection } from "@/game/domain/testing/worldStateFixture.testutil";
 import { createInitialStoryState } from "@/game/domain/storyState";
-import type { GameEvent } from "@/game/domain/events";
+import type { CommittedNarrativeEvent } from "@/game/domain/events";
 import {
   compileEntityStoreFromCompatibilityProjection, createEntityStore,
   entitiesOfKind, projectEntityStore, projectNpcEntry,
@@ -70,7 +70,7 @@ function createBattleWorldState(overrides?: Partial<WorldState>): WorldState {
   });
   const preBattleSnapshot: BattleStartSnapshot = {
     entityStore: base.entityStore,
-    eventLedger: [] as readonly GameEvent[],
+    eventLedger: [] as readonly CommittedNarrativeEvent[],
   };
   return {
     ...base,
@@ -115,10 +115,10 @@ function createBattleStoryState(narrative?: StoryState["narrative"]): StoryState
 type LegacyRollbackFixture = Readonly<{
   harness: InMemoryHarness;
   snapshotStore: EntityStore;
-  snapshotLedger: readonly GameEvent[];
+  snapshotLedger: readonly CommittedNarrativeEvent[];
   preBattleNpc: NpcEntityRecord;
   midBattleStore: EntityStore;
-  midBattleLedger: readonly GameEvent[];
+  midBattleLedger: readonly CommittedNarrativeEvent[];
   midBattleNpc: NpcEntityRecord;
   revision: number;
 }>;
@@ -134,7 +134,7 @@ type LegacyRollbackFixture = Readonly<{
 async function driveLegacyBattleUntilLayersDiverge(): Promise<LegacyRollbackFixture> {
   const worldState = layeredBattleWorld();
   const snapshotStore = worldState.entityStore;
-  const snapshotLedger: readonly GameEvent[] = [];
+  const snapshotLedger: readonly CommittedNarrativeEvent[] = [];
   const preBattleNpc = npcRecordOf(snapshotStore);
   const harness = createInMemoryRepo({
     gameId: GAME_ID,
@@ -560,7 +560,7 @@ type MidBattleFixture = Readonly<{
   harness: InMemoryHarness;
   preBattleNpc: NpcEntityRecord;
   preBattleStore: EntityStore;
-  preBattleLedger: readonly GameEvent[];
+  preBattleLedger: readonly CommittedNarrativeEvent[];
   midBattleNpc: NpcEntityRecord;
   revision: number;
 }>;
@@ -723,8 +723,8 @@ describe("performBattleRound：NPC 分层组件的战前快照与回滚", () => 
     );
     expect(resolved.ok).toBe(true);
     if (!resolved.ok) return;
-    expect(resolved.resolution.domainEvents.some((event) => event.type === "candidate_event_approved")).toBe(true);
-    expect(resolved.resolution.domainEvents.some((event) => event.type === "candidate_event_activated")).toBe(false);
+    expect(resolved.resolution.domainEvents.some((event) => event.kind === "candidate_event_approved")).toBe(true);
+    expect(resolved.resolution.domainEvents.some((event) => event.kind === "candidate_event_activated")).toBe(false);
     const committed = await commitState(harness.repo, {
       gameId: GAME_ID,
       expectedRevision: 0,

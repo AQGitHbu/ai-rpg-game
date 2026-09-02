@@ -4,7 +4,7 @@ import { materializeWorldDelta } from "./materializeWorldDelta";
 import type { WorldState, LocationEntry, NpcEntry } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import { createInitialStoryState } from "@/game/domain/storyState";
-import type { GameEvent } from "@/game/domain/events";
+import type { CommittedNarrativeEvent } from "@/game/domain/events";
 import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
 import {
   createWorldStateFixtureWith,
@@ -65,7 +65,7 @@ function makeWorld(overrides: WorldStateFixtureOverrides = {}): WorldState {
     generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia",
   };
   // 与 createInitialWorldState 一致：账本首条为 game_initialized。
-  const eventLedger: readonly GameEvent[] = [{ type: "game_initialized", generation }];
+  const eventLedger: readonly CommittedNarrativeEvent[] = [{ type: "game_initialized", generation }];
   return createWorldStateFixtureWith({ generation, base: BASE_PROJECTION }, { eventLedger, ...overrides });
 }
 
@@ -172,8 +172,8 @@ describe("materializeWorldDelta", () => {
     expect(previewSs.budget.events.expanded).toBe(1);
 
     const event = delta.previewWorldState.eventLedger.at(-1)!;
-    expect(event.type).toBe("blueprint_expanded");
-    if (event.type === "blueprint_expanded") {
+    expect(event.kind).toBe("blueprint_expanded");
+    if (event.kind === "blueprint_expanded") {
       expect(event.newNpcIds).toEqual(["npc_dyn_1"]);
       expect(event.newLocationIds).toEqual(["loc_dyn_1"]);
       expect(event.newQuestIds).toEqual(["quest_dyn_1"]);
@@ -254,7 +254,7 @@ describe("materializeWorldDelta", () => {
     expect(delta.previewWorldState.endings.map((e) => e.name)).toEqual(["共担真相", "独自揭露"]);
     expect(delta.previewStoryState.evolution.status).toBe("stable");
     const event = delta.previewWorldState.eventLedger.at(-1)!;
-    if (event.type === "blueprint_expanded") {
+    if (event.kind === "blueprint_expanded") {
       expect(event.newEndingIds).toHaveLength(2);
     }
   });

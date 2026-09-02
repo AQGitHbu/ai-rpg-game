@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
-import { asNarrativeJobId, type GameEvent } from "@/game/domain/events";
+import { asNarrativeJobId, type CommittedNarrativeEvent } from "@/game/domain/events";
 import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
 import {
   asGenerationId,
@@ -36,7 +36,7 @@ const GENERATION: GenerationMetadata = {
 };
 
 /** 与 createInitialWorldState 一致：开局事件仍在账本里。 */
-const INITIALIZED_LEDGER: readonly GameEvent[] = [{ type: "game_initialized", generation: GENERATION }];
+const INITIALIZED_LEDGER: readonly CommittedNarrativeEvent[] = [{ type: "game_initialized", generation: GENERATION }];
 
 // 起始投影一次给全：小镇的连接边指向镇外破庙，因此破庙同批具象化。
 // 名册留空——本夹具不具象化任何 NPC；说台词的老乞丐只存在于 prepared step 的 scene 里。
@@ -158,7 +158,7 @@ function resolvedEvent(): ResolvedEvent {
   };
 }
 
-function moveEvent(): GameEvent {
+function moveEvent(): CommittedNarrativeEvent {
   return {
     type: "location_visited",
     locationId: locTemple,

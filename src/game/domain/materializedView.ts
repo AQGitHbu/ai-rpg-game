@@ -1,4 +1,4 @@
-import type { GameEvent } from "./events";
+import type { CommittedNarrativeEvent } from "./events";
 import type { LocationId, NpcId } from "./worldEntity";
 
 const RECENT_BEATS_LIMIT = 12;
@@ -32,7 +32,7 @@ const BEAT_EVENTS = new Set([
 
 export function reconcileMaterializedView(
   prev: MaterializedView,
-  eventLedger: readonly GameEvent[],
+  eventLedger: readonly CommittedNarrativeEvent[],
   currentLocationId: LocationId,
 ): MaterializedView {
   if (eventLedger.length <= prev.reducedThroughEventCount) return prev;
@@ -44,14 +44,15 @@ export function reconcileMaterializedView(
 
   for (let i = prev.reducedThroughEventCount; i < eventLedger.length; i++) {
     const event = eventLedger[i]!;
-    const turn = i;
+    const turn = event.turnNumber;
 
-    if (BEAT_EVENTS.has(event.type)) {
-      newBeats.push({ turn, kind: event.type, summary: summarizeBeat(event) });
+    if (BEAT_EVENTS.has(event.kind)) {
+      newBeats.push({ turn, kind: event.kind, summary: summarizeBeat(event) });
     }
 
-    if (event.type === "npc_met") {
-      const npcId = event.npcId;
+    if (event.kind === "npc_met") {
+      const payload = event.payload as { npcId: NpcId };
+      const npcId = payload.npcId;
       npcContactMap.set(String(npcId), {
         npcId,
         lastContactTurn: turn,
@@ -69,15 +70,35 @@ export function reconcileMaterializedView(
   };
 }
 
-function summarizeBeat(event: GameEvent): string {
-  switch (event.type) {
-    case "quest_completed": return `Quest completed: ${String(event.questId)}`;
-    case "quest_failed": return `Quest failed: ${String(event.questId)}`;
-    case "fact_discovered": return `Fact discovered: ${String(event.factId)}`;
-    case "npc_met": return `NPC met: ${String(event.npcId)}`;
-    case "battle_resolved": return `Battle resolved: ${event.outcome}`;
-    case "ending_reached": return `Ending: ${String(event.endingId)}`;
-    case "blueprint_expanded": return `World expanded`;
-    default: return event.type;
+function summarizeBeat(event: CommittedNarrativeEvent): string {
+  switch (event.kind) {
+    case "quest_completed": {
+      const p = event.payload as { questId: string };
+      return `Quest completed: ${p.questId}`;
+    }
+    case "quest_failed": {
+      const p = event.payload as { questId: string };
+      return `Quest failed: ${p.questId}`;
+    }
+    case "fact_discovered": {
+      const p = event.payload as { factId: string };
+      return `Fact discovered: ${p.factId}`;
+    }
+    case "npc_met": {
+      const p = event.payload as { npcId: string };
+      return `NPC met: ${p.npcId}`;
+    }
+    case "battle_resolved": {
+      const p = event.payload as { outcome: string };
+      return `Battle resolved: ${p.outcome}`;
+    }
+    case "ending_reached": {
+      const p = event.payload as { endingId: string };
+      return `Ending: ${p.endingId}`;
+    }
+    case "blueprint_expanded":
+      return `World expanded`;
+    default:
+      return event.kind;
   }
 }

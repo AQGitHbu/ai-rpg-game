@@ -26,313 +26,8 @@ export function asNarrativeJobId(raw: string): NarrativeJobId {
   return raw as NarrativeJobId;
 }
 
-// 领域事件：纯数据，时间戳等外部信息由调用方传入（domain 不读取时钟）。
-// Phase 3 扩展：行动 resolver 产出地点观察、NPC 初次交谈和事实发现三种事件。
-// Phase 4 扩展：move 行动成功时追加地点到访事件；任务 reconciliation 产出任务完成与解锁事件。
-// Phase 5 扩展：take_item 行动成功时追加物品取得事件。
-
-/** 初始事件账本条目：记录本局的生成元数据（Task 5 初始化时写入）。 */
-export type GameInitializedEvent = {
-  readonly type: "game_initialized";
-  readonly generation: GenerationMetadata;
-};
-
-/** 玩家观察当前地点：由 observe 行动成功时追加。 */
-export type LocationObservedEvent = {
-  readonly type: "location_observed";
-  readonly locationId: LocationId;
-  /** ISO 8601 时间戳：由 resolver 从注入的时钟获取，domain 不读时钟。 */
-  readonly occurredAt: string;
-};
-
-/** 玩家初次与 NPC 交谈：由 talk 行动成功时追加；重复交谈不产生此事件。 */
-export type NpcMetEvent = {
-  readonly type: "npc_met";
-  readonly npcId: NpcId;
-  readonly occurredAt: string;
-  // Phase 13：可选交互类型，reconcileStoryMemory 据此生成 lastInteractionSummary。
-  // 旧存档缺省时回退到 undefined，reducer 安全跳过。
-  readonly interactionKind?: "greet" | "ask_main_quest";
-};
-
-/**
- * 一名 NPC 的正式多轮对话会话已经完成。`npc_met` 只表示接触发生；任务和
- * 后续目标必须以本事件或当前 completed dialogueSession 作为历史完成事实。
- */
-export type NpcDialogueCompletedEvent = {
-  readonly type: "npc_dialogue_completed";
-  readonly npcId: NpcId;
-  /** 服务器铸造的本轮 action provenance；旧存档事件可缺省。 */
-  readonly actionId?: string;
-  readonly occurredAt: string;
-};
-
-/** 玩家发现世界事实：由 investigate 行动成功时追加；重复调查不产生此事件。 */
-export type FactDiscoveredEvent = {
-  readonly type: "fact_discovered";
-  readonly factId: FactId;
-  readonly occurredAt: string;
-  /** 在场目击的 NPC（scene_witness 传播来源）；缺省 = 无人目击，不自动传播。 */
-  readonly witnessNpcIds?: readonly NpcId[];
-  /** 玩家所选调查方式；自动揭示或旧事件缺省，不参与事实裁决。 */
-  readonly approachId?: string;
-  /** 证据质量；旧事件/自动揭示缺省时按 "clean" 读取。 */
-  readonly evidenceQuality?: "clean" | "noisy";
-  /** 本方式声明的额外张力；旧事件/自动揭示缺省时按 0 的额外张力读取，保留既有 fact_discovered 基础张力。 */
-  readonly tensionDelta?: number;
-};
-
-/** 玩家移动到达地点：由 move 行动成功时追加；重复到访照常追加事件。 */
-export type LocationVisitedEvent = {
-  readonly type: "location_visited";
-  readonly locationId: LocationId;
-  readonly occurredAt: string;
-};
-
-/** 玩家探索当前地点：由 explore 行动成功时追加（Spec §7/Task 29，不得 success + 空事件）。 */
-export type LocationExploredEvent = {
-  readonly type: "location_explored";
-  readonly locationId: LocationId;
-  readonly occurredAt: string;
-};
-
-/** 任务完成：由任务 reconciliation 在 active 任务全部 objective 满足时追加。 */
-export type QuestCompletedEvent = {
-  readonly type: "quest_completed";
-  readonly questId: QuestId;
-  readonly occurredAt: string;
-};
-
-/** 任务解锁：由已完成任务的 onSuccess.unlock_quests 将 locked 任务置为 active 时追加。 */
-export type QuestUnlockedEvent = {
-  readonly type: "quest_unlocked";
-  readonly questId: QuestId;
-  readonly occurredAt: string;
-};
-
-/** 地点解锁：由任务 outcome（unlock_quests 携带 locationIds）将 locked 地点解锁时追加。
- *  地点解锁只能来自规则 outcome/事实/权限/物品/批准候选事件，禁止交给 worldEvolution。 */
-export type LocationUnlockedEvent = {
-  readonly type: "location_unlocked";
-  readonly locationId: LocationId;
-  readonly occurredAt: string;
-};
-
-/** 玩家取得地点预置物品：由 take_item 行动成功时追加；locationId 为取得时所在地点。 */
-export type ItemObtainedEvent = {
-  readonly type: "item_obtained";
-  readonly itemId: ItemId;
-  readonly locationId: LocationId;
-  readonly occurredAt: string;
-};
-
-/** 玩家将背包物品移交给在场 NPC：由 give_item 行动成功时追加。 */
-export type ItemGivenEvent = {
-  readonly type: "item_given";
-  readonly itemId: ItemId;
-  readonly npcId: NpcId;
-  readonly locationId: LocationId;
-  /** 服务器铸造的本轮 action provenance；旧存档事件可缺省。 */
-  readonly actionId?: string;
-  readonly occurredAt: string;
-};
-
-/** Phase 6：战斗开始——由 start_battle 成功时追加。 */
-export type BattleStartedEvent = {
-  readonly type: "battle_started";
-  readonly enemyId: EnemyId;
-  /** 多敌人遭遇的扩展字段；旧单敌人事件仍可读取 enemyId。 */
-  readonly enemyIds?: readonly EnemyId[];
-  readonly occurredAt: string;
-};
-
-/** Phase 6：单回合结算——由 battle_action 成功时追加，含回合后双方剩余生命。 */
-export type BattleRoundResolvedEvent = {
-  readonly type: "battle_round_resolved";
-  readonly enemyId: EnemyId;
-  readonly round: number;
-  readonly playerHp: number;
-  readonly enemyHp: number;
-  readonly action: CombatActionKind | "withdraw";
-  readonly results?: readonly CombatActionResult[];
-  readonly occurredAt: string;
-};
-
-/** Phase 6：战斗结束——胜利、失败或撤退。 */
-export type BattleResolvedEvent = {
-  readonly type: "battle_resolved";
-  readonly enemyId: EnemyId;
-  readonly enemyIds?: readonly EnemyId[];
-  readonly outcome: "victory" | "defeat" | "withdraw";
-  readonly occurredAt: string;
-};
-
-/** Phase 6：敌人被击败——胜利战斗后追加，写入 defeatedEnemyIds。 */
-export type EnemyDefeatedEvent = {
-  readonly type: "enemy_defeated";
-  readonly enemyId: EnemyId;
-  readonly occurredAt: string;
-};
-
-/** Phase 6：任务失败——由显式 failQuest 入口将 active quest 置为 failed 时追加。 */
-export type QuestFailedEvent = {
-  readonly type: "quest_failed";
-  readonly questId: QuestId;
-  readonly occurredAt: string;
-};
-
-/** Phase 6：结局抵达——由 ending resolver 在满足结局条件后追加，结局状态只能写入一次。 */
-export type EndingReachedEvent = {
-  readonly type: "ending_reached";
-  readonly endingId: EndingId;
-  readonly outcome: "success" | "failure";
-  readonly occurredAt: string;
-};
-
-/** Phase 10：叙事选择——玩家在 AI 导演场景中做出的选择。 */
-export type NarrativeChoiceEvent = {
-  readonly type: "narrative_choice";
-  readonly choiceToken: string;
-  readonly actionKey: string;
-  readonly sceneId: string;
-  readonly occurredAt: string;
-};
-
-/** 玩家在 NPC 对话场景中选择的回应；不直接触发规则行动。 */
-export type NarrativeDialogueChoiceEvent = {
-  readonly type: "narrative_dialogue_choice";
-  readonly choiceToken: string;
-  readonly dialogueIntent: string;
-  readonly npcId: NpcId;
-  readonly sceneId: string;
-  readonly occurredAt: string;
-};
-
-/**
- * Phase 11：场景提交事件——玩家已看见一幕及其安全结构索引的审计事实。
- * 只携带结构索引（场景 ID、地点、焦点 NPC、已向玩家呈现的已发现事实 ID、节奏标签），
- * 绝不携带 narration、NPC 台词、choiceToken、actionKey 或 AI provenance。
- */
-export type NarrativeScenePresentedEvent = {
-  readonly type: "narrative_scene_presented";
-  readonly sceneId: string;
-  readonly locationId: LocationId;
-  readonly focusNpcId: NpcId | null;
-  readonly revealedFactIds: readonly FactId[];
-  readonly pacing: StoryPacing;
-  readonly occurredAt: string;
-};
-
-/** 蓝图动态化：运行时蓝图扩展落账——记录本次追加的实体 ID，供回放与调试。 */
-export type BlueprintExpandedEvent = {
-  readonly type: "blueprint_expanded";
-  readonly newLocationIds: readonly LocationId[];
-  readonly newNpcIds: readonly NpcId[];
-  readonly newFactIds?: readonly FactId[];
-  readonly newItemIds?: readonly ItemId[];
-  readonly newEnemyIds?: readonly EnemyId[];
-  readonly newQuestIds?: readonly QuestId[];
-  readonly newEndingIds?: readonly EndingId[];
-  readonly occurredAt: string;
-};
-
-/**
- * Task 9：玩家自由输入未映射为规则行动时表达意图的结构化审计事件。
- * 只携带解析结果 intent 兜底标，绝不携带玩家原文（原文只允许出现在
- * PendingNarrativeJob.utterance，供叙事回应）。
- */
-export type PlayerIntentExpressedEvent = {
-  readonly type: "player_intent_expressed";
-  readonly intent: string;
-  readonly occurredAt: string;
-};
-
 // ---------------------------------------------------------------------------
-// R4（Task 18）：AI 候选事件生命周期审计事件
-// 只携带结构化索引（candidateId/kind/turn/code），绝不携带完整 AI 原文或隐藏事实正文。
-// ---------------------------------------------------------------------------
-
-/** 候选事件进入池：由 SceneWriteBack 追加候选时写入。 */
-export type CandidateEventProposedEvent = {
-  readonly type: "candidate_event_proposed";
-  readonly candidateId: string;
-  readonly kind: string;
-  readonly proposedAtTurn: number;
-  readonly expiresAtTurn: number;
-  readonly occurredAt: string;
-};
-
-/** 候选事件审批通过：由下一回合纯规则审批成功后写入。 */
-export type CandidateEventApprovedEvent = {
-  readonly type: "candidate_event_approved";
-  readonly candidateId: string;
-  readonly kind: string;
-  readonly approvedAtTurn: number;
-  readonly occurredAt: string;
-};
-
-/** 候选事件审批拒绝：原因用稳定 code，不携带冲突正文。 */
-export type CandidateEventRejectedEvent = {
-  readonly type: "candidate_event_rejected";
-  readonly candidateId: string;
-  readonly kind: string;
-  readonly reasonCode: string;
-  readonly rejectedAtTurn: number;
-  readonly occurredAt: string;
-};
-
-/** 候选事件过期：当前回合超过 expiresAtTurn 且未审批时写入。 */
-export type CandidateEventExpiredEvent = {
-  readonly type: "candidate_event_expired";
-  readonly candidateId: string;
-  readonly kind: string;
-  readonly expiredAtTurn: number;
-  readonly occurredAt: string;
-};
-
-/** 候选事件激活：审批通过后编译为真实领域事件与状态变化时写入。 */
-export type CandidateEventActivatedEvent = {
-  readonly type: "candidate_event_activated";
-  readonly candidateId: string;
-  readonly kind: string;
-  readonly activatedAtTurn: number;
-  readonly occurredAt: string;
-};
-
-export type GameEvent =
-  | GameInitializedEvent
-  | LocationObservedEvent
-  | NpcMetEvent
-  | NpcDialogueCompletedEvent
-  | FactDiscoveredEvent
-  | LocationVisitedEvent
-  | LocationExploredEvent
-  | QuestCompletedEvent
-  | QuestUnlockedEvent
-  | LocationUnlockedEvent
-  | ItemObtainedEvent
-  | ItemGivenEvent
-  | BattleStartedEvent
-  | BattleRoundResolvedEvent
-  | BattleResolvedEvent
-  | EnemyDefeatedEvent
-  | QuestFailedEvent
-  | EndingReachedEvent
-  | NarrativeChoiceEvent
-  | NarrativeDialogueChoiceEvent
-  | NarrativeScenePresentedEvent
-  | BlueprintExpandedEvent
-  | PlayerIntentExpressedEvent
-  | CandidateEventProposedEvent
-  | CandidateEventApprovedEvent
-  | CandidateEventRejectedEvent
-  | CandidateEventExpiredEvent
-  | CandidateEventActivatedEvent;
-
-// ---------------------------------------------------------------------------
-// Plan 4：Committed Narrative Event 体系（增量引入，不切换 WorldState.eventLedger）
-// Task 1 只新增类型和 commit helper；Task 2 才把 WorldState.eventLedger 切到新形状。
-// 旧 GameEvent 保留为 Task 2 cutover 前的源码兼容名。
+// 稳定 ID 体系
 // ---------------------------------------------------------------------------
 
 declare const eventIdBrand: unique symbol;
@@ -369,94 +64,20 @@ export function episodeIdForTurn(turnId: TurnId): EpisodeId {
   return asEpisodeId(`episode:${turnId}`);
 }
 
+/**
+ * 确定性铸造战斗 Episode ID：同一 battleKey 永远得到同一 Episode ID。
+ * 战斗的 started/round/resolved/defeated/relationship 事件共享此 Episode。
+ */
+export function episodeIdForBattle(battleKey: string): EpisodeId {
+  return asEpisodeId(`episode:battle:${battleKey}`);
+}
+
 // ---------------------------------------------------------------------------
-// 新 payload union（Task 1 增量引入；Task 2 删除旧 GameEvent 后成为唯一 payload）
-// 新增三种 NPC 规则事实 payload；收口旧遗留变体（narrative_choice 等）
+// Payload union：封闭 discriminated union，禁止万能 Record<string, unknown>
+// payload 不再含 occurredAt；时间只在 envelope（committedAt）
 // ---------------------------------------------------------------------------
 
-/** NPC 交互记录：封闭 dialogueAct + npcId，不保存台词正文。 */
-export type NpcInteractionRecordedPayload = Readonly<{
-  readonly type: "npc_interaction_recorded";
-  readonly npcId: NpcId;
-  readonly dialogueAct: DialogueAct | "freeform";
-}>;
-
-/** NPC 知识变化：封闭 change + npcId + factId，不保存 Fact 正文。 */
-export type NpcKnowledgeChangedPayload = Readonly<{
-  readonly type: "npc_knowledge_changed";
-  readonly npcId: NpcId;
-  readonly factId: FactId;
-  readonly change: "learned" | "certainty_upgraded" | "disclosure_changed";
-}>;
-
-/** NPC 关系变化：封闭 signal + from/to，不保存裸数值 delta。 */
-export type NpcRelationshipChangedPayload = Readonly<{
-  readonly type: "npc_relationship_changed";
-  readonly fromNpcId: NpcId;
-  readonly targetId: PlayerEntityId | NpcId;
-  readonly signal: RelationshipSignal;
-}>;
-
-/**
- * narrative_scene_presented 的最小 payload（Plan 4 Canonical Contract）。
- * 地点与参与实体只放 envelope，避免双写漂移。
- */
-export type NarrativeScenePresentedPayload = Readonly<{
-  readonly type: "narrative_scene_presented";
-  readonly sceneId: string;
-  readonly focusNpcId: NpcId | null;
-  readonly pacing: StoryPacing;
-  readonly beatIds: readonly string[];
-  readonly revealedFactIds: readonly FactId[];
-}>;
-
-/**
- * player_intent_expressed 的封闭 payload：
- * 只保存 intentCode，不保存 Action.intent 字符串或玩家原文。
- */
-export type PlayerIntentExpressedPayload = Readonly<{
-  readonly type: "player_intent_expressed";
-  readonly intentCode: "unmapped_freeform" | "thread_complicates" | "thread_resolves";
-}>;
-
-/**
- * 新 payload union：保留仍有生产语义的封闭变体，新增 NPC payload，
- * 收口遗留变体（删除 narrative_choice / narrative_dialogue_choice /
- * candidate_event_proposed 等无生产路径的变体）。
- * 时间只在 envelope（committedAt），payload 不再含 occurredAt。
- */
-export type NarrativeEventPayload =
-  | GameInitializedPayload
-  | LocationObservedPayload
-  | NpcMetPayload
-  | NpcDialogueCompletedPayload
-  | FactDiscoveredPayload
-  | LocationVisitedPayload
-  | LocationExploredPayload
-  | QuestCompletedPayload
-  | QuestUnlockedPayload
-  | LocationUnlockedPayload
-  | ItemObtainedPayload
-  | ItemGivenPayload
-  | BattleStartedPayload
-  | BattleRoundResolvedPayload
-  | BattleResolvedPayload
-  | EnemyDefeatedPayload
-  | QuestFailedPayload
-  | EndingReachedPayload
-  | BlueprintExpandedPayload
-  | NarrativeScenePresentedPayload
-  | PlayerIntentExpressedPayload
-  | CandidateEventApprovedPayload
-  | CandidateEventRejectedPayload
-  | CandidateEventExpiredPayload
-  | CandidateEventActivatedPayload
-  | NpcInteractionRecordedPayload
-  | NpcKnowledgeChangedPayload
-  | NpcRelationshipChangedPayload;
-
-// 新 payload 类型（不再含 occurredAt）
-
+/** 初始事件 payload：记录本局的生成元数据。 */
 export type GameInitializedPayload = Readonly<{
   readonly type: "game_initialized";
   readonly generation: GenerationMetadata;
@@ -575,6 +196,28 @@ export type BlueprintExpandedPayload = Readonly<{
   readonly newEndingIds?: readonly EndingId[];
 }>;
 
+/**
+ * narrative_scene_presented 的最小 payload（Plan 4 Canonical Contract）。
+ * 地点与参与实体只放 envelope，避免双写漂移。
+ */
+export type NarrativeScenePresentedPayload = Readonly<{
+  readonly type: "narrative_scene_presented";
+  readonly sceneId: string;
+  readonly focusNpcId: NpcId | null;
+  readonly pacing: StoryPacing;
+  readonly beatIds: readonly string[];
+  readonly revealedFactIds: readonly FactId[];
+}>;
+
+/**
+ * player_intent_expressed 的封闭 payload：
+ * 只保存 intentCode，不保存 Action.intent 字符串或玩家原文。
+ */
+export type PlayerIntentExpressedPayload = Readonly<{
+  readonly type: "player_intent_expressed";
+  readonly intentCode: "unmapped_freeform" | "thread_complicates" | "thread_resolves";
+}>;
+
 export type CandidateEventApprovedPayload = Readonly<{
   readonly type: "candidate_event_approved";
   readonly candidateId: string;
@@ -604,6 +247,65 @@ export type CandidateEventActivatedPayload = Readonly<{
   readonly activatedAtTurn: number;
 }>;
 
+/** NPC 交互记录：封闭 dialogueAct + npcId，不保存台词正文。 */
+export type NpcInteractionRecordedPayload = Readonly<{
+  readonly type: "npc_interaction_recorded";
+  readonly npcId: NpcId;
+  readonly dialogueAct: DialogueAct | "freeform";
+}>;
+
+/** NPC 知识变化：封闭 change + npcId + factId，不保存 Fact 正文。 */
+export type NpcKnowledgeChangedPayload = Readonly<{
+  readonly type: "npc_knowledge_changed";
+  readonly npcId: NpcId;
+  readonly factId: FactId;
+  readonly change: "learned" | "certainty_upgraded" | "disclosure_changed";
+}>;
+
+/** NPC 关系变化：封闭 signal + from/to，不保存裸数值 delta。 */
+export type NpcRelationshipChangedPayload = Readonly<{
+  readonly type: "npc_relationship_changed";
+  readonly fromNpcId: NpcId;
+  readonly targetId: PlayerEntityId | NpcId;
+  readonly signal: RelationshipSignal;
+}>;
+
+/**
+ * 新 payload union：保留仍有生产语义的封闭变体，新增 NPC payload，
+ * 收口遗留变体（删除 narrative_choice / narrative_dialogue_choice /
+ * candidate_event_proposed 等无生产路径的变体）。
+ * 时间只在 envelope（committedAt），payload 不再含 occurredAt。
+ */
+export type NarrativeEventPayload =
+  | GameInitializedPayload
+  | LocationObservedPayload
+  | NpcMetPayload
+  | NpcDialogueCompletedPayload
+  | FactDiscoveredPayload
+  | LocationVisitedPayload
+  | LocationExploredPayload
+  | QuestCompletedPayload
+  | QuestUnlockedPayload
+  | LocationUnlockedPayload
+  | ItemObtainedPayload
+  | ItemGivenPayload
+  | BattleStartedPayload
+  | BattleRoundResolvedPayload
+  | BattleResolvedPayload
+  | EnemyDefeatedPayload
+  | QuestFailedPayload
+  | EndingReachedPayload
+  | BlueprintExpandedPayload
+  | NarrativeScenePresentedPayload
+  | PlayerIntentExpressedPayload
+  | CandidateEventApprovedPayload
+  | CandidateEventRejectedPayload
+  | CandidateEventExpiredPayload
+  | CandidateEventActivatedPayload
+  | NpcInteractionRecordedPayload
+  | NpcKnowledgeChangedPayload
+  | NpcRelationshipChangedPayload;
+
 // ---------------------------------------------------------------------------
 // Committed Event Envelope 与 Draft
 // ---------------------------------------------------------------------------
@@ -618,7 +320,7 @@ export type CommittedNarrativeEvent<P extends NarrativeEventPayload = NarrativeE
   readonly episodeId: EpisodeId;
   readonly kind: P["type"];
   readonly actorIds: readonly (PlayerEntityId | NpcId)[];
-  readonly targetIds: readonly (PlayerEntityId | NpcId | NpcId | EnemyId)[];
+  readonly targetIds: readonly (PlayerEntityId | NpcId | EnemyId)[];
   readonly locationId: LocationId | null;
   readonly causeEventIds: readonly EventId[];
   readonly factIds: readonly FactId[];
@@ -648,3 +350,85 @@ export type NarrativeEventDraft<P extends NarrativeEventPayload = NarrativeEvent
 export type EventCauseKey =
   | Readonly<{ kind: "event_id"; eventId: EventId }>
   | Readonly<{ kind: "same_batch"; eventKey: string }>;
+
+// ---------------------------------------------------------------------------
+// parseCommittedEventLedger：持久化层唯一的 ledger parser
+// ---------------------------------------------------------------------------
+
+const PAYLOAD_TYPE_KEYS: ReadonlySet<string> = new Set<NarrativeEventPayload["type"]>([
+  "game_initialized",
+  "location_observed",
+  "npc_met",
+  "npc_dialogue_completed",
+  "fact_discovered",
+  "location_visited",
+  "location_explored",
+  "quest_completed",
+  "quest_unlocked",
+  "location_unlocked",
+  "item_obtained",
+  "item_given",
+  "battle_started",
+  "battle_round_resolved",
+  "battle_resolved",
+  "enemy_defeated",
+  "quest_failed",
+  "ending_reached",
+  "blueprint_expanded",
+  "narrative_scene_presented",
+  "player_intent_expressed",
+  "candidate_event_approved",
+  "candidate_event_rejected",
+  "candidate_event_expired",
+  "candidate_event_activated",
+  "npc_interaction_recorded",
+  "npc_knowledge_changed",
+  "npc_relationship_changed",
+]);
+
+export type ParseCommittedEventLedgerResult =
+  | { readonly ok: true; readonly value: readonly CommittedNarrativeEvent[] }
+  | { readonly ok: false; readonly code: "INVALID_LEDGER" };
+
+/**
+ * 持久化层唯一的 committed event ledger parser。
+ * 只验证 envelope 格式和 payload type 存在性，不做 entity 引用校验（由 persistence 层另行校验）。
+ */
+export function parseCommittedEventLedger(value: unknown): ParseCommittedEventLedgerResult {
+  if (!Array.isArray(value)) return { ok: false, code: "INVALID_LEDGER" };
+  const result: CommittedNarrativeEvent[] = [];
+  for (let i = 0; i < value.length; i++) {
+    const entry = value[i];
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      return { ok: false, code: "INVALID_LEDGER" };
+    }
+    const e = entry as Record<string, unknown>;
+    if (
+      typeof e.eventId !== "string" ||
+      typeof e.sequence !== "number" || !Number.isInteger(e.sequence) || e.sequence < 0 || e.sequence !== i ||
+      typeof e.turnId !== "string" ||
+      typeof e.turnNumber !== "number" || !Number.isInteger(e.turnNumber) || e.turnNumber < 0 ||
+      typeof e.episodeId !== "string" ||
+      typeof e.kind !== "string" || !PAYLOAD_TYPE_KEYS.has(e.kind) ||
+      !Array.isArray(e.actorIds) ||
+      !Array.isArray(e.targetIds) ||
+      (e.locationId !== null && typeof e.locationId !== "string") ||
+      !Array.isArray(e.causeEventIds) ||
+      !Array.isArray(e.factIds) ||
+      !Array.isArray(e.questIds) ||
+      typeof e.outcome !== "string" || !["success", "failure", "mixed", "neutral"].includes(e.outcome) ||
+      typeof e.salience !== "number" || !Number.isInteger(e.salience) || e.salience < 0 || e.salience > 100 ||
+      typeof e.committedAt !== "string" ||
+      typeof e.payload !== "object" || e.payload === null || Array.isArray(e.payload) ||
+      typeof (e.payload as Record<string, unknown>).type !== "string" ||
+      (e.payload as Record<string, unknown>).type !== e.kind
+    ) {
+      return { ok: false, code: "INVALID_LEDGER" };
+    }
+    if (e.actionId !== undefined && typeof e.actionId !== "string") {
+      return { ok: false, code: "INVALID_LEDGER" };
+    }
+    result.push(e as unknown as CommittedNarrativeEvent);
+  }
+  return { ok: true, value: result };
+}

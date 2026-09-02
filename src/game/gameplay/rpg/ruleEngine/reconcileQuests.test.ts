@@ -4,7 +4,7 @@ import { createInitialWorldState, type EnemyEntry, type NpcEntry, type LocationE
 import { entitiesOfKind, projectEntityStore, type EntityCompatibilityProjection } from "@/game/domain/entity";
 import { createWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 import { asLocationId, asNpcId, asQuestId, asGenerationId, asItemId, asFactId, asEnemyId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
-import type { GameEvent } from "@/game/domain/events";
+import type { CommittedNarrativeEvent } from "@/game/domain/events";
 import type { WorldState } from "@/game/domain/worldState";
 
 function withProjection(
@@ -50,7 +50,7 @@ describe("reconcileQuests", () => {
       }],
     });
     const result = reconcileQuests(ws, deps);
-    expect(result.events[0]?.type).toBe("quest_completed");
+    expect(result.drafts[0]?.type).toBe("quest_completed");
     expect(result.nextWorldState.quests[0]?.status).toBe("completed");
   });
 
@@ -69,7 +69,7 @@ describe("reconcileQuests", () => {
       }],
     });
     const result = reconcileQuests(ws, deps);
-    expect(result.events).toHaveLength(0);
+    expect(result.drafts).toHaveLength(0);
     expect(result.nextWorldState.quests[0]?.status).toBe("active");
   });
 
@@ -85,7 +85,7 @@ describe("reconcileQuests", () => {
       }],
     }, [{ type: "item_obtained", itemId, locationId: asLocationId("loc_1"), occurredAt: "2026-01-01" }]);
     const result = reconcileQuests(ws, deps);
-    expect(result.events[0]?.type).toBe("quest_completed");
+    expect(result.drafts[0]?.type).toBe("quest_completed");
     expect(result.nextWorldState.quests[0]?.status).toBe("completed");
   });
 
@@ -139,7 +139,7 @@ describe("reconcileQuests", () => {
       talkToNpcSession: { npcId: npc.id, completed: true },
       actionContext: { participantNpcId: npc.id, actionId: "neutral_action", turnNumber: 5 },
     });
-    expect(result.events.filter((event) => event.type === "quest_completed")).toHaveLength(4);
+    expect(result.drafts.filter((event) => event.kind === "quest_completed")).toHaveLength(4);
     const npcRecord = entitiesOfKind(result.nextWorldState.entityStore, "npc").find((record) => record.core.id === npc.id);
     expect(npcRecord?.relationships.outgoing.flatMap((edge) => edge.evidence)).toEqual([]);
   });
@@ -187,7 +187,7 @@ describe("reconcileQuests", () => {
         relationship: { affinity: 0 }, emotion: "neutral", goals: [],
       },
     };
-    const replayEvidence: GameEvent = {
+    const replayEvidence: CommittedNarrativeEvent = {
       type: "npc_dialogue_completed", npcId: npc.id, actionId, occurredAt: "2026-01-01",
     };
     const ws = withProjection(withProjection(baseWs, { npcs: [npc] }), {
@@ -279,7 +279,7 @@ describe("reconcileQuests 完整 outcome", () => {
     // advance_story 是幕推进信号（Task 3 消费），本阶段零世界状态变化：
     expect(result.nextWorldState.quests.find((q) => q.id === asQuestId("q2"))?.status).toBe("locked");
     expect(result.nextWorldState.unlockedLocationIds).toEqual([asLocationId("loc_1")]);
-    const types = result.events.map((e) => e.type);
+    const types = result.drafts.map((e) => e.payload.type);
     expect(types).toContain("quest_completed");
     expect(types).not.toContain("quest_unlocked");
     expect(types).not.toContain("location_unlocked");
@@ -292,7 +292,7 @@ describe("reconcileQuests 完整 outcome", () => {
       ],
     });
     const result = reconcileQuests(ws, deps);
-    expect(result.events).toHaveLength(0);
+    expect(result.drafts).toHaveLength(0);
     expect(result.nextWorldState.quests[0]?.status).toBe("completed");
   });
 
@@ -309,7 +309,7 @@ describe("reconcileQuests 完整 outcome", () => {
       visitedLocationIds: [asLocationId("loc_1")],
     });
     const result = reconcileQuests(ws, deps);
-    expect(result.events.map((e) => e.type)).not.toContain("ending_reached");
+    expect(result.drafts.map((e) => e.payload.type)).not.toContain("ending_reached");
     expect(result.nextWorldState.quests[0]?.status).toBe("completed");
   });
 
@@ -332,6 +332,6 @@ describe("reconcileQuests 完整 outcome", () => {
     });
     const result = reconcileQuests(ws, deps);
     expect(result.nextWorldState.quests.find((q) => q.id === asQuestId("q2"))?.status).toBe("locked");
-    expect(result.events.map((e) => e.type)).not.toContain("quest_unlocked");
+    expect(result.drafts.map((e) => e.payload.type)).not.toContain("quest_unlocked");
   });
 });

@@ -1,7 +1,7 @@
 import type { ItemEntry, WorldState } from "@/game/domain/worldState";
 import { findLocation, findNpc, findItem } from "@/game/domain/worldState";
 import type { Action } from "@/game/domain/action";
-import type { GameEvent } from "@/game/domain/events";
+import type { NarrativeEventDraft } from "@/game/domain/events";
 import type { ResolvedEventStatus, StateChange, FactChange } from "@/game/domain/resolvedEvent";
 import type { StoryState } from "@/game/domain/storyState";
 import { startBattle, battleAction } from "./battleResolver";
@@ -13,7 +13,7 @@ import { PLAYER_ENTITY_ID, RETURN_REQUIRED_ITEM_TAG } from "@/game/domain/worldE
 export type ResolveResult = {
   readonly ok: true;
   readonly nextWorldState: WorldState;
-  readonly events: readonly GameEvent[];
+  readonly drafts: readonly NarrativeEventDraft[];
   readonly feedback: string;
   readonly status: ResolvedEventStatus;
   readonly stateChanges: readonly StateChange[];
@@ -24,7 +24,6 @@ export type ResolveResult = {
 };
 
 export type ResolveDeps = {
-  readonly now: () => string;
   /** 当前回合的 actionId（写入 NpcInteraction.actionId，用于记忆去重）。 */
   readonly actionId: string;
   /** 当前回合号（写入 NpcInteraction.turnNumber）。 */
@@ -42,16 +41,26 @@ function applyRuleMutations(ws: WorldState, mutations: readonly EntityMutation[]
 }
 
 export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps): ResolveResult {
-  const occurredAt = deps.now();
-
   // freeform：零世界变化，但必须以结构化事件落账意图，
   // 让回合能形成可回应的叙事任务（spec §7.3/@13.5；事件不携带玩家原文）。
   if (action.type === "freeform") {
-    const event: GameEvent = { type: "player_intent_expressed", intent: action.intent, occurredAt };
+    const draft: NarrativeEventDraft = {
+      eventKey: "player_intent_expressed:freeform",
+      episodeKey: "turn",
+      actorIds: [PLAYER_ENTITY_ID],
+      targetIds: [PLAYER_ENTITY_ID],
+      locationId: ws.currentLocationId,
+      causeKeys: [],
+      factIds: [],
+      questIds: [],
+      outcome: "neutral",
+      salience: 15,
+      payload: { type: "player_intent_expressed", intentCode: "unmapped_freeform" },
+    };
     return {
       ok: true,
-      nextWorldState: { ...ws, eventLedger: [...ws.eventLedger, event] },
-      events: [event],
+      nextWorldState: ws,
+      drafts: [draft],
       feedback: "",
       status: "success",
       stateChanges: [],
@@ -64,7 +73,7 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
     return {
       ok: true,
       nextWorldState: ws,
-      events: [],
+      drafts: [],
       feedback: "战斗中无法执行此行动。",
       status: "blocked",
       stateChanges: [],
@@ -74,20 +83,31 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
 
   switch (action.type) {
     case "move": {
-      const event: GameEvent = { type: "location_visited", locationId: action.locationId, occurredAt };
+      const draft: NarrativeEventDraft = {
+        eventKey: `location_visited:${action.locationId}`,
+        episodeKey: "turn",
+        actorIds: [PLAYER_ENTITY_ID],
+        targetIds: [PLAYER_ENTITY_ID],
+        locationId: action.locationId,
+        causeKeys: [],
+        factIds: [],
+        questIds: [],
+        outcome: "neutral",
+        salience: 20,
+        payload: { type: "location_visited", locationId: action.locationId },
+      };
       const mutated = applyRuleMutations(ws, [{ kind: "move_player", toLocationId: action.locationId, markVisited: true }]);
       if (mutated === null) return { ok: false, feedback: "世界状态不一致。" };
       const nextWs: WorldState = {
         ...mutated,
         battle: mutated.battle.status === "resolved" ? { status: "idle" } : mutated.battle,
-        eventLedger: [...mutated.eventLedger, event],
       };
       const locName = findLocation(ws, action.locationId)?.name ?? "未知地点";
       const stateChanges: StateChange[] = [
         { path: "currentLocationId", description: `移动到 ${locName}`, operation: "set" },
         { path: "visitedLocationIds", description: `记录到访`, operation: "add" },
       ];
-      return { ok: true, nextWorldState: nextWs, events: [event], feedback: `你来到了${locName}。`, status: "success", stateChanges, facts: [] };
+      return { ok: true, nextWorldState: nextWs, drafts: [draft], feedback: `你来到了${locName}。`, status: "success", stateChanges, facts: [] };
     }
     case "talk": {
       const npc = findNpc(ws, action.npcId);
@@ -95,20 +115,15 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
       // 旧构造器可能缺失 dialogueAct（Task 9 交割前）：回退 ask
       const dialogueAct = action.dialogueAct ?? "ask";
       const dialogue = resolveDialogue(ws, npc, { ...action, dialogueAct }, {
-        now: deps.now,
         actionId: deps.actionId,
         turnNumber: deps.turnNumber,
       });
       const mutated = applyRuleMutations(ws, dialogue.mutations);
       if (mutated === null) return { ok: false, feedback: "世界状态不一致。" };
-      const nextWs: WorldState = {
-        ...mutated,
-        eventLedger: [...mutated.eventLedger, dialogue.event],
-      };
       return {
         ok: true,
-        nextWorldState: nextWs,
-        events: [dialogue.event],
+        nextWorldState: mutated,
+        drafts: [dialogue.draft],
         feedback: dialogue.feedback,
         status: dialogue.status,
         stateChanges: [...dialogue.stateChanges],
@@ -120,25 +135,33 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
       const source: FactDiscoverySource = action.approachId === undefined
         ? { kind: "automatic" }
         : { kind: "player", approachId: action.approachId };
-      return resolveFactDiscovery(ws, action, source, { now: deps.now });
+      return resolveFactDiscovery(ws, action, source);
     }
     case "take_item": {
-      const event: GameEvent = { type: "item_obtained", itemId: action.itemId, locationId: ws.currentLocationId, occurredAt };
+      const draft: NarrativeEventDraft = {
+        eventKey: `item_obtained:${action.itemId}`,
+        episodeKey: "turn",
+        actorIds: [PLAYER_ENTITY_ID],
+        targetIds: [PLAYER_ENTITY_ID],
+        locationId: ws.currentLocationId,
+        causeKeys: [],
+        factIds: [],
+        questIds: [],
+        outcome: "success",
+        salience: 30,
+        payload: { type: "item_obtained", itemId: action.itemId, locationId: ws.currentLocationId },
+      };
       const mutated = applyRuleMutations(ws, [{
         kind: "transfer_item",
         itemId: action.itemId,
         owner: { kind: "player", playerId: PLAYER_ENTITY_ID },
       }]);
       if (mutated === null) return { ok: false, feedback: "世界状态不一致。" };
-      const nextWs: WorldState = {
-        ...mutated,
-        eventLedger: [...mutated.eventLedger, event],
-      };
       const stateChanges: StateChange[] = [
         { path: "inventory", description: `获得物品 ${String(action.itemId)}`, operation: "add" },
         { path: `locations[current].availableItemIds`, description: `从地点移除物品`, operation: "remove" },
       ];
-      return { ok: true, nextWorldState: nextWs, events: [event], feedback: "你取得了这件物品。", status: "success", stateChanges, facts: [] };
+      return { ok: true, nextWorldState: mutated, drafts: [draft], feedback: "你取得了这件物品。", status: "success", stateChanges, facts: [] };
     }
     case "give_item": {
       const item = findItem(ws, action.itemId);
@@ -151,13 +174,18 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
         return { ok: false, feedback: "世界状态不一致。" };
       }
       if (!ws.inventory.includes(action.itemId)) return { ok: false, feedback: "无法交付这件物品。" };
-      const event: GameEvent = {
-        type: "item_given",
-        itemId: action.itemId,
-        npcId: action.npcId,
+      const draft: NarrativeEventDraft = {
+        eventKey: `item_given:${action.itemId}:${action.npcId}`,
+        episodeKey: "turn",
+        actorIds: [PLAYER_ENTITY_ID],
+        targetIds: [action.npcId],
         locationId: ws.currentLocationId,
-        actionId: deps.actionId,
-        occurredAt,
+        causeKeys: [],
+        factIds: [],
+        questIds: [],
+        outcome: "success",
+        salience: 45,
+        payload: { type: "item_given", itemId: action.itemId, npcId: action.npcId, locationId: ws.currentLocationId },
       };
       const mutated = applyRuleMutations(ws, [
         { kind: "transfer_item", itemId: action.itemId, owner: { kind: "npc", npcId: action.npcId } },
@@ -181,23 +209,31 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
         },
       ]);
       if (mutated === null) return { ok: false, feedback: "世界状态不一致。" };
-      const nextWs: WorldState = {
-        ...mutated,
-        eventLedger: [...mutated.eventLedger, event],
-      };
       const stateChanges: StateChange[] = [
         { path: "inventory", description: `交出物品 ${item.name}`, operation: "remove" },
         { path: `npcs[${String(action.npcId)}].memory`, description: `${npc.name} 收下物品，关系改善`, operation: "set" },
       ];
-      return { ok: true, nextWorldState: nextWs, events: [event], feedback: `你把${item.name}交给了${npc.name}。`, status: "success", stateChanges, facts: [] };
+      return { ok: true, nextWorldState: mutated, drafts: [draft], feedback: `你把${item.name}交给了${npc.name}。`, status: "success", stateChanges, facts: [] };
     }
     case "explore": {
       // 无状态行动也产生主事件（Task 29）：explore → location_explored，不得 success + 空事件。
-      const event: GameEvent = { type: "location_explored", locationId: ws.currentLocationId, occurredAt };
+      const draft: NarrativeEventDraft = {
+        eventKey: `location_explored:${ws.currentLocationId}`,
+        episodeKey: "turn",
+        actorIds: [PLAYER_ENTITY_ID],
+        targetIds: [PLAYER_ENTITY_ID],
+        locationId: ws.currentLocationId,
+        causeKeys: [],
+        factIds: [],
+        questIds: [],
+        outcome: "neutral",
+        salience: 20,
+        payload: { type: "location_explored", locationId: ws.currentLocationId },
+      };
       return {
         ok: true,
-        nextWorldState: { ...ws, eventLedger: [...ws.eventLedger, event] },
-        events: [event],
+        nextWorldState: ws,
+        drafts: [draft],
         feedback: "你探索了周围环境。",
         status: "success",
         stateChanges: [],
@@ -205,7 +241,7 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
       };
     }
     case "ack_prologue": {
-      return { ok: true, nextWorldState: { ...ws }, events: [], feedback: "", status: "success", stateChanges: [], facts: [] };
+      return { ok: true, nextWorldState: { ...ws }, drafts: [], feedback: "", status: "success", stateChanges: [], facts: [] };
     }
     case "attack": {
       return startBattle(ws, action.enemyId, deps);
@@ -236,9 +272,7 @@ export function resolveFactDiscovery(
   ws: WorldState,
   action: Extract<Action, { readonly type: "investigate" }>,
   source: FactDiscoverySource,
-  deps: { readonly now: () => string },
 ): ResolveResult {
-  const occurredAt = deps.now();
   const fact = ws.worldFacts.find((f) => f.factId === action.factId);
   if (fact === undefined) return { ok: false, feedback: "未知线索。" };
   if (fact.discovered) return { ok: false, feedback: "这条线索已经调查过了。" };
@@ -248,21 +282,31 @@ export function resolveFactDiscovery(
     : undefined;
   if (source.kind === "player" && approach === undefined) return { ok: false, feedback: "未知的调查方式。" };
 
-  const event: GameEvent = {
-    type: "fact_discovered",
-    factId: action.factId,
-    occurredAt,
-    ...(approach === undefined
-      ? {}
-      : {
-          approachId: approach.approachId,
-          evidenceQuality: approach.evidenceQuality,
-          tensionDelta: approach.tensionDelta,
-        }),
+  const draft: NarrativeEventDraft = {
+    eventKey: `fact_discovered:${action.factId}`,
+    episodeKey: "turn",
+    actorIds: [PLAYER_ENTITY_ID],
+    targetIds: [PLAYER_ENTITY_ID],
+    locationId: ws.currentLocationId,
+    causeKeys: [],
+    factIds: [action.factId],
+    questIds: [],
+    outcome: "success",
+    salience: 65,
+    payload: {
+      type: "fact_discovered",
+      factId: action.factId,
+      ...(approach === undefined
+        ? {}
+        : {
+            approachId: approach.approachId,
+            evidenceQuality: approach.evidenceQuality,
+            tensionDelta: approach.tensionDelta,
+          }),
+    },
   };
   const mutated = applyRuleMutations(ws, [{ kind: "discover_fact", factId: action.factId }]);
   if (mutated === null) return { ok: false, feedback: "世界状态不一致。" };
-  const nextWs: WorldState = { ...mutated, eventLedger: [...mutated.eventLedger, event] };
   const stateChanges: StateChange[] = [
     { path: `worldFacts[${String(action.factId)}].discovered`, description: `发现线索`, operation: "set" },
   ];
@@ -271,7 +315,7 @@ export function resolveFactDiscovery(
   const facts: FactChange[] = [
     { factId: action.factId, change: "discovered", source: "scene_witness" },
   ];
-  return { ok: true, nextWorldState: nextWs, events: [event], feedback: "你调查了这条线索。", status: "success", stateChanges, facts };
+  return { ok: true, nextWorldState: mutated, drafts: [draft], feedback: "你调查了这条线索。", status: "success", stateChanges, facts };
 }
 
 /**
@@ -279,7 +323,7 @@ export function resolveFactDiscovery(
  */
 export type AutoResolveInvestigationResult = {
   readonly nextWorldState: WorldState;
-  readonly events: readonly GameEvent[];
+  readonly drafts: readonly NarrativeEventDraft[];
   readonly stateChanges: readonly StateChange[];
   readonly facts: readonly FactChange[];
 };
@@ -292,11 +336,10 @@ export type AutoResolveInvestigationResult = {
 export function autoResolveCurrentInvestigation(
   worldState: WorldState,
   storyState: StoryState,
-  deps?: { readonly now: () => string },
 ): AutoResolveInvestigationResult {
   const noOp: AutoResolveInvestigationResult = {
     nextWorldState: worldState,
-    events: [],
+    drafts: [],
     stateChanges: [],
     facts: [],
   };
@@ -310,11 +353,11 @@ export function autoResolveCurrentInvestigation(
   // 旧档案事实可能缺 locationId（Task 6 线性模式 legacy_fact 兼容）：视为当前地点。
   if (fact.locationId !== undefined && String(fact.locationId) !== String(worldState.currentLocationId)) return noOp;
   const action: Extract<Action, { readonly type: "investigate" }> = { type: "investigate", factId: fact.factId };
-  const resolved = resolveFactDiscovery(worldState, action, { kind: "automatic" }, { now: deps?.now ?? (() => "") });
+  const resolved = resolveFactDiscovery(worldState, action, { kind: "automatic" });
   if (!resolved.ok) return noOp;
   return {
     nextWorldState: resolved.nextWorldState,
-    events: resolved.events,
+    drafts: resolved.drafts,
     stateChanges: resolved.stateChanges,
     facts: resolved.facts,
   };

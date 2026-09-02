@@ -1,6 +1,6 @@
 import { entitiesOfKind, parseEntityStore, projectEntityStore, validateEntityCompatibilityProjection, validateEntityReferences } from "@/game/domain/entity";
 import type { EntityCompatibilityProjection, EntityStore } from "@/game/domain/entity";
-import type { GameEvent } from "@/game/domain/events";
+import { parseCommittedEventLedger, type CommittedNarrativeEvent } from "@/game/domain/events";
 import type { GenerationMetadata } from "@/game/domain/worldEntity";
 import { WORLD_STATE_SCHEMA_VERSION, type BattleState, type EndingState, type WorldState } from "@/game/domain/worldState";
 import type { EndingEntry } from "@/game/domain/worldEntries";
@@ -62,7 +62,7 @@ function isGeneration(value: unknown): value is GenerationMetadata {
 
 function isBattleSnapshot(value: unknown): boolean {
   if (!isObject(value) || !hasExactKeys(value, ["entityStore", "eventLedger"]) || !Array.isArray(value.eventLedger)) return false;
-  return parseEntityStore(value.entityStore).ok && value.eventLedger.every(isGameEvent);
+  return parseEntityStore(value.entityStore).ok && parseCommittedEventLedger(value.eventLedger).ok;
 }
 
 function findUnknownBattleCompanionReference(
@@ -212,120 +212,29 @@ function isEndingRequirement(value: unknown): boolean {
   return false;
 }
 
-function eventWithOccurredAt(value: JsonObject, required: readonly string[], optional: readonly string[] = []): boolean {
-  return hasRequiredAndOptionalKeys(value, ["type", ...required, "occurredAt"], optional)
-    && typeof value.occurredAt === "string";
+function eventWithOccurredAt(_value: JsonObject, _required: readonly string[], _optional: readonly string[] = []): boolean {
+  return false; // committed events use parseCommittedEventLedger, not occurredAt
 }
 
-function isGameEvent(value: unknown): value is GameEvent {
-  if (!isObject(value) || typeof value.type !== "string") return false;
-  switch (value.type) {
-    case "game_initialized":
-      return hasExactKeys(value, ["type", "generation"]) && isGeneration(value.generation);
-    case "location_observed":
-    case "location_visited":
-    case "location_explored":
-    case "location_unlocked":
-      return eventWithOccurredAt(value, ["locationId"]) && typeof value.locationId === "string";
-    case "npc_met":
-      return eventWithOccurredAt(value, ["npcId"], ["interactionKind"])
-        && typeof value.npcId === "string"
-        && optionalMatches(value, "interactionKind", (entry) => entry === "greet" || entry === "ask_main_quest");
-    case "npc_dialogue_completed":
-      return eventWithOccurredAt(value, ["npcId"], ["actionId"])
-        && typeof value.npcId === "string"
-        && optionalMatches(value, "actionId", (entry) => typeof entry === "string");
-    case "fact_discovered":
-      return eventWithOccurredAt(value, ["factId"], ["witnessNpcIds", "approachId", "evidenceQuality", "tensionDelta"])
-        && typeof value.factId === "string"
-        && optionalMatches(value, "witnessNpcIds", isStringArray)
-        && optionalMatches(value, "approachId", (entry) => typeof entry === "string")
-        && optionalMatches(value, "evidenceQuality", (entry) => entry === "clean" || entry === "noisy")
-        && optionalMatches(value, "tensionDelta", isFiniteNumber);
-    case "quest_completed":
-    case "quest_unlocked":
-    case "quest_failed":
-      return eventWithOccurredAt(value, ["questId"]) && typeof value.questId === "string";
-    case "item_obtained":
-      return eventWithOccurredAt(value, ["itemId", "locationId"])
-        && typeof value.itemId === "string" && typeof value.locationId === "string";
-    case "item_given":
-      return eventWithOccurredAt(value, ["itemId", "npcId", "locationId"], ["actionId"])
-        && typeof value.itemId === "string" && typeof value.npcId === "string" && typeof value.locationId === "string"
-        && optionalMatches(value, "actionId", (entry) => typeof entry === "string");
-    case "battle_started":
-      return eventWithOccurredAt(value, ["enemyId"], ["enemyIds"])
-        && typeof value.enemyId === "string" && optionalMatches(value, "enemyIds", isStringArray);
-    case "battle_round_resolved":
-      return eventWithOccurredAt(value, ["enemyId", "round", "playerHp", "enemyHp", "action"], ["results"])
-        && typeof value.enemyId === "string" && Number.isInteger(value.round) && (value.round as number) >= 0
-        && isFiniteNumber(value.playerHp) && isFiniteNumber(value.enemyHp)
-        && (value.action === "attack" || value.action === "skill" || value.action === "guard" || value.action === "flee" || value.action === "withdraw")
-        && optionalMatches(value, "results", (entry) => Array.isArray(entry) && entry.every(isCombatResult));
-    case "battle_resolved":
-      return eventWithOccurredAt(value, ["enemyId", "outcome"], ["enemyIds"])
-        && typeof value.enemyId === "string" && (value.outcome === "victory" || value.outcome === "defeat" || value.outcome === "withdraw")
-        && optionalMatches(value, "enemyIds", isStringArray);
-    case "enemy_defeated":
-      return eventWithOccurredAt(value, ["enemyId"]) && typeof value.enemyId === "string";
-    case "ending_reached":
-      return eventWithOccurredAt(value, ["endingId", "outcome"])
-        && typeof value.endingId === "string" && (value.outcome === "success" || value.outcome === "failure");
-    case "narrative_choice":
-      return eventWithOccurredAt(value, ["choiceToken", "actionKey", "sceneId"])
-        && typeof value.choiceToken === "string" && typeof value.actionKey === "string" && typeof value.sceneId === "string";
-    case "narrative_dialogue_choice":
-      return eventWithOccurredAt(value, ["choiceToken", "dialogueIntent", "npcId", "sceneId"])
-        && typeof value.choiceToken === "string" && typeof value.dialogueIntent === "string"
-        && typeof value.npcId === "string" && typeof value.sceneId === "string";
-    case "narrative_scene_presented":
-      return eventWithOccurredAt(value, ["sceneId", "locationId", "focusNpcId", "revealedFactIds", "pacing"])
-        && typeof value.sceneId === "string" && typeof value.locationId === "string"
-        && (value.focusNpcId === null || typeof value.focusNpcId === "string") && isStringArray(value.revealedFactIds)
-        && ["setup", "develop", "turn", "climax", "resolution"].includes(String(value.pacing));
-    case "blueprint_expanded":
-      return eventWithOccurredAt(value, ["newLocationIds", "newNpcIds"], ["newFactIds", "newItemIds", "newEnemyIds", "newQuestIds", "newEndingIds"])
-        && isStringArray(value.newLocationIds) && isStringArray(value.newNpcIds)
-        && ["newFactIds", "newItemIds", "newEnemyIds", "newQuestIds", "newEndingIds"].every((key) => optionalMatches(value, key, isStringArray));
-    case "player_intent_expressed":
-      return eventWithOccurredAt(value, ["intent"]) && typeof value.intent === "string";
-    case "candidate_event_proposed":
-      return eventWithOccurredAt(value, ["candidateId", "kind", "proposedAtTurn", "expiresAtTurn"])
-        && typeof value.candidateId === "string" && typeof value.kind === "string"
-        && Number.isInteger(value.proposedAtTurn) && (value.proposedAtTurn as number) >= 0
-        && Number.isInteger(value.expiresAtTurn) && (value.expiresAtTurn as number) >= 0;
-    case "candidate_event_approved":
-      return eventWithOccurredAt(value, ["candidateId", "kind", "approvedAtTurn"])
-        && typeof value.candidateId === "string" && typeof value.kind === "string"
-        && Number.isInteger(value.approvedAtTurn) && (value.approvedAtTurn as number) >= 0;
-    case "candidate_event_rejected":
-      return eventWithOccurredAt(value, ["candidateId", "kind", "reasonCode", "rejectedAtTurn"])
-        && typeof value.candidateId === "string" && typeof value.kind === "string" && typeof value.reasonCode === "string"
-        && Number.isInteger(value.rejectedAtTurn) && (value.rejectedAtTurn as number) >= 0;
-    case "candidate_event_expired":
-      return eventWithOccurredAt(value, ["candidateId", "kind", "expiredAtTurn"])
-        && typeof value.candidateId === "string" && typeof value.kind === "string"
-        && Number.isInteger(value.expiredAtTurn) && (value.expiredAtTurn as number) >= 0;
-    case "candidate_event_activated":
-      return eventWithOccurredAt(value, ["candidateId", "kind", "activatedAtTurn"])
-        && typeof value.candidateId === "string" && typeof value.kind === "string"
-        && Number.isInteger(value.activatedAtTurn) && (value.activatedAtTurn as number) >= 0;
-    default:
-      return false;
-  }
+function isGameEvent(value: unknown): value is CommittedNarrativeEvent {
+  return parseCommittedEventLedger([value]).ok;
 }
 
 /** SQLite 边界唯一接受的 WorldState 解析器（版本与 WORLD_STATE_SCHEMA_VERSION 同源）；兼容投影始终由 store 重建。 */
 export function validatePersistableWorldState(value: unknown): PersistableWorldStateValidationResult {
   if (!isObject(value)) return { ok: false, code: "invalid_world_envelope" };
   if (value.version !== WORLD_STATE_SCHEMA_VERSION) return { ok: false, code: "wrong_world_version" };
-  if (!hasExactKeys(value, WORLD_KEYS) || !isGeneration(value.generation) || !isBattle(value.battle) || !Array.isArray(value.endings) || !value.endings.every(isEndingEntry) || !isEndingState(value.ending) || !Array.isArray(value.eventLedger) || !value.eventLedger.every(isGameEvent)) {
+  if (!hasExactKeys(value, WORLD_KEYS) || !isGeneration(value.generation) || !isBattle(value.battle) || !Array.isArray(value.endings) || !value.endings.every(isEndingEntry) || !isEndingState(value.ending) || !Array.isArray(value.eventLedger)) {
     return { ok: false, code: "invalid_world_envelope" };
   }
   const parsedStore = parseEntityStore(value.entityStore);
   if (!parsedStore.ok) {
     const issue = parsedStore.issues[0];
     return { ok: false, code: "invalid_entity_store", issueCode: issue?.code, entityId: issue?.entityId };
+  }
+  const parsedLedger = parseCommittedEventLedger(value.eventLedger);
+  if (!parsedLedger.ok) {
+    return { ok: false, code: "invalid_world_envelope" };
   }
   const referenceIssue = validateEntityReferences(parsedStore.store)[0];
   if (referenceIssue !== undefined) return { ok: false, code: "invalid_entity_reference", issueCode: referenceIssue.code, entityId: referenceIssue.entityId };
@@ -342,7 +251,7 @@ export function validatePersistableWorldState(value: unknown): PersistableWorldS
     battle: value.battle,
     endings: value.endings,
     ending: value.ending,
-    eventLedger: value.eventLedger,
+    eventLedger: parsedLedger.value,
   };
   const worldReferenceIssue = validateWorldStateEntityReferences(normalized)[0];
   if (worldReferenceIssue !== undefined) return { ok: false, code: "invalid_entity_reference", issueCode: worldReferenceIssue.code, entityId: worldReferenceIssue.entityId };

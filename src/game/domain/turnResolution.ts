@@ -1,5 +1,5 @@
 import type { Action, Interaction } from "./action";
-import type { GameEvent, TurnId } from "./events";
+import type { CommittedNarrativeEvent, TurnId } from "./events";
 import type { ResolvedEvent } from "./resolvedEvent";
 import type { StoryState } from "./storyState";
 import type { WorldState } from "./worldState";
@@ -18,7 +18,7 @@ export type TurnResolution = {
   readonly action: Action;
   readonly primaryResult: ResolvedEvent;
   /** 本回合产生的完整、有序领域事件。 */
-  readonly domainEvents: readonly GameEvent[];
+  readonly domainEvents: readonly CommittedNarrativeEvent[];
   readonly nextWorldState: WorldState;
   readonly nextStoryState: StoryState;
 };
@@ -27,7 +27,7 @@ export type CreateTurnResolutionInput = Omit<
   TurnResolution,
   "actionId" | "turnNumber" | "domainEvents" | "nextStoryState"
 > & {
-  readonly domainEvents: readonly GameEvent[];
+  readonly domainEvents: readonly CommittedNarrativeEvent[];
   readonly previousStoryState: StoryState;
   readonly nextStoryState: StoryState;
 };

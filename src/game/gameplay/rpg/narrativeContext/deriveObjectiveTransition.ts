@@ -34,7 +34,7 @@ export function isObjectiveSatisfiedInStory(
   // 本回合把新 NPC 标记为 met，但这只代表接触发生，不代表两轮对白结束。
   if (String(session.npcId) !== String(objective.npcId)) {
     return ws.eventLedger.some((event) =>
-      event.type === "npc_dialogue_completed" && event.npcId === objective.npcId);
+      event.kind === "npc_dialogue_completed" && (event.payload as { npcId: string }).npcId === objective.npcId);
   }
   return session.completed;
 }

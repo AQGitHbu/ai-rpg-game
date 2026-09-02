@@ -1,6 +1,38 @@
 import { describe, expect, it } from "vitest";
-import type { GameEvent, LocationObservedEvent, NpcMetEvent, NpcDialogueCompletedEvent, FactDiscoveredEvent, LocationVisitedEvent, QuestCompletedEvent, QuestUnlockedEvent, ItemObtainedEvent, ItemGivenEvent, BattleStartedEvent, BattleRoundResolvedEvent, BattleResolvedEvent, EnemyDefeatedEvent, QuestFailedEvent, EndingReachedEvent, NarrativeScenePresentedEvent, CandidateEventProposedEvent, CandidateEventApprovedEvent, CandidateEventRejectedEvent, CandidateEventExpiredEvent, CandidateEventActivatedEvent } from "./events";
-import { asLocationId, asNpcId, asFactId, asGenerationId, asItemId, asQuestId, asEnemyId, asEndingId, type GenerationMetadata } from "./worldEntity";
+import type {
+  NarrativeEventPayload,
+  CommittedNarrativeEvent,
+  NarrativeEventDraft,
+  GameInitializedPayload,
+  LocationObservedPayload,
+  NpcMetPayload,
+  NpcDialogueCompletedPayload,
+  FactDiscoveredPayload,
+  LocationVisitedPayload,
+  QuestCompletedPayload,
+  QuestUnlockedPayload,
+  ItemObtainedPayload,
+  ItemGivenPayload,
+  BattleStartedPayload,
+  BattleRoundResolvedPayload,
+  BattleResolvedPayload,
+  EnemyDefeatedPayload,
+  QuestFailedPayload,
+  EndingReachedPayload,
+  NarrativeScenePresentedPayload,
+  CandidateEventApprovedPayload,
+  CandidateEventRejectedPayload,
+  CandidateEventExpiredPayload,
+  CandidateEventActivatedPayload,
+} from "./events";
+import {
+  asEventId, asTurnId, asEpisodeId, eventIdFor, episodeIdForTurn,
+  parseCommittedEventLedger,
+} from "./events";
+import {
+  asLocationId, asNpcId, asFactId, asGenerationId, asItemId, asQuestId, asEnemyId, asEndingId,
+  type GenerationMetadata,
+} from "./worldEntity";
 
 function buildGeneration(): GenerationMetadata {
   return {
@@ -12,409 +44,299 @@ function buildGeneration(): GenerationMetadata {
   };
 }
 
-describe("GameEvent union (Phase 3 action events)", () => {
-  it("accepts location_observed event with injected timestamp", () => {
-    const event: LocationObservedEvent = {
+function buildCommittedEvent(overrides: Partial<CommittedNarrativeEvent> = {}): CommittedNarrativeEvent {
+  const turnId = asTurnId("turn:1");
+  return {
+    eventId: eventIdFor(turnId, "test_event"),
+    sequence: 0,
+    turnId,
+    turnNumber: 1,
+    episodeId: episodeIdForTurn(turnId),
+    kind: "fact_discovered",
+    actorIds: [],
+    targetIds: [],
+    locationId: asLocationId("loc_1"),
+    causeEventIds: [],
+    factIds: [asFactId("fact_1")],
+    questIds: [],
+    outcome: "success",
+    salience: 50,
+    committedAt: "2026-09-02T00:00:00Z",
+    payload: { type: "fact_discovered", factId: asFactId("fact_1") },
+    ...overrides,
+  };
+}
+
+describe("NarrativeEventPayload union", () => {
+  it("accepts game_initialized payload", () => {
+    const payload: GameInitializedPayload = {
+      type: "game_initialized",
+      generation: buildGeneration(),
+    };
+    expect(payload.type).toBe("game_initialized");
+  });
+
+  it("accepts location_observed payload", () => {
+    const payload: LocationObservedPayload = {
       type: "location_observed",
       locationId: asLocationId("loc_1"),
-      occurredAt: "2026-07-27T10:00:00Z",
     };
-    expect(event.type).toBe("location_observed");
-    expect(event.locationId).toBe("loc_1");
-    expect(event.occurredAt).toBe("2026-07-27T10:00:00Z");
+    expect(payload.type).toBe("location_observed");
   });
 
-  it("accepts npc_met event with injected timestamp", () => {
-    const event: NpcMetEvent = {
+  it("accepts npc_met payload", () => {
+    const payload: NpcMetPayload = {
       type: "npc_met",
       npcId: asNpcId("npc_1"),
-      occurredAt: "2026-07-27T10:01:00Z",
     };
-    expect(event.type).toBe("npc_met");
-    expect(event.npcId).toBe("npc_1");
+    expect(payload.npcId).toBe("npc_1");
   });
 
-  it("accepts dialogue completion action evidence while keeping old events readable", () => {
-    const legacy: NpcDialogueCompletedEvent = {
-      type: "npc_dialogue_completed", npcId: asNpcId("npc_1"), occurredAt: "2026-07-27T10:01:30Z",
+  it("accepts npc_dialogue_completed payload", () => {
+    const payload: NpcDialogueCompletedPayload = {
+      type: "npc_dialogue_completed",
+      npcId: asNpcId("npc_1"),
     };
-    const current: NpcDialogueCompletedEvent = {
-      ...legacy, actionId: "dialogue_action_1",
-    };
-    expect(legacy.actionId).toBeUndefined();
-    expect(current.actionId).toBe("dialogue_action_1");
+    expect(payload.type).toBe("npc_dialogue_completed");
   });
 
-  it("accepts fact_discovered event with injected timestamp", () => {
-    const event: FactDiscoveredEvent = {
-      type: "fact_discovered",
-      factId: asFactId("fact_gen_1"),
-      occurredAt: "2026-07-27T10:02:00Z",
-    };
-    expect(event.type).toBe("fact_discovered");
-    expect(event.factId).toBe("fact_gen_1");
-  });
-
-  it("records approach metadata on fact_discovered without requiring it for auto discovery", () => {
-    const event: FactDiscoveredEvent = {
+  it("accepts fact_discovered payload with approach metadata", () => {
+    const payload: FactDiscoveredPayload = {
       type: "fact_discovered",
       factId: asFactId("fact_trace"),
-      occurredAt: "t1",
       approachId: "follow",
       evidenceQuality: "clean",
       tensionDelta: 4,
     };
-    expect(event.evidenceQuality).toBe("clean");
-    expect(event.approachId).toBe("follow");
-    expect(event.tensionDelta).toBe(4);
+    expect(payload.evidenceQuality).toBe("clean");
+    expect(payload.approachId).toBe("follow");
+    expect(payload.tensionDelta).toBe(4);
   });
 
-  it("fact_discovered stays valid when approach metadata is omitted for auto discovery", () => {
-    const event: FactDiscoveredEvent = {
+  it("fact_discovered stays valid when approach metadata is omitted", () => {
+    const payload: FactDiscoveredPayload = {
       type: "fact_discovered",
       factId: asFactId("fact_trace"),
-      occurredAt: "t1",
     };
-    expect(event.approachId).toBeUndefined();
-    expect(event.evidenceQuality).toBeUndefined();
-    expect(event.tensionDelta).toBeUndefined();
+    expect(payload.approachId).toBeUndefined();
+    expect(payload.evidenceQuality).toBeUndefined();
+    expect(payload.tensionDelta).toBeUndefined();
   });
 
-  it("accepts location_visited event with injected timestamp (Phase 4 move)", () => {
-    const event: LocationVisitedEvent = {
+  it("accepts location_visited payload", () => {
+    const payload: LocationVisitedPayload = {
       type: "location_visited",
       locationId: asLocationId("loc_2"),
-      occurredAt: "2026-07-27T10:03:00Z",
     };
-    expect(event.type).toBe("location_visited");
-    expect(event.locationId).toBe("loc_2");
-    expect(event.occurredAt).toBe("2026-07-27T10:03:00Z");
+    expect(payload.type).toBe("location_visited");
   });
 
-  it("accepts quest_completed event with injected timestamp (Phase 4 reconciliation)", () => {
-    const event: QuestCompletedEvent = {
+  it("accepts quest_completed payload", () => {
+    const payload: QuestCompletedPayload = {
       type: "quest_completed",
       questId: asQuestId("m1"),
-      occurredAt: "2026-07-27T10:04:00Z",
     };
-    expect(event.type).toBe("quest_completed");
-    expect(event.questId).toBe("m1");
-    expect(event.occurredAt).toBe("2026-07-27T10:04:00Z");
+    expect(payload.questId).toBe("m1");
   });
 
-  it("accepts quest_unlocked event with injected timestamp (Phase 4 reconciliation)", () => {
-    const event: QuestUnlockedEvent = {
+  it("accepts quest_unlocked payload", () => {
+    const payload: QuestUnlockedPayload = {
       type: "quest_unlocked",
       questId: asQuestId("m2"),
-      occurredAt: "2026-07-27T10:05:00Z",
     };
-    expect(event.type).toBe("quest_unlocked");
-    expect(event.questId).toBe("m2");
-    expect(event.occurredAt).toBe("2026-07-27T10:05:00Z");
+    expect(payload.type).toBe("quest_unlocked");
   });
 
-  it("accepts item_obtained event with injected timestamp (Phase 5 take_item)", () => {
-    const event: ItemObtainedEvent = {
+  it("accepts item_obtained payload", () => {
+    const payload: ItemObtainedPayload = {
       type: "item_obtained",
       itemId: asItemId("item_key"),
       locationId: asLocationId("loc_3"),
-      occurredAt: "2026-07-27T10:06:00Z",
     };
-    expect(event.type).toBe("item_obtained");
-    expect(event.itemId).toBe("item_key");
-    expect(event.locationId).toBe("loc_3");
-    expect(event.occurredAt).toBe("2026-07-27T10:06:00Z");
+    expect(payload.itemId).toBe("item_key");
   });
 
-  it("accepts item_given action evidence without requiring it on legacy events", () => {
-    const event: ItemGivenEvent = {
-      type: "item_given", itemId: asItemId("item_key"), npcId: asNpcId("npc_1"),
-      locationId: asLocationId("loc_3"), actionId: "give_action_1", occurredAt: "2026-07-27T10:06:30Z",
+  it("accepts item_given payload", () => {
+    const payload: ItemGivenPayload = {
+      type: "item_given",
+      itemId: asItemId("item_key"),
+      npcId: asNpcId("npc_1"),
+      locationId: asLocationId("loc_3"),
     };
-    expect(event.actionId).toBe("give_action_1");
+    expect(payload.type).toBe("item_given");
   });
 
-  it("GameEvent union narrows on all Phase 3 type discriminators", () => {
-    const events: GameEvent[] = [
-      { type: "game_initialized", generation: buildGeneration() },
-      { type: "location_observed", locationId: asLocationId("loc_1"), occurredAt: "t1" },
-      { type: "npc_met", npcId: asNpcId("npc_1"), occurredAt: "t2" },
-      { type: "fact_discovered", factId: asFactId("fact_1"), occurredAt: "t3" },
-      { type: "location_visited", locationId: asLocationId("loc_2"), occurredAt: "t4" },
-      { type: "quest_completed", questId: asQuestId("m1"), occurredAt: "t5" },
-      { type: "quest_unlocked", questId: asQuestId("m2"), occurredAt: "t6" },
-      { type: "item_obtained", itemId: asItemId("item_1"), locationId: asLocationId("loc_3"), occurredAt: "t7" },
-    ];
-
-    const types = events.map((e) => e.type);
-    expect(types).toEqual([
-      "game_initialized",
-      "location_observed",
-      "npc_met",
-      "fact_discovered",
-      "location_visited",
-      "quest_completed",
-      "quest_unlocked",
-      "item_obtained",
-    ]);
-  });
-
-  it("rejects unknown event types at compile time", () => {
-    // @ts-expect-error only declared event types are allowed
-    const unknownEvent: GameEvent = { type: "combat_resolved" };
-    expect(unknownEvent).toBeDefined();
-  });
-
-  it("rejects raw strings for branded id fields at compile time", () => {
-    // @ts-expect-error locationId requires a branded LocationId
-    const badEvent: LocationObservedEvent = { type: "location_observed", locationId: "loc_1", occurredAt: "t" };
-    expect(badEvent).toBeDefined();
-  });
-});
-
-describe("GameEvent union (Phase 6 battle and ending events)", () => {
-  it("accepts battle_started event with enemyId and timestamp", () => {
-    const event: BattleStartedEvent = {
+  it("accepts battle_started payload", () => {
+    const payload: BattleStartedPayload = {
       type: "battle_started",
       enemyId: asEnemyId("enemy_boss"),
-      occurredAt: "2026-07-28T10:00:00Z",
     };
-    expect(event.type).toBe("battle_started");
-    expect(event.enemyId).toBe("enemy_boss");
+    expect(payload.enemyId).toBe("enemy_boss");
   });
 
-  it("accepts battle_round_resolved event with full round data", () => {
-    const event: BattleRoundResolvedEvent = {
+  it("accepts battle_round_resolved payload", () => {
+    const payload: BattleRoundResolvedPayload = {
       type: "battle_round_resolved",
       enemyId: asEnemyId("enemy_boss"),
       round: 1,
       playerHp: 28,
       enemyHp: 16,
       action: "attack",
-      occurredAt: "2026-07-28T10:01:00Z",
     };
-    expect(event.type).toBe("battle_round_resolved");
-    expect(event.round).toBe(1);
-    expect(event.playerHp).toBe(28);
-    expect(event.enemyHp).toBe(16);
-    expect(event.action).toBe("attack");
+    expect(payload.round).toBe(1);
+    expect(payload.playerHp).toBe(28);
   });
 
-  it("accepts battle_resolved event with victory outcome", () => {
-    const event: BattleResolvedEvent = {
+  it("accepts battle_resolved payload with victory outcome", () => {
+    const payload: BattleResolvedPayload = {
       type: "battle_resolved",
       enemyId: asEnemyId("enemy_boss"),
       outcome: "victory",
-      occurredAt: "2026-07-28T10:05:00Z",
     };
-    expect(event.type).toBe("battle_resolved");
-    expect(event.outcome).toBe("victory");
+    expect(payload.outcome).toBe("victory");
   });
 
-  it("accepts battle_resolved event with withdraw outcome", () => {
-    const event: BattleResolvedEvent = {
-      type: "battle_resolved",
-      enemyId: asEnemyId("enemy_boss"),
-      outcome: "withdraw",
-      occurredAt: "2026-07-28T10:05:00Z",
-    };
-    expect(event.outcome).toBe("withdraw");
-  });
-
-  it("accepts enemy_defeated event with enemyId and timestamp", () => {
-    const event: EnemyDefeatedEvent = {
+  it("accepts enemy_defeated payload", () => {
+    const payload: EnemyDefeatedPayload = {
       type: "enemy_defeated",
       enemyId: asEnemyId("enemy_boss"),
-      occurredAt: "2026-07-28T10:06:00Z",
     };
-    expect(event.type).toBe("enemy_defeated");
-    expect(event.enemyId).toBe("enemy_boss");
+    expect(payload.type).toBe("enemy_defeated");
   });
 
-  it("accepts quest_failed event with questId and timestamp", () => {
-    const event: QuestFailedEvent = {
+  it("accepts quest_failed payload", () => {
+    const payload: QuestFailedPayload = {
       type: "quest_failed",
       questId: asQuestId("quest_m3"),
-      occurredAt: "2026-07-28T10:07:00Z",
     };
-    expect(event.type).toBe("quest_failed");
-    expect(event.questId).toBe("quest_m3");
+    expect(payload.questId).toBe("quest_m3");
   });
 
-  it("accepts ending_reached event with endingId, outcome and timestamp", () => {
-    const event: EndingReachedEvent = {
+  it("accepts ending_reached payload with success outcome", () => {
+    const payload: EndingReachedPayload = {
       type: "ending_reached",
       endingId: asEndingId("ending_1"),
       outcome: "success",
-      occurredAt: "2026-07-28T10:08:00Z",
     };
-    expect(event.type).toBe("ending_reached");
-    expect(event.endingId).toBe("ending_1");
-    expect(event.outcome).toBe("success");
+    expect(payload.endingId).toBe("ending_1");
+    expect(payload.outcome).toBe("success");
   });
 
-  it("accepts ending_reached event with failure outcome", () => {
-    const event: EndingReachedEvent = {
+  it("accepts ending_reached payload with failure outcome", () => {
+    const payload: EndingReachedPayload = {
       type: "ending_reached",
       endingId: asEndingId("ending_2"),
       outcome: "failure",
-      occurredAt: "2026-07-28T10:09:00Z",
     };
-    expect(event.outcome).toBe("failure");
+    expect(payload.outcome).toBe("failure");
   });
 
-  it("GameEvent union includes all Phase 6 type discriminators", () => {
-    const events: GameEvent[] = [
-      { type: "battle_started", enemyId: asEnemyId("e1"), occurredAt: "t1" },
-      { type: "battle_round_resolved", enemyId: asEnemyId("e1"), round: 1, playerHp: 10, enemyHp: 5, action: "attack", occurredAt: "t2" },
-      { type: "battle_resolved", enemyId: asEnemyId("e1"), outcome: "victory", occurredAt: "t3" },
-      { type: "enemy_defeated", enemyId: asEnemyId("e1"), occurredAt: "t4" },
-      { type: "quest_failed", questId: asQuestId("q1"), occurredAt: "t5" },
-      { type: "ending_reached", endingId: asEndingId("ed1"), outcome: "success", occurredAt: "t6" },
-    ];
-
-    const types = events.map((e) => e.type);
-    expect(types).toEqual([
-      "battle_started",
-      "battle_round_resolved",
-      "battle_resolved",
-      "enemy_defeated",
-      "quest_failed",
-      "ending_reached",
-    ]);
-  });
-});
-
-describe("GameEvent union (Phase 11 narrative scene presented)", () => {
-  it("accepts narrative_scene_presented event carrying only structural indexes", () => {
-    const event: NarrativeScenePresentedEvent = {
+  it("accepts narrative_scene_presented payload with minimal structure", () => {
+    const payload: NarrativeScenePresentedPayload = {
       type: "narrative_scene_presented",
       sceneId: "scene-1",
-      locationId: asLocationId("loc_1"),
       focusNpcId: null,
-      revealedFactIds: [],
       pacing: "develop",
-      occurredAt: "2026-07-31T00:00:00.000Z"
-    };
-    expect(event.type).toBe("narrative_scene_presented");
-    expect(event.focusNpcId).toBeNull();
-    expect(event.pacing).toBe("develop");
-    // 仅结构索引：不携带叙事文本、choiceToken、actionKey 或 provider 输出。
-    const keys = Object.keys(event).sort();
-    expect(keys).toEqual([
-      "focusNpcId",
-      "locationId",
-      "occurredAt",
-      "pacing",
-      "revealedFactIds",
-      "sceneId",
-      "type"
-    ]);
-  });
-
-  it("narrative_scene_presented narrows via type discriminator in the GameEvent union", () => {
-    const event: GameEvent = {
-      type: "narrative_scene_presented",
-      sceneId: "scene-1",
-      locationId: asLocationId("loc_1"),
-      focusNpcId: null,
+      beatIds: [],
       revealedFactIds: [],
-      pacing: "climax",
-      occurredAt: "2026-07-31T00:00:00.000Z"
     };
-    if (event.type === "narrative_scene_presented") {
-      expect(event.sceneId).toBe("scene-1");
-      expect(event.pacing).toBe("climax");
-    } else {
-      throw new Error("discriminator narrowing failed");
-    }
-  });
-});
-
-describe("GameEvent union (R4 candidate event audit events)", () => {
-  it("accepts candidate_event_proposed carrying only structural indexes", () => {
-    const event: CandidateEventProposedEvent = {
-      type: "candidate_event_proposed",
-      candidateId: "ce-1",
-      kind: "enemy_appears",
-      proposedAtTurn: 3,
-      expiresAtTurn: 6,
-      occurredAt: "2026-08-09T00:00:00.000Z",
-    };
-    expect(event.type).toBe("candidate_event_proposed");
-    expect(event.candidateId).toBe("ce-1");
-    expect(event.kind).toBe("enemy_appears");
-    // 只携带结构索引，不携带 AI 原文或隐藏事实正文
-    const keys = Object.keys(event).sort();
-    expect(keys).toEqual([
-      "candidateId", "expiresAtTurn", "kind", "occurredAt", "proposedAtTurn", "type",
-    ]);
+    expect(payload.type).toBe("narrative_scene_presented");
+    expect(payload.focusNpcId).toBeNull();
+    expect(payload.pacing).toBe("develop");
   });
 
-  it("accepts candidate_event_approved with stable code", () => {
-    const event: CandidateEventApprovedEvent = {
+  it("accepts candidate_event_approved payload", () => {
+    const payload: CandidateEventApprovedPayload = {
       type: "candidate_event_approved",
       candidateId: "ce-1",
       kind: "npc_reveals_fact",
       approvedAtTurn: 4,
-      occurredAt: "t1",
     };
-    expect(event.approvedAtTurn).toBe(4);
-    const keys = Object.keys(event).sort();
-    expect(keys).toEqual(["approvedAtTurn", "candidateId", "kind", "occurredAt", "type"]);
+    expect(payload.approvedAtTurn).toBe(4);
   });
 
-  it("accepts candidate_event_rejected with reasonCode but no conflict body", () => {
-    const event: CandidateEventRejectedEvent = {
+  it("accepts candidate_event_rejected payload with reasonCode", () => {
+    const payload: CandidateEventRejectedPayload = {
       type: "candidate_event_rejected",
       candidateId: "ce-2",
       kind: "thread_complicates",
       reasonCode: "prerequisite_unmet",
       rejectedAtTurn: 4,
-      occurredAt: "t2",
     };
-    expect(event.reasonCode).toBe("prerequisite_unmet");
-    expect("conflictText" in event).toBe(false);
+    expect(payload.reasonCode).toBe("prerequisite_unmet");
   });
 
-  it("accepts candidate_event_expired at expiry turn", () => {
-    const event: CandidateEventExpiredEvent = {
+  it("accepts candidate_event_expired payload", () => {
+    const payload: CandidateEventExpiredPayload = {
       type: "candidate_event_expired",
       candidateId: "ce-3",
       kind: "location_state_changes",
       expiredAtTurn: 6,
-      occurredAt: "t3",
     };
-    expect(event.expiredAtTurn).toBe(6);
+    expect(payload.expiredAtTurn).toBe(6);
   });
 
-  it("accepts candidate_event_activated when compiled to real domain event", () => {
-    const event: CandidateEventActivatedEvent = {
+  it("accepts candidate_event_activated payload", () => {
+    const payload: CandidateEventActivatedPayload = {
       type: "candidate_event_activated",
       candidateId: "ce-1",
       kind: "npc_reveals_fact",
       activatedAtTurn: 4,
-      occurredAt: "t4",
     };
-    expect(event.type).toBe("candidate_event_activated");
-    expect(event.candidateId).toBe("ce-1");
+    expect(payload.type).toBe("candidate_event_activated");
+  });
+});
+
+describe("CommittedNarrativeEvent envelope", () => {
+  it("builds a valid committed event", () => {
+    const event = buildCommittedEvent();
+    expect(event.eventId).toBeDefined();
+    expect(event.sequence).toBe(0);
+    expect(event.kind).toBe("fact_discovered");
+    expect(event.committedAt).toBe("2026-09-02T00:00:00Z");
+    expect((event.payload as { type: string }).type).toBe("fact_discovered");
   });
 
-  it("all five candidate audit discriminators appear in the GameEvent union", () => {
-    const events: GameEvent[] = [
-      { type: "candidate_event_proposed", candidateId: "ce-1", kind: "enemy_appears", proposedAtTurn: 3, expiresAtTurn: 6, occurredAt: "t1" },
-      { type: "candidate_event_approved", candidateId: "ce-1", kind: "enemy_appears", approvedAtTurn: 4, occurredAt: "t2" },
-      { type: "candidate_event_rejected", candidateId: "ce-2", kind: "thread_complicates", reasonCode: "budget", rejectedAtTurn: 4, occurredAt: "t3" },
-      { type: "candidate_event_expired", candidateId: "ce-3", kind: "npc_reveals_fact", expiredAtTurn: 6, occurredAt: "t4" },
-      { type: "candidate_event_activated", candidateId: "ce-1", kind: "npc_reveals_fact", activatedAtTurn: 4, occurredAt: "t5" },
-    ];
-    const types = events.map((e) => e.type);
-    expect(types).toEqual([
-      "candidate_event_proposed",
-      "candidate_event_approved",
-      "candidate_event_rejected",
-      "candidate_event_expired",
-      "candidate_event_activated",
-    ]);
+  it("parseCommittedEventLedger accepts valid ledger", () => {
+    const event = buildCommittedEvent();
+    const result = parseCommittedEventLedger([event]);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value).toHaveLength(1);
+    }
+  });
+
+  it("parseCommittedEventLedger rejects non-array", () => {
+    const result = parseCommittedEventLedger(null);
+    expect(result.ok).toBe(false);
+  });
+
+  it("parseCommittedEventLedger rejects wrong sequence", () => {
+    const event = buildCommittedEvent({ sequence: 5 });
+    const result = parseCommittedEventLedger([event]);
+    expect(result.ok).toBe(false);
+  });
+
+  it("parseCommittedEventLedger rejects mismatched kind and payload type", () => {
+    const event = buildCommittedEvent({
+      kind: "npc_met",
+      payload: { type: "fact_discovered", factId: asFactId("fact_1") },
+    });
+    const result = parseCommittedEventLedger([event]);
+    expect(result.ok).toBe(false);
+  });
+
+  it("eventIdFor is deterministic", () => {
+    const turnId = asTurnId("turn:1");
+    const id1 = eventIdFor(turnId, "fact_discovered:fact_1");
+    const id2 = eventIdFor(turnId, "fact_discovered:fact_1");
+    expect(id1).toBe(id2);
+  });
+
+  it("episodeIdForTurn is deterministic", () => {
+    const turnId = asTurnId("turn:1");
+    const id1 = episodeIdForTurn(turnId);
+    const id2 = episodeIdForTurn(turnId);
+    expect(id1).toBe(id2);
   });
 });

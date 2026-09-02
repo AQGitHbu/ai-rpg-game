@@ -9,7 +9,7 @@ import type {
 } from "./server/persistence/gameRepository";
 import { asGameId } from "./server/persistence/gameRepository";
 import { type LocationEntry, type NpcEntry } from "@/game/domain/worldState";
-import type { GameEvent } from "@/game/domain/events";
+import type { CommittedNarrativeEvent } from "@/game/domain/events";
 import type { GenerationMetadata } from "@/game/domain/worldEntity";
 import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
 import {
@@ -99,7 +99,7 @@ const BASE_PROJECTION: EntityCompatibilityProjection = {
   factions: [],
 };
 
-const INITIALIZED_LEDGER: readonly GameEvent[] = [{ type: "game_initialized", generation: GENERATION }];
+const INITIALIZED_LEDGER: readonly CommittedNarrativeEvent[] = [{ type: "game_initialized", generation: GENERATION }];
 
 function buildWorldState(overrides: WorldStateFixtureOverrides = {}): WorldState {
   return createWorldStateFixtureWith(
@@ -1364,10 +1364,10 @@ describe("performTurn — 自动揭示必经事实（Task 3）", () => {
     expect(applyCalls()).toHaveLength(1);
     const applied = applyCalls()[0]!;
     // 事实发现、任务完成与 npc_met 同回合按序落账（自动事件无 approach 元数据）
-    expect(applied.nextWorldState.eventLedger.map((event) => event.type)).toEqual([
+    expect(applied.nextWorldState.eventLedger.map((event) => event.kind)).toEqual([
       "game_initialized", "npc_met", "fact_discovered", "quest_completed",
     ]);
-    const autoEvent = applied.nextWorldState.eventLedger.find((event) => event.type === "fact_discovered");
+    const autoEvent = applied.nextWorldState.eventLedger.find((event) => event.kind === "fact_discovered");
     if (autoEvent?.type === "fact_discovered") {
       expect(autoEvent.factId).toBe(FACT_1_ID);
       expect(autoEvent.approachId).toBeUndefined();

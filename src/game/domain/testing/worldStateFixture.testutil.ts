@@ -1,6 +1,6 @@
 import type { GenerationMetadata, LocationId } from "../worldEntity";
 import type { LocationEntry, PlayerState } from "../worldEntries";
-import type { GameEvent } from "../events";
+import type { CommittedNarrativeEvent } from "../events";
 import type { EntityCompatibilityProjection } from "../entity/entityProjection";
 import { projectEntityStore } from "../entity/entityProjection";
 import { importNpcLayers } from "../entity/npcProjection";
@@ -29,7 +29,7 @@ export type WorldStateFixtureInput = Readonly<{
   battle?: BattleState;
   endings?: readonly EndingEntry[];
   ending?: EndingState;
-  eventLedger?: readonly GameEvent[];
+  eventLedger?: readonly CommittedNarrativeEvent[];
 }>;
 
 /**
@@ -104,7 +104,7 @@ export type WorldStateFixtureOverrides = Partial<EntityCompatibilityProjection> 
   battle?: BattleState;
   endings?: readonly EndingEntry[];
   ending?: EndingState;
-  eventLedger?: readonly GameEvent[];
+  eventLedger?: readonly CommittedNarrativeEvent[];
 }>;
 
 /** 以合法基投影 + 覆盖项合成 fixture：覆盖经同一组装点重建 store，再投影回兼容字段。 */

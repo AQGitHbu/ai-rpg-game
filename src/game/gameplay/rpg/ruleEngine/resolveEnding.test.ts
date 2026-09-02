@@ -28,7 +28,7 @@ describe("resolveEnding", () => {
     };
     const ss = { ...baseSs, endingAllowed: true };
     const result = resolveEnding(ws, ss, deps);
-    expect(result.events[0]?.type).toBe("ending_reached");
+    expect(result.drafts[0]?.type).toBe("ending_reached");
     expect(result.nextWorldState.ending?.endingId).toBe(asEndingId("e1"));
   });
 
@@ -40,7 +40,7 @@ describe("resolveEnding", () => {
     };
     const ss = { ...baseSs, endingAllowed: false };
     const result = resolveEnding(ws, ss, deps);
-    expect(result.events).toHaveLength(0);
+    expect(result.drafts).toHaveLength(0);
   });
 
   it("selects mutually exclusive endings from the key NPC affinity", () => {

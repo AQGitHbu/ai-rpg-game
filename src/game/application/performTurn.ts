@@ -340,7 +340,7 @@ export async function performTurn(
         : "预备叙事图已失效，请重新开始当前回合。",
     };
   }
-  const startsBattle = resolution.domainEvents.some((event) => event.type === "battle_started");
+  const startsBattle = resolution.domainEvents.some((event) => event.kind === "battle_started");
   const storyForCommit = startsBattle && nextStoryState.nextStoryState.narrative.status === "ready"
     ? (() => {
         const { narrative: _narrative, ...storySnapshot } = record.storyState;

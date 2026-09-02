@@ -4,6 +4,8 @@ import type { GenerationMetadata } from "@/game/domain/worldEntity";
 import { asLocationId, asNpcId, asQuestId, asFactId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import type { WorldState } from "@/game/domain/worldState";
 import { createWorldStateFromProjection } from "@/game/domain/worldState";
+import { commitEventDrafts, type EventCommitSource } from "@/game/domain/eventLedger";
+import { asTurnId, type NarrativeEventDraft } from "@/game/domain/events";
 import type {
   LocationEntry, NpcEntry, QuestEntry, WorldFactEntry,
 } from "@/game/domain/worldEntries";
@@ -198,8 +200,37 @@ export function compileOpeningGenerationCandidate(
       relationships: openingRelationships,
       history: openingHistory,
     }]]),
-    eventLedger: [{ type: "game_initialized", generation }],
+    eventLedger: [],
   });
+
+  // Produce the single game_initialized committed event via the canonical commit pipeline.
+  const initTurnId = asTurnId(`init:${generation.generationId}`);
+  const initDraft: NarrativeEventDraft = {
+    eventKey: "game_initialized",
+    episodeKey: "initialization",
+    actorIds: [PLAYER_ENTITY_ID],
+    targetIds: [PLAYER_ENTITY_ID],
+    locationId,
+    causeKeys: [],
+    factIds: [],
+    questIds: [],
+    outcome: "neutral",
+    salience: 100,
+    payload: { type: "game_initialized", generation },
+  };
+  const initSource: EventCommitSource = {
+    turnId: initTurnId,
+    turnNumber: 0,
+    committedAt: "1970-01-01T00:00:00Z",
+  };
+  const initCommit = commitEventDrafts({
+    ledger: [],
+    drafts: [initDraft],
+    source: initSource,
+    entityStore: worldState.entityStore,
+  });
+  if (!initCommit.ok) throw new Error("Failed to commit game_initialized event");
+  const committedWorldState: WorldState = { ...worldState, eventLedger: initCommit.ledger };
 
   const baseStoryState = createInitialStoryState({
     gameLength,
@@ -223,5 +254,5 @@ export function compileOpeningGenerationCandidate(
     },
   };
 
-  return { worldState, storyState };
+  return { worldState: committedWorldState, storyState };
 }

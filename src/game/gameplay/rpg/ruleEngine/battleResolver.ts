@@ -1,8 +1,9 @@
 import type { WorldState, BattleStartSnapshot } from "@/game/domain/worldState";
-import type { EnemyId } from "@/game/domain/worldEntity";
-import type { GameEvent } from "@/game/domain/events";
+import type { EnemyId, PlayerEntityId } from "@/game/domain/worldEntity";
+import type { NarrativeEventDraft } from "@/game/domain/events";
+import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import type { StateChange } from "@/game/domain/resolvedEvent";
-import type { ResolveDeps, ResolveResult } from "./resolveByType";
+import type { ResolveResult } from "./resolveByType";
 import type { ActiveBattleCombatState, BattleCombatant, CombatActionKind, CombatCommand } from "@/game/domain/combat";
 import { buildEncounter } from "./buildEncounter";
 import { advanceUntilPlayerDecision } from "./advanceBattle";
@@ -14,8 +15,6 @@ import { applyEntityMutations } from "@/game/gameplay/rpg/entityWorld";
 // 只要敌人存在且在玩家地点即可开战。
 // 纯函数：不修改输入 state，不依赖 IO/Date/Math.random/AI。
 // ---------------------------------------------------------------------------
-
-export type BattleResolveDeps = Pick<ResolveDeps, "now">;
 
 type ActiveBattle = Extract<WorldState["battle"], { status: "active" }>;
 
@@ -65,22 +64,33 @@ function modernResult(
   battle: ActiveBattle,
   command: CombatActionKind,
   advanced: ReturnType<typeof advanceUntilPlayerDecision>,
-  deps: BattleResolveDeps,
 ): ResolveResult {
-  const occurredAt = deps.now();
   const enemyIds = battle.enemyIds ?? [battle.enemyId];
   const hp = snapshotHp(advanced.state.combatants, battle.enemyId);
-  const roundEvent: GameEvent = {
-    type: "battle_round_resolved",
-    enemyId: battle.enemyId,
-    round: advanced.state.round,
-    playerHp: hp.playerHp,
-    enemyHp: hp.enemyHp,
-    action: command === "flee" ? "withdraw" : command,
-    results: advanced.results,
-    occurredAt,
+  const drafts: NarrativeEventDraft[] = [];
+  const episodeKey = battle.battleKey ? `battle:${battle.battleKey}` : "turn";
+  const roundDraft: NarrativeEventDraft = {
+    eventKey: `battle_round_resolved:${battle.enemyId}:${advanced.state.round}`,
+    episodeKey,
+    actorIds: [PLAYER_ENTITY_ID],
+    targetIds: [battle.enemyId],
+    locationId: ws.currentLocationId,
+    causeKeys: [],
+    factIds: [],
+    questIds: [],
+    outcome: "mixed",
+    salience: 50,
+    payload: {
+      type: "battle_round_resolved",
+      enemyId: battle.enemyId,
+      round: advanced.state.round,
+      playerHp: hp.playerHp,
+      enemyHp: hp.enemyHp,
+      action: command === "flee" ? "withdraw" : command,
+      results: advanced.results,
+    },
   };
-  const events: GameEvent[] = [roundEvent];
+  drafts.push(roundDraft);
   const outcome = advanced.outcome;
   if (outcome === null) {
     const nextBattle = activeBattleState(
@@ -90,11 +100,11 @@ function modernResult(
       battle.battleKey,
       battle.preBattleSnapshot,
     );
-    const nextWs: WorldState = { ...ws, battle: nextBattle, eventLedger: [...ws.eventLedger, roundEvent] };
+    const nextWs: WorldState = { ...ws, battle: nextBattle };
     return {
       ok: true,
       nextWorldState: nextWs,
-      events,
+      drafts,
       feedback: modernFeedback(advanced.results, advanced.state.combatants),
       status: "success",
       stateChanges: [{ path: "battle", description: `回合 ${advanced.state.round} 结算`, operation: "update" }],
@@ -102,9 +112,33 @@ function modernResult(
     };
   }
 
-  events.push({ type: "battle_resolved", enemyId: battle.enemyId, enemyIds, outcome, occurredAt });
+  drafts.push({
+    eventKey: `battle_resolved:${battle.enemyId}`,
+    episodeKey,
+    actorIds: [PLAYER_ENTITY_ID],
+    targetIds: [battle.enemyId],
+    locationId: ws.currentLocationId,
+    causeKeys: [{ kind: "same_batch", eventKey: roundDraft.eventKey }],
+    factIds: [],
+    questIds: [],
+    outcome: outcome === "victory" ? "success" : outcome === "defeat" ? "failure" : "mixed",
+    salience: 80,
+    payload: { type: "battle_resolved", enemyId: battle.enemyId, enemyIds, outcome },
+  });
   for (const defeatedId of advanced.state.downedEnemyIds) {
-    events.push({ type: "enemy_defeated", enemyId: defeatedId, occurredAt });
+    drafts.push({
+      eventKey: `enemy_defeated:${defeatedId}`,
+      episodeKey,
+      actorIds: [PLAYER_ENTITY_ID],
+      targetIds: [defeatedId],
+      locationId: ws.currentLocationId,
+      causeKeys: [{ kind: "same_batch", eventKey: `battle_resolved:${battle.enemyId}` }],
+      factIds: [],
+      questIds: [],
+      outcome: "success",
+      salience: 80,
+      payload: { type: "enemy_defeated", enemyId: defeatedId },
+    });
   }
   // 现代遭遇可先击倒一个敌人再撤退；resolver 保留当下结算事实，应用层在
   // withdraw/defeat 时用完整战前快照回滚，因此两层语义都保持一致。
@@ -113,7 +147,6 @@ function modernResult(
   const nextWs: WorldState = {
     ...mutation.worldState,
     battle: { status: "resolved", enemyId: battle.enemyId, outcome, ...(battle.battleKey === undefined ? {} : { battleKey: battle.battleKey }) },
-    eventLedger: [...mutation.worldState.eventLedger, ...events],
   };
   const firstEnemy = ws.enemies.find((enemy) => enemy.id === battle.enemyId);
   const label = outcome === "victory" ? `你击败了${firstEnemy?.name ?? "敌人"}！`
@@ -122,7 +155,7 @@ function modernResult(
   return {
     ok: true,
     nextWorldState: nextWs,
-    events,
+    drafts,
     feedback: label,
     status: outcome === "defeat" ? "failure" : "success",
     stateChanges: [{ path: "battle", description: outcome === "victory" ? "战斗胜利" : "战斗结束", operation: "set" }],
@@ -133,7 +166,6 @@ function modernResult(
 function modernBattleAction(
   ws: WorldState,
   action: CombatActionKind,
-  deps: BattleResolveDeps,
   requestedCommand?: Omit<CombatCommand, "kind">,
 ): ResolveResult {
   if (ws.battle.status !== "active" || !isModernBattle(ws.battle)) return { ok: false, feedback: "当前战斗状态不可推进。" };
@@ -154,7 +186,7 @@ function modernBattleAction(
   };
   try {
     const advanced = advanceUntilPlayerDecision(battle, command);
-    return modernResult(ws, battle, action, advanced, deps);
+    return modernResult(ws, battle, action, advanced);
   } catch (error) {
     return { ok: false, feedback: error instanceof Error ? error.message : "战斗行动无效。" };
   }
@@ -164,7 +196,6 @@ function modernBattleAction(
 export function startBattle(
   ws: WorldState,
   enemyId: EnemyId,
-  deps: BattleResolveDeps,
 ): ResolveResult {
   // resolved 只表示上一场战斗的结果；没有 active battle 时可以重新挑战
   // 尚未击败的敌人，避免撤退后界面仍有“挑战”按钮却永远被规则拒绝。
@@ -203,21 +234,33 @@ export function startBattle(
       lastAdvance: [],
     };
     const advanced = advanceUntilPlayerDecision(initial, null);
-    const occurredAt = deps.now();
-    const event: GameEvent = { type: "battle_started", enemyId, enemyIds, occurredAt };
+    // 预铸稳定 battleKey：从 enemyId 派生，后续 commitEventDrafts 铸造 ID
+    const battleKey = `battle_started:${enemyId}`;
+    const draft: NarrativeEventDraft = {
+      eventKey: `battle_started:${enemyId}`,
+      episodeKey: `battle:${battleKey}`,
+      actorIds: [PLAYER_ENTITY_ID],
+      targetIds: [enemyId],
+      locationId: ws.currentLocationId,
+      causeKeys: [],
+      factIds: [],
+      questIds: [],
+      outcome: "neutral",
+      salience: 70,
+      payload: { type: "battle_started", enemyId, enemyIds },
+    };
     const preBattleSnapshot: BattleStartSnapshot = {
       entityStore: ws.entityStore,
       eventLedger: ws.eventLedger,
     };
     const nextWs: WorldState = {
       ...ws,
-      battle: activeBattleState(enemyId, enemyIds, advanced.state, occurredAt, preBattleSnapshot),
-      eventLedger: [...ws.eventLedger, event],
+      battle: activeBattleState(enemyId, enemyIds, advanced.state, battleKey, preBattleSnapshot),
     };
     return {
       ok: true,
       nextWorldState: nextWs,
-      events: [event],
+      drafts: [draft],
       feedback: `战斗开始：你与${enemy.name}${enemyIds.length > 2 ? `等 ${enemyIds.length} 名敌人` : "展开了战斗"}！`,
       status: "success",
       stateChanges: [{ path: "battle", description: `与${enemy.name}展开战斗`, operation: "set" }],
@@ -225,8 +268,21 @@ export function startBattle(
     };
   }
 
-  const occurredAt = deps.now();
-  const event: GameEvent = { type: "battle_started", enemyId, occurredAt };
+  // 旧路径：单敌人遭遇
+  const battleKey = `battle_started:${enemyId}`;
+  const draft: NarrativeEventDraft = {
+    eventKey: `battle_started:${enemyId}`,
+    episodeKey: `battle:${battleKey}`,
+    actorIds: [PLAYER_ENTITY_ID],
+    targetIds: [enemyId],
+    locationId: ws.currentLocationId,
+    causeKeys: [],
+    factIds: [],
+    questIds: [],
+    outcome: "neutral",
+    salience: 70,
+    payload: { type: "battle_started", enemyId },
+  };
   const preBattleSnapshot: BattleStartSnapshot = {
     entityStore: ws.entityStore,
     eventLedger: ws.eventLedger,
@@ -240,10 +296,9 @@ export function startBattle(
       playerHp: ws.player.stats.hp,
       enemyHp: enemy.stats.hp,
       round: 1,
-      battleKey: occurredAt,
+      battleKey,
       preBattleSnapshot,
     },
-    eventLedger: [...ws.eventLedger, event],
   };
 
   const stateChanges: StateChange[] = [
@@ -253,7 +308,7 @@ export function startBattle(
   return {
     ok: true,
     nextWorldState: nextWs,
-    events: [event],
+    drafts: [draft],
     feedback: `战斗开始：你与${enemy.name}展开了决斗！`,
     status: "success",
     stateChanges,
@@ -265,7 +320,6 @@ export function startBattle(
 export function battleAction(
   ws: WorldState,
   action: CombatActionKind,
-  deps: BattleResolveDeps,
   requestedCommand?: Omit<CombatCommand, "kind">,
 ): ResolveResult {
   if (ws.battle.status !== "active") {
@@ -273,36 +327,42 @@ export function battleAction(
   }
 
   const battle = ws.battle;
-  if (isModernBattle(battle)) return modernBattleAction(ws, action, deps, requestedCommand);
+  if (isModernBattle(battle)) return modernBattleAction(ws, action, requestedCommand);
   if (action === "skill") return { ok: false, feedback: "旧战斗存档暂不支持技能行动。" };
   const enemy = ws.enemies.find((e) => e.id === battle.enemyId);
   if (enemy === undefined) {
     return { ok: false, feedback: "战斗中的敌人不存在。" };
   }
 
-  const occurredAt = deps.now();
-  const events: GameEvent[] = [];
+  const drafts: NarrativeEventDraft[] = [];
+  const episodeKey = battle.battleKey ? `battle:${battle.battleKey}` : "turn";
   const player = ws.player.stats;
 
   // flee → withdraw 语义
   if (action === "flee") {
-    events.push({
-      type: "battle_resolved",
-      enemyId: battle.enemyId,
-      outcome: "withdraw",
-      occurredAt,
+    drafts.push({
+      eventKey: `battle_resolved:${battle.enemyId}`,
+      episodeKey,
+      actorIds: [PLAYER_ENTITY_ID],
+      targetIds: [battle.enemyId],
+      locationId: ws.currentLocationId,
+      causeKeys: [],
+      factIds: [],
+      questIds: [],
+      outcome: "mixed",
+      salience: 80,
+      payload: { type: "battle_resolved", enemyId: battle.enemyId, outcome: "withdraw" },
     });
 
     const nextWs: WorldState = {
       ...ws,
       battle: { status: "resolved", enemyId: battle.enemyId, outcome: "withdraw" },
-      eventLedger: [...ws.eventLedger, ...events],
     };
 
     return {
       ok: true,
       nextWorldState: nextWs,
-      events,
+      drafts,
       feedback: "你选择了撤退，战斗以失败告终。",
       status: "success",
       stateChanges: [{ path: "battle", description: "撤退", operation: "set" }],
@@ -322,25 +382,45 @@ export function battleAction(
 
   if (enemyHp <= 0) {
     // 胜利！不触发反击
-    events.push({
-      type: "battle_round_resolved",
-      enemyId: battle.enemyId,
-      round: battle.round,
-      playerHp,
-      enemyHp: 0,
-      action,
-      occurredAt,
+    const roundDraftKey = `battle_round_resolved:${battle.enemyId}:${battle.round}`;
+    drafts.push({
+      eventKey: roundDraftKey,
+      episodeKey,
+      actorIds: [PLAYER_ENTITY_ID],
+      targetIds: [battle.enemyId],
+      locationId: ws.currentLocationId,
+      causeKeys: [],
+      factIds: [],
+      questIds: [],
+      outcome: "success",
+      salience: 50,
+      payload: { type: "battle_round_resolved", enemyId: battle.enemyId, round: battle.round, playerHp, enemyHp: 0, action },
     });
-    events.push({
-      type: "battle_resolved",
-      enemyId: battle.enemyId,
-      outcome: "victory",
-      occurredAt,
+    drafts.push({
+      eventKey: `battle_resolved:${battle.enemyId}`,
+      episodeKey,
+      actorIds: [PLAYER_ENTITY_ID],
+      targetIds: [battle.enemyId],
+      locationId: ws.currentLocationId,
+      causeKeys: [{ kind: "same_batch", eventKey: roundDraftKey }],
+      factIds: [],
+      questIds: [],
+      outcome: "success",
+      salience: 80,
+      payload: { type: "battle_resolved", enemyId: battle.enemyId, outcome: "victory" },
     });
-    events.push({
-      type: "enemy_defeated",
-      enemyId: battle.enemyId,
-      occurredAt,
+    drafts.push({
+      eventKey: `enemy_defeated:${battle.enemyId}`,
+      episodeKey,
+      actorIds: [PLAYER_ENTITY_ID],
+      targetIds: [battle.enemyId],
+      locationId: ws.currentLocationId,
+      causeKeys: [{ kind: "same_batch", eventKey: `battle_resolved:${battle.enemyId}` }],
+      factIds: [],
+      questIds: [],
+      outcome: "success",
+      salience: 80,
+      payload: { type: "enemy_defeated", enemyId: battle.enemyId },
     });
 
     const mutation = applyEntityMutations(ws, [{ kind: "set_enemy_defeated", enemyId: battle.enemyId, defeated: true }]);
@@ -348,13 +428,12 @@ export function battleAction(
     const nextWs: WorldState = {
       ...mutation.worldState,
       battle: { status: "resolved", enemyId: battle.enemyId, outcome: "victory" },
-      eventLedger: [...mutation.worldState.eventLedger, ...events],
     };
 
     return {
       ok: true,
       nextWorldState: nextWs,
-      events,
+      drafts,
       feedback: `你击败了${enemy.name}！`,
       status: "success",
       stateChanges: [
@@ -376,32 +455,43 @@ export function battleAction(
 
   if (playerHp <= 0) {
     // 失败
-    events.push({
-      type: "battle_round_resolved",
-      enemyId: battle.enemyId,
-      round: battle.round,
-      playerHp: 0,
-      enemyHp,
-      action,
-      occurredAt,
+    const roundDraftKey = `battle_round_resolved:${battle.enemyId}:${battle.round}`;
+    drafts.push({
+      eventKey: roundDraftKey,
+      episodeKey,
+      actorIds: [PLAYER_ENTITY_ID],
+      targetIds: [battle.enemyId],
+      locationId: ws.currentLocationId,
+      causeKeys: [],
+      factIds: [],
+      questIds: [],
+      outcome: "failure",
+      salience: 50,
+      payload: { type: "battle_round_resolved", enemyId: battle.enemyId, round: battle.round, playerHp: 0, enemyHp, action },
     });
-    events.push({
-      type: "battle_resolved",
-      enemyId: battle.enemyId,
-      outcome: "defeat",
-      occurredAt,
+    drafts.push({
+      eventKey: `battle_resolved:${battle.enemyId}`,
+      episodeKey,
+      actorIds: [PLAYER_ENTITY_ID],
+      targetIds: [battle.enemyId],
+      locationId: ws.currentLocationId,
+      causeKeys: [{ kind: "same_batch", eventKey: roundDraftKey }],
+      factIds: [],
+      questIds: [],
+      outcome: "failure",
+      salience: 80,
+      payload: { type: "battle_resolved", enemyId: battle.enemyId, outcome: "defeat" },
     });
 
     const nextWs: WorldState = {
       ...ws,
       battle: { status: "resolved", enemyId: battle.enemyId, outcome: "defeat" },
-      eventLedger: [...ws.eventLedger, ...events],
     };
 
     return {
       ok: true,
       nextWorldState: nextWs,
-      events,
+      drafts,
       feedback: `你被${enemy.name}击败了……`,
       status: "failure",
       stateChanges: [{ path: "battle", description: `被${enemy.name}击败`, operation: "set" }],
@@ -410,24 +500,23 @@ export function battleAction(
   }
 
   // 战斗继续
-  events.push({
-    type: "battle_round_resolved",
-    enemyId: battle.enemyId,
-    round: battle.round,
-    playerHp,
-    enemyHp,
-    action,
-    occurredAt,
+  drafts.push({
+    eventKey: `battle_round_resolved:${battle.enemyId}:${battle.round}`,
+    episodeKey,
+    actorIds: [PLAYER_ENTITY_ID],
+    targetIds: [battle.enemyId],
+    locationId: ws.currentLocationId,
+    causeKeys: [],
+    factIds: [],
+    questIds: [],
+    outcome: "mixed",
+    salience: 50,
+    payload: { type: "battle_round_resolved", enemyId: battle.enemyId, round: battle.round, playerHp, enemyHp, action },
   });
 
   const nextWs: WorldState = {
     ...ws,
-    // 非终结回合只改 hp 与 round，其余字段整份带过去：这里曾是逐字段重建的形状，
-    // 而正是那个形状让 preBattleSnapshot / battleKey 被悄悄漏掉（快照是战败/撤退唯一
-    // 可恢复的世界，落盘校验又要求 active battle 必带它）。展开现存 battle 才能保证
-    // ActiveBattle 以后新增的可选字段也不会再丢。
     battle: { ...battle, playerHp, enemyHp, round: battle.round + 1 },
-    eventLedger: [...ws.eventLedger, ...events],
   };
 
   const playerDamage = action === "attack" ? Math.max(1, player.attack - enemy.stats.defense) : 0;
@@ -435,7 +524,7 @@ export function battleAction(
   return {
     ok: true,
     nextWorldState: nextWs,
-    events,
+    drafts,
     feedback: action === "attack"
       ? `你发起攻击，造成 ${playerDamage} 点伤害；敌人反击造成 ${counterDamage} 点伤害。`
       : `你摆出防御姿态；敌人反击造成 ${counterDamage} 点伤害。`,

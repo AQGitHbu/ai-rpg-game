@@ -694,17 +694,18 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
     const upper = Math.min(job.domainEventRange.toLedgerIndexExclusive, ws.eventLedger.length);
     for (let index = job.domainEventRange.fromLedgerIndex; index < upper; index += 1) {
       const event = ws.eventLedger[index];
-      if (event.type !== "fact_discovered") continue;
-      if (String(event.factId) !== String(job.actionSummary.factId)) continue;
-      if (event.approachId === undefined) return undefined;
-      const fact = ws.worldFacts.find((entry) => String(entry.factId) === String(event.factId));
-      const approach = fact?.investigationApproaches?.find((entry) => entry.approachId === event.approachId);
+      if (event.kind !== "fact_discovered") continue;
+      const payload = event.payload as { factId: FactId; approachId?: string; evidenceQuality?: "clean" | "noisy"; tensionDelta?: number };
+      if (String(payload.factId) !== String(job.actionSummary.factId)) continue;
+      if (payload.approachId === undefined) return undefined;
+      const fact = ws.worldFacts.find((entry) => String(entry.factId) === String(payload.factId));
+      const approach = fact?.investigationApproaches?.find((entry) => entry.approachId === payload.approachId);
       return {
-        factId: event.factId,
-        approachId: event.approachId,
+        factId: payload.factId,
+        approachId: payload.approachId,
         approachLabel: approach?.label ?? "现场调查",
-        evidenceQuality: event.evidenceQuality ?? "clean",
-        tensionDelta: event.tensionDelta ?? 0,
+        evidenceQuality: payload.evidenceQuality ?? "clean",
+        tensionDelta: payload.tensionDelta ?? 0,
       };
     }
     return undefined;

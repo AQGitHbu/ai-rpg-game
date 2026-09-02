@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { reconcileMaterializedView, createEmptyMaterializedView } from "./materializedView";
-import type { GameEvent } from "./events";
+import type { CommittedNarrativeEvent } from "./events";
 import { asLocationId, asNpcId, asQuestId, asFactId } from "./worldEntity";
 
 describe("MaterializedView", () => {
@@ -18,7 +18,7 @@ describe("MaterializedView", () => {
   });
 
   it("extracts quest_completed as a beat", () => {
-    const events: GameEvent[] = [
+    const events: CommittedNarrativeEvent[] = [
       { type: "quest_completed", questId: asQuestId("q1"), occurredAt: "2026-01-01" },
     ];
     const v = createEmptyMaterializedView();
@@ -28,7 +28,7 @@ describe("MaterializedView", () => {
   });
 
   it("npc_met records contact location (from currentLocationId at commit time)", () => {
-    const events: GameEvent[] = [
+    const events: CommittedNarrativeEvent[] = [
       { type: "npc_met", npcId: asNpcId("npc_1"), occurredAt: "t1" },
     ];
     const v = createEmptyMaterializedView();
@@ -37,7 +37,7 @@ describe("MaterializedView", () => {
   });
 
   it("incremental: only processes new events since cursor", () => {
-    const events: GameEvent[] = [
+    const events: CommittedNarrativeEvent[] = [
       { type: "quest_completed", questId: asQuestId("q1"), occurredAt: "t1" },
       { type: "location_visited", locationId: asLocationId("loc1"), occurredAt: "t2" },
     ];
@@ -51,7 +51,7 @@ describe("MaterializedView", () => {
 
 describe("MaterializedView candidate reaction visibility (Task 20)", () => {
   it("approved candidate reaction (fact_discovered) appears in recentBeats without AI text", () => {
-    const events: GameEvent[] = [
+    const events: CommittedNarrativeEvent[] = [
       { type: "candidate_event_proposed", candidateId: "ce-1", kind: "npc_reveals_fact", proposedAtTurn: 3, expiresAtTurn: 6, occurredAt: "t1" },
       { type: "candidate_event_approved", candidateId: "ce-1", kind: "npc_reveals_fact", approvedAtTurn: 4, occurredAt: "t2" },
       { type: "fact_discovered", factId: asFactId("fact_2"), occurredAt: "t3" },

@@ -41,7 +41,7 @@ describe("modern turn-based battle resolver", () => {
     const result = battleAction(started.nextWorldState, "attack", deps);
     expect(result.ok).toBe(true);
     if (!result.ok || result.nextWorldState.battle.status !== "active") return;
-    expect(result.events.some((event) => event.type === "battle_round_resolved")).toBe(true);
+    expect(result.drafts.some((event) => event.kind === "battle_round_resolved")).toBe(true);
     expect(result.nextWorldState.battle.combatants?.find((unit) => unit.combatantId === "ally:protagonist")?.hp).toBeLessThan(100);
     expect(result.nextWorldState.battle.round).toBe(2);
   });
@@ -63,7 +63,7 @@ describe("modern turn-based battle resolver", () => {
     expect(withdrawn.ok).toBe(true);
     if (!withdrawn.ok) return;
     expect(withdrawn.nextWorldState.defeatedEnemyIds).toContain(asEnemyId("enemy_a"));
-    expect(withdrawn.events.filter((event) => event.type === "enemy_defeated").map((event) => event.enemyId)).toEqual([asEnemyId("enemy_a")]);
+    expect(withdrawn.events.filter((event) => event.kind === "enemy_defeated").map((event) => event.enemyId)).toEqual([asEnemyId("enemy_a")]);
   });
 
   it("batches all encounter IDs while emitting one defeated event per enemy", () => {
@@ -83,9 +83,9 @@ describe("modern turn-based battle resolver", () => {
     if (!second.ok) return;
     expect(second.nextWorldState.battle.status).toBe("resolved");
     expect(second.nextWorldState.defeatedEnemyIds).toEqual([asEnemyId("enemy_a"), asEnemyId("enemy_b")]);
-    const resolved = second.events.find((event) => event.type === "battle_resolved");
+    const resolved = second.events.find((event) => event.kind === "battle_resolved");
     expect(resolved?.type === "battle_resolved" ? resolved.enemyIds : undefined).toEqual([asEnemyId("enemy_a"), asEnemyId("enemy_b")]);
-    expect(second.events.filter((event) => event.type === "enemy_defeated")).toHaveLength(2);
+    expect(second.events.filter((event) => event.kind === "enemy_defeated")).toHaveLength(2);
   });
 
   it("rejects a command bound to a non-current actor without changing the battle", () => {

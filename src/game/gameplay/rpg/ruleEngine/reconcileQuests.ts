@@ -1,5 +1,5 @@
 import type { WorldState, QuestOutcome } from "@/game/domain/worldState";
-import type { GameEvent } from "@/game/domain/events";
+import type { NarrativeEventDraft } from "@/game/domain/events";
 import { entitiesOfKind } from "@/game/domain/entity";
 import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import { isObjectiveSatisfied } from "@/game/gameplay/rpg/narrativeContext/objectiveRules";
@@ -7,7 +7,7 @@ import { applyEntityMutations, EntityMutationInvariantError, type EntityMutation
 
 export type QuestReconcileResult = {
   readonly nextWorldState: WorldState;
-  readonly events: readonly GameEvent[];
+  readonly drafts: readonly NarrativeEventDraft[];
 };
 
 export type QuestActionContext = {
@@ -64,24 +64,24 @@ function canEmitNpcQuestSignal(
 function applyOutcome(
   ws: WorldState,
   outcome: QuestOutcome,
-): { readonly nextWorldState: WorldState; readonly events: readonly GameEvent[] } {
+): { readonly nextWorldState: WorldState; readonly drafts: readonly NarrativeEventDraft[] } {
   switch (outcome.kind) {
     case "advance_story":
-      return { nextWorldState: ws, events: [] };
+      return { nextWorldState: ws, drafts: [] };
     case "resolve_story":
       // 结局由 ending resolver 依据 quest_completed/failed/fact_discovered 独立评估。
-      return { nextWorldState: ws, events: [] };
+      return { nextWorldState: ws, drafts: [] };
     case "closed":
-      return { nextWorldState: ws, events: [] };
+      return { nextWorldState: ws, drafts: [] };
   }
 }
 
 export function reconcileQuests(
   ws: WorldState,
-  deps: { readonly now: () => string },
+  _deps: { readonly now: () => string },
   options?: QuestReconcileOptions,
 ): QuestReconcileResult {
-  const events: GameEvent[] = [];
+  const drafts: NarrativeEventDraft[] = [];
   const mutations: EntityMutation[] = [];
 
   // 1) active 任务：objective 全满足 → 完成 + 应用 onSuccess（advance_story 零世界状态变化）。
@@ -97,7 +97,19 @@ export function reconcileQuests(
     });
     if (!allSatisfied) continue;
 
-    events.push({ type: "quest_completed", questId: quest.id, occurredAt: deps.now() });
+    drafts.push({
+      eventKey: `quest_completed:${quest.id}`,
+      episodeKey: "turn",
+      actorIds: [PLAYER_ENTITY_ID],
+      targetIds: [PLAYER_ENTITY_ID],
+      locationId: ws.currentLocationId,
+      causeKeys: [],
+      factIds: [],
+      questIds: [quest.id],
+      outcome: "success",
+      salience: 80,
+      payload: { type: "quest_completed", questId: quest.id },
+    });
     const npcObjective = quest.objectives.find((obj) => {
       if (obj.kind !== "talk_to_npc") return false;
       return canEmitNpcQuestSignal(ws, String(obj.npcId), options);
@@ -116,21 +128,21 @@ export function reconcileQuests(
     }
     mutations.push({ kind: "set_quest_status", questId: quest.id, status: "completed" });
     const successOutcome = applyOutcome(ws, quest.onSuccess);
-    events.push(...successOutcome.events);
+    drafts.push(...successOutcome.drafts);
   }
 
   // 2) failed 任务：应用 onFailure（解锁失败路线或关闭）。onFailure 为 closed 时关闭任务。
   for (const quest of ws.quests) {
     if (quest.status !== "failed") continue;
     const failureOutcome = applyOutcome(ws, quest.onFailure);
-    events.push(...failureOutcome.events);
+    drafts.push(...failureOutcome.drafts);
     if (quest.onFailure.kind === "closed") {
       mutations.push({ kind: "set_quest_status", questId: quest.id, status: "closed" });
     }
   }
 
-  if (mutations.length === 0) return { nextWorldState: ws, events };
+  if (mutations.length === 0) return { nextWorldState: ws, drafts };
   const applied = applyEntityMutations(ws, mutations);
   if (!applied.ok) throw new EntityMutationInvariantError(applied);
-  return { nextWorldState: applied.worldState, events };
+  return { nextWorldState: applied.worldState, drafts };
 }

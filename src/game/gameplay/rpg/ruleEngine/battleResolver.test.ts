@@ -53,7 +53,7 @@ describe("startBattle", () => {
         expect(result.nextWorldState.battle.enemyHp).toBe(20);
         expect(result.nextWorldState.battle.round).toBe(1);
       }
-      expect(result.events[0]?.type).toBe("battle_started");
+      expect(result.drafts[0]?.type).toBe("battle_started");
       expect(result.status).toBe("success");
     }
   });

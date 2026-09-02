@@ -4,7 +4,7 @@ import type { Action } from "./action";
 import {
   asNarrativeJobId,
   asTurnId,
-  type GameEvent,
+  type CommittedNarrativeEvent,
 } from "./events";
 import type { ResolvedEvent } from "./resolvedEvent";
 import {
@@ -43,7 +43,7 @@ function createStates(): {
   readonly previousStoryState: StoryState;
   readonly nextStoryState: StoryState;
   readonly nextWorldState: WorldState;
-  readonly domainEvents: readonly GameEvent[];
+  readonly domainEvents: readonly CommittedNarrativeEvent[];
 } {
   const previousStoryState = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(),
     gameLength: "short",
@@ -59,7 +59,7 @@ function createStates(): {
     startingLocation,
     startingItemIds: [],
   });
-  const domainEvents: readonly GameEvent[] = [
+  const domainEvents: readonly CommittedNarrativeEvent[] = [
     {
       type: "location_observed",
       locationId: startingLocation.id,
@@ -71,7 +71,7 @@ function createStates(): {
       occurredAt: "2026-08-08T08:00:01.000Z",
     },
   ];
-  const priorEvents: readonly GameEvent[] = [
+  const priorEvents: readonly CommittedNarrativeEvent[] = [
     {
       type: "location_observed",
       locationId: startingLocation.id,
@@ -147,7 +147,7 @@ describe("TurnResolution", () => {
     expect(resolution.interactionKind).toBe("fixed_choice");
     expect(resolution.action).toEqual({ type: "explore" });
     expect(resolution.primaryResult).toEqual(createCanonicalResolvedEvent());
-    expect(resolution.domainEvents.map((event) => event.type)).toEqual([
+    expect(resolution.domainEvents.map((event) => event.kind)).toEqual([
       "location_observed",
       "location_visited",
     ]);

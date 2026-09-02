@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { ObjectiveTransition } from "@/game/domain/narrativeBeat";
-import type { GameEvent } from "@/game/domain/events";
+import type { CommittedNarrativeEvent } from "@/game/domain/events";
 import type { WorldState } from "@/game/domain/worldState";
 import type { GenerationMetadata } from "@/game/domain/worldEntity";
 import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
@@ -49,7 +49,7 @@ const GENERATION: GenerationMetadata = {
 };
 
 /** 与 createInitialWorldState 一致：开局事件仍在账本里。 */
-const INITIALIZED_LEDGER: readonly GameEvent[] = [{ type: "game_initialized", generation: GENERATION }];
+const INITIALIZED_LEDGER: readonly CommittedNarrativeEvent[] = [{ type: "game_initialized", generation: GENERATION }];
 
 // 起始投影一次给全：小镇的连接边指向镇外破庙，因此破庙、老乞丐名册与野狼同批具象化。
 const BASE_PROJECTION: EntityCompatibilityProjection = {

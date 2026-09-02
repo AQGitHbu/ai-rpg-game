@@ -116,6 +116,6 @@ describe("approveCandidateEvents（经 ruleEngine 兼容再导出）", () => {
 
   it("emits candidate_event_approved audit event on approval", () => {
     const result = approveCandidateEvents({ worldState: makeWorldState(), storyState: ss, candidates: [candidate()] }, { now: NOW });
-    expect(result.events.some((e) => e.type === "candidate_event_approved")).toBe(true);
+    expect(result.drafts.some((e) => e.payload.type === "candidate_event_approved")).toBe(true);
   });
 });

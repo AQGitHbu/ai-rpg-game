@@ -3,7 +3,7 @@ import type { StoryState } from "@/game/domain/storyState";
 import type { EventCandidate } from "@/game/domain/candidateEvent";
 import { isExpiredCandidate } from "@/game/domain/candidateEvent";
 import { budgetAllowsExpansion, consumeExpansion } from "@/game/domain/storyBudget";
-import type { GameEvent } from "@/game/domain/events";
+import type { NarrativeEventDraft } from "@/game/domain/events";
 import { asFactId } from "@/game/domain/worldEntity";
 
 // ---------------------------------------------------------------------------
@@ -29,27 +29,26 @@ export type ApproveCandidateEventsResult = {
   readonly approvedCandidates: readonly ApprovedEventCandidate[];
   readonly rejected: readonly CandidateRejection[];
   /** 审批审计事件（approved/rejected/expired）。 */
-  readonly events: readonly GameEvent[];
+  readonly drafts: readonly NarrativeEventDraft[];
   readonly nextStoryState: StoryState;
 };
 
-export type ApproveCandidateEventsDeps = { readonly now: () => string };
+export type ApproveCandidateEventsDeps = Readonly<{}>;
 
 /** MVP：每回合最多批准 1 条候选事件（Spec §11.3）。 */
 export const MAX_CANDIDATE_APPROVED_PER_TURN = 1;
 
 export function approveCandidateEvents(
   input: ApproveCandidateEventsInput,
-  deps: ApproveCandidateEventsDeps,
+  _deps?: ApproveCandidateEventsDeps,
 ): ApproveCandidateEventsResult {
   const { worldState, storyState, candidates } = input;
   if (candidates.length === 0) {
-    return { approvedCandidates: [], rejected: [], events: [], nextStoryState: storyState };
+    return { approvedCandidates: [], rejected: [], drafts: [], nextStoryState: storyState };
   }
 
-  const occurredAt = deps.now();
   const currentTurn = storyState.turnNumber;
-  const events: GameEvent[] = [];
+  const drafts: NarrativeEventDraft[] = [];
   const rejected: CandidateRejection[] = [];
   const approvedCandidates: ApprovedEventCandidate[] = [];
   let nextBudget = storyState.budget;
@@ -58,19 +57,24 @@ export function approveCandidateEvents(
   if (storyState.endingProposed) {
     for (const candidate of candidates) {
       rejected.push({ candidate, reasonCode: "ending_reached" });
-      events.push({
-        type: "candidate_event_rejected",
-        candidateId: candidate.id,
-        kind: candidate.kind,
-        reasonCode: "ending_reached",
-        rejectedAtTurn: currentTurn,
-        occurredAt,
+      drafts.push({
+        eventKey: `candidate_event_rejected:${candidate.id}`,
+        episodeKey: "turn",
+        actorIds: [],
+        targetIds: [],
+        locationId: null,
+        causeKeys: [],
+        factIds: [],
+        questIds: [],
+        outcome: "neutral",
+        salience: 20,
+        payload: { type: "candidate_event_rejected", candidateId: candidate.id, kind: candidate.kind, reasonCode: "ending_reached", rejectedAtTurn: currentTurn },
       });
     }
     return {
       approvedCandidates,
       rejected,
-      events,
+      drafts,
       nextStoryState: { ...storyState, candidateEventPool: [] },
     };
   }
@@ -83,13 +87,18 @@ export function approveCandidateEvents(
     // 同批内重复 ID → 拒绝（池本身由写回方去重，见 Task 20）
     if (seenIds.has(candidate.id)) {
       rejected.push({ candidate, reasonCode: "duplicate_id" });
-      events.push({
-        type: "candidate_event_rejected",
-        candidateId: candidate.id,
-        kind: candidate.kind,
-        reasonCode: "duplicate_id",
-        rejectedAtTurn: currentTurn,
-        occurredAt,
+      drafts.push({
+        eventKey: `candidate_event_rejected:${candidate.id}:dup`,
+        episodeKey: "turn",
+        actorIds: [],
+        targetIds: [],
+        locationId: null,
+        causeKeys: [],
+        factIds: [],
+        questIds: [],
+        outcome: "neutral",
+        salience: 20,
+        payload: { type: "candidate_event_rejected", candidateId: candidate.id, kind: candidate.kind, reasonCode: "duplicate_id", rejectedAtTurn: currentTurn },
       });
       continue;
     }
@@ -98,12 +107,18 @@ export function approveCandidateEvents(
     // 过期 → 拒绝并移除
     if (isExpiredCandidate(candidate, currentTurn)) {
       rejected.push({ candidate, reasonCode: "expired" });
-      events.push({
-        type: "candidate_event_expired",
-        candidateId: candidate.id,
-        kind: candidate.kind,
-        expiredAtTurn: currentTurn,
-        occurredAt,
+      drafts.push({
+        eventKey: `candidate_event_expired:${candidate.id}`,
+        episodeKey: "turn",
+        actorIds: [],
+        targetIds: [],
+        locationId: null,
+        causeKeys: [],
+        factIds: [],
+        questIds: [],
+        outcome: "neutral",
+        salience: 15,
+        payload: { type: "candidate_event_expired", candidateId: candidate.id, kind: candidate.kind, expiredAtTurn: currentTurn },
       });
       continue;
     }
@@ -111,13 +126,18 @@ export function approveCandidateEvents(
     // 预算不足 → 拒绝（保留，仍会移除？）——预算不足属于本轮拒绝，从池移除并审计。
     if (!budgetAllowsExpansion(nextBudget, "events")) {
       rejected.push({ candidate, reasonCode: "budget" });
-      events.push({
-        type: "candidate_event_rejected",
-        candidateId: candidate.id,
-        kind: candidate.kind,
-        reasonCode: "budget",
-        rejectedAtTurn: currentTurn,
-        occurredAt,
+      drafts.push({
+        eventKey: `candidate_event_rejected:${candidate.id}:budget`,
+        episodeKey: "turn",
+        actorIds: [],
+        targetIds: [],
+        locationId: null,
+        causeKeys: [],
+        factIds: [],
+        questIds: [],
+        outcome: "neutral",
+        salience: 20,
+        payload: { type: "candidate_event_rejected", candidateId: candidate.id, kind: candidate.kind, reasonCode: "budget", rejectedAtTurn: currentTurn },
       });
       continue;
     }
@@ -132,13 +152,18 @@ export function approveCandidateEvents(
     const entityError = validateCandidateEntities(worldState, candidate);
     if (entityError !== null) {
       rejected.push({ candidate, reasonCode: entityError });
-      events.push({
-        type: "candidate_event_rejected",
-        candidateId: candidate.id,
-        kind: candidate.kind,
-        reasonCode: entityError,
-        rejectedAtTurn: currentTurn,
-        occurredAt,
+      drafts.push({
+        eventKey: `candidate_event_rejected:${candidate.id}:${entityError}`,
+        episodeKey: "turn",
+        actorIds: [],
+        targetIds: [],
+        locationId: null,
+        causeKeys: [],
+        factIds: [],
+        questIds: [],
+        outcome: "neutral",
+        salience: 20,
+        payload: { type: "candidate_event_rejected", candidateId: candidate.id, kind: candidate.kind, reasonCode: entityError, rejectedAtTurn: currentTurn },
       });
       continue;
     }
@@ -147,12 +172,18 @@ export function approveCandidateEvents(
     approvedCandidates.push({ ...candidate, approvedAtTurn: currentTurn });
     approvedIds.add(candidate.id);
     nextBudget = consumeExpansion(nextBudget, "events");
-    events.push({
-      type: "candidate_event_approved",
-      candidateId: candidate.id,
-      kind: candidate.kind,
-      approvedAtTurn: currentTurn,
-      occurredAt,
+    drafts.push({
+      eventKey: `candidate_event_approved:${candidate.id}`,
+      episodeKey: "turn",
+      actorIds: [],
+      targetIds: [],
+      locationId: null,
+      causeKeys: [],
+      factIds: [],
+      questIds: [],
+      outcome: "neutral",
+      salience: 30,
+      payload: { type: "candidate_event_approved", candidateId: candidate.id, kind: candidate.kind, approvedAtTurn: currentTurn },
     });
   }
 
@@ -162,8 +193,8 @@ export function approveCandidateEvents(
     ...candidates.filter((c) => !approvedIds.has(c.id) && !seenIds.has(c.id)),
   ];
 
-  if (approvedCandidates.length === 0 && events.length === 0) {
-    return { approvedCandidates, rejected, events, nextStoryState: storyState };
+  if (approvedCandidates.length === 0 && drafts.length === 0) {
+    return { approvedCandidates, rejected, drafts, nextStoryState: storyState };
   }
 
   const nextStoryState: StoryState = {
@@ -172,7 +203,7 @@ export function approveCandidateEvents(
     candidateEventPool: remaining,
   };
 
-  return { approvedCandidates, rejected, events, nextStoryState };
+  return { approvedCandidates, rejected, drafts, nextStoryState };
 }
 
 /** 实体存在性与前置事实校验；返回稳定 reasonCode 或 null（通过）。 */

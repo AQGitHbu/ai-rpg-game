@@ -439,7 +439,7 @@ function isBlank(value: unknown): boolean {
 /**
  * 来源判别式校验：本层只放行 `action` 一支，并要求 actionId 非空白、turnNumber 为非负整数。
  * 「actionId 指向真实已提交行动」这件事本层无法自查——WorldState 里没有行动账本
- * （eventLedger 的 GameEvent 不携带 actionId），所以调用方必须传服务端已铸造的那个 ID。
+ * （eventLedger 的 CommittedNarrativeEvent 不携带 actionId），所以调用方必须传服务端已铸造的那个 ID。
  * initial_world 的拒绝理由见 RelationshipMutationSource。
  */
 function checkRelationshipSource(declared: RelationshipMutationSource): RelationshipSourceCheck {

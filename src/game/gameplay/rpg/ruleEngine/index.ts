@@ -3,8 +3,9 @@ import type { StoryState } from "@/game/domain/storyState";
 import type { Action, Interaction } from "@/game/domain/action";
 import type { ResolvedEvent } from "@/game/domain/resolvedEvent";
 import type { NarrativeEventKind } from "@/game/domain/narrative";
-import type { GameEvent, TurnId } from "@/game/domain/events";
+import type { NarrativeEventDraft, TurnId, CommittedNarrativeEvent } from "@/game/domain/events";
 import { asTurnId } from "@/game/domain/events";
+import { commitEventDrafts, type EventCommitSource } from "@/game/domain/eventLedger";
 import type { TurnResolution } from "@/game/domain/turnResolution";
 import { createTurnResolution } from "@/game/domain/turnResolution";
 import type { ValidationCode } from "./validateAction";
@@ -180,14 +181,14 @@ export function resolveTurn(
   const dialogueStoryState = advanceDialogueSession(propagatedWs, storyState, action);
   const previousDialogueSession = storyState.narrative.dialogueSession;
   const dialogueSession = dialogueStoryState.narrative.dialogueSession;
-  const dialogueEvents: GameEvent[] = dialogueSession !== undefined
+  const dialogueEvents: NarrativeEventDraft[] = dialogueSession !== undefined
     && dialogueSession.completed
     && (
       previousDialogueSession === undefined
       || String(previousDialogueSession.npcId) !== String(dialogueSession.npcId)
       || !previousDialogueSession.completed
     )
-    ? [{ type: "npc_dialogue_completed", npcId: dialogueSession.npcId, actionId, occurredAt: deps.now() }]
+    ? [{ eventKey: `npc_dialogue_completed:${dialogueSession.npcId}`, episodeKey: "normal", actorIds: [dialogueSession.npcId], targetIds: [dialogueSession.npcId], locationId: propagatedWs.currentLocationId, causeKeys: [], factIds: [], questIds: [], outcome: "success", salience: 30, payload: { type: "npc_dialogue_completed", npcId: dialogueSession.npcId } }]
     : [];
   // 当前会话是 talk_to_npc 是否完成的权威游标。即使本回合不是正式回应，
   // 也要持续传入；否则 ask 写入的 met=true 或随后一次移动/探索会让通用
@@ -209,7 +210,7 @@ export function resolveTurn(
         } : {}),
       });
   // 初步 domainEvents：resolver + 对话完成 + quest（ending 在 Step 5 追加）
-  const domainEvents: GameEvent[] = [...resolved.events, ...dialogueEvents, ...quests.events];
+  const domainEvents: NarrativeEventDraft[] = [...resolved.drafts, ...dialogueEvents, ...quests.drafts];
 
   // Step 1b: 先在本规则回合内推进一次 reveal 游标，再判断抵达后是否已经进入
   // discover_fact。此前这里仍使用回合开始时的 dialogueStoryState，导致 move
@@ -223,16 +224,16 @@ export function resolveTurn(
   });
   let ruleWorldState = revealedAtBoundary.worldState;
   const ruleStoryState = revealedAtBoundary.storyState;
-  let questEvents = quests.events;
+  let questEvents = quests.drafts;
   const autoInvestigation = autoResolveCurrentInvestigation(ruleWorldState, ruleStoryState, { now: deps.now });
-  if (autoInvestigation.events.length > 0) {
+  if (autoInvestigation.drafts.length > 0) {
     ruleWorldState = autoInvestigation.nextWorldState;
     const afterAutoInvestigation = reconcileQuests(ruleWorldState, deps);
     ruleWorldState = afterAutoInvestigation.nextWorldState;
-    questEvents = [...questEvents, ...autoInvestigation.events, ...afterAutoInvestigation.events];
+    questEvents = [...questEvents, ...autoInvestigation.drafts, ...afterAutoInvestigation.drafts];
   }
   const allQuestEvents = questEvents;
-  domainEvents.splice(0, domainEvents.length, ...resolved.events, ...dialogueEvents, ...allQuestEvents);
+  domainEvents.splice(0, domainEvents.length, ...resolved.drafts, ...dialogueEvents, ...allQuestEvents);
 
   // Step 2: 幕推进 + storyProgress + endingAllowed 推导（§13.1 在 resolveEnding 之前）
   const progression = advanceStoryProgression(
@@ -250,7 +251,7 @@ export function resolveTurn(
     },
     { now: deps.now },
   );
-  const candidateFlowEvents: GameEvent[] = [...approval.events];
+  const candidateFlowEvents: NarrativeEventDraft[] = [...approval.drafts];
   let afterCandidateWs = ruleWorldState;
   for (const candidate of approval.approvedCandidates) {
     // 候选编译内的 NPC 写入沿用本回合真实行动：candidate.id 不是证据，不得充当 actionId。
@@ -260,10 +261,10 @@ export function resolveTurn(
       turnNumber: storyState.turnNumber,
     });
     afterCandidateWs = compiled.worldState;
-    candidateFlowEvents.push(...compiled.events);
+    candidateFlowEvents.push(...compiled.drafts);
   }
   // 候选事件及其审计事件纳入本回合领域事件流（供张力/结局/ledger 归约）
-  const domainEventsWithCandidate: GameEvent[] = [...domainEvents, ...candidateFlowEvents];
+  const domainEventsWithCandidate: NarrativeEventDraft[] = [...domainEvents, ...candidateFlowEvents];
 
   // Step 4: 张力/进度更新（storyProgress 由 advanceStoryProgression 推导，此处只更新 tension）
   const nextStoryState = updateStoryMetrics(approval.nextStoryState, domainEventsWithCandidate);
@@ -277,7 +278,7 @@ export function resolveTurn(
   const ending = isExplicitEndingDecision
     ? resolveEnding(afterCandidateWs, nextStoryState, deps)
     : { nextWorldState: afterCandidateWs, nextStoryState, events: [] };
-  const finalDomainEvents: GameEvent[] = [...domainEventsWithCandidate, ...ending.events];
+  const finalDomainEvents: NarrativeEventDraft[] = [...domainEventsWithCandidate, ...ending.drafts];
 
   // Step 6: 物化视图增量归约
   const prevBeats = storyState.recentBeats as readonly RecentBeat[];
@@ -296,13 +297,28 @@ export function resolveTurn(
     reducedThroughEventCount: newView.reducedThroughEventCount,
   };
 
-  // eventLedger 与 finalDomainEvents 严格对齐：只追加本回合按序产生的事件；无事件时保持原对象不变
-  const nextWorldState: WorldState = finalDomainEvents.length === 0
-    ? ending.nextWorldState
-    : {
-        ...ending.nextWorldState,
-        eventLedger: [...worldState.eventLedger, ...finalDomainEvents],
-      };
+  // eventLedger 与 finalDomainEvents 严格对齐：通过 commitEventDrafts 一次提交
+  const commitSource: EventCommitSource = {
+    turnId,
+    turnNumber: storyState.turnNumber + 1,
+    committedAt: deps.now(),
+    actionId,
+  };
+  let committedEvents: readonly CommittedNarrativeEvent[] = [];
+  let nextWorldState: WorldState = ending.nextWorldState;
+  if (finalDomainEvents.length > 0) {
+    const commitResult = commitEventDrafts({
+      ledger: ending.nextWorldState.eventLedger,
+      drafts: finalDomainEvents,
+      source: commitSource,
+      entityStore: ending.nextWorldState.entityStore,
+    });
+    if (!commitResult.ok) {
+      return { ok: false, code: "INVALID_RESOLUTION", feedback: "事件提交失败" };
+    }
+    committedEvents = commitResult.appended;
+    nextWorldState = { ...ending.nextWorldState, eventLedger: commitResult.ledger };
+  }
 
   // 构建最终 ResolvedEvent（作为 TurnResolution.primaryResult）
   const primaryResult: ResolvedEvent = {
@@ -313,7 +329,7 @@ export function resolveTurn(
     facts: resolved.facts,
     costs: [],
     rewards: [],
-    triggeredEvents: [...finalDomainEvents.map((e) => e.type), ...approval.approvedCandidates.map((e) => e.id)],
+    triggeredEvents: [...committedEvents.map((e) => e.kind), ...approval.approvedCandidates.map((e) => e.id)],
     rejectedEffects: [],
   };
 
@@ -323,7 +339,7 @@ export function resolveTurn(
     interactionKind,
     action,
     primaryResult,
-    domainEvents: finalDomainEvents,
+    domainEvents: committedEvents,
     nextWorldState,
     previousStoryState: storyState,
     nextStoryState: nextStoryStateWithView,

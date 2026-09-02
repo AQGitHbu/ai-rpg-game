@@ -40,7 +40,7 @@ describe("resolveByType", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.nextWorldState.currentLocationId).toBe(asLocationId("loc_2"));
-      expect(result.events[0]?.type).toBe("location_visited");
+      expect(result.drafts[0]?.type).toBe("location_visited");
     }
   });
 
@@ -73,7 +73,7 @@ describe("resolveByType", () => {
     const result = resolveByType(ws, { type: "ack_prologue" }, deps);
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.events).toHaveLength(0);
+      expect(result.drafts).toHaveLength(0);
     }
   });
 
@@ -81,7 +81,7 @@ describe("resolveByType", () => {
     const result = resolveByType(ws, { type: "explore" }, deps);
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.events.map((e) => e.type)).toEqual(["location_explored"]);
+      expect(result.drafts.map((e) => e.payload.type)).toEqual(["location_explored"]);
       expect(result.nextWorldState.eventLedger.length).toBe(ws.eventLedger.length + 1);
     }
   });
@@ -158,7 +158,7 @@ describe("resolveByType status and stateChanges", () => {
     if (result.ok) {
       expect(result.status).toBe("success");
       expect(result.stateChanges).toEqual([]);
-      expect(result.events.map((e) => e.type)).toEqual(["player_intent_expressed"]);
+      expect(result.drafts.map((e) => e.payload.type)).toEqual(["player_intent_expressed"]);
       expect(result.nextWorldState.eventLedger.length).toBe(ws.eventLedger.length + 1);
     }
   });
@@ -190,7 +190,7 @@ describe("resolveByType — attack", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.nextWorldState.battle.status).toBe("active");
-      expect(result.events.some((e) => e.type === "battle_started")).toBe(true);
+      expect(result.drafts.some((e) => e.payload.type === "battle_started")).toBe(true);
       expect(result.status).toBe("success");
     }
   });
@@ -202,7 +202,7 @@ describe("resolveByType — attack", () => {
     const result = resolveByType(started.nextWorldState, { type: "battle_action", action: "attack" }, deps);
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.events.some((e) => e.type === "battle_round_resolved")).toBe(true);
+      expect(result.drafts.some((e) => e.payload.type === "battle_round_resolved")).toBe(true);
     }
   });
 
@@ -270,7 +270,7 @@ describe("resolveByType — attack", () => {
       expect(result.ok).toBe(true);
       if (result.ok) {
         expect(result.nextWorldState.inventory).not.toContain(item.id);
-        expect(result.events[0]).toMatchObject({ type: "item_given", itemId: item.id, npcId: npc.id, actionId: deps.actionId });
+        expect(result.drafts[0]).toMatchObject({ type: "item_given", itemId: item.id, npcId: npc.id, actionId: deps.actionId });
         const after = result.nextWorldState.npcs.find((n) => n.id === npc.id);
         expect(after?.memory.relationship.affinity).toBe(6);
         expect(after?.memory.interactionHistory).toHaveLength(1);
@@ -369,7 +369,7 @@ describe("resolveByType — attack", () => {
       expect(first.nextWorldState.entityStore.records).toBe(beforeRecords);
       first.nextWorldState.entityStore.records.forEach((record, index) => expect(record).toBe(beforeRecords[index]));
       expect(first.nextWorldState.eventLedger).toBe(beforeLedger);
-      expect(first.nextWorldState.eventLedger.filter((event) => event.type === "item_given")).toHaveLength(1);
+      expect(first.nextWorldState.eventLedger.filter((event) => event.kind === "item_given")).toHaveLength(1);
       const afterRecord = entitiesOfKind(first.nextWorldState.entityStore, "npc").find((record) => record.core.id === npc.id);
       expect(afterRecord?.history.interactions.filter((entry) => entry.actionId === deps.actionId)).toHaveLength(1);
       expect(afterRecord?.relationships.outgoing.flatMap((edge) => edge.evidence).filter((evidence) => evidence.actionId === deps.actionId)).toHaveLength(1);
@@ -417,7 +417,7 @@ describe("resolveByType — attack", () => {
       expect(inactiveResult.worldState.entityStore.records).toBe(beforeRecords);
       inactiveResult.worldState.entityStore.records.forEach((record, index) => expect(record).toBe(beforeRecords[index]));
       expect(inactiveResult.worldState.eventLedger).toBe(beforeLedger);
-      expect(inactiveResult.worldState.eventLedger.some((event) => event.type === "item_given")).toBe(false);
+      expect(inactiveResult.worldState.eventLedger.some((event) => event.kind === "item_given")).toBe(false);
     });
 
     it("战斗中无法给予", () => {
@@ -597,10 +597,10 @@ describe("resolveByType — investigate approaches", () => {
     }, deps);
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("investigate should succeed");
-    expect(result.events[0]).toMatchObject({
+    expect(result.drafts[0]).toMatchObject({
       type: "fact_discovered", approachId: "risky", evidenceQuality: "noisy", tensionDelta: 12,
     });
-    const nextStory = updateStoryMetrics(storyWithDiscoverFact(), result.events);
+    const nextStory = updateStoryMetrics(storyWithDiscoverFact(), result.drafts);
     expect(nextStory.tension).toBeGreaterThan(storyWithDiscoverFact().tension);
   });
 
@@ -610,7 +610,7 @@ describe("resolveByType — investigate approaches", () => {
     }, deps);
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.events[0]).toMatchObject({
+      expect(result.drafts[0]).toMatchObject({
         type: "fact_discovered", approachId: "careful", evidenceQuality: "clean", tensionDelta: 4,
       });
       expect(result.nextWorldState.worldFacts[0]?.discovered).toBe(true);
@@ -675,20 +675,20 @@ describe("autoResolveCurrentInvestigation", () => {
 
   it("automatically discovers an approach-less fact at a reveal boundary without exposing a player action", () => {
     const result = autoResolveCurrentInvestigation(worldWithApproachlessFact(), storyWithDiscoverFact());
-    expect(result.events).toContainEqual(expect.objectContaining({ type: "fact_discovered", factId: FACT_1_ID }));
+    expect(result.drafts).toContainEqual(expect.objectContaining({ type: "fact_discovered", factId: FACT_1_ID }));
     expect(result.stateChanges.some((change) => change.path.includes("discovered"))).toBe(true);
   });
 
   it("emits the automatic event with omitted approach metadata and zero extra tension", () => {
     const result = autoResolveCurrentInvestigation(worldWithApproachlessFact(), storyWithDiscoverFact());
-    const autoEvent = result.events[0];
+    const autoEvent = result.drafts[0];
     expect(autoEvent).toMatchObject({ type: "fact_discovered", factId: FACT_1_ID });
     if (autoEvent?.type === "fact_discovered") {
       expect(autoEvent.approachId).toBeUndefined();
       expect(autoEvent.evidenceQuality).toBeUndefined();
       expect(autoEvent.tensionDelta).toBeUndefined();
     }
-    expect(updateStoryMetrics(storyWithDiscoverFact(), result.events).tension).toBe(42); // 30 + 12
+    expect(updateStoryMetrics(storyWithDiscoverFact(), result.drafts).tension).toBe(42); // 30 + 12
   });
 
   it("returns no-op for a non-discover_fact current objective", () => {
@@ -702,7 +702,7 @@ describe("autoResolveCurrentInvestigation", () => {
       }],
     });
     const result = autoResolveCurrentInvestigation(ws, storyWithDiscoverFact());
-    expect(result.events).toEqual([]);
+    expect(result.drafts).toEqual([]);
     expect(result.nextWorldState).toBe(ws);
   });
 
@@ -711,13 +711,13 @@ describe("autoResolveCurrentInvestigation", () => {
       worldFacts: [{ ...FACT_APPROACHLESS, discovered: true }],
     });
     const result = autoResolveCurrentInvestigation(ws, storyWithDiscoverFact());
-    expect(result.events).toEqual([]);
+    expect(result.drafts).toEqual([]);
   });
 
   it("automatically discovers the current fact even when it has approved approaches", () => {
     const ws = worldWithApproaches({ quests: [QUEST_FACT] });
     const result = autoResolveCurrentInvestigation(ws, storyWithDiscoverFact());
-    expect(result.events).toContainEqual(expect.objectContaining({ type: "fact_discovered", factId: FACT_1_ID }));
+    expect(result.drafts).toContainEqual(expect.objectContaining({ type: "fact_discovered", factId: FACT_1_ID }));
     expect(result.nextWorldState).not.toBe(ws);
   });
 });

@@ -1,5 +1,5 @@
 import type { WorldState } from "@/game/domain/worldState";
-import type { ItemId } from "@/game/domain/worldEntity";
+import type { ItemId, NpcId } from "@/game/domain/worldEntity";
 import { findNpc, findLocation, findItem } from "@/game/domain/worldState";
 
 // 内部共享规则：目标满足判定与稳定展示标签（与 ruleEngine/reconcileQuests 语义一致）。
@@ -8,7 +8,7 @@ export type QuestObjective = WorldState["quests"][number]["objectives"][number];
 
 function hasObtainedItem(ws: WorldState, itemId: ItemId): boolean {
   return ws.inventory.includes(itemId)
-    || ws.eventLedger.some((event) => event.type === "item_obtained" && event.itemId === itemId);
+    || ws.eventLedger.some((event) => event.kind === "item_obtained" && (event.payload as { itemId: ItemId }).itemId === itemId);
 }
 
 export function isObjectiveSatisfied(ws: WorldState, objective: QuestObjective): boolean {
@@ -16,7 +16,7 @@ export function isObjectiveSatisfied(ws: WorldState, objective: QuestObjective):
     case "visit_location": return ws.visitedLocationIds.includes(objective.locationId);
     case "talk_to_npc": {
       const completed = ws.eventLedger.some((event) =>
-        event.type === "npc_dialogue_completed" && event.npcId === objective.npcId);
+        event.kind === "npc_dialogue_completed" && (event.payload as { npcId: NpcId }).npcId === objective.npcId);
       if (completed) return true;
       // 旧存档没有 dialogue-completed 事件；在当前会话规则介入前仍按 met
       // 兼容读取。新运行时的当前 NPC 总会由 dialogueSession 覆盖此结果。
