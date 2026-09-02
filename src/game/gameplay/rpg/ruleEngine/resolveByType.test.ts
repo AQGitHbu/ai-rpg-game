@@ -83,7 +83,7 @@ describe("resolveByType", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.drafts.map((e) => e.payload.type)).toEqual(["location_explored"]);
-      expect(result.nextWorldState.eventLedger.length).toBe(ws.eventLedger.length + 1);
+      // drafts are not yet committed to eventLedger at this layer; commit happens in resolveTurn
     }
   });
 
@@ -160,7 +160,7 @@ describe("resolveByType status and stateChanges", () => {
       expect(result.status).toBe("success");
       expect(result.stateChanges).toEqual([]);
       expect(result.drafts.map((e) => e.payload.type)).toEqual(["player_intent_expressed"]);
-      expect(result.nextWorldState.eventLedger.length).toBe(ws.eventLedger.length + 1);
+      // drafts not yet committed at this layer
     }
   });
 });
@@ -370,7 +370,7 @@ describe("resolveByType — attack", () => {
       expect(first.nextWorldState.entityStore.records).toBe(beforeRecords);
       first.nextWorldState.entityStore.records.forEach((record, index) => expect(record).toBe(beforeRecords[index]));
       expect(first.nextWorldState.eventLedger).toBe(beforeLedger);
-      expect(first.nextWorldState.eventLedger.filter((event) => event.kind === "item_given")).toHaveLength(1);
+      expect(first.drafts.filter((event) => event.payload.type === "item_given")).toHaveLength(1);
       const afterRecord = entitiesOfKind(first.nextWorldState.entityStore, "npc").find((record) => record.core.id === npc.id);
       expect(afterRecord?.history.interactions.filter((entry) => entry.actionId === deps.actionId)).toHaveLength(1);
       expect(afterRecord?.relationships.outgoing.flatMap((edge) => edge.evidence).filter((evidence) => evidence.actionId === deps.actionId)).toHaveLength(1);
@@ -558,7 +558,8 @@ describe("resolveByType — talk 的窄 mutation batch", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.nextWorldState).not.toBe(ws);
-      expect(result.nextWorldState.eventLedger).toHaveLength(ws.eventLedger.length + 1);
+      // drafts not yet committed to eventLedger at this layer
+      expect(result.drafts.length).toBeGreaterThan(0);
     }
   });
 });
@@ -599,7 +600,7 @@ describe("resolveByType — investigate approaches", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("investigate should succeed");
     expect(result.drafts[0]).toMatchObject({
-      type: "fact_discovered", approachId: "risky", evidenceQuality: "noisy", tensionDelta: 12,
+      payload: { type: "fact_discovered", approachId: "risky", evidenceQuality: "noisy", tensionDelta: 12 },
     } as unknown as CommittedNarrativeEvent);
     const nextStory = updateStoryMetrics(storyWithDiscoverFact(), result.drafts);
     expect(nextStory.tension).toBeGreaterThan(storyWithDiscoverFact().tension);
@@ -612,11 +613,11 @@ describe("resolveByType — investigate approaches", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.drafts[0]).toMatchObject({
-        type: "fact_discovered", approachId: "careful", evidenceQuality: "clean", tensionDelta: 4,
+        payload: { type: "fact_discovered", approachId: "careful", evidenceQuality: "clean", tensionDelta: 4 },
       } as unknown as CommittedNarrativeEvent);
       expect(result.nextWorldState.worldFacts[0]?.discovered).toBe(true);
       expect(result.stateChanges.some((change) => change.path.includes("discovered"))).toBe(true);
-      expect(result.nextWorldState.eventLedger.length).toBe(worldWithApproaches().eventLedger.length + 1);
+      // drafts not yet committed to eventLedger at this layer
     }
   });
 });
