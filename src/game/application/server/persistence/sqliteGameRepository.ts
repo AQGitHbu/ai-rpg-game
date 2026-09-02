@@ -42,10 +42,10 @@ const GAME_RECORD_VERSION = 1;
 const UNSUPPORTED_RECORD_VERSION = 0;
 const INITIAL_REVISION = 0;
 
-/** JSON 内部的旧 WorldState 世代（含 v3 单层 npcState 形状）：整体按旧存档处理。 */
-const LEGACY_WORLD_SCHEMA_VERSIONS: readonly number[] = [1, 2, 3];
+/** JSON 内部的旧 WorldState 世代（含 v3 单层 npcState 形状与 v4 扁平 GameEvent ledger）：整体按旧存档处理。 */
+const LEGACY_WORLD_SCHEMA_VERSIONS: readonly number[] = [1, 2, 3, 4];
 /** JSON 内部的旧 StoryState 世代。 */
-const LEGACY_STORY_SCHEMA_VERSIONS: readonly number[] = [1, 2, 3, 4, 5];
+const LEGACY_STORY_SCHEMA_VERSIONS: readonly number[] = [1, 2, 3, 4, 5, 6];
 
 function isLegacyVersion(value: unknown, legacyVersions: readonly number[]): boolean {
   return typeof value === "number" && Number.isInteger(value) && legacyVersions.includes(value);

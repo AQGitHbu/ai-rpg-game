@@ -313,7 +313,7 @@ export function resolveTurn(
       entityStore: ending.nextWorldState.entityStore,
     });
     if (!commitResult.ok) {
-      return { ok: false, code: "INVALID_RESOLUTION", feedback: "事件提交失败" };
+      return { ok: false, code: "INVALID_RESOLUTION", feedback: `事件提交失败: ${commitResult.code}` };
     }
     committedEvents = commitResult.appended;
     nextWorldState = { ...ending.nextWorldState, eventLedger: commitResult.ledger };

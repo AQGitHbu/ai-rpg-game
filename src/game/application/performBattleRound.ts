@@ -114,13 +114,20 @@ export async function performBattleRound(
     ? beforeNarrative.battleCheckpoint
     : undefined;
 
+  // Battle rounds use a unique actionId per round to prevent event ID conflicts
+  // when multiple battle actions share the same turnNumber (non-terminal rounds
+  // don't increment turnNumber). The round number is part of the actionId so
+  // that eventIdFor(turnId, eventKey) produces distinct IDs across rounds.
+  const battleRound = beforeWorldState.battle.status === "active" ? beforeWorldState.battle.round : 0;
+  const battleActionId = `${input.actionId}:battle:${battleRound}`;
+
   const resolved = resolveTurn(
     beforeWorldState,
     beforeStoryState,
     input.action,
-    input.actionId,
+    battleActionId,
     record.revision,
-    asTurnId(input.actionId),
+    asTurnId(battleActionId),
     input.interactionKind as "fixed_choice" | "free_text",
     { now: deps.now },
   );

@@ -7,7 +7,8 @@ import {
 } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { asLocationId, asNpcId, asGenerationId, asEnemyId, asQuestId, asFactId, type GenerationMetadata, type QuestId, type EndingId, type FactId } from "@/game/domain/worldEntity";
-import { asTurnId, type CommittedNarrativeEvent } from "@/game/domain/events";
+import { asTurnId } from "@/game/domain/events";
+import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
 import {
   createWorldStateFixtureWith,
   emptyProjection,
@@ -32,7 +33,7 @@ const BASE = emptyProjection({
   currentLocationId: LOC_1.id,
   unlockedLocationIds: [LOC_1.id, LOC_2.id],
 });
-const INITIALIZED_LEDGER: readonly CommittedNarrativeEvent[] = [{ type: "game_initialized", generation: GENERATION } as unknown as CommittedNarrativeEvent];
+const INITIALIZED_LEDGER = [makeCommittedEvent({ type: "game_initialized", generation: GENERATION }, { sequence: 0 })];
 
 /** 一次传入完整兼容投影：覆盖项与 entityStore 由同一组装点重建。 */
 function makeWorld(overrides: WorldStateFixtureOverrides = {}): WorldState {
@@ -130,10 +131,13 @@ describe("ruleEngine facade", () => {
     expect(second.resolution.nextWorldState.quests[0]?.status).toBe("completed");
     expect(second.resolution.domainEvents.map((event) => event.kind)).toContain("quest_completed");
     expect(second.resolution.domainEvents).toContainEqual(expect.objectContaining({
-      type: "npc_dialogue_completed",
-      npcId: npc.id,
+      kind: "npc_dialogue_completed",
       actionId: "dialogue_2",
-    } as unknown as CommittedNarrativeEvent));
+      payload: expect.objectContaining({
+        type: "npc_dialogue_completed",
+        npcId: npc.id,
+      }),
+    }));
     expect(second.resolution.nextStoryState.narrative.dialogueSession).toMatchObject({ turnCount: 2, completed: true });
   });
 
@@ -621,7 +625,10 @@ describe("resolveTurn — 自动揭示无 approach 的必经事实 (Task 3)", ()
     const types = r.domainEvents.map((e) => e.kind);
     expect(types).toContain("fact_discovered");
     expect(types).toContain("quest_completed");
-    expect(r.domainEvents.find((e) => e.kind === "fact_discovered")).toMatchObject({ type: "fact_discovered", factId: FACT_1_ID } as unknown as CommittedNarrativeEvent);
+    expect(r.domainEvents.find((e) => e.kind === "fact_discovered")).toMatchObject({
+      kind: "fact_discovered",
+      payload: { type: "fact_discovered", factId: FACT_1_ID },
+    });
     expect(r.nextWorldState.worldFacts[0]?.discovered).toBe(true);
     expect(r.nextWorldState.quests[0]?.status).toBe("completed");
     expect(r.nextStoryState.tension).toBe(50); // 30 + 12 (fact_discovered) + 8 (quest_completed)

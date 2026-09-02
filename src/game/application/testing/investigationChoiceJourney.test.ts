@@ -1,5 +1,6 @@
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
-import type { CommittedNarrativeEvent } from "@/game/domain/events";
+import { asTurnId, eventIdFor, episodeIdForTurn } from "@/game/domain/events";
+import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 /** @vitest-environment node */
 import { describe, it, expect, afterAll } from "vitest";
 import { join } from "node:path";
@@ -119,7 +120,24 @@ function worldWithApproaches(): WorldState {
       defeatedEnemyIds: [],
       factions: [],
     },
-    eventLedger: [{ type: "game_initialized", generation } as unknown as CommittedNarrativeEvent],
+    eventLedger: [{
+      eventId: eventIdFor(asTurnId("init:g1"), "game_initialized"),
+      sequence: 0,
+      turnId: asTurnId("init:g1"),
+      turnNumber: 0,
+      episodeId: episodeIdForTurn(asTurnId("init:g1")),
+      kind: "game_initialized",
+      actorIds: [PLAYER_ENTITY_ID],
+      targetIds: [PLAYER_ENTITY_ID],
+      locationId: null,
+      causeEventIds: [],
+      factIds: [],
+      questIds: [],
+      outcome: "neutral",
+      salience: 50,
+      committedAt: "2026-01-01T00:00:00Z",
+      payload: { type: "game_initialized", generation },
+    }],
   });
 }
 
@@ -177,7 +195,24 @@ function worldWithApproachlessFact(): WorldState {
       defeatedEnemyIds: [],
       factions: [],
     },
-    eventLedger: [{ type: "game_initialized", generation } as unknown as CommittedNarrativeEvent],
+    eventLedger: [{
+      eventId: eventIdFor(asTurnId("init:g2"), "game_initialized"),
+      sequence: 0,
+      turnId: asTurnId("init:g2"),
+      turnNumber: 0,
+      episodeId: episodeIdForTurn(asTurnId("init:g2")),
+      kind: "game_initialized",
+      actorIds: [PLAYER_ENTITY_ID],
+      targetIds: [PLAYER_ENTITY_ID],
+      locationId: null,
+      causeEventIds: [],
+      factIds: [],
+      questIds: [],
+      outcome: "neutral",
+      salience: 50,
+      committedAt: "2026-01-01T00:00:00Z",
+      payload: { type: "game_initialized", generation },
+    }],
   });
 }
 

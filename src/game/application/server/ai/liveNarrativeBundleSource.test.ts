@@ -655,7 +655,7 @@ describe("createNarrativeBundleSource", () => {
     const messages = complete.mock.calls[0]![1] as readonly AiMessage[];
     const systemPrompt = messages[0]!.content as string;
     expect(systemPrompt).toContain("已占用实体名称");
-    expect(systemPrompt).toContain("- 地点：小镇、山涧密林");
+    expect(systemPrompt).toContain("- 地点：山涧密林、小镇");
     expect(systemPrompt).toContain("- NPC：灰衣老者");
     expect(systemPrompt).toContain("- 敌人：黑衣暗哨");
     expect(systemPrompt).toContain("世界内实体名称唯一");

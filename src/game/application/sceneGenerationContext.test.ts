@@ -21,7 +21,8 @@ import {
   asFactId,
   type GenerationMetadata,
 } from "@/game/domain/worldEntity";
-import { asNarrativeJobId, asTurnId, type CommittedNarrativeEvent } from "@/game/domain/events";
+import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
+import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
 import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
 import {
   createWorldStateFixtureWith,
@@ -70,7 +71,7 @@ const BASE_PROJECTION: EntityCompatibilityProjection = {
   factions: [],
 };
 
-const INITIALIZED_LEDGER: readonly CommittedNarrativeEvent[] = [{ type: "game_initialized", generation: GENERATION } as unknown as CommittedNarrativeEvent];
+const INITIALIZED_LEDGER = [makeCommittedEvent({ type: "game_initialized", generation: GENERATION }, { sequence: 0 })];
 
 function makeWorld(overrides: WorldStateFixtureOverrides = {}): WorldState {
   return createWorldStateFixtureWith(
@@ -440,7 +441,10 @@ describe("buildSceneGenerationContext", () => {
       quests: [quest],
       eventLedger: [
         ...INITIALIZED_LEDGER,
-        { type: "fact_discovered" as const, factId: fact.factId, occurredAt: "2026-01-02", approachId: "search", evidenceQuality: "noisy" as const, tensionDelta: 12  as unknown as CommittedNarrativeEvent} as unknown as CommittedNarrativeEvent,
+        makeCommittedEvent(
+          { type: "fact_discovered", factId: fact.factId, approachId: "search", evidenceQuality: "noisy", tensionDelta: 12 },
+          { sequence: 1 },
+        ),
       ],
     });
     const job = makeJob({

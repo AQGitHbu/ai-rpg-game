@@ -31,7 +31,7 @@ export function classifyStoryStateSchemaVersion(
   if (version === STORY_STATE_SCHEMA_VERSION) {
     return { ok: true, version: STORY_STATE_SCHEMA_VERSION };
   }
-  if (version === 2 || version === 3 || version === 4 || version === 5 || version === 6) {
+  if (version === 1 || version === 2 || version === 3 || version === 4 || version === 5 || version === 6) {
     return { ok: false, code: "UNSUPPORTED_RECORD" };
   }
   return { ok: false, code: "UNSUPPORTED_STORY_STATE_VERSION" };

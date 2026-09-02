@@ -144,7 +144,7 @@ describe("buildEntityContextProjection", () => {
 
   it("keeps global collision names compact without exposing fact names or prose", () => {
     const result = buildEntityContextProjection({ worldState, storyState: baseStory, job: job() });
-    expect(result.occupiedNames.location).toEqual(["古道", "远山", "青石镇"]);
+    expect(result.occupiedNames.location).toEqual(["古道", "青石镇", "远山"]);
     expect(Object.keys(result.occupiedNames)).toEqual(["location", "npc", "item", "enemy", "quest"]);
     expect(JSON.stringify(result.occupiedNames)).not.toContain("古道留有车辙");
   });
