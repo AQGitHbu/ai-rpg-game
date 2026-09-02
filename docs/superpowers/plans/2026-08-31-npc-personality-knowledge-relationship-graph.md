@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-23-long-form-narrative-entity-memory-architecture.md`（Plan 3；§7；NAR-06、NAR-07、NAR-14、NAR-17）
 
-> 状态：待执行
+> 状态：已完成、已验收并合入 main（2026-09-02）
 
 ## Global Constraints
 

@@ -12,7 +12,7 @@
 |---|---|---|---|
 | 共享基础设施 | `共同规范/共享模块开发流程.md` | `共同规范/共享模块目录.json` | 仅按触发条件读取 |
 | 项目脚手架 | `agent/项目脚手架.md` | — | 已建立；提供 `branch:finish` 合并后 worktree/分支收尾入口；SQLite 仓储测试使用每进程独占的 OS 临时目录，兼容 Windows/Git Bash 管道运行 |
-| 当前开发阶段 | `agent/当前开发阶段.md` | `agent/current-phase.json` | 「NPC 人格、知识与关系图」（Plan 3）已完成离线与 Chrome 真实 API 中篇验收，待合并 main：已在 `codex/npc-personality-knowledge-relationship-graph` 实现 `WorldState v4` / `EntityStore v2`、NPC 五层组件、知识/关系规则、统一 speech authority 和跨玩法 continuity journey；机器状态为 `implemented / implemented`。明确排除 Plan 4 的 Event/Episode 与稳定 `eventId`、Plan 5 的 Living Outline/Arc、长篇分段存储、Identity Anchors 运行期更新与新增 provider 调用。Plan 见 `superpowers/plans/2026-08-31-npc-personality-knowledge-relationship-graph.md` |
+| 当前开发阶段 | `agent/当前开发阶段.md` | `agent/current-phase.json` | 「结构化 Event 与 Episodic Memory」（Plan 4）已规划、待执行，机器状态为 `planned / not_started`。目标是建立稳定 Event ID、参与者/地点/因果/显著度、可重建 Episode 与结构化召回，并把 NPC 长期证据升级为 Event provenance；保持一次生成逐步消费、战败回滚、六个 API 与短/中篇完整可玩。明确排除 Plan 5/6 的 Outline/Arc/scene planning、Plan 7/8 的分段长局与向量索引、misinformation、新 provider 调用和共享 package 改动。Plan 见 `superpowers/plans/2026-09-02-structured-events-episodic-memory.md` |
 | NPC 人格、知识与关系图 | `agent/NPC人格知识与关系图.md` | `策划文档/AI生成RPG_MVP.md` §7 | Plan 3 已完成真实 API 中篇验收：NPC identity/dynamicState/knowledge/relationships/history 作为唯一组件；对话、事实、赠物、明确 NPC 任务和共同战斗共享同一投影；四条台词引用审批路径共用 `NpcSpeechAuthority`；离线五幕连续性旅程已通过 |
 | 生产链边界 | `agent/当前开发阶段.md` | — | 只允许无版本后缀的生产命名；旧 route、旧 application/UI 链、兼容 facade、类型隔离和旧存档迁移均不存在。历史文档只作决策记录 |
 | MVP 核心闭环 | `agent/MVP核心闭环.md` | `策划文档/AI生成RPG_MVP.md` | 创建/恢复、选择驱动推进、探索、物品、战斗、分支和多结局可由显式 offline fixture 完整游玩；生产 AI 失败显示 stable failure 并手动重试 |
@@ -23,7 +23,7 @@
 | 地图与地点冒险 | `agent/地图与地点冒险.md` | `策划文档/AI生成RPG_MVP.md` | Phase 7 地图/地点主循环、Phase 8 非战斗 HUD/视窗/详情/对话层、响应式全屏地图 HUD 细化均已实现；Phase 10 narrative 仅在进入地点后显示，地图始终为入口；town 层已接入主循环（map→town→scene 三层导航，2026-07-31）；序幕阅读期间静默预生成，API/后台编排期间使用全屏模态锁定（2026-08-13）；普通建筑入口只导航、NPC 卡片打开预生成对话，事实目标建筑由服务端下发 arrivalChoiceToken 后在进入时自动规则揭示（2026-08-26），正式 NPC 回合由双选项/自定义输入提交；旁注侧栏点击后才显示建筑/NPC，不再有临时会面开发面板；城镇物品按建筑场景单归属投影，规则动作与 generated/fixture 场景分离；AI failure 锁定当前规则操作并显示重试提示，不自动生成剧情；新地点任务先 visit 再自动确认事实；地点场景不渲染调查按钮或底部行动栏，地图/NPC/热点/战斗面板承载交互；演化实体按释放游标逐步投影，未释放 NPC/物品/敌人不出现在地图或场景；交接场景保留旁注和地图动线（2026-08-25） |
 | 运行时 AI 导演与场景表演 | `agent/运行时AI导演与场景表演.md` | `策划文档/AI生成RPG_MVP.md` | v7 生产链由单次 `NarrativeBundleSource` 提案当前 scene、可选 world delta 与 continuation graph；provider 触发白名单仅为 opening 与 NPC fixed/free-text，移动/战斗边界不再调用 provider；规则场景与 bundle 步骤在一次状态 CAS 中消费；runtime state 使用 ready/provider_pending/provider_failed 判别联合，failed 仅同 job 手动 retry；五类 AI 角色统一经 `RpgAiClient`，玩家决策的 `narrative_bundle` Prompt 使用 context compiler 并附带无正文 manifest，显式 fixture 才使用 deterministic source |
 | NPC 对话驱动叙事场景触发 | `agent/NPC对话驱动叙事场景触发.md` | `策划文档/AI生成RPG_MVP.md` | 普通焦点 NPC ready scene 提供两个固定选择与一个自定义输入；对话收尾同一次 scene 生成旧 NPC 最后一段直接对白，并把下一步作为服务端批准的 prepared/travel 入口，不生成可重复提交的 handoff action；普通输入统一经 `/api/game/actions` → `performTurn`，浏览器逐次 UUID，均记录回合并创建 pending job；建筑与 talk 入口不提交，只有对话选项/自定义输入提交并立即后台生成（2026-08-13）；提交后保留对话框并显示内联 loading，waiting 使用提交前的本页对话快照；ready 后清理临时快照并显示新台词与下一组选项（2026-08-22）；NPC 回应只保留第一人称直接台词，必须承接当前话语或情境；选项由当前主线、NPC 可说事实卡、结构化对话历史和本轮事实引用驱动，不再按 NPC 角色名或对白关键词分类；pending 上下文保存上一句 NPC 台词、玩家选项和结构化主题，live AI 生成自然措辞但服务端锁定 candidateId/action，连续至少两轮后才完成 `talk_to_npc`；同幕后续 NPC/证物/敌人可以预生成但按释放游标逐步进入场景，抵达 NPC 必须承接已完成的调查事实；幕交接保留原场景与原 NPC 的回应，read model 可修复旧存档的冲突焦点（2026-08-18）；2026-08-18：非目标/交接 NPC 零回合闲聊化，talk 入口仅属权威目标；2026-08-24：同地点 NPC 交接只保留旧 NPC 最后一句并以本地关闭/地图 travel 入口承接，不重复提交回合 |
-| NPC 关系与知识演化 | `agent/NPC人格知识与关系图.md` | `superpowers/specs/2026-07-31-npc-relationship-knowledge-evolution-design.md` | Plan 3 已统一替代旧单维兼容写路径：关系边支持玩家/NPC 有向目标、四维有限 signal、stage/evidence/commitment；knowledge 保存 FactId、来源、披露和 audience；旧 affinity 仅为兼容投影，当前阶段待验收 |
+| NPC 关系与知识演化 | `agent/NPC人格知识与关系图.md` | `superpowers/specs/2026-07-31-npc-relationship-knowledge-evolution-design.md` | Plan 3 已验收并统一替代旧单维兼容写路径：关系边支持玩家/NPC 有向目标、四维有限 signal、stage/evidence/commitment；knowledge 保存 FactId、来源、披露和 audience；旧 affinity 仅为兼容投影 |
 | 剧情连续性与结构化记忆 | `agent/剧情连续性与结构化记忆.md` | `策划文档/AI生成RPG_MVP.md` | 有界规则记忆、最小权限上下文与离线 replay 已实现；中篇新幕中的事实/地点/NPC/物品/敌人按题材剧本与结构变体生成目标链，StoryState 释放游标控制玩家可见节奏；当前 v7 生产决策链通过 `compileDecisionNarrativeContext` 共享 `NarrativeContextBlock` IR、固定 authority/slot 顺序、mandatory 溢出保留与 optional 预算裁剪，但 opening/intent 及 Entity/Episode/Living Outline 仍未迁入；短篇/中篇正式支持，启用长篇/开放式前须另立 segmented ledger Spec/Plan |
 | 世界动态具象化 | `agent/世界动态具象化.md` | `策划文档/AI生成RPG_MVP.md` §4–§5 | 开局只生成可完成切片（1 地点/1 NPC/1 主线 + 契约 + 序幕 + 预算），后续实体只经运行时世界演化按需具象化（EvolutionNeed → 提案 → 审批 → 铸 ID → 预览状态）；同幕完整结构可预先持久化，但通过 StoryState.reveal 逐步释放；生产 source 失败零演化写入并进入 failed；live prompt 按需求条件化 `nextMainQuest`/`endingPair` 字段，避免下一幕误带结局对；deterministic 剧本仅供显式 offline fixture；城镇调查点与离镇场景按空间层级区分；动态地点提案以 placement 区分世界地图地点与当前城镇建筑，town_building 复用剧情 slot 不铸造地图节点（2026-08-22）；终幕按 trust/doubt 抽象方向铸造互斥结局对；无预生成蓝图/隐藏任务图；world 演化解析/审批失败自动最多一次内容修复（`evolveWorld` 两轮循环，`WorldEvolutionContentRepair.reason` 四种 + `approvalCode`），新地点与主线目标 NPC 空间一致由审批层硬拒绝（`unreachable_objective/npc_not_at_new_location`，2026-08-22）；2026-08-23 起 world Prompt 统一经 `compileWorldNarrativeContext` 编译，只投影公开事实、过滤后的 recent beats 与已批准实体索引，不投影 eventLedger 或私密事实正文；调查方式 `label/hint` 可复用事实关键词，仅完整复制事实正文算泄漏 |
 | 无 AI 试玩验收 | `agent/无AI试玩验收.md` | `superpowers/plans/2026-07-28-mvp-no-ai-playable-vertical-slice.md` | 已实现：属性/模板叙事、开发环境清档、成功/失败手工试玩路线；开发开局可使用 Phase 10 固定离线旅程基线或 7 题材离线基线（2026-08-04 扩展） |
@@ -101,14 +101,20 @@
 - 实现事实变化时同步更新 agent 文档和本索引。
 - 新系统先从 `agent/template.md` 创建最小文档。
 
-## 2026-09-01 Plan 3 NPC 连续性图实现（已验收，待合并 main）
+## 2026-09-01 Plan 3 NPC 连续性图实现（已验收并合入 main）
 
 - `agent/NPC人格知识与关系图.md` 是本阶段新增 canonical 实现事实入口；`agent/实体与组件世界状态.md`、`剧情连续性与结构化记忆.md`、`运行时AI导演与场景表演.md`、`世界动态具象化.md`、`行动裁决.md`、`探索与任务推进.md`、`战斗与结局.md` 已同步组件、规则、隐私、回滚和测试边界。
-- 当前分支已通过 Plan 3 的定向 journey、全量测试、类型检查、lint、边界检查和 build；阶段机器状态暂为 `implemented / implemented`，人读状态为“待验收”。
+- Plan 3 已通过定向 journey、全量测试、类型检查、lint、边界检查和 build，随后完成真实 API 中篇回归并合入 main；原分支/worktree 已收尾。
 - `docs/游戏设计原则.md` 的规则原则未改变；RPG 开发规范已补充 v4/v2 Entity Store 与 Plan 3 分层边界。未触发共享基础设施流程。
 
 ## 2026-09-02 Plan 3 真实 API 中篇验收
 
 - 真实 Chrome 链路从新游戏完整走完五幕、战斗和终幕立场，结局「托付官府」在刷新后仍可恢复；审计 run 的最终提案均完成解析/审批。
 - 真机发现并修复：决策焦点上下文改用 canonical Entity Store + `NpcSpeechAuthority`，下一幕终点强制抵达 NPC 直接台词；可选 `newFact` 的坏调查方式不再阻塞必需 world delta；`needs_ending_pair` 不再丢失 provider `endingPair`。
-- 验收命令：`npm test`（173 个文件、2317 项）通过，`npm run typecheck`、`npm run lint` 与 `git diff --check` 通过。
+- 验收命令：当次真实 API 收口后 `npm test` 为 173 个文件、2317 项；本次 Plan 3 复核为 173 个文件、2318 项，均通过，`npm run typecheck`、`npm run lint`、边界检查、foundation journey、production build 与 `git diff --check` 通过。
+
+## 2026-09-02 Plan 4 结构化事件与情节记忆规划
+
+- 唯一执行 Plan 为 `superpowers/plans/2026-09-02-structured-events-episodic-memory.md`；阶段机器状态为 `planned / not_started`，尚未创建 worktree。
+- 计划把当前事件 payload 数组升级为稳定 committed envelope，并从完整账本确定性重建 Episode、近期场景记忆与 NPC 接触索引；检索按硬引用、任务/实体/地点、因果、显著度和近期性稳定排序。
+- Plan 4 不增加 provider 调用，不把完整账本或私密事实正文注入 Prompt，不改变战败回滚、API、Action、CAS 或 Narrative Bundle；分段存储、向量索引、Living Outline/Arc 与十小时长篇仍属于后续 Plan。

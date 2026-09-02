@@ -1,10 +1,10 @@
-# NPC 人格、知识与关系图（Plan 3 实现事实，待验收）
+# NPC 人格、知识与关系图（Plan 3 已实现）
 
 ## 系统定位
 
 Plan 3 将 NPC 的固定人格、动态状态、知识来源、结构化交互、承诺和 NPC→玩家 / NPC→NPC 有向关系边收敛到 Entity Store 的唯一权威组件。对话、调查、赠物、明确 NPC 任务和共同战斗都读取同一投影；AI 只能在创建 NPC 时提出有界材料，不能直接修改既有 NPC 或提交关系数值。
 
-当前实现位于目标分支 `codex/npc-personality-knowledge-relationship-graph`，已完成代码与离线验收，尚未合并 `main`。
+当前实现已合入 `main`，并通过离线五幕连续性旅程、真实 API 中篇回归、全量测试与生产构建验收；原目标分支和 worktree 已收尾。
 
 ## 权威组件
 
@@ -67,10 +67,10 @@ Plan 3 将 NPC 的固定人格、动态状态、知识来源、结构化交互�
 
 ## 后续边界
 
-Plan 4 负责稳定 `eventId`、Event/Episode 与 misinformation/因果模型；Plan 5 负责 Living Outline、Arc、Milestone、Story Thread。长篇 segmented ledger、snapshot/cursor、归档和容量承诺仍需另立 Spec/Plan。本 Plan 不接入 provider 的 `EntityCommand`，不增加 provider 调用或共享 package。
+Plan 4 负责稳定 `eventId`、Event/Episode、因果模型与结构化召回。当前设计原则仍不把 misinformation 作为独立模型；Plan 4 只为 canonical Fact 和 NPC knowledge 增加 Event provenance。Plan 5 负责 Living Outline、Arc、Milestone、Story Thread。长篇 segmented ledger、snapshot/cursor、归档和容量承诺仍属于 Plan 7/8。本 Plan 不接入 provider 的 `EntityCommand`，不增加 provider 调用或共享 package。
 
 ## 最近维护
 
-2026-09-01：Plan 3 代码、测试与离线门禁完成；当前阶段标记为 `implemented / implemented`，人读入口保持“待验收”，目标分支尚未合并 main。
+2026-09-02：Plan 3 代码、离线门禁、真实 API 中篇回归、全量测试与生产构建验收完成并已位于 main；阶段已收尾，后续开发入口切换到 Plan 4。
 
 2026-09-01（code review 修复）：重复引用拒绝码 `duplicate_npc_reference` 不再被误归为 `invalid_fact_reference`；过期候选事件丢弃改为发出 `candidate_event_rejected` 审计事件；战斗形状校验器统一收敛到 `src/game/application/battleShapeValidation.ts`；`buildNpcSpeechAuthority` 对未知 speaker 返回 `null`（调用方改为稳定拒绝，不再 try/catch）。统一读取路径的执行偏差已同步记录在 plan 的 Acceptance Checklist。

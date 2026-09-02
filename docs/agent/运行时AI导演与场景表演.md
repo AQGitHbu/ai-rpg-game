@@ -37,7 +37,7 @@
 - 决策编译块明确不投影：完整 `GameRecord`、完整 `eventLedger`、其他 NPC 的交互历史、任何 NPC 的私密事实正文、玩家长期自由文本历史、隐藏 registry/effect/debug 结构。
 - 编译产物的 manifest 只进入审计上下文 `context.narrativeContext` 作为元数据；source 不保存第二份 Prompt 副本，也不把渲染后的 Prompt 文本写入存档或 manifest。初始化 opening 分支仍使用现有专用 Prompt，没有 manifest。
 
-## Plan 3 NPC 台词权威与隐私（待验收）
+## Plan 3 NPC 台词权威与隐私（已实现）
 
 - `NpcSpeechAuthority` 是 opening preview、`approveNarrativeBundle`、`approvePreparedContinuation` 和 `approveAndWriteScene` 四条 NPC 台词路径共享的权限投影。它只从 speaker 的 Entity Components、scene-visible FactId、当前 target 和该 NPC 的 history 生成 allowed/withheld facts、interaction actionId、anchors、目标关系和 evidence key。
 - `secret` Fact 不因 NPC 已知就自动可说；`conditional` Fact 需要允许的关系 stage。其他 NPC 的私密事实正文、其他 NPC history、玩家自由文本和裸关系数字不会进入 prompt、manifest 或台词审批上下文。
