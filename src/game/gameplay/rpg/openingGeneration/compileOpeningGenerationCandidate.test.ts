@@ -67,6 +67,15 @@ function compile(candidate: OpeningGenerationCandidate = validCandidate()) {
 }
 
 describe("compileOpeningGenerationCandidate", () => {
+  it("初始化事件提交后，Story memory 由同一 ledger 重建", () => {
+    const result = compile(validCandidate());
+    expect(result.worldState.eventLedger).toHaveLength(1);
+    expect(result.storyState.memory.reducedThroughSequence).toBe(0);
+    expect(result.storyState.memory.episodes[0]?.eventIds).toEqual([
+      result.worldState.eventLedger[0]?.eventId,
+    ]);
+  });
+
   it("从 anchors/goals proposals 显式创建 npc_0 的非占位组件与初始 provenance", () => {
     const candidate = {
       ...validCandidate(),

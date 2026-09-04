@@ -11,6 +11,7 @@ import type {
 } from "@/game/domain/worldEntries";
 import type { StoryState } from "@/game/domain/storyState";
 import { createInitialStoryState } from "@/game/domain/storyState";
+import { rebuildEpisodicMemory } from "@/game/domain/episodicMemory";
 import type { NarrativeRuntimeState } from "@/game/domain/narrative";
 import { createTownRuntime, townSeedFor, bindNpcToTownSlot } from "@/game/gameplay/rpg/town";
 import { PLAYER_COMBAT_STATS, toStatBlock } from "@/game/domain/combat";
@@ -239,6 +240,7 @@ export function compileOpeningGenerationCandidate(
   });
   const storyState: StoryState = {
     ...baseStoryState,
+    memory: rebuildEpisodicMemory(committedWorldState.eventLedger),
     targetActs: candidate.storyContract.targetActs,
     contract: candidate.storyContract,
     prologueText: candidate.prologue,

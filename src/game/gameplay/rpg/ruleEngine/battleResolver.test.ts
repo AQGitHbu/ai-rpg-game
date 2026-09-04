@@ -8,6 +8,7 @@ import {
 } from "@/game/domain/worldState";
 import { updateWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 import { asEnemyId, asLocationId, asGenerationId } from "@/game/domain/worldEntity";
+import { asTurnId, eventIdFor } from "@/game/domain/events";
 
 const FIXED_TIME = "2026-08-07T12:00:00Z";
 const deps = { now: () => FIXED_TIME };
@@ -41,6 +42,17 @@ function makeWorldWithEnemy(): WorldState {
 }
 
 describe("startBattle", () => {
+  it("derives battleKey from the stable battle_started event ID", () => {
+    const ws = makeWorldWithEnemy();
+    const turnId = asTurnId("turn:open-battle");
+    const result = startBattle(ws, asEnemyId("enemy_1"), turnId);
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.nextWorldState.battle.status !== "active") return;
+    const expectedEventId = eventIdFor(turnId, "battle_started:enemy_1");
+    expect(result.nextWorldState.battle.battleKey).toBe(expectedEventId);
+    expect(result.drafts[0]?.episodeKey).toBe(`battle:${expectedEventId}`);
+  });
+
   it("starts battle when enemy exists at player location and no active battle", () => {
     const ws = makeWorldWithEnemy();
     const result = startBattle(ws, asEnemyId("enemy_1"));

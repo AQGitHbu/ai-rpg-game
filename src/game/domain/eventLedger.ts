@@ -70,6 +70,13 @@ function isValidRef(id: string, entityIdSet: Set<string>): boolean {
   return entityIdSet.has(id);
 }
 
+function episodeIdForDraft(source: EventCommitSource, draft: NarrativeEventDraft): ReturnType<typeof asEpisodeId> {
+  if (draft.episodeKey === "turn" || draft.episodeKey === "normal" || draft.episodeKey === "initialization") {
+    return episodeIdForTurn(source.turnId);
+  }
+  return asEpisodeId(`episode:${draft.episodeKey}`);
+}
+
 // ---------------------------------------------------------------------------
 // commitEventDrafts：唯一的事件提交入口
 // ---------------------------------------------------------------------------
@@ -227,7 +234,17 @@ export function commitEventDrafts(input: {
     const entry = batchKeys.get(key)!;
     const draft = entry.draft;
     const eventId = entry.eventId;
-    const episodeId = asEpisodeId(`episode:${source.turnId}`);
+    const episodeId = episodeIdForDraft(source, draft);
+
+    const causeEventIds: EventId[] = [];
+    for (const causeKey of draft.causeKeys) {
+      if (causeKey.kind === "event_id") {
+        causeEventIds.push(causeKey.eventId);
+      } else if (causeKey.kind === "same_batch") {
+        const causeEntry = batchKeys.get(causeKey.eventKey);
+        if (causeEntry) causeEventIds.push(causeEntry.eventId);
+      }
+    }
 
     // 检查 ID 是否已在 ledger 中
     const existing = newLedger.find((e) => e.eventId === eventId);
@@ -235,11 +252,15 @@ export function commitEventDrafts(input: {
       // 幂等：只有 payload/refs/metadata 完全等价时才视为 retry，不比较 committedAt
       if (
         existing.kind === draft.payload.type &&
+        (existing.actionId ?? undefined) === (source.actionId ?? undefined) &&
         existing.actorIds.length === draft.actorIds.length &&
         existing.actorIds.every((a, i) => a === draft.actorIds[i]) &&
         existing.targetIds.length === draft.targetIds.length &&
         existing.targetIds.every((t, i) => t === draft.targetIds[i]) &&
         existing.locationId === draft.locationId &&
+        existing.episodeId === episodeId &&
+        existing.causeEventIds.length === causeEventIds.length &&
+        existing.causeEventIds.every((causeId, i) => causeId === causeEventIds[i]) &&
         existing.factIds.length === draft.factIds.length &&
         existing.factIds.every((f, i) => f === draft.factIds[i]) &&
         existing.questIds.length === draft.questIds.length &&
@@ -253,19 +274,6 @@ export function commitEventDrafts(input: {
         continue;
       } else {
         return { ok: false, code: "EVENT_ID_CONFLICT" };
-      }
-    }
-
-    // 解析 causeEventIds
-    const causeEventIds: EventId[] = [];
-    for (const causeKey of draft.causeKeys) {
-      if (causeKey.kind === "event_id") {
-        causeEventIds.push(causeKey.eventId);
-      } else if (causeKey.kind === "same_batch") {
-        const causeEntry = batchKeys.get(causeKey.eventKey);
-        if (causeEntry) {
-          causeEventIds.push(causeEntry.eventId);
-        }
       }
     }
 

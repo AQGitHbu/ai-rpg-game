@@ -278,6 +278,14 @@ describe("commitEventDrafts: envelope and ID rules", () => {
     expect(r2.appended[0]!.sequence).toBe(1);
   });
 
+  it("uses the draft episodeKey so battle events share one episode across turns", () => {
+    const store = buildMinimalEntityStore();
+    const draft = { ...makeLocationVisitedDraft(), episodeKey: "battle:turn:1:battle_started:enemy_1" };
+    const result = commitEventDrafts({ ledger: [], drafts: [draft], source: buildTurnSource("turn:2", 2), entityStore: store });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.appended[0]?.episodeId).toBe("episode:battle:turn:1:battle_started:enemy_1");
+  });
+
   it("rejects non-integer salience", () => {
     const store = buildMinimalEntityStore();
     const source = buildTurnSource("turn:1", 1);

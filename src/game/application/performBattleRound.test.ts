@@ -15,6 +15,7 @@ import { createInitialWorldState } from "@/game/domain/worldState";
 import { npcCreationComponentsForProjection } from "@/game/domain/testing/worldStateFixture.testutil";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { CommittedNarrativeEvent } from "@/game/domain/events";
+import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
 import {
   compileEntityStoreFromCompatibilityProjection, createEntityStore,
   entitiesOfKind, projectEntityStore, projectNpcEntry,
@@ -450,6 +451,36 @@ function enemyRecord(): EnemyEntityRecord {
   };
 }
 
+function layeredProvenanceEvents(sequenceStart: number): readonly CommittedNarrativeEvent[] {
+  const entries: readonly CommittedNarrativeEvent[] = [
+    makeCommittedEvent({ type: "npc_knowledge_changed", npcId: NPC_ID, factId: asFactId("fact_1"), change: "learned" }, {
+      eventId: asEventId("evt:seed:1"), sequence: sequenceStart, actorIds: [NPC_ID], targetIds: [PLAYER_ENTITY_ID],
+    }),
+    makeCommittedEvent({ type: "npc_knowledge_changed", npcId: NPC_ID, factId: asFactId("fact_2"), change: "learned" }, {
+      eventId: asEventId("evt:seed:2"), sequence: sequenceStart + 1, actorIds: [NPC_ID], targetIds: [PLAYER_ENTITY_ID],
+    }),
+    makeCommittedEvent({ type: "npc_relationship_changed", fromNpcId: NPC_ID, targetId: RIVAL_NPC_ID, signal: "broke_promise" }, {
+      eventId: asEventId("evt:seed:3"), sequence: sequenceStart + 2, actorIds: [NPC_ID], targetIds: [RIVAL_NPC_ID],
+    }),
+    makeCommittedEvent({ type: "npc_relationship_changed", fromNpcId: NPC_ID, targetId: PLAYER_ENTITY_ID, signal: "shared_fact" }, {
+      eventId: asEventId("evt:seed:4"), sequence: sequenceStart + 3, actorIds: [NPC_ID], targetIds: [PLAYER_ENTITY_ID],
+    }),
+    makeCommittedEvent({ type: "npc_relationship_changed", fromNpcId: NPC_ID, targetId: PLAYER_ENTITY_ID, signal: "fought_together" }, {
+      eventId: asEventId("evt:seed:5"), sequence: sequenceStart + 4, actorIds: [NPC_ID], targetIds: [PLAYER_ENTITY_ID],
+    }),
+    makeCommittedEvent({ type: "npc_dialogue_completed", npcId: NPC_ID }, {
+      eventId: asEventId("evt:interact:seed_act_4:4"), sequence: sequenceStart + 5, actorIds: [NPC_ID], targetIds: [PLAYER_ENTITY_ID],
+    }),
+    makeCommittedEvent({ type: "npc_dialogue_completed", npcId: NPC_ID }, {
+      eventId: asEventId("evt:interact:seed_act_5:5"), sequence: sequenceStart + 6, actorIds: [NPC_ID], targetIds: [PLAYER_ENTITY_ID],
+    }),
+    makeCommittedEvent({ type: "npc_dialogue_completed", npcId: RIVAL_NPC_ID }, {
+      eventId: asEventId("evt:interact:seed_act_9:9"), sequence: sequenceStart + 7, actorIds: [RIVAL_NPC_ID], targetIds: [PLAYER_ENTITY_ID],
+    }),
+  ];
+  return entries;
+}
+
 /** 玩家 hp 8 / attack 20 / defense 5：一个非终结回合后必在下一回合战败。 */
 function layeredBattleWorld(): WorldState {
   const base = createInitialWorldState({
@@ -472,7 +503,8 @@ function layeredBattleWorld(): WorldState {
     enemyRecord(),
   ];
   const store = createEntityStore(records);
-  return { ...base, entityStore: store, ...projectEntityStore(store) };
+  const eventLedger = [...base.eventLedger, ...layeredProvenanceEvents(base.eventLedger.length)];
+  return { ...base, entityStore: store, ...projectEntityStore(store), eventLedger };
 }
 
 function npcRecordOf(store: EntityStore): NpcEntityRecord {
@@ -543,14 +575,14 @@ async function writeNpcLayersMidBattle(harness: InMemoryHarness): Promise<number
     emotion: "afraid",
   }]);
   if (!applied.ok) throw new Error(`fixture must be able to write npc layers: ${applied.code}`);
+  const midBattleEvent = makeCommittedEvent({ type: "npc_interaction_recorded", npcId: NPC_ID, dialogueAct: "ask" }, {
+    eventId: asEventId("evt:mid:2"), sequence: applied.worldState.eventLedger.length,
+    turnNumber: 2, actorIds: [NPC_ID], targetIds: [PLAYER_ENTITY_ID], locationId: LOC_0,
+    actionId: "mid_battle_act",
+  });
   const withActionEvidence: WorldState = {
     ...applied.worldState,
-    eventLedger: [...applied.worldState.eventLedger, {
-      type: "npc_dialogue_completed",
-      npcId: NPC_ID,
-      actionId: "mid_battle_act",
-      occurredAt: CLOCK(),
-    } as unknown as CommittedNarrativeEvent],
+    eventLedger: [...applied.worldState.eventLedger, midBattleEvent],
   };
   const committed = await commitState(harness.repo, {
     gameId: GAME_ID,
@@ -798,6 +830,7 @@ describe("performBattleRound：同伴共同战斗关系证据", () => {
       position: { ...rivalNpcRecord().position, locationOrder: 2 },
       dynamicState: { ...rivalNpcRecord().dynamicState, isCompanion: true },
       relationships: { outgoing: [] },
+      history: { interactions: [] },
     };
     const store = createEntityStore([
       ...base.entityStore.records.filter((record) => record.core.id !== companionId),
@@ -907,6 +940,9 @@ describe("performBattleRound：同伴共同战斗关系证据", () => {
     );
     expect(evidence).toHaveLength(1);
     expect(evidence?.[0]).toMatchObject({ actionId: "battle_victory_1", signal: "fought_together" });
+    const supportingEventId = evidence?.[0]?.supportingEventIds[0];
+    expect(supportingEventId).toBeDefined();
+    expect(record.worldState.eventLedger.some((event) => event.eventId === supportingEventId)).toBe(true);
 
     const replay = applyEntityMutations(record.worldState, [{
       kind: "apply_relationship_signal",

@@ -289,10 +289,14 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
       return { ok: true, nextWorldState: { ...ws }, drafts: [], feedback: "", status: "success", stateChanges: [], facts: [] };
     }
     case "attack": {
-      return startBattle(ws, action.enemyId);
+      return startBattle(ws, action.enemyId, deps.turnId);
     }
     case "battle_action": {
-      return battleAction(ws, action.action, action.command);
+      return battleAction(ws, action.action, action.command, {
+        turnId: deps.turnId,
+        actionId: deps.actionId,
+        turnNumber: deps.turnNumber + 1,
+      });
     }
     default:
       return { ok: false, feedback: "此行动类型暂不支持。" };

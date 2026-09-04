@@ -5,14 +5,12 @@ import type { ResolvedEvent } from "@/game/domain/resolvedEvent";
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { NarrativeRuntimeState, BattleNarrativeCheckpointState } from "@/game/domain/narrative";
-import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import { resolveTurn } from "@/game/gameplay/rpg/ruleEngine";
 import { commitState } from "./stateCommit";
-import { asTurnId, asEventId } from "@/game/domain/events";
+import { asTurnId } from "@/game/domain/events";
 import { consumeNarrativeBundle } from "./consumeNarrativeBundle";
 import { consumePreparedContinuation } from "./consumePreparedContinuation";
 import { projectEntityStore } from "@/game/domain/entity";
-import { applyEntityMutations } from "@/game/gameplay/rpg/entityWorld";
 
 // ---------------------------------------------------------------------------
 // Task 8: 专门处理活跃战斗回合的应用路径。
@@ -57,29 +55,6 @@ function restoreNarrativeFromCheckpoint(
   };
 }
 
-function applyCompanionVictorySignals(
-  worldState: WorldState,
-  battle: Extract<WorldState["battle"], { status: "active" }>,
-  actionId: string,
-  turnNumber: number,
-): WorldState | null {
-  const participantIds = (battle.combatants ?? [])
-    .filter((unit) => unit.side === "allies" && unit.hp >= 0 && unit.source.kind === "companion")
-    .map((unit) => unit.source.kind === "companion" ? unit.source.npcId : undefined)
-    .filter((npcId): npcId is NonNullable<typeof npcId> => npcId !== undefined)
-    .filter((npcId, index, ids) => ids.findIndex((id) => String(id) === String(npcId)) === index);
-  if (participantIds.length === 0) return worldState;
-  const mutation = applyEntityMutations(worldState, participantIds.map((npcId) => ({
-    kind: "apply_relationship_signal" as const,
-    fromNpcId: npcId,
-    targetId: PLAYER_ENTITY_ID,
-    signal: "fought_together" as const,
-    source: { kind: "action" as const, actionId, turnNumber },
-    supportingEventId: asEventId(`evt_fought_together:${actionId}:${npcId}`),
-  })));
-  return mutation.ok ? mutation.worldState : null;
-}
-
 export async function performBattleRound(
   input: PerformBattleRoundInput,
   deps: PerformBattleRoundDeps,
@@ -115,22 +90,15 @@ export async function performBattleRound(
     ? beforeNarrative.battleCheckpoint
     : undefined;
 
-  // Battle rounds use a unique actionId per round to prevent event ID conflicts
-  // when multiple battle actions share the same turnNumber (non-terminal rounds
-  // don't increment turnNumber). The round number is part of the actionId so
-  // that eventIdFor(turnId, eventKey) produces distinct IDs across rounds.
-  const battleRound = beforeWorldState.battle.status === "active" ? beforeWorldState.battle.round : 0;
-  const battleActionId = `${input.actionId}:battle:${battleRound}`;
-
   const resolved = resolveTurn(
     beforeWorldState,
     beforeStoryState,
     input.action,
-    battleActionId,
+    input.actionId,
     record.revision,
-    asTurnId(battleActionId),
+    asTurnId(input.actionId),
     input.interactionKind as "fixed_choice" | "free_text",
-    { now: deps.now, turnId: asTurnId(battleActionId) },
+    { now: deps.now, turnId: asTurnId(input.actionId) },
   );
 
   if (!resolved.ok) return { ok: false, code: "ACTION_REJECTED", feedback: resolved.feedback };
@@ -222,12 +190,7 @@ export async function performBattleRound(
       ...afterWorldState,
       battle: { status: "idle" as const },
     };
-    const withCompanionSignals = beforeWorldState.battle.status === "active"
-      ? applyCompanionVictorySignals(victoryWorldState, beforeWorldState.battle, input.actionId, beforeStoryState.turnNumber)
-      : victoryWorldState;
-    if (withCompanionSignals === null) {
-      return { ok: false, code: "ACTION_REJECTED", feedback: "战斗世界状态不一致。" };
-    }
+    const withCompanionSignals = victoryWorldState;
 
     // Offline fixture worlds can exercise rule-only battle paths without a
     // prepared continuation graph. Keep the victory atomic and clear the
