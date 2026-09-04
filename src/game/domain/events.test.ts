@@ -288,6 +288,17 @@ describe("NarrativeEventPayload union", () => {
 });
 
 describe("CommittedNarrativeEvent envelope", () => {
+  it.each([
+    { payload: { type: "fact_discovered" } },
+    { payload: { type: "fact_discovered", factId: "fact_1", rawText: "private input" } },
+    { actorIds: [42] },
+    { causeEventIds: ["missing:event"] },
+    { episodeId: "" },
+    { privateText: "unapproved prose" },
+  ])("rejects malformed committed data: %j", (override) => {
+    expect(parseCommittedEventLedger([{ ...buildCommittedEvent(), ...override }]).ok).toBe(false);
+  });
+
   it("builds a valid committed event", () => {
     const event = buildCommittedEvent();
     expect(event.eventId).toBeDefined();

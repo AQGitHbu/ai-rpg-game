@@ -8,6 +8,7 @@ import type {
   NarrativeEpisode,
   RecentSceneMemory,
 } from "@/game/domain/episodicMemory";
+import { rebuildEpisodicMemory } from "@/game/domain/episodicMemory";
 import type {
   FactId,
   LocationId,
@@ -18,6 +19,8 @@ import type {
 export type NarrativeMemoryQuery = Readonly<{
   readonly memory: EpisodicMemoryState;
   readonly ledger: readonly CommittedNarrativeEvent[];
+  /** Current resolution stays mandatory, but is not repeated as historical memory. */
+  readonly beforeSequenceExclusive?: number;
   readonly requiredEventIds?: readonly EventId[];
   readonly requiredEpisodeIds?: readonly EpisodeId[];
   readonly relevantEntityIds?: readonly string[];
@@ -35,12 +38,15 @@ export type NarrativeMemoryMatchReason =
   | "required_episode"
   | "entity"
   | "quest"
+  | "fact"
   | "location"
   | "cause";
 
 export type NarrativeMemoryEpisodeMatch = Readonly<{
   readonly episode: NarrativeEpisode;
-  /** Descending lexicographic rank: authority, task, entity, cause, salience, recency. */
+  /** At most three exact item events, projected from the ledger, never persisted. */
+  readonly relatedItemEvents: readonly CommittedNarrativeEvent[];
+  /** Descending lexicographic rank: hard refs, task/fact, entity, cause, location, salience, recency. */
   readonly rank: readonly number[];
   readonly matchedBy: readonly NarrativeMemoryMatchReason[];
 }>;
@@ -94,6 +100,10 @@ export function retrieveNarrativeMemory(
   query: NarrativeMemoryQuery,
 ): RetrievedNarrativeMemory {
   const requiredEventIds = stringSet(query.requiredEventIds?.map(String));
+  const requiredEvents = stableRequiredEvents(query.ledger, query.requiredEventIds);
+  const memory = query.beforeSequenceExclusive === undefined
+    ? query.memory
+    : rebuildEpisodicMemory(query.ledger.filter((event) => event.sequence < query.beforeSequenceExclusive!));
   const requiredEpisodeIds = stringSet(query.requiredEpisodeIds?.map(String));
   const relevantEntityIds = new Set<string>([
     ...(query.relevantEntityIds ?? []).map(String),
@@ -104,32 +114,52 @@ export function retrieveNarrativeMemory(
   const causeEventIds = new Set<string>([
     ...(query.causeEventIds ?? []).map(String),
     ...requiredEventIds,
+    ...requiredEvents.flatMap((event) => event.causeEventIds.map(String)),
   ]);
   const currentLocationId = query.currentLocationId === undefined || query.currentLocationId === null
     ? undefined
     : String(query.currentLocationId);
+  const itemEventsByEpisode = new Map<string, CommittedNarrativeEvent[]>();
+  for (const event of query.ledger) {
+    if (query.beforeSequenceExclusive !== undefined && event.sequence >= query.beforeSequenceExclusive) continue;
+    const payload = event.payload;
+    if ((payload.type !== "item_obtained" && payload.type !== "item_given")
+      || !relevantEntityIds.has(String(payload.itemId))) continue;
+    const key = String(event.episodeId);
+    const events = itemEventsByEpisode.get(key) ?? [];
+    events.push(event);
+    itemEventsByEpisode.set(key, events);
+  }
 
   const matches: NarrativeMemoryEpisodeMatch[] = [];
-  for (const episode of query.memory.episodes) {
+  for (const episode of memory.episodes) {
     const reasons: NarrativeMemoryMatchReason[] = [];
     const requiredEpisode = requiredEpisodeIds.has(String(episode.episodeId));
+    const requiredEvent = intersects(episode.eventIds.map(String), requiredEventIds);
+    const relatedItemEvents = (itemEventsByEpisode.get(String(episode.episodeId)) ?? [])
+      .filter((event) => episode.eventIds.includes(event.eventId)).slice(-3);
     const entityHit = intersects(episode.participantEntityIds.map(String), relevantEntityIds)
-      || intersects(episode.factIds.map(String), relevantFactIds);
+      || relatedItemEvents.length > 0;
+    const factHit = intersects(episode.factIds.map(String), relevantFactIds);
     const questHit = intersects(episode.questIds.map(String), relevantQuestIds);
     const locationHit = currentLocationId !== undefined && episode.locationIds.some((id) => String(id) === currentLocationId);
-    const causeHit = intersects(episode.causeEventIds.map(String), causeEventIds);
+    const causeHit = intersects(episode.causeEventIds.map(String), causeEventIds)
+      || intersects(episode.eventIds.map(String), causeEventIds);
+    if (requiredEvent) reasons.push("required_event");
     if (requiredEpisode) reasons.push("required_episode");
     if (entityHit) reasons.push("entity");
     if (questHit) reasons.push("quest");
+    if (factHit) reasons.push("fact");
     if (locationHit) reasons.push("location");
     if (causeHit) reasons.push("cause");
     if (reasons.length === 0) continue;
     matches.push({
       episode,
+      relatedItemEvents,
       matchedBy: reasons,
       rank: [
-        requiredEpisode ? 1 : 0,
-        questHit ? 1 : 0,
+        requiredEvent || requiredEpisode ? 1 : 0,
+        questHit || factHit ? 1 : 0,
         entityHit ? 1 : 0,
         causeHit ? 1 : 0,
         locationHit ? 1 : 0,
@@ -142,8 +172,8 @@ export function retrieveNarrativeMemory(
   const maxEpisodes = Math.max(0, Math.floor(query.maxEpisodes ?? 6));
   const maxRecentScenes = Math.max(0, Math.floor(query.maxRecentScenes ?? 4));
   return {
-    requiredEvents: stableRequiredEvents(query.ledger, query.requiredEventIds),
+    requiredEvents,
     relevantEpisodes: matches.sort(compareRank).slice(0, maxEpisodes),
-    recentScenes: maxRecentScenes === 0 ? [] : query.memory.recentScenes.slice(-maxRecentScenes),
+    recentScenes: maxRecentScenes === 0 ? [] : memory.recentScenes.slice(-maxRecentScenes),
   };
 }

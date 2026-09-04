@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "phase": "structured-events-episodic-memory",
-  "status": "completed",
-  "implementationStatus": "merged",
-  "targetBranch": "codex/structured-events-episodic-memory",
-  "worktreeName": "structured-events-episodic-memory",
+  "phase": "hierarchical-living-outline-story-threads",
+  "status": "planned",
+  "implementationStatus": "not_started",
+  "targetBranch": "codex/hierarchical-living-outline-story-threads",
+  "worktreeName": "hierarchical-living-outline-story-threads",
   "repositories": ["ai-rpg-game"],
-  "plan": "docs/superpowers/plans/2026-09-02-structured-events-episodic-memory.md",
+  "plan": "docs/superpowers/plans/2026-09-04-hierarchical-living-outline-story-threads.md",
   "sharedInfrastructureChangeAllowed": false,
   "startCommand": "npm run phase:start",
   "entryDocs": [
@@ -20,8 +20,10 @@
     "docs/agent/运行时AI导演与场景表演.md",
     "docs/agent/行动裁决.md",
     "docs/agent/战斗与结局.md",
+    "docs/agent/世界动态具象化.md",
+    "docs/agent/探索与任务推进.md",
     "docs/superpowers/specs/2026-08-23-long-form-narrative-entity-memory-architecture.md",
-    "docs/superpowers/plans/2026-09-02-structured-events-episodic-memory.md"
+    "docs/superpowers/plans/2026-09-04-hierarchical-living-outline-story-threads.md"
   ],
   "acceptanceCommands": [
     "npm run check:standards",
@@ -37,8 +39,9 @@
     "npm test",
     "npm run test:foundation-journey",
     "npm run journey:foundation",
-    "npm test -- src/game/application/testing/episodicMemoryJourney.test.ts src/game/application/testing/npcContinuityJourney.test.ts src/game/application/testing/narrativeGroundingJourney.test.ts src/game/application/testing/investigationChoiceJourney.test.ts src/game/application/testing/dynamicMaterializationJourney.test.ts src/game/application/testing/mediumActJourney.test.ts src/game/application/testing/storyDivergenceJourney.test.ts",
+    "npm test -- src/game/application/testing/livingOutlineJourney.test.ts src/game/application/testing/episodicMemoryJourney.test.ts src/game/application/testing/npcContinuityJourney.test.ts src/game/application/testing/narrativeGroundingJourney.test.ts src/game/application/testing/investigationChoiceJourney.test.ts src/game/application/testing/dynamicMaterializationJourney.test.ts src/game/application/testing/mediumActJourney.test.ts src/game/application/testing/storyDivergenceJourney.test.ts",
     "npm run build",
+    "git diff --check",
     "npm run phase:status"
   ]
 }

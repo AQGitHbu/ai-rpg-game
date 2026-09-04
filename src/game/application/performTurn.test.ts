@@ -604,7 +604,7 @@ describe("performTurn 单次 CAS 提交", () => {
         battle: midBattle,
         eventLedger: [...opened.worldState.eventLedger, {
           // CommittedNarrativeEvent envelope for test
-      ...makeCommittedEvent({ type: "npc_dialogue_completed", npcId: npc1.id } as unknown as NarrativeEventPayload),
+      ...makeCommittedEvent({ type: "npc_dialogue_completed", npcId: npc1.id } as unknown as NarrativeEventPayload, { sequence: opened.worldState.eventLedger.length }),
       actionId: "mid-battle-action-evidence", committedAt: "2026-01-02",
         }],
       },
@@ -789,6 +789,11 @@ describe("performTurn 单次 CAS 提交", () => {
 
     expect(move.ok).toBe(true);
     const arrived = record()!;
+    const presented = arrived.worldState.eventLedger.filter((event) => event.kind === "narrative_scene_presented");
+    expect(presented).toHaveLength(1);
+    expect(arrived.storyState.memory.recentScenes.at(-1)?.sceneEventId).toBe(presented[0]?.eventId);
+    expect(presented[0]?.turnId).toBe("arrive");
+    expect(presented[0]?.causeEventIds).toContain(arrived.worldState.eventLedger.find((event) => event.kind === "location_visited")?.eventId);
     if (arrived.storyState.narrative.status !== "ready") throw new Error("arrival should be ready");
     expect(arrived.storyState.narrative.currentScene.event).toEqual({ kind: "dialogue", focusNpcId: npc2.id });
     const decision = arrived.storyState.narrative.choiceRegistry[0]!;

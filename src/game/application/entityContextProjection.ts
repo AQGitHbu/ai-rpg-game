@@ -252,7 +252,7 @@ export function buildEntityContextProjection(input: {
     .slice(0, Math.max(0, input.optionalLimit ?? 12));
 
   const names = (kind: "location" | "npc" | "item" | "enemy" | "quest"): readonly string[] =>
-    entitiesOfKind(entityStore, kind).map((record) => record.core.name).sort((left, right) => left.localeCompare(right));
+    entitiesOfKind(entityStore, kind).map((record) => record.core.name).sort((left, right) => left.localeCompare(right, "zh-CN"));
 
   return {
     mandatory,

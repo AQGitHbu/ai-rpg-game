@@ -2,6 +2,7 @@ import type { EndingId, EnemyId, FactId, GenerationMetadata, ItemId, LocationId,
 import type { CombatActionResult, CombatActionKind } from "./combat";
 import type { DialogueAct } from "./action";
 import type { RelationshipSignal } from "./entity/npcComponents";
+import { isNarrativeEventPayload } from "./eventPayloadValidation";
 
 export type StoryPacing = "setup" | "develop" | "turn" | "climax" | "resolution";
 
@@ -402,17 +403,31 @@ export type ParseCommittedEventLedgerResult =
 
 /**
  * 持久化层唯一的 committed event ledger parser。
- * 只验证 envelope 格式和 payload type 存在性，不做 entity 引用校验（由 persistence 层另行校验）。
+ * 验证完整封闭 payload、envelope、连续序号与较早因果；实体引用由提交/持久化边界另行校验。
  */
 export function parseCommittedEventLedger(value: unknown): ParseCommittedEventLedgerResult {
   if (!Array.isArray(value)) return { ok: false, code: "INVALID_LEDGER" };
   const result: CommittedNarrativeEvent[] = [];
+  const seenIds = new Set<string>();
+  const keys = new Set(["eventId", "sequence", "turnId", "actionId", "turnNumber", "episodeId", "kind", "actorIds", "targetIds", "locationId", "causeEventIds", "factIds", "questIds", "outcome", "salience", "committedAt", "payload"]);
+  const validId = (id: unknown): id is string => typeof id === "string" && id.trim().length > 0;
+  const validRefs = (refs: unknown): refs is string[] => Array.isArray(refs) && refs.every(validId) && new Set(refs).size === refs.length;
   for (let i = 0; i < value.length; i++) {
     const entry = value[i];
     if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
       return { ok: false, code: "INVALID_LEDGER" };
     }
     const e = entry as Record<string, unknown>;
+    if (Object.keys(e).some((key) => !keys.has(key))
+      || !validId(e.eventId) || !isWellFormedEventId(e.eventId) || seenIds.has(e.eventId)
+      || !validId(e.turnId) || !validId(e.episodeId) || !e.episodeId.startsWith("episode:")
+      || e.episodeId.length <= "episode:".length
+      || !validRefs(e.actorIds) || !validRefs(e.targetIds) || !validRefs(e.factIds) || !validRefs(e.questIds)
+      || !validRefs(e.causeEventIds) || e.causeEventIds.some((id) => !seenIds.has(id))
+      || !validId(e.committedAt) || !Number.isFinite(Date.parse(e.committedAt))
+      || !isNarrativeEventPayload(e.payload)) {
+      return { ok: false, code: "INVALID_LEDGER" };
+    }
     if (
       typeof e.eventId !== "string" ||
       typeof e.sequence !== "number" || !Number.isInteger(e.sequence) || e.sequence < 0 || e.sequence !== i ||
@@ -438,6 +453,7 @@ export function parseCommittedEventLedger(value: unknown): ParseCommittedEventLe
     if (e.actionId !== undefined && typeof e.actionId !== "string") {
       return { ok: false, code: "INVALID_LEDGER" };
     }
+    seenIds.add(e.eventId);
     result.push(e as unknown as CommittedNarrativeEvent);
   }
   return { ok: true, value: result };

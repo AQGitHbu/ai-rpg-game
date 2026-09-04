@@ -4,6 +4,13 @@
 
 运行时 AI 负责提出下一幕的结构化场景表演（分段旁白、焦点 NPC 台词、目标链接与合法选项）；规则系统负责审批候选、铸造玩家 token、裁决行动、审批世界演化并写入状态。AI 不直接写存档，也不能决定任务、关系、知识、战斗或结局。
 
+## 2026-09-04 canonical 基线补充
+
+- 当前生产 opening 是一次 initialization 直接 ready；正式 NPC fixed/free 决策走 `generatePendingNarrativeBundle`，一次逻辑生成携带 world delta、current scene 与后续图，最多四次完整尝试。下文 2026-08 的独立 scene/world 两轮修复描述是历史 source 行为，不能用来重建生产链。
+- 正式成功写回为 `approveNarrativeBundle → commitEventDrafts → reconcileCommittedMemory → repository.applyState`，只有一次生成包 CAS；旧 `sceneWriteBack.ts` 已不存在。规则回合 CAS 与生成包 CAS 仍有各自 revision 屏障。
+- 生产移动/取物/战斗消费 `narrativeBundle`；`consumePreparedContinuation` 仅离线 fixture 使用。消费当前 scene 时才记录 presented Event，与规则后果同次 CAS 落库，失败/撤退继续回滚完整战前记忆。
+- Plan5 已规划同包 `outlineUpdate` 审批与安全计划卡，但本轮未实施，不存在新增大纲 provider 或后台补写入口。
+
 真机回合的 live 场景表演调用以 45 秒为单次上限；场景表演和世界演化分别使用 3000/3200 completion tokens，因为 provider 可能仍把 reasoning_content 计入同一预算。当前 new-api → DeepSeek 官方 OpenAI-compatible 链路通过请求体 `thinking: { type: "disabled" }` 关闭默认思考，显式角色策略才发送 `type: "enabled"`。若预算被 reasoning 消耗完，API 可能返回 HTTP 200 但没有可解析的 `message.content`，仍按 AI 提案失败处理。生产配置启用 live 时由单一 `RpgAiClient` 统一执行：timeout、限流、5xx 和网络失败按角色策略重试；AI 已返回但 JSON/场景契约或审批不通过时，同一回合最多再发送一次带稳定字段级失败原因的内容修复请求，修复仍失败就返回稳定 failure。`empty_response` 仍不在客户端重复相同请求，避免再次消耗预算却重复得到空 final content；失败不会被改写成 generated，也不会让玩家永久停留在 `provider_pending`：provider job 持久化为 `provider_failed`，玩家可手动重试同一 job。无 AI 配置时生产注入 unavailable source；确定性 source 只由显式离线 fixture 使用。
 
 ## 重试分层与修复边界（2026-08-22）

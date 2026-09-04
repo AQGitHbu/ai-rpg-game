@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-23-long-form-narrative-entity-memory-architecture.md`（Plan 4；§6、§10、§11.3；NAR-08、NAR-09、NAR-14、NAR-17）
 
-> 状态：待执行
+> 状态：已实现并合入 main；2026-09-04 main 复核修复见 `docs/agent/剧情连续性与结构化记忆.md`。本轮复核为离线代码/测试验收，不代表重新完成真实 AI 游玩验收。
 
 ## Global Constraints
 

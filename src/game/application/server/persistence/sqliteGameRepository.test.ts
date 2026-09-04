@@ -781,7 +781,7 @@ describe("sqliteGameRepository：stale 后旧值保留", () => {
         ...nextWorld,
         eventLedger: [...nextWorld.eventLedger, makeCommittedEvent(
           { type: "player_intent_expressed", intentCode: "unmapped_freeform" },
-          { sequence: initialLedgerLength + i - 1, turnNumber: i, committedAt: `2026-01-01T00:00:${String(i).padStart(2, "0")}Z` },
+          { sequence: initialLedgerLength + i - 1, turnNumber: i, committedAt: new Date(Date.parse("2026-01-01T00:00:00Z") + i * 1000).toISOString() },
         )],
       };
       nextStory = {

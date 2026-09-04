@@ -264,6 +264,11 @@ describe("createNarrativeBundleSource", () => {
           locationId: interaction.locationId,
           actionId: interaction.actionId,
         })),
+        makeCommittedEvent({ type: "fact_discovered", factId: publicFactId }, {
+          sequence: base.eventLedger.length + interactionHistory.length,
+          turnId: asTurnId("turn:4"), eventId: asEventId("turn:4:fact_discovered"),
+          turnNumber: 4, locationId: asLocationId("loc_0"), factIds: [publicFactId], actorIds: [focusNpcId],
+        }),
       ],
     });
     const storyState: StoryState = {
@@ -271,15 +276,7 @@ describe("createNarrativeBundleSource", () => {
       currentAct: 2,
       tension: 55,
       nextPacingNeed: "complicate",
-      memory: rebuildEpisodicMemory([
-        makeCommittedEvent({ type: "fact_discovered", factId: publicFactId }, {
-          turnId: asTurnId("turn:4"),
-          eventId: asEventId("turn:4:fact_discovered"),
-          turnNumber: 4,
-          locationId: asLocationId("loc_0"),
-          factIds: [publicFactId],
-        }),
-      ]),
+      memory: rebuildEpisodicMemory(worldState.eventLedger),
       contract: {
         version: 1,
         targetActs: 3,

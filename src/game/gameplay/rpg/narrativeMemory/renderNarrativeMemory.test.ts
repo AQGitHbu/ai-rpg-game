@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { asEventId, asEpisodeId, asTurnId } from "@/game/domain/events";
 import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
 import { rebuildEpisodicMemory } from "@/game/domain/episodicMemory";
-import { asFactId, asLocationId, asNpcId } from "@/game/domain/worldEntity";
+import { asFactId, asItemId, asLocationId, asNpcId } from "@/game/domain/worldEntity";
 import { renderNarrativeMemory } from "./renderNarrativeMemory";
 import { retrieveNarrativeMemory } from "./retrieveNarrativeMemory";
 import type { EntityStore } from "@/game/domain/entity";
@@ -26,6 +26,20 @@ const entityStore = {
 } as unknown as EntityStore;
 
 describe("renderNarrativeMemory", () => {
+  it("renders the exact historical item and source event from item-only recall", () => {
+    const itemId = asItemId("item:keepsake");
+    const ledger = [makeCommittedEvent({ type: "item_given", itemId, npcId: NPC, locationId: OLD_LOCATION }, {
+      sequence: 0, actorIds: [], targetIds: [NPC], locationId: OLD_LOCATION,
+    })];
+    const retrieved = retrieveNarrativeMemory({
+      memory: rebuildEpisodicMemory(ledger), ledger, relevantEntityIds: [itemId],
+    });
+    const rendered = renderNarrativeMemory({ retrieved, entityStore });
+    expect(rendered.relevantEpisodesText).toContain(`itemId=${itemId}`);
+    expect(rendered.relevantEpisodesText).toContain("kind=item_given");
+    expect(rendered.manifestRefs.eventIds).toContain(ledger[0]!.eventId);
+  });
+
   it("renders bounded cards with current-state precedence and no private fact text", () => {
     const ledger = [makeCommittedEvent({ type: "fact_discovered", factId: SECRET_FACT } as never, {
       eventId: asEventId("event:secret"),

@@ -4,13 +4,14 @@ import type {
   EventId,
   TurnId,
 } from "./events";
-import { eventIdFor, asEpisodeId, asTurnId, episodeIdForTurn } from "./events";
+import { eventIdFor, asEpisodeId, asTurnId, episodeIdForTurn, parseCommittedEventLedger } from "./events";
 import type {
   LocationId,
   GenerationMetadata,
 } from "./worldEntity";
 import { PLAYER_ENTITY_ID } from "./worldEntity";
 import type { EntityStore } from "./entity/entityStore";
+import { isNarrativeEventPayload } from "./eventPayloadValidation";
 
 // ---------------------------------------------------------------------------
 // EventCommitSource：提交入口所需的权威元数据
@@ -36,6 +37,8 @@ export type EventCommitError =
   | { readonly ok: false; readonly code: "INVALID_SALIENCE" }
   | { readonly ok: false; readonly code: "INVALID_REFS" }
   | { readonly ok: false; readonly code: "UNKNOWN_PAYLOAD_TYPE" }
+  | { readonly ok: false; readonly code: "INVALID_PAYLOAD" }
+  | { readonly ok: false; readonly code: "INVALID_LEDGER" }
   | { readonly ok: false; readonly code: "EVENT_ID_CONFLICT" }
   | { readonly ok: false; readonly code: "INVALID_ENTITY_REF" };
 
@@ -123,6 +126,7 @@ export function commitEventDrafts(input: {
   readonly entityStore: EntityStore;
 }): EventCommitResult {
   const { ledger, drafts, source, entityStore } = input;
+  if (!parseCommittedEventLedger(ledger).ok) return { ok: false, code: "INVALID_LEDGER" };
   const entityIdSet = buildEntityIdSet(entityStore);
 
   // Phase 1: 预铸 ID、校验单个 draft、检测同批重复 eventKey
@@ -186,6 +190,7 @@ export function commitEventDrafts(input: {
     ) {
       return { ok: false, code: "UNKNOWN_PAYLOAD_TYPE" };
     }
+    if (!isNarrativeEventPayload(draft.payload)) return { ok: false, code: "INVALID_PAYLOAD" };
 
     // 引用校验：actorIds/targetIds/locationId/factIds/questIds
     for (const a of draft.actorIds) {
@@ -276,6 +281,8 @@ export function commitEventDrafts(input: {
       // 幂等：只有 payload/refs/metadata 完全等价时才视为 retry，不比较 committedAt
       if (
         existing.kind === draft.payload.type &&
+        existing.turnId === source.turnId &&
+        existing.turnNumber === source.turnNumber &&
         (existing.actionId ?? undefined) === (source.actionId ?? undefined) &&
         existing.actorIds.length === draft.actorIds.length &&
         existing.actorIds.every((a, i) => a === draft.actorIds[i]) &&
@@ -309,16 +316,16 @@ export function commitEventDrafts(input: {
       turnNumber: source.turnNumber,
       episodeId,
       kind: draft.payload.type,
-      actorIds: draft.actorIds,
-      targetIds: draft.targetIds,
+      actorIds: [...draft.actorIds],
+      targetIds: [...draft.targetIds],
       locationId: draft.locationId,
       causeEventIds,
-      factIds: draft.factIds,
-      questIds: draft.questIds,
+      factIds: [...draft.factIds],
+      questIds: [...draft.questIds],
       outcome: draft.outcome,
       salience: draft.salience,
       committedAt: source.committedAt,
-      payload: draft.payload,
+      payload: structuredClone(draft.payload),
     };
 
     appended.push(event);
@@ -326,5 +333,6 @@ export function commitEventDrafts(input: {
     eventIdByKey.set(key, eventId);
   }
 
+  if (!parseCommittedEventLedger(newLedger).ok) return { ok: false, code: "INVALID_LEDGER" };
   return { ok: true, appended, ledger: newLedger, eventIdByKey };
 }

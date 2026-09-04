@@ -223,6 +223,8 @@ export function buildDecisionNarrativeContextBlocks(
       memory: storyState.memory,
       ledger: worldState.eventLedger,
       requiredEventIds: job.domainEventIds,
+      beforeSequenceExclusive: Math.min(worldState.eventLedger.length, ...worldState.eventLedger
+        .filter((event) => job.domainEventIds.includes(event.eventId)).map((event) => event.sequence)),
       relevantEntityIds: [
         String(worldState.currentLocationId),
         ...actionSummaryEntityIds(job.actionSummary),

@@ -200,7 +200,7 @@ export function buildNarrativeScenePresentedDraft(input: {
   readonly domainEventIds: readonly EventId[];
   readonly currentLocationId: LocationId;
   readonly nextPacingNeed: SceneGenerationContext["story"]["nextPacingNeed"];
-  readonly mandatoryBeats: SceneGenerationContext["mandatoryBeats"];
+  readonly mandatoryBeats: readonly Pick<SceneGenerationContext["mandatoryBeats"][number], "beatId">[];
   readonly objectiveTransition: SceneGenerationContext["objectiveTransition"];
   readonly scene: NarrativeSceneState;
 }): NarrativeEventDraft<NarrativeScenePresentedPayload> {
@@ -215,7 +215,7 @@ export function buildNarrativeScenePresentedDraft(input: {
   } = input;
   const focusNpcId = scene.event?.kind === "dialogue"
     ? scene.event.focusNpcId
-    : null;
+    : scene.npcLine?.npcId ?? null;
   const questIds: QuestId[] = [];
   const transition = objectiveTransition;
   if (transition.before !== null) questIds.push(transition.before.questId);
@@ -225,7 +225,10 @@ export function buildNarrativeScenePresentedDraft(input: {
     eventKey: `narrative_scene_presented:${scene.sceneId}`,
     episodeKey: String(turnId),
     actorIds: [PLAYER_ENTITY_ID],
-    targetIds: focusNpcId === null ? [PLAYER_ENTITY_ID] : [focusNpcId],
+    targetIds: [...new Set([
+      ...(focusNpcId === null ? [] : [focusNpcId]),
+      ...(scene.event?.kind === "battle" ? [scene.event.enemyId] : []),
+    ])],
     locationId: currentLocationId,
     causeKeys: domainEventIds.map((eventId) => ({ kind: "event_id" as const, eventId })),
     factIds: [...new Set(scene.usedFactIds)],

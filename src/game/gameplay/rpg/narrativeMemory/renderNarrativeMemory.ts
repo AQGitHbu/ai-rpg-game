@@ -83,7 +83,10 @@ function eventCard(
     .map((id) => currentStateLabel(entityStore, id))
     .filter((value): value is string => value !== undefined);
   const facts = event.factIds.map(String).filter((id) => safeFactIds.has(id));
-  return `eventId=${event.eventId}; sequence=${event.sequence}; turn=${event.turnNumber}; kind=${event.kind}; actors=[${entityLabels(entityStore, event.actorIds as readonly EntityId[]).join(", ") || "无"}]; targets=[${entityLabels(entityStore, event.targetIds as readonly EntityId[]).join(", ") || "无"}]; thenLocation=${locationName(entityStore, event.locationId === null ? null : String(event.locationId))}; publicFactIds=[${facts.join(", ") || "无"}]; outcome=${event.outcome}; causeEventIds=[${event.causeEventIds.map(String).join(", ") || "无"}]; currentState=[${states.join(" | ") || "无"}]`;
+  const itemRef = event.payload.type === "item_obtained" || event.payload.type === "item_given"
+    ? `; itemId=${event.payload.itemId}`
+    : "";
+  return `eventId=${event.eventId}; sequence=${event.sequence}; turn=${event.turnNumber}; kind=${event.kind}; actors=[${entityLabels(entityStore, event.actorIds as readonly EntityId[]).join(", ") || "无"}]; targets=[${entityLabels(entityStore, event.targetIds as readonly EntityId[]).join(", ") || "无"}]; thenLocation=${locationName(entityStore, event.locationId === null ? null : String(event.locationId))}; publicFactIds=[${facts.join(", ") || "无"}]; outcome=${event.outcome}; causeEventIds=[${event.causeEventIds.map(String).join(", ") || "无"}]; currentState=[${states.join(" | ") || "无"}]${itemRef}`;
 }
 
 function episodeCard(
@@ -119,7 +122,10 @@ export function renderNarrativeMemory(input: Readonly<{
 }>): RenderedNarrativeMemory {
   const safeFactIds = publicFactIds(input.entityStore);
   const eventCards = input.retrieved.requiredEvents.map((event) => eventCard(event, input.entityStore, safeFactIds));
-  const episodeCards = input.retrieved.relevantEpisodes.map((match) => episodeCard(match, input.entityStore, safeFactIds));
+  const episodeCards = input.retrieved.relevantEpisodes.flatMap((match) => [
+    episodeCard(match, input.entityStore, safeFactIds),
+    ...match.relatedItemEvents.map((event) => eventCard(event, input.entityStore, safeFactIds)),
+  ]);
   const sceneCards = input.retrieved.recentScenes.map((scene) => sceneCard(scene, input.entityStore, safeFactIds));
   return {
     requiredEventsText: eventCards.join("\n"),
@@ -127,7 +133,10 @@ export function renderNarrativeMemory(input: Readonly<{
     relevantEventsText: [...eventCards, ...episodeCards].join("\n"),
     recentScenesText: sceneCards.join("\n"),
     manifestRefs: {
-      eventIds: input.retrieved.requiredEvents.map((event) => event.eventId),
+      eventIds: [...new Set([
+        ...input.retrieved.requiredEvents.map((event) => event.eventId),
+        ...input.retrieved.relevantEpisodes.flatMap((match) => match.relatedItemEvents.map((event) => event.eventId)),
+      ])],
       episodeIds: input.retrieved.relevantEpisodes.map((match) => match.episode.episodeId),
       sceneEventIds: input.retrieved.recentScenes.map((scene) => scene.sceneEventId),
     },

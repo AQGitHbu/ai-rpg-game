@@ -12,6 +12,8 @@ import {
 import { createApprovedChoice, type ApprovedChoice } from "@/game/domain/approvedChoice";
 import type { WorldState } from "@/game/domain/worldState";
 import type { EnemyId, FactId, ItemId, LocationId, NpcId } from "@/game/domain/worldEntity";
+import { commitEventDrafts } from "@/game/domain/eventLedger";
+import { buildNarrativeScenePresentedDraft } from "./approveAndWriteScene";
 
 export type ConsumeNarrativeBundleResult =
   | { readonly ok: true; readonly nextWorldState: WorldState; readonly nextStoryState: StoryState }
@@ -138,5 +140,29 @@ export function consumeNarrativeBundle(input: {
     choiceRegistry: materialized.choiceRegistry,
     ...(nextBundle.steps.length > 0 ? { narrativeBundle: nextBundle } : {}),
   };
-  return { ok: true, nextWorldState: input.resolvedWorldState, nextStoryState: { ...input.resolvedStoryState, narrative: nextNarrative } };
+  // A stored step becomes history only when consumed, never when the provider
+  // prepares a future scene. Reuse this rule action's source and the same CAS.
+  const source = input.domainEvents.at(-1);
+  if (source === undefined) return { ok: false, code: "NARRATIVE_CONTINUATION_INVALID" };
+  const sceneDraft = buildNarrativeScenePresentedDraft({
+    turnId: source.turnId,
+    domainEventIds: input.domainEvents.map((event) => event.eventId),
+    currentLocationId: input.resolvedWorldState.currentLocationId,
+    nextPacingNeed: input.resolvedStoryState.nextPacingNeed,
+    mandatoryBeats: selected.scene.segments,
+    objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
+    scene: materialized.scene,
+  });
+  const committed = commitEventDrafts({
+    ledger: input.resolvedWorldState.eventLedger,
+    drafts: [{
+      ...sceneDraft,
+      episodeKey: String(source.episodeId).slice("episode:".length),
+      questIds: [...new Set(input.domainEvents.flatMap((event) => event.questIds))],
+    }],
+    source,
+    entityStore: input.resolvedWorldState.entityStore,
+  });
+  if (!committed.ok) return { ok: false, code: "NARRATIVE_CONTINUATION_INVALID" };
+  return { ok: true, nextWorldState: { ...input.resolvedWorldState, eventLedger: committed.ledger }, nextStoryState: { ...input.resolvedStoryState, narrative: nextNarrative } };
 }

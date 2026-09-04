@@ -742,6 +742,8 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
       memory: ss.memory,
       ledger: ws.eventLedger,
       requiredEventIds: job.domainEventIds,
+      beforeSequenceExclusive: Math.min(ws.eventLedger.length, ...ws.eventLedger
+        .filter((event) => job.domainEventIds.includes(event.eventId)).map((event) => event.sequence)),
       relevantEntityIds: [
         ...actionSummaryEntityIds(job.actionSummary),
         ...beatSubjectIds,

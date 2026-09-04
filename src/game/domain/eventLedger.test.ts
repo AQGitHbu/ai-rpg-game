@@ -207,6 +207,26 @@ function makeLocationVisitedDraft(): NarrativeEventDraft {
 // ---------------------------------------------------------------------------
 
 describe("commitEventDrafts: envelope and ID rules", () => {
+  it("rejects a retry that changes the authoritative turn number", () => {
+    const entityStore = buildMinimalEntityStore();
+    const source = buildTurnSource("turn:1", 1);
+    const drafts = [makeLocationVisitedDraft()];
+    const first = commitEventDrafts({ ledger: [], drafts, source, entityStore });
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error(first.code);
+    expect(commitEventDrafts({ ledger: first.ledger, drafts, source: { ...source, turnNumber: 2 }, entityStore }))
+      .toEqual({ ok: false, code: "EVENT_ID_CONFLICT" });
+  });
+
+  it("rejects extra payload prose before committing it", () => {
+    const draft = makeLocationVisitedDraft();
+    const result = commitEventDrafts({
+      ledger: [], source: buildTurnSource("turn:1", 1), entityStore: buildMinimalEntityStore(),
+      drafts: [{ ...draft, payload: { ...draft.payload, rawText: "private input" } } as unknown as NarrativeEventDraft],
+    });
+    expect(result.ok).toBe(false);
+  });
+
   it("same turnId + eventKey produces same eventId on replay", () => {
     const store = buildMinimalEntityStore();
     const source = buildInitSource("init:gen-0001");

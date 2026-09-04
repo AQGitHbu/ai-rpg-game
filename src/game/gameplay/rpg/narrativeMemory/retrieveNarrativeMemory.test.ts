@@ -7,6 +7,7 @@ import {
 import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
 import {
   asFactId,
+  asItemId,
   asLocationId,
   asNpcId,
   asQuestId,
@@ -33,6 +34,49 @@ function event(sequence: number, input: Parameters<typeof makeCommittedEvent>[0]
 }
 
 describe("retrieveNarrativeMemory", () => {
+  it("recalls an item from its payload without inventing a character participant or including current events", () => {
+    const itemId = asItemId("item:keepsake");
+    const ledger = [
+      event(0, { type: "item_obtained", itemId, locationId: OLD_LOCATION }, { actorIds: [], targetIds: [] }),
+      event(1, { type: "item_given", itemId, npcId: FOCUS_NPC, locationId: OLD_LOCATION }, { actorIds: [], targetIds: [] }),
+    ];
+    const result = retrieveNarrativeMemory({
+      memory: rebuildEpisodicMemory(ledger), ledger,
+      relevantEntityIds: [itemId], beforeSequenceExclusive: 1,
+    });
+    expect(result.relevantEpisodes.map((match) => match.episode.eventIds)).toEqual([[ledger[0]!.eventId]]);
+    expect(result.relevantEpisodes[0]!.matchedBy).toContain("entity");
+  });
+
+  it("recalls the parent cause of the current event without repeating its episode as history", () => {
+    const ledger = [
+      event(0, { type: "location_observed", locationId: OTHER_LOCATION }),
+      event(1, { type: "location_observed", locationId: OLD_LOCATION }, { causeEventIds: [asEventId("event:0")] }),
+    ];
+    const result = retrieveNarrativeMemory({
+      memory: rebuildEpisodicMemory(ledger), ledger,
+      requiredEventIds: [ledger[1]!.eventId],
+      beforeSequenceExclusive: 1,
+    });
+    expect(result.requiredEvents).toEqual([ledger[1]]);
+    expect(result.relevantEpisodes.map((match) => match.episode.eventIds)).toEqual([[ledger[0]!.eventId]]);
+    expect(result.relevantEpisodes[0]!.matchedBy).toContain("cause");
+  });
+
+  it("prioritizes explicit historical event references and fact matches over entity-only matches", () => {
+    const factId = asFactId("fact:old");
+    const ledger = [
+      event(0, { type: "fact_discovered", factId }, { factIds: [factId] }),
+      event(1, { type: "npc_met", npcId: FOCUS_NPC }, { actorIds: [FOCUS_NPC] }),
+      event(2, { type: "location_observed", locationId: OTHER_LOCATION }),
+    ];
+    const result = retrieveNarrativeMemory({
+      memory: rebuildEpisodicMemory(ledger), ledger,
+      requiredEventIds: [ledger[2]!.eventId], relevantFactIds: [factId], focusNpcId: FOCUS_NPC,
+    });
+    expect(result.relevantEpisodes.map((match) => match.episode.fromSequence)).toEqual([2, 0, 1]);
+  });
+
   it("ranks a structurally related old episode above recent unrelated episodes and caps results", () => {
     const ledger = Array.from({ length: 14 }, (_, sequence) => event(
       sequence,
@@ -62,7 +106,8 @@ describe("retrieveNarrativeMemory", () => {
 
     expect(result.requiredEvents.map((entry) => entry.eventId)).toEqual([ledger[0]!.eventId]);
     expect(result.relevantEpisodes).toHaveLength(6);
-    expect(result.relevantEpisodes[0]!.episode.episodeId).toBe("episode:old-focus");
+    expect(result.relevantEpisodes[0]!.episode.episodeId).toBe(ledger[0]!.episodeId);
+    expect(result.relevantEpisodes[1]!.episode.episodeId).toBe("episode:old-focus");
     expect(result.relevantEpisodes.map((entry) => entry.episode.episodeId)).not.toContain("episode:turn:13");
   });
 
