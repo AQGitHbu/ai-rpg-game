@@ -8,7 +8,7 @@ import type { NarrativeEventDraft, TurnId } from "@/game/domain/events";
 import { eventIdFor } from "@/game/domain/events";
 import type { StateChange } from "@/game/domain/resolvedEvent";
 import { RELATIONSHIP_SIGNAL_POLICY } from "@/game/gameplay/rpg/npcMemory";
-import type { EntityMutation, NpcInteractionPayload } from "@/game/gameplay/rpg/entityWorld/entityMutation";
+import type { EntityMutation, NpcInteractionPayload } from "@/game/gameplay/rpg/entityWorld";
 
 // ---------------------------------------------------------------------------
 // 固定对话选项的结构化裁决（Spec §7.2 / FND-03）。

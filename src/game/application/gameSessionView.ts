@@ -20,12 +20,11 @@ import {
   townBuildingInvestigationTargetNpcId,
 } from "./buildChoiceMap";
 import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
-import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
+import { currentObjectiveOf, isObjectiveSatisfied } from "@/game/gameplay/rpg/narrativeContext";
 import {
   endingDecisionStances,
   isEndingDecisionDue,
 } from "@/game/gameplay/rpg/narrativeBundle";
-import { isObjectiveSatisfied } from "@/game/gameplay/rpg/narrativeContext/objectiveRules";
 import { buildTownView, type TownView } from "./townView";
 import { projectCombatView, type BattleView } from "./combatView";
 import { normalizeNpcSpeech } from "@/game/domain/npcSpeech";

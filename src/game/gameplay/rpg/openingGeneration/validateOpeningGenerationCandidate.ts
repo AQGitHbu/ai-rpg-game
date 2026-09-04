@@ -2,7 +2,7 @@ import type { GameLength } from "@/game/domain/newGame";
 import { TARGET_ACTS } from "@/game/domain/storyBudget";
 import type { OpeningGenerationCandidate } from "@/game/domain/openingGenerationCandidate";
 import { parseNpcCreationAnchors, parseNpcGoalProposals } from "@/game/domain/entity";
-import { investigationApproachListIsValid } from "@/game/gameplay/rpg/worldEvolution/approveWorldDelta";
+import { investigationApproachListIsValid } from "@/game/gameplay/rpg/worldEvolution";
 
 // ---------------------------------------------------------------------------
 // Task 2：开局切片候选的 gameplay 校验（无 schema 校验——那由 domain parser

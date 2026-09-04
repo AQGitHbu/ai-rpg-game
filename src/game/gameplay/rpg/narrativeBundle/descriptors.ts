@@ -18,7 +18,7 @@ import type {
   NpcId,
   QuestId,
 } from "@/game/domain/worldEntity";
-import type { PreparedChoiceCandidate, PreparedArrivalNpcContext } from "@/game/gameplay/rpg/preparedContinuation/candidates";
+import type { PreparedChoiceCandidate, PreparedArrivalNpcContext } from "@/game/gameplay/rpg/preparedContinuation";
 
 export type { PreparedChoiceCandidate, PreparedArrivalNpcContext };
 

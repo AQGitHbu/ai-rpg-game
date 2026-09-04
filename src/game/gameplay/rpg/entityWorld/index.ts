@@ -6,6 +6,7 @@ export {
   knowledgeReferences,
   type ApplyEntityMutationsResult,
   type EntityMutation,
+  type NpcInteractionPayload,
   type EntityMutationErrorCode,
   type KnowledgeMutationSource,
   type RelationshipMutationSource,

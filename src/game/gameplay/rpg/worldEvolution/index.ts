@@ -1,5 +1,5 @@
 export { deriveEvolutionNeed } from "./deriveEvolutionNeed";
-export { approveWorldDelta } from "./approveWorldDelta";
+export { approveWorldDelta, investigationApproachListIsValid } from "./approveWorldDelta";
 export type {
   ApprovedWorldDeltaCore,
   ApproveWorldDeltaResult,

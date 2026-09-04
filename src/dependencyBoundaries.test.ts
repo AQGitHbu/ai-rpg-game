@@ -38,6 +38,12 @@ const SERVER_ONLY_IMPORT: BoundaryPattern = {
   regex: /["']server-only["']/
 };
 
+/** core 是无 RPG 语义的通用机制层：出现这些业务词汇即视为被污染（规范 1.1）。 */
+const CORE_RPG_VOCABULARY: BoundaryPattern = {
+  label: "core module mentions RPG vocabulary",
+  regex: /\b(?:npc|quest|battle|combat|narrative|story|savegame|gamestate|worldstate|storystate|prompt)\b/i
+};
+
 /** UI/API/store 只允许门面，禁止 deep-import 内部文件——由下方 FACADES 清单自动生成。 */
 
 /**
@@ -66,7 +72,8 @@ const FACADES: readonly FacadeSpec[] = [
   { name: "narrativeBundle", path: "@/game/gameplay/rpg/narrativeBundle", anchors: ["descriptors", "coverage"] },
   { name: "entityWorld", path: "@/game/gameplay/rpg/entityWorld", anchors: ["entityMutation", "proposedEntityCommand"] },
   { name: "npcMemory", path: "@/game/gameplay/rpg/npcMemory", anchors: ["relationshipSignalPolicy"] },
-  { name: "narrativeMemory", path: "@/game/gameplay/rpg/narrativeMemory", anchors: ["eventPolicy", "retrieveNarrativeMemory"] }
+  { name: "narrativeMemory", path: "@/game/gameplay/rpg/narrativeMemory", anchors: ["eventPolicy", "retrieveNarrativeMemory"] },
+  { name: "narrativeContext", path: "@/game/gameplay/rpg/narrativeContext", anchors: ["objectiveRules", "deriveObjectiveTransition"] }
 ] as const satisfies readonly FacadeSpec[];
 
 /** 由 facade 清单生成 deep-import 规则：只许门面本体，禁止任何内部文件。 */
@@ -203,6 +210,22 @@ const UI_LAYER_PATTERNS: readonly BoundaryPattern[] = [
 
 const rules: readonly BoundaryRule[] = [
   {
+    directory: "game/core",
+    patterns: [
+      forbiddenSpecifierPrefix("@/game/domain"),
+      forbiddenSpecifierPrefix("@/game/gameplay/"),
+      forbiddenSpecifierPrefix("@/game/application"),
+      forbiddenSpecifierPrefix("@/components/"),
+      forbiddenSpecifierPrefix("@/store/"),
+      forbiddenSpecifierPrefix("@/app/"),
+      forbiddenSpecifierPrefix("@/providers/"),
+      CORE_RPG_VOCABULARY,
+      JSON_IMPORT,
+      SERVER_ONLY_IMPORT,
+      LIBSQL_IMPORT
+    ]
+  },
+  {
     directory: "game/domain",
     patterns: [
       forbiddenSpecifierPrefix("@/game/gameplay/"),
@@ -226,6 +249,7 @@ const rules: readonly BoundaryRule[] = [
       forbiddenSpecifierPrefix("@/store/"),
       forbiddenSpecifierPrefix("@/app/"),
       forbiddenSpecifierPrefix("@/providers/"),
+      ...Object.values(FACADE_DEEP_IMPORTS),
       RELATIVE_ESCAPE_FROM_GAMEPLAY,
       SERVER_ONLY_IMPORT,
       LIBSQL_IMPORT
@@ -341,6 +365,14 @@ describe("boundary patterns detect synthetic violations", () => {
   ]);
   const cases: readonly { pattern: BoundaryPattern; snippet: string }[] = [
     ...facadeCases,
+    {
+      pattern: forbiddenSpecifierPrefix("@/game/domain"),
+      snippet: `import type { WorldState } from "@/game/domain/worldState";`
+    },
+    {
+      pattern: CORE_RPG_VOCABULARY,
+      snippet: `export function resolve(quest: string): string { return quest; }`
+    },
     {
       pattern: forbiddenSpecifierPrefix("@/game/gameplay/"),
       snippet: `import { x } from "@/game/gameplay/rpg/foo";`
@@ -501,6 +533,52 @@ describe("boundary patterns detect synthetic violations", () => {
   it("pure gameRepository port import does not trip the sqlite module rule", () => {
     const snippet = `import { asGameId } from "./server/persistence/gameRepository";`;
     expect(findBoundaryViolations(snippet, [SQLITE_MODULE_IMPORT, LIBSQL_IMPORT])).toEqual([]);
+  });
+});
+
+describe("facade inventory matches the gameplay subsystem directories", () => {
+  const rpgRoot = resolve(sourceRoot, "game/gameplay/rpg");
+
+  it("declares exactly one facade per rpg subsystem directory", () => {
+    const directories = readdirSync(rpgRoot)
+      .filter((entry) => statSync(resolve(rpgRoot, entry)).isDirectory())
+      .sort();
+    const declared = FACADES.map((facade) => facade.name).sort();
+    expect(declared).toEqual(directories);
+  });
+
+  it("every declared facade resolves to a directory with an index.ts", () => {
+    for (const facade of FACADES) {
+      const directory = resolve(sourceRoot, facade.path.replace("@/", ""));
+      expect(existsSync(resolve(directory, "index.ts")), facade.name).toBe(true);
+    }
+  });
+
+  it("every anchor names a real module inside its facade directory", () => {
+    for (const facade of FACADES) {
+      const directory = resolve(sourceRoot, facade.path.replace("@/", ""));
+      for (const anchor of facade.anchors) {
+        expect(existsSync(resolve(directory, `${anchor}.ts`)), `${facade.name}/${anchor}`).toBe(true);
+      }
+    }
+  });
+});
+
+describe("core layer stays free of product semantics", () => {
+  it("core rule actually scans both core modules (guard is not vacuous)", () => {
+    const coreFiles = exists(resolve(sourceRoot, "game/core"), false).map(toPosixRelative);
+    expect(coreFiles).toContain("game/core/json/structuredJsonResponse.ts");
+    expect(coreFiles).toContain("game/core/retry/boundedAttempts.ts");
+  });
+
+  it("core implementations import nothing at all", () => {
+    for (const relative of [
+      "game/core/json/structuredJsonResponse.ts",
+      "game/core/retry/boundedAttempts.ts"
+    ]) {
+      const specifiers = extractSpecifiers(readFileSync(resolve(sourceRoot, relative), "utf8"));
+      expect(specifiers, relative).toEqual([]);
+    }
   });
 });
 
@@ -816,8 +894,7 @@ describe("server-only modules stay out of client-importable code", () => {
     for (const relative of [
       "game/application/createGame.ts",
       "game/application/performTurn.ts",
-      "game/application/stateCommit.ts",
-      "game/application/sceneWriteBack.ts"
+      "game/application/stateCommit.ts"
     ]) {
       const file = resolve(sourceRoot, relative);
       expect(statSync(file).isFile(), relative).toBe(true);

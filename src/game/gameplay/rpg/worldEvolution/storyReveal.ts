@@ -2,7 +2,7 @@ import type { Action } from "@/game/domain/action";
 import type { StoryState } from "@/game/domain/storyState";
 import type { QuestObjective, QuestEntry, WorldState } from "@/game/domain/worldState";
 import type { ItemId } from "@/game/domain/worldEntity";
-import { isObjectiveSatisfiedInStory } from "@/game/gameplay/rpg/narrativeContext/deriveObjectiveTransition";
+import { isObjectiveSatisfiedInStory } from "@/game/gameplay/rpg/narrativeContext";
 import { applyEntityMutations, EntityMutationInvariantError } from "@/game/gameplay/rpg/entityWorld";
 
 /** 旧存档没有 reveal 字段时，保持既有“全部已物化内容可用”的兼容语义。 */

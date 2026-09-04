@@ -11,7 +11,7 @@
 | 系统 | Agent 文档 | 策划参考 | 状态 |
 |---|---|---|---|
 | 共享基础设施 | `共同规范/共享模块开发流程.md` | `共同规范/共享模块目录.json` | 仅按触发条件读取 |
-| 项目脚手架 | `agent/项目脚手架.md` | — | 已建立；提供 `branch:finish` 合并后 worktree/分支收尾入口；SQLite 仓储测试使用每进程独占的 OS 临时目录，兼容 Windows/Git Bash 管道运行 |
+| 项目脚手架 | `agent/项目脚手架.md` | — | 已建立；提供 `branch:finish` 合并后 worktree/分支收尾入口；SQLite 仓储测试使用每进程独占的 OS 临时目录，兼容 Windows/Git Bash 管道运行；分层守卫已覆盖 core 专项规则、facade 目录事实与 gameplay 跨子系统 deep-import |
 | 当前开发阶段 | `agent/当前开发阶段.md` | `agent/current-phase.json` | 「结构化 Event 与 Episodic Memory」（Plan 4）已完成并合入 main，机器状态为 `completed / merged`。当前为 WorldState v5 / StoryState v8 / EntityStore v2，稳定 Event ID、参与者/地点/因果/显著度、可重建 Episode、结构化召回和 NPC Event provenance 已落地；保持一次生成逐步消费、战败回滚、六个 API 与短/中篇完整可玩。明确排除 Plan 5/6 的 Outline/Arc/scene planning、Plan 7/8 的分段长局与向量索引、misinformation、新 provider 调用和共享 package 改动。Plan 见 `superpowers/plans/2026-09-02-structured-events-episodic-memory.md` |
 | NPC 人格、知识与关系图 | `agent/NPC人格知识与关系图.md` | `策划文档/AI生成RPG_MVP.md` §7 | Plan 3 已完成真实 API 中篇验收；Plan 4 已把 knowledge source、relationship evidence、interaction 和 speech references 收敛到真实 Event provenance，并由 ledger 校验；NPC identity/dynamicState/knowledge/relationships/history 仍是唯一组件 |
 | 生产链边界 | `agent/当前开发阶段.md` | — | 只允许无版本后缀的生产命名；旧 route、旧 application/UI 链、兼容 facade、类型隔离和旧存档迁移均不存在。历史文档只作决策记录 |

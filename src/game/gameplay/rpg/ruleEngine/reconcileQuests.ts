@@ -3,7 +3,7 @@ import type { NarrativeEventDraft, EventId } from "@/game/domain/events";
 import { eventIdFor, asTurnId } from "@/game/domain/events";
 import { entitiesOfKind } from "@/game/domain/entity";
 import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
-import { isObjectiveSatisfied } from "@/game/gameplay/rpg/narrativeContext/objectiveRules";
+import { isObjectiveSatisfied } from "@/game/gameplay/rpg/narrativeContext";
 import { applyEntityMutations, EntityMutationInvariantError, type EntityMutation } from "@/game/gameplay/rpg/entityWorld";
 
 export type QuestReconcileResult = {

@@ -1,6 +1,6 @@
 import type { FactId } from "@/game/domain/worldEntity";
 import type { RelationshipTier } from "@/game/domain/relationship";
-import { DIALOGUE_TIER_CANDIDNESS, DIALOGUE_REVEAL_THRESHOLD } from "@/game/gameplay/rpg/dialogue/dialogueResolution";
+import { DIALOGUE_TIER_CANDIDNESS, DIALOGUE_REVEAL_THRESHOLD } from "@/game/gameplay/rpg/dialogue";
 
 // ---------------------------------------------------------------------------
 // Task 5 Step 1：关系档位 → NPC 回应政策（tone/initiative/披露边界）。
