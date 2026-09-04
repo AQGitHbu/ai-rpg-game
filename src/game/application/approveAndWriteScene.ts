@@ -6,6 +6,7 @@ import type {
   ScenePerformanceNpcLine,
 } from "./sceneSource";
 import type { NarrativeEventState, NarrativeNpcLineState, NarrativeSceneState } from "@/game/domain/narrative";
+import type { EventId, NarrativeEventDraft, NarrativeScenePresentedPayload, StoryPacing, TurnId } from "@/game/domain/events";
 import type { WorldState } from "@/game/domain/worldState";
 import { buildNpcDialoguePages } from "@/game/domain/narrative";
 import { isFinalDialogueHandoff, type SceneGenerationContext } from "./sceneGenerationContext";
@@ -19,7 +20,7 @@ import {
   formatSceneChoiceLabel,
   usesFallbackDialogueChoiceLabels,
 } from "./deterministicSceneSource";
-import { asFactId, asNpcId } from "@/game/domain/worldEntity";
+import { asFactId, asNpcId, PLAYER_ENTITY_ID, type LocationId, type QuestId } from "@/game/domain/worldEntity";
 import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
 import { approvePreparedContinuation } from "./approvePreparedContinuation";
 import {
@@ -160,6 +161,7 @@ export type ApprovedSceneWriteBack = {
   readonly preparedContinuation: import("@/game/domain/preparedContinuation").PreparedContinuationState;
   /** 叙事质量告警：只用于日志/审计，不阻断场景写回。 */
   readonly qualityWarnings: readonly SceneQualityWarningCode[];
+  readonly eventDrafts: readonly NarrativeEventDraft<NarrativeScenePresentedPayload>[];
 };
 
 export type ApproveScenePerformanceResult =
@@ -181,6 +183,66 @@ function rebuildEvent(event: NarrativeEventState): NarrativeEventState {
   }
 }
 
+function scenePacingOf(need: SceneGenerationContext["story"]["nextPacingNeed"]): StoryPacing {
+  switch (need) {
+    case "reveal": return "setup";
+    case "develop": return "develop";
+    case "complicate":
+    case "escalate": return "turn";
+    case "climax": return "climax";
+    case "resolve": return "resolution";
+  }
+}
+
+/** Build the immutable scene-presentation fact; the application commits it with the world delta. */
+export function buildNarrativeScenePresentedDraft(input: {
+  readonly turnId: TurnId;
+  readonly domainEventIds: readonly EventId[];
+  readonly currentLocationId: LocationId;
+  readonly nextPacingNeed: SceneGenerationContext["story"]["nextPacingNeed"];
+  readonly mandatoryBeats: SceneGenerationContext["mandatoryBeats"];
+  readonly objectiveTransition: SceneGenerationContext["objectiveTransition"];
+  readonly scene: NarrativeSceneState;
+}): NarrativeEventDraft<NarrativeScenePresentedPayload> {
+  const {
+    turnId,
+    domainEventIds,
+    currentLocationId,
+    nextPacingNeed,
+    mandatoryBeats,
+    objectiveTransition,
+    scene,
+  } = input;
+  const focusNpcId = scene.event?.kind === "dialogue"
+    ? scene.event.focusNpcId
+    : null;
+  const questIds: QuestId[] = [];
+  const transition = objectiveTransition;
+  if (transition.before !== null) questIds.push(transition.before.questId);
+  for (const completed of transition.completed) questIds.push(completed.questId);
+  if (transition.after !== null) questIds.push(transition.after.questId);
+  return {
+    eventKey: `narrative_scene_presented:${scene.sceneId}`,
+    episodeKey: String(turnId),
+    actorIds: [PLAYER_ENTITY_ID],
+    targetIds: focusNpcId === null ? [PLAYER_ENTITY_ID] : [focusNpcId],
+    locationId: currentLocationId,
+    causeKeys: domainEventIds.map((eventId) => ({ kind: "event_id" as const, eventId })),
+    factIds: [...new Set(scene.usedFactIds)],
+    questIds: [...new Set(questIds)],
+    outcome: "success",
+    salience: 40,
+    payload: {
+      type: "narrative_scene_presented",
+      sceneId: scene.sceneId,
+      focusNpcId,
+      pacing: scenePacingOf(nextPacingNeed),
+      beatIds: mandatoryBeats.map((beat) => beat.beatId),
+      revealedFactIds: [...new Set(scene.usedFactIds)],
+    },
+  };
+}
+
 function rebuildNpcLine(
   line: ScenePerformanceNpcLine,
   presentNpcs: SceneGenerationContext["presentNpcs"],
@@ -191,7 +253,7 @@ function rebuildNpcLine(
     text: normalizeNpcSpeech(line.text, npcName),
     emotion: line.emotion,
     usedFactIds: line.usedFactIds.map((id) => asFactId(id)),
-    usedInteractionActionIds: [...line.usedInteractionActionIds],
+    usedEventIds: [...line.usedEventIds],
     answeredBeatIds: [...line.answeredBeatIds],
   };
 }
@@ -215,20 +277,20 @@ function validateNpcSpeechReferencesForSpeaker(input: {
   readonly npc: SceneGenerationContext["presentNpcs"][number];
   readonly context: SceneGenerationContext;
   readonly usedFactIds: readonly string[];
-  readonly usedInteractionActionIds: readonly string[];
+  readonly usedEventIds: readonly string[];
 }): ReturnType<typeof validateNpcSpeechReferences> {
   const authority = projectedNpcSpeechAuthority(input.npc, input.context);
   if (authority === undefined) {
     // Empty reference arrays are safe for legacy hand-built contexts. Any
     // non-empty array without the speaker's real authority fails closed.
     if (input.usedFactIds.length > 0) return { ok: false, code: "invalid_fact_reference" };
-    if (input.usedInteractionActionIds.length > 0) return { ok: false, code: "invalid_interaction_reference" };
+    if (input.usedEventIds.length > 0) return { ok: false, code: "invalid_interaction_reference" };
     return { ok: true };
   }
   return validateNpcSpeechReferences({
     authority,
     usedFactIds: input.usedFactIds,
-    usedInteractionActionIds: input.usedInteractionActionIds,
+    usedEventIds: input.usedEventIds,
   });
 }
 
@@ -236,10 +298,10 @@ function buildGeneratedNpcDialogueMap(
   proposal: ScenePerformanceProposal,
   context: SceneGenerationContext,
   focusNpcId: string | undefined,
-): { readonly ok: true; readonly lines: ReadonlyMap<string, { readonly text: string; readonly usedFactIds: readonly string[]; readonly usedInteractionActionIds: readonly string[] }> } | { readonly ok: false; readonly code: SceneRejectionCode } {
+): { readonly ok: true; readonly lines: ReadonlyMap<string, { readonly text: string; readonly usedFactIds: readonly string[]; readonly usedEventIds: readonly string[] }> } | { readonly ok: false; readonly code: SceneRejectionCode } {
   const entries = proposal.npcDialogues ?? [];
   const presentIds = new Set(context.presentNpcs.map((npc) => String(npc.id)));
-  const lines = new Map<string, { readonly text: string; readonly usedFactIds: readonly string[]; readonly usedInteractionActionIds: readonly string[] }>();
+  const lines = new Map<string, { readonly text: string; readonly usedFactIds: readonly string[]; readonly usedEventIds: readonly string[] }>();
   for (const entry of entries) {
     if (!isRecord(entry)
       || typeof entry.npcId !== "string"
@@ -251,7 +313,7 @@ function buildGeneratedNpcDialogueMap(
     }
     const npc = context.presentNpcs.find((candidate) => String(candidate.id) === String(entry.npcId));
     if (npc === undefined) return { ok: false, code: "missing_non_focus_npc_dialogue" };
-    if (!Array.isArray(entry.usedFactIds) || !Array.isArray(entry.usedInteractionActionIds)) {
+    if (!Array.isArray(entry.usedFactIds) || !Array.isArray(entry.usedEventIds)) {
       return { ok: false, code: "missing_non_focus_npc_dialogue" };
     }
     const text = normalizeNpcSpeech(entry.text, npc.name);
@@ -265,14 +327,14 @@ function buildGeneratedNpcDialogueMap(
       npc,
       context,
       usedFactIds: entry.usedFactIds,
-      usedInteractionActionIds: entry.usedInteractionActionIds,
+      usedEventIds: entry.usedEventIds,
     });
     if (!referenceCheck.ok) {
       return {
         ok: false,
         code: referenceCheck.code === "invalid_fact_reference"
           ? "npc_uses_forbidden_fact"
-          : referenceCheck.code === "invalid_interaction_reference"
+          : referenceCheck.code === "invalid_interaction_reference" || referenceCheck.code === "invalid_event_reference"
             ? "wrong_npc_interaction"
             : "duplicate_npc_reference",
       };
@@ -280,7 +342,7 @@ function buildGeneratedNpcDialogueMap(
     lines.set(String(entry.npcId), {
       text,
       usedFactIds: [...entry.usedFactIds],
-      usedInteractionActionIds: [...entry.usedInteractionActionIds],
+      usedEventIds: [...entry.usedEventIds],
     });
   }
 
@@ -409,7 +471,7 @@ export function approveScenePerformance(input: {
       || typeof npcLine.emotion !== "string") {
       return { ok: false, code: "unknown_dialogue_npc" };
     }
-    if (!Array.isArray(npcLine.usedFactIds) || !Array.isArray(npcLine.usedInteractionActionIds)) {
+    if (!Array.isArray(npcLine.usedFactIds) || !Array.isArray(npcLine.usedEventIds)) {
       return { ok: false, code: "unknown_dialogue_npc" };
     }
     const present = context.presentNpcs.find((n) => String(n.id) === String(npcLine.npcId));
@@ -426,14 +488,14 @@ export function approveScenePerformance(input: {
       npc: present,
       context,
       usedFactIds: npcLine.usedFactIds,
-      usedInteractionActionIds: npcLine.usedInteractionActionIds,
+      usedEventIds: npcLine.usedEventIds,
     });
     if (!referenceCheck.ok) {
       return {
         ok: false,
         code: referenceCheck.code === "invalid_fact_reference"
           ? "npc_uses_forbidden_fact"
-          : referenceCheck.code === "invalid_interaction_reference"
+          : referenceCheck.code === "invalid_interaction_reference" || referenceCheck.code === "invalid_event_reference"
             ? "wrong_npc_interaction"
             : "duplicate_npc_reference",
       };
@@ -675,7 +737,7 @@ export function approveScenePerformance(input: {
     const references = dialogue.npcId === rebuiltNpcLine?.npcId
       ? {
         usedFactIds: (rebuiltNpcLine?.usedFactIds ?? []).map((id) => asFactId(String(id))),
-        usedInteractionActionIds: rebuiltNpcLine?.usedInteractionActionIds ?? [],
+        usedEventIds: rebuiltNpcLine?.usedEventIds ?? [],
       }
       : (() => {
         const line = generatedNpcDialogues.lines.get(String(dialogue.npcId));
@@ -721,6 +783,15 @@ export function approveScenePerformance(input: {
     candidateEventPool: [...input.existingCandidateEventPool],
     preparedContinuation: preparedApproval.prepared,
     qualityWarnings,
+    eventDrafts: [buildNarrativeScenePresentedDraft({
+      turnId: context.job.turnId,
+      domainEventIds: context.job.domainEventIds,
+      currentLocationId: context.currentLocation.id,
+      nextPacingNeed: context.story.nextPacingNeed,
+      mandatoryBeats: context.mandatoryBeats,
+      objectiveTransition: context.objectiveTransition,
+      scene,
+    })],
   };
 }
 

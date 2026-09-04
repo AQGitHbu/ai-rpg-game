@@ -1,10 +1,10 @@
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { materializeWorldDelta } from "./materializeWorldDelta";
 import type { WorldState, LocationEntry, NpcEntry } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import { createInitialStoryState } from "@/game/domain/storyState";
-import type { CommittedNarrativeEvent } from "@/game/domain/events";
+import { asEventId, asTurnId, type CommittedNarrativeEvent } from "@/game/domain/events";
 import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
 import {
   createWorldStateFixtureWith,
@@ -171,9 +171,10 @@ describe("materializeWorldDelta", () => {
     expect(previewSs.budget.quests.expanded).toBe(1);
     expect(previewSs.budget.events.expanded).toBe(1);
 
-    const event = delta.previewWorldState.eventLedger.at(-1)!;
-    expect(event.kind).toBe("blueprint_expanded");
-    if (event.kind === "blueprint_expanded") {
+    expect(delta.previewWorldState.eventLedger).toEqual(ws.eventLedger);
+    const event = delta.eventDrafts.at(-1)!;
+    expect(event.payload.type).toBe("blueprint_expanded");
+    if (event.payload.type === "blueprint_expanded") {
       const bp = event.payload as unknown as { newNpcIds: string[]; newLocationIds: string[]; newQuestIds: string[] };
       expect(bp.newNpcIds).toEqual(["npc_dyn_1"]);
       expect(bp.newLocationIds).toEqual(["loc_dyn_1"]);
@@ -254,8 +255,9 @@ describe("materializeWorldDelta", () => {
     const delta = materializeWorldDelta({ approved, need: { kind: "ending_pair", finalAct: 3 }, ws, ss, now: () => "2026-01-02" });
     expect(delta.previewWorldState.endings.map((e) => e.name)).toEqual(["共担真相", "独自揭露"]);
     expect(delta.previewStoryState.evolution.status).toBe("stable");
-    const event = delta.previewWorldState.eventLedger.at(-1)!;
-    if (event.kind === "blueprint_expanded") {
+    expect(delta.previewWorldState.eventLedger).toEqual(ws.eventLedger);
+    const event = delta.eventDrafts.at(-1)!;
+    if (event.payload.type === "blueprint_expanded") {
       expect((event.payload as unknown as { newEndingIds: string[] }).newEndingIds).toHaveLength(2);
     }
   });
@@ -365,5 +367,56 @@ describe("materializeWorldDelta", () => {
     expect(locOut.town?.slots[1]?.boundNpcId).toBe(asNpcId("npc_dyn_1"));
     // 几何/既有绑定不变
     expect(locOut.town?.slots.map((slot) => slot.buildingId)).toEqual(town.slots.map((slot) => slot.buildingId));
+  });
+
+  it("returns a causal blueprint draft without committing or reading the clock", () => {
+    const ws = makeWorld();
+    const ss = makeStory({ currentAct: 2 });
+    const approved = approve({ proposal: nextActProposal(), need: { kind: "next_act", act: 2 }, ws, ss });
+    const now = vi.fn(() => "must-not-be-read");
+
+    const delta = materializeWorldDelta({
+      approved,
+      need: { kind: "next_act", act: 2 },
+      ws,
+      ss,
+      now,
+      eventContext: {
+        turnId: asTurnId("turn-7"),
+        turnNumber: 7,
+        actionId: "action-7",
+        domainEventIds: [asEventId("turn-7:fact_discovered")],
+      },
+    });
+
+    expect(now).not.toHaveBeenCalled();
+    expect(delta.previewWorldState.eventLedger).toEqual(ws.eventLedger);
+    expect(delta.eventDrafts).toHaveLength(1);
+    expect(delta.eventDrafts[0]).toEqual(expect.objectContaining({
+      eventKey: "blueprint_expanded:job:turn-7",
+      episodeKey: "turn-7",
+      causeKeys: [{ kind: "event_id", eventId: "turn-7:fact_discovered" }],
+    }));
+  });
+
+  it("does not create a blueprint draft when no entity was minted", () => {
+    const ws = makeWorld();
+    const ss = makeStory({ currentAct: 2 });
+    const seeded = approve({ proposal: nextActProposal(), need: { kind: "next_act", act: 2 }, ws, ss });
+    const approved: ApprovedWorldDeltaCore = {
+      ...seeded,
+      mintedLocationIds: [], mintedNpcIds: [], mintedItemIds: [], mintedEnemyIds: [],
+      mintedFactIds: [], mintedQuestIds: [], mintedEndingIds: [],
+      newLocations: [], newNpcs: [], newItems: [], newEnemies: [], newFacts: [], newQuests: [], newEndings: [],
+      npcCreationComponentsById: new Map(),
+      townBuildingBindings: [], itemLocationId: null, enemyLocationId: null,
+    };
+    const now = vi.fn(() => "must-not-be-read");
+
+    const delta = materializeWorldDelta({ approved, need: { kind: "pacing", pacingNeed: "complicate" }, ws, ss, now });
+
+    expect(now).not.toHaveBeenCalled();
+    expect(delta.eventDrafts).toEqual([]);
+    expect(delta.previewWorldState.eventLedger).toEqual(ws.eventLedger);
   });
 });

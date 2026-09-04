@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { asNarrativeJobId, asTurnId } from "./events";
+import { asEventId, asNarrativeJobId, asTurnId } from "./events";
 import type { ResolvedEvent } from "./resolvedEvent";
 import { asLocationId, asNpcId, asQuestId } from "./worldEntity";
 import {
@@ -37,7 +37,7 @@ const DEFAULT_INPUT: CreatePendingNarrativeJobInput = {
   actionSummary: { kind: "talk", npcId: asNpcId("npc_1") },
   utterance: "我想打听矿坑的事",
   resolvedEvent: canonicalResolvedEvent(),
-  domainEventRange: { fromLedgerIndex: 12, toLedgerIndexExclusive: 15 },
+  domainEventIds: [asEventId("turn-1:event-12"), asEventId("turn-1:event-13"), asEventId("turn-1:event-14")],
   focusNpcId: asNpcId("npc_1"),
   requestedAt: "2026-08-08T08:00:00.000Z",
   objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
@@ -68,7 +68,7 @@ describe("PendingNarrativeJob", () => {
       "actionId",
       "actionSummary",
       "basedOnRevision",
-      "domainEventRange",
+      "domainEventIds",
       "focusNpcId",
       "generationKind",
       "jobId",
@@ -87,7 +87,11 @@ describe("PendingNarrativeJob", () => {
     expect(job.turnNumber).toBe(3);
     expect(job.actionSummary).toEqual({ kind: "talk", npcId: "npc_1" });
     expect(job.resolvedEvent).toEqual(canonicalResolvedEvent());
-    expect(job.domainEventRange).toEqual({ fromLedgerIndex: 12, toLedgerIndexExclusive: 15 });
+    expect(job.domainEventIds).toEqual([
+      asEventId("turn-1:event-12"),
+      asEventId("turn-1:event-13"),
+      asEventId("turn-1:event-14"),
+    ]);
     expect(job.requestedAt).toBe("2026-08-08T08:00:00.000Z");
   });
 
@@ -177,14 +181,12 @@ describe("PendingNarrativeJob", () => {
     }
   });
 
-  it("拒绝无效 ledger range", () => {
-    expect(createResult({ domainEventRange: { fromLedgerIndex: 3, toLedgerIndexExclusive: 3 } }).ok).toBe(false);
-    expect(createResult({ domainEventRange: { fromLedgerIndex: 5, toLedgerIndexExclusive: 2 } }).ok).toBe(false);
-  });
-
-  it("拒绝负数 ledger index", () => {
-    expect(createResult({ domainEventRange: { fromLedgerIndex: -1, toLedgerIndexExclusive: 2 } }).ok).toBe(false);
-    expect(createResult({ domainEventRange: { fromLedgerIndex: 0, toLedgerIndexExclusive: -1 } }).ok).toBe(false);
+  it("拒绝空、重复、格式错误和旧范围事件引用", () => {
+    expect(createResult({ domainEventIds: [] }).ok).toBe(false);
+    expect(createResult({ domainEventIds: [asEventId("turn-1:event-1"), asEventId("turn-1:event-1")] }).ok).toBe(false);
+    expect(createResult({ domainEventIds: [asEventId("")] }).ok).toBe(false);
+    expect(createResult({ domainEventIds: ["not-an-event-id"] as never }).ok).toBe(false);
+    expect(createResult({ domainEventIds: undefined, domainEventRange: { fromLedgerIndex: 0, toLedgerIndexExclusive: 1 } } as never).ok).toBe(false);
   });
 
   it("拒绝超长 utterance（上限引用统一常量）", () => {

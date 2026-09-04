@@ -10,6 +10,7 @@ import type {
 } from "./worldEntity";
 import type { StoryState } from "./storyState";
 import type { EndingRequirement, InvestigationApproach, WorldState } from "./worldState";
+import type { BlueprintExpandedPayload, EventId, NarrativeEventDraft, TurnId } from "./events";
 import type {
   NpcGoalProposal,
   NpcIdentityAnchors,
@@ -104,6 +105,16 @@ export type WorldDeltaEntityContextClosure = Readonly<{
   readonly currentLocationActiveNpcIds: readonly string[];
 }>;
 
+/** 世界演化草稿使用的规则回合上下文；不包含时钟或随机值。 */
+export type WorldDeltaEventContext = Readonly<{
+  readonly turnId: TurnId;
+  readonly turnNumber: number;
+  readonly actionId?: string;
+  readonly domainEventIds: readonly EventId[];
+  readonly episodeKey?: string;
+  readonly eventKey?: string;
+}>;
+
 /** 已审批的世界演化：服务端铸造品牌化 ID，并携带预览状态供场景表演构建合法选项。 */
 export type ApprovedWorldDelta = {
   readonly mintedLocationIds: readonly LocationId[];
@@ -115,4 +126,6 @@ export type ApprovedWorldDelta = {
   readonly mintedEndingIds: readonly EndingId[];
   readonly previewWorldState: WorldState;
   readonly previewStoryState: StoryState;
+  /** 预览阶段产生的草稿；最终账本只能由应用层统一提交。 */
+  readonly eventDrafts: readonly NarrativeEventDraft<BlueprintExpandedPayload>[];
 };

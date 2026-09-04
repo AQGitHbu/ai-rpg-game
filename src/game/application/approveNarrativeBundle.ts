@@ -7,6 +7,7 @@ import type {
   ApprovedWorldDelta,
 } from "@/game/domain/worldDelta";
 import type { NarrativeJobId } from "@/game/domain/events";
+import { asTurnId, type NarrativeEventDraft } from "@/game/domain/events";
 import type {
   NarrativeBundleProposal,
   NarrativeBundleState,
@@ -51,6 +52,7 @@ import {
   isValidNpcSpeechTarget,
   validateNpcSpeechReferences,
 } from "./npcSpeechAuthority";
+import { buildNarrativeScenePresentedDraft } from "./approveAndWriteScene";
 
 // ---------------------------------------------------------------------------
 // Task 4：原子审批叙事生成包。
@@ -67,6 +69,7 @@ export type ApprovedNarrativeBundle = {
   readonly choiceRegistry: readonly ApprovedChoice[];
   readonly bundle: NarrativeBundleState;
   readonly candidateEventPool: readonly EventCandidate[];
+  readonly eventDrafts: readonly NarrativeEventDraft[];
 };
 
 export type ApproveNarrativeBundleResult =
@@ -91,6 +94,7 @@ export type ApproveNarrativeBundleInput = {
   readonly idOverride?: WorldDeltaIdOverride;
   readonly entityContextClosure?: WorldDeltaEntityContextClosure;
   readonly now: () => string;
+  readonly eventContext?: import("@/game/domain/worldDelta").WorldDeltaEventContext;
   readonly auditLink?: AiTextAuditLink;
 };
 
@@ -166,7 +170,7 @@ function buildSceneFromProposal(
         text: normalizedNpcText!,
         emotion: proposal.npcLine.emotion,
         usedFactIds: proposal.npcLine.usedFactIds.map((id: string) => id as never),
-        usedInteractionActionIds: [...proposal.npcLine.usedInteractionActionIds],
+        usedEventIds: [...proposal.npcLine.usedEventIds],
         answeredBeatIds: [...proposal.npcLine.answeredBeatIds],
       };
   // The current-scene terminal is itself a formal NPC decision boundary.
@@ -190,7 +194,7 @@ function buildSceneFromProposal(
       speechSource: "generated" as const,
       speechPurpose: dialogue.npcId === String(npcLine?.npcId) ? "focus" as const : "ambient" as const,
       usedFactIds: dialogue.usedFactIds.map(asFactId),
-      usedInteractionActionIds: [...dialogue.usedInteractionActionIds],
+      usedEventIds: [...dialogue.usedEventIds],
     };
   });
   return {
@@ -243,7 +247,7 @@ function buildStepState(
         text: normalizedNpcText!,
         emotion: proposal.scene.npcLine.emotion,
         usedFactIds: proposal.scene.npcLine.usedFactIds.map((id: string) => id as never),
-        usedInteractionActionIds: [...proposal.scene.npcLine.usedInteractionActionIds],
+        usedEventIds: [...proposal.scene.npcLine.usedEventIds],
         answeredBeatIds: [...proposal.scene.npcLine.answeredBeatIds],
       };
 
@@ -265,7 +269,7 @@ function buildStepState(
       speechSource: "generated" as const,
       speechPurpose: dialogue.npcId === String(npcLine?.npcId) ? "focus" as const : "ambient" as const,
       usedFactIds: dialogue.usedFactIds.map(asFactId),
-      usedInteractionActionIds: [...dialogue.usedInteractionActionIds],
+      usedEventIds: [...dialogue.usedEventIds],
     };
   });
 
@@ -347,7 +351,7 @@ function hasExactChoiceCandidates(
 type SceneContentRejection = { readonly code: NarrativeBundleRejection; readonly detail?: string };
 
 function validateBundleNpcSpeech(
-  line: { readonly npcId: string; readonly usedFactIds: readonly string[]; readonly usedInteractionActionIds: readonly string[] },
+  line: { readonly npcId: string; readonly usedFactIds: readonly string[]; readonly usedEventIds: readonly string[] },
   worldState: WorldState,
 ): SceneContentRejection | null {
   const visibleFactIds = entitiesOfKind(worldState.entityStore, "fact")
@@ -365,7 +369,7 @@ function validateBundleNpcSpeech(
   const result = validateNpcSpeechReferences({
     authority,
     usedFactIds: line.usedFactIds,
-    usedInteractionActionIds: line.usedInteractionActionIds,
+    usedEventIds: line.usedEventIds,
   });
   if (result.ok) return null;
   return { code: "bundle_invalid_scene", detail: result.code };
@@ -399,7 +403,7 @@ function validateBundleSceneNpcSpeech(
     const rejection = validateBundleNpcSpeech({
       npcId: dialogue.npcId,
       usedFactIds: dialogue.usedFactIds,
-      usedInteractionActionIds: dialogue.usedInteractionActionIds,
+      usedEventIds: dialogue.usedEventIds,
     }, worldState);
     if (rejection !== null) return rejection;
   }
@@ -528,6 +532,13 @@ export function approveNarrativeBundle(
   input: ApproveNarrativeBundleInput,
 ): ApproveNarrativeBundleResult {
   const { proposal, worldState, storyState, transition, evolutionNeed, jobId, basedOnRevision, now } = input;
+  const eventContext = input.eventContext ?? {
+    turnId: asTurnId(String(jobId)),
+    turnNumber: basedOnRevision,
+    domainEventIds: [],
+    episodeKey: String(jobId),
+  };
+  let worldEventDrafts: readonly NarrativeEventDraft[] = [];
 
   // Step 1: Parse the proposal
   const parsed = parseNarrativeBundleProposal(proposal);
@@ -579,9 +590,11 @@ export function approveNarrativeBundle(
       ws: worldState,
       ss: storyState,
       now,
+      eventContext,
     });
     previewWorldState = approvedDelta.previewWorldState;
     previewStoryState = approvedDelta.previewStoryState;
+    worldEventDrafts = approvedDelta.eventDrafts;
   }
 
   // Step 3: Build descriptors from preview state.  At a natural act boundary
@@ -785,6 +798,18 @@ export function approveNarrativeBundle(
       choiceRegistry,
       bundle,
       candidateEventPool: [],
+      eventDrafts: [
+        ...worldEventDrafts,
+        buildNarrativeScenePresentedDraft({
+          turnId: eventContext.turnId,
+          domainEventIds: eventContext.domainEventIds,
+          currentLocationId: previewWorldState.currentLocationId,
+          nextPacingNeed: previewStoryState.nextPacingNeed,
+          mandatoryBeats: input.mandatoryBeats,
+          objectiveTransition: transition,
+          scene: finalScene,
+        }),
+      ],
     },
   };
 }

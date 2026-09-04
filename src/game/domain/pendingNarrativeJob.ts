@@ -1,4 +1,4 @@
-import type { NarrativeJobId, TurnId } from "./events";
+import { isWellFormedEventId, type EventId, type NarrativeJobId, type TurnId } from "./events";
 import type { ResolvedEvent } from "./resolvedEvent";
 import type {
   EnemyId,
@@ -140,10 +140,8 @@ export type PendingNarrativeJob = {
   /** 有界玩家原文；其他任何领域对象不得保存玩家原文。 */
   readonly utterance?: string;
   readonly resolvedEvent: ResolvedEvent;
-  readonly domainEventRange: {
-    readonly fromLedgerIndex: number;
-    readonly toLedgerIndexExclusive: number;
-  };
+  /** 本回合规则提交产生的稳定 Event ID，顺序与 ledger 追加顺序一致。 */
+  readonly domainEventIds: readonly EventId[];
   readonly focusNpcId?: NpcId;
   /** 当前固定选项/自由输入的结构化对白上下文；旧 job 缺失时按兼容路径读取。 */
   readonly selectedDialogue?: {
@@ -170,10 +168,7 @@ export type CreatePendingNarrativeJobInput = {
   readonly actionSummary: StructuredActionSummary;
   readonly utterance?: string;
   readonly resolvedEvent: ResolvedEvent;
-  readonly domainEventRange: {
-    readonly fromLedgerIndex: number;
-    readonly toLedgerIndexExclusive: number;
-  };
+  readonly domainEventIds: readonly EventId[];
   readonly focusNpcId?: NpcId;
   readonly selectedDialogue?: {
     readonly dialogueAct: import("./action").DialogueAct;
@@ -192,7 +187,7 @@ export type CreatePendingNarrativeJobInput = {
 export type PendingNarrativeJobErrorCode =
   | "EMPTY_ACTION_ID"
   | "INVALID_EXPECTED_REVISION"
-  | "INVALID_LEDGER_RANGE"
+  | "INVALID_EVENT_IDS"
   | "UTTERANCE_TOO_LONG"
   | "OBJECTIVE_TRANSITION_INVALID"
   | "MANDATORY_BEATS_OVER_CAP"
@@ -257,7 +252,7 @@ function isValidMandatoryBeat(candidate: unknown): boolean {
     && beat.instruction.length > 0;
 }
 
-/** 纯构造：拒绝空 actionId、无效 ledger range、超长 utterance 和非法 expectedRevision。 */
+/** 纯构造：拒绝空 actionId、无效 Event 引用、超长 utterance 和非法 expectedRevision。 */
 export function createPendingNarrativeJob(
   input: CreatePendingNarrativeJobInput,
 ): CreatePendingNarrativeJobResult {
@@ -269,14 +264,13 @@ export function createPendingNarrativeJob(
   if (!Number.isInteger(input.expectedRevision) || input.expectedRevision < 0) {
     errors.push({ code: "INVALID_EXPECTED_REVISION" });
   }
-  const { fromLedgerIndex, toLedgerIndexExclusive } = input.domainEventRange;
   if (
-    !Number.isInteger(fromLedgerIndex)
-    || !Number.isInteger(toLedgerIndexExclusive)
-    || fromLedgerIndex < 0
-    || toLedgerIndexExclusive <= fromLedgerIndex
+    !Array.isArray(input.domainEventIds)
+    || input.domainEventIds.length === 0
+    || input.domainEventIds.some((id) => typeof id !== "string" || !isWellFormedEventId(id))
+    || new Set(input.domainEventIds.map(String)).size !== input.domainEventIds.length
   ) {
-    errors.push({ code: "INVALID_LEDGER_RANGE" });
+    errors.push({ code: "INVALID_EVENT_IDS" });
   }
   if (
     input.utterance !== undefined
@@ -316,7 +310,7 @@ export function createPendingNarrativeJob(
       turnNumber: input.turnNumber,
       actionSummary: input.actionSummary,
       resolvedEvent: input.resolvedEvent,
-      domainEventRange: { fromLedgerIndex, toLedgerIndexExclusive },
+      domainEventIds: [...input.domainEventIds],
       requestedAt: input.requestedAt,
       objectiveTransition: input.objectiveTransition,
       mandatoryBeats: input.mandatoryBeats,
@@ -346,10 +340,7 @@ export function parsePendingNarrativeJob(value: unknown): ParsePendingNarrativeJ
     actionSummary: v.actionSummary as StructuredActionSummary,
     utterance: v.utterance as string | undefined,
     resolvedEvent: v.resolvedEvent as ResolvedEvent,
-    domainEventRange: v.domainEventRange as {
-      readonly fromLedgerIndex: number;
-      readonly toLedgerIndexExclusive: number;
-    },
+    domainEventIds: v.domainEventIds as readonly EventId[],
     focusNpcId: v.focusNpcId as NpcId | undefined,
     selectedDialogue: v.selectedDialogue as {
       readonly dialogueAct: import("./action").DialogueAct;

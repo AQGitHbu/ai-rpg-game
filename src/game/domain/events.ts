@@ -57,6 +57,16 @@ export function eventIdFor(turnId: TurnId, eventKey: string): EventId {
   return asEventId(`${turnId}:${eventKey}`);
 }
 
+/** 持久化/跨边界输入的最小 EventId 形状校验。 */
+export function isWellFormedEventId(raw: string): boolean {
+  const separatorIndex = raw.indexOf(":");
+  return raw.trim() === raw
+    && raw.length > 0
+    && separatorIndex > 0
+    && separatorIndex < raw.length - 1
+    && !/\s/.test(raw);
+}
+
 /**
  * 确定性铸造 Episode ID（turn 聚合）：同一 turnId 永远得到同一 Episode ID。
  */

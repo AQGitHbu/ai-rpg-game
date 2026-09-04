@@ -6,6 +6,7 @@ import type {
   ApprovedWorldDelta,
   WorldDeltaEntityContextClosure,
   WorldDeltaProposal,
+  WorldDeltaEventContext,
 } from "@/game/domain/worldDelta";
 import type { WorldEvolutionContentRepair, WorldEvolutionSource, WorldEvolutionSourceContext } from "./worldEvolutionSource";
 import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
@@ -53,6 +54,8 @@ export type EvolveWorldInput = {
   readonly entityContextClosure?: WorldDeltaEntityContextClosure;
   /** 仅用于关联 world AI 审计事件，不进入世界状态。 */
   readonly auditLink?: AiTextAuditLink;
+  /** 规则回合事件上下文；世界草稿不得脱离本回合因果链。 */
+  readonly eventContext?: WorldDeltaEventContext;
   readonly now: () => string;
 };
 
@@ -155,6 +158,7 @@ export async function evolveWorld(input: EvolveWorldInput): Promise<EvolveWorldR
           ws: input.worldState,
           ss: input.storyState,
           now: input.now,
+          eventContext: input.eventContext,
         });
         const success = { ok: true as const, proposal: sourceResult.proposal, approved: approval.approved, delta };
         terminalResult = success;

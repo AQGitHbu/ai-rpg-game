@@ -21,6 +21,7 @@ import type { NarrativeGenerationRepairReason } from "@/game/domain/narrativeGen
 import { markNarrativeGenerationFailed } from "./markNarrativeGenerationFailed";
 import { runBoundedAttempts } from "@/game/core/retry";
 import { buildWorldDeltaEntityContextClosure } from "./entityContextProjection";
+import { commitEventDrafts } from "@/game/domain/eventLedger";
 
 export type GeneratePendingSceneDeps = {
   readonly repository: GameRepository;
@@ -171,6 +172,7 @@ export async function generatePendingScene(
   // 最后经 applySceneWriteBack 单次 CAS 一并写回实体与场景。
   let scenarioWs = record.worldState;
   let scenarioSs = record.storyState;
+  let eventDrafts: readonly import("@/game/domain/events").NarrativeEventDraft[] = [];
   const derivedNeed = deriveEvolutionNeed(record.worldState, record.storyState);
   // 结局对已具象化后，规则层在最终选择回合仍可能保留
   // needs_ending_pair 标记；不能再次向 source 请求同一对结局并把合法收尾判成重复。
@@ -208,6 +210,14 @@ export async function generatePendingScene(
         job: generation.job,
       }),
       auditLink: { ...deps.auditLink, gameId: String(record.gameId), jobId: String(generation.job.jobId), turnNumber: generation.job.turnNumber },
+      eventContext: {
+        turnId: generation.job.turnId,
+        turnNumber: generation.job.turnNumber,
+        actionId: generation.job.actionId,
+        domainEventIds: generation.job.domainEventIds,
+        episodeKey: String(generation.job.turnId),
+        eventKey: `blueprint_expanded:${generation.job.jobId}:scene_evolution`,
+      },
       now: deps.now,
     });
     if (outcome.ok) {
@@ -216,6 +226,7 @@ export async function generatePendingScene(
       }
       scenarioWs = outcome.delta.previewWorldState;
       scenarioSs = outcome.delta.previewStoryState;
+      eventDrafts = [...eventDrafts, ...outcome.delta.eventDrafts];
     } else if (outcome.failure !== undefined) {
       return fail({ ...outcome.failure, phase: "scene", failedAt: deps.now() });
     } else {
@@ -253,6 +264,14 @@ export async function generatePendingScene(
         jobId: String(generation.job.jobId),
         turnNumber: generation.job.turnNumber,
       },
+      eventContext: {
+        turnId: generation.job.turnId,
+        turnNumber: generation.job.turnNumber,
+        actionId: generation.job.actionId,
+        domainEventIds: generation.job.domainEventIds,
+        episodeKey: String(generation.job.turnId),
+        eventKey: `blueprint_expanded:${generation.job.jobId}:scene_candidate_shortage`,
+      },
       now: deps.now,
     });
     if (!recovery.ok) {
@@ -264,6 +283,7 @@ export async function generatePendingScene(
     }
     scenarioWs = recovery.delta.previewWorldState;
     scenarioSs = recovery.delta.previewStoryState;
+    eventDrafts = [...eventDrafts, ...recovery.delta.eventDrafts];
     scenarioRecord = { ...record, worldState: scenarioWs, storyState: scenarioSs };
     context = buildAuditedSceneGenerationContext(scenarioRecord, deps.auditLink, generation.retryContext);
   }
@@ -341,16 +361,34 @@ export async function generatePendingScene(
   if (!bounded.ok) return fail(terminalFailure);
   const { approved, context: acceptedContext } = bounded.value;
   context = acceptedContext;
+  eventDrafts = [...eventDrafts, ...approved.eventDrafts];
 
   const pendingRuntime = scenarioSs.narrative;
   if (pendingRuntime.status !== "provider_pending") {
     return fail(sceneFailure("AI_RESPONSE_INVALID"));
   }
 
+  const eventCommit = commitEventDrafts({
+    ledger: record.worldState.eventLedger,
+    drafts: eventDrafts,
+    source: {
+      turnId: generation.job.turnId,
+      actionId: generation.job.actionId,
+      turnNumber: generation.job.turnNumber,
+      committedAt: deps.now(),
+    },
+    entityStore: scenarioWs.entityStore,
+  });
+  if (!eventCommit.ok) {
+    deps.logger?.warn("scene_event_commit_rejected", { code: eventCommit.code });
+    return fail(sceneFailure("AI_RESPONSE_INVALID"));
+  }
+  const committedScenarioWs = { ...scenarioWs, eventLedger: eventCommit.ledger };
+
   const writeBack = await deps.repository.applySceneWriteBack({
     gameId: record.gameId,
     expectedRevision: record.revision,
-    nextWorldState: scenarioWs,
+    nextWorldState: committedScenarioWs,
     nextStoryState: {
       ...scenarioSs,
       narrative: {

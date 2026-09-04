@@ -1,10 +1,8 @@
 import type { ApprovedWorldDeltaCore } from "./approveWorldDelta";
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
-import type { EvolutionNeed, ApprovedWorldDelta } from "@/game/domain/worldDelta";
-import type { BlueprintExpandedPayload, NarrativeEventDraft, TurnId } from "@/game/domain/events";
-import { commitEventDrafts, type EventCommitSource } from "@/game/domain/eventLedger";
-import { asTurnId } from "@/game/domain/events";
+import type { EvolutionNeed, ApprovedWorldDelta, WorldDeltaEventContext } from "@/game/domain/worldDelta";
+import type { BlueprintExpandedPayload, NarrativeEventDraft } from "@/game/domain/events";
 import type { LocationId, NpcId, ItemId, PlayerEntityId } from "@/game/domain/worldEntity";
 import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import type { TownRuntimeState } from "@/game/domain/townState";
@@ -29,7 +27,9 @@ export type MaterializeWorldDeltaInput = {
   readonly need: EvolutionNeed;
   readonly ws: WorldState;
   readonly ss: StoryState;
-  readonly now: () => string;
+  /** 旧调用方兼容保留；物化阶段不得读取时钟。 */
+  readonly now?: () => string;
+  readonly eventContext?: WorldDeltaEventContext;
 };
 
 type LocationPatch = {
@@ -50,7 +50,7 @@ function bindTownNpcIfAvailable(
 }
 
 export function materializeWorldDelta(input: MaterializeWorldDeltaInput): ApprovedWorldDelta {
-  const { approved, ws, ss, now } = input;
+  const { approved, ws, ss, eventContext } = input;
 
   const newLocationIds = approved.newLocations.map((l) => l.id);
   const stagedQuest = approved.newQuests[0];
@@ -134,28 +134,39 @@ export function materializeWorldDelta(input: MaterializeWorldDeltaInput): Approv
     }),
   ];
 
-  const draft: NarrativeEventDraft<BlueprintExpandedPayload> = {
-    eventKey: `blueprint_expanded:${approved.mintedLocationIds.join(',')}`,
-    episodeKey: "normal",
-    actorIds: [PLAYER_ENTITY_ID],
-    targetIds: [PLAYER_ENTITY_ID],
-    locationId: ws.currentLocationId,
-    causeKeys: [],
-    factIds: approved.mintedFactIds ?? [],
-    questIds: approved.mintedQuestIds ?? [],
-    outcome: "success",
-    salience: 50,
-    payload: {
-      type: "blueprint_expanded",
-      newLocationIds: approved.mintedLocationIds,
-      newNpcIds: approved.mintedNpcIds,
-      newFactIds: approved.mintedFactIds,
-      newItemIds: approved.mintedItemIds,
-      newEnemyIds: approved.mintedEnemyIds,
-      newQuestIds: approved.mintedQuestIds,
-      newEndingIds: approved.mintedEndingIds,
-    },
-  };
+  const hasMintedEntities = [
+    approved.mintedLocationIds,
+    approved.mintedNpcIds,
+    approved.mintedItemIds,
+    approved.mintedEnemyIds,
+    approved.mintedFactIds,
+    approved.mintedQuestIds,
+    approved.mintedEndingIds,
+  ].some((ids) => ids.length > 0);
+  const eventDrafts: readonly NarrativeEventDraft<BlueprintExpandedPayload>[] = !hasMintedEntities
+    ? []
+    : [{
+        eventKey: eventContext?.eventKey ?? `blueprint_expanded:job:${eventContext?.turnId ?? approved.mintedLocationIds.join(",")}`,
+        episodeKey: eventContext?.episodeKey ?? String(eventContext?.turnId ?? "normal"),
+        actorIds: [PLAYER_ENTITY_ID],
+        targetIds: [PLAYER_ENTITY_ID],
+        locationId: ws.currentLocationId,
+        causeKeys: (eventContext?.domainEventIds ?? []).map((eventId) => ({ kind: "event_id" as const, eventId })),
+        factIds: approved.mintedFactIds,
+        questIds: approved.mintedQuestIds,
+        outcome: "success" as const,
+        salience: 50,
+        payload: {
+          type: "blueprint_expanded" as const,
+          newLocationIds: approved.mintedLocationIds,
+          newNpcIds: approved.mintedNpcIds,
+          newFactIds: approved.mintedFactIds,
+          newItemIds: approved.mintedItemIds,
+          newEnemyIds: approved.mintedEnemyIds,
+          newQuestIds: approved.mintedQuestIds,
+          newEndingIds: approved.mintedEndingIds,
+        },
+      }];
 
   // 先用唯一 projection compiler 在局部构造所需 EntityRecord；再只将新 records、
   // 已有地点组件和解锁索引作为一批规则可信 mutation 应用到原 store。
@@ -187,23 +198,10 @@ export function materializeWorldDelta(input: MaterializeWorldDeltaInput): Approv
   }
   const applied = applyEntityMutations(ws, mutations);
   if (!applied.ok) throw new EntityMutationInvariantError(applied);
-  // world expansion 事件由 commitEventDrafts 铸造 ID 并校验引用后再追加。
-  const commitSource: EventCommitSource = {
-    turnId: asTurnId(`world-expansion:${ss.turnNumber}:${approved.mintedLocationIds.join(',')}`) as TurnId,
-    turnNumber: ss.turnNumber,
-    committedAt: now(),
-  };
-  const commitResult = commitEventDrafts({
-    ledger: applied.worldState.eventLedger,
-    drafts: [draft],
-    source: commitSource,
-    entityStore: applied.worldState.entityStore,
-  });
-  if (!commitResult.ok) throw new Error("blueprint_expanded commit failed");
   const previewWorldState: WorldState = {
     ...applied.worldState,
     endings: [...applied.worldState.endings, ...approved.newEndings],
-    eventLedger: commitResult.ledger,
+    eventLedger: ws.eventLedger,
   };
 
   const previewStoryState: StoryState = {
@@ -231,5 +229,6 @@ export function materializeWorldDelta(input: MaterializeWorldDeltaInput): Approv
     mintedEndingIds: approved.mintedEndingIds,
     previewWorldState,
     previewStoryState,
+    eventDrafts,
   };
 }

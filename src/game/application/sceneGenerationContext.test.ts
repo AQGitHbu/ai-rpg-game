@@ -21,7 +21,7 @@ import {
   asFactId,
   type GenerationMetadata,
 } from "@/game/domain/worldEntity";
-import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
+import { asNarrativeJobId, asTurnId, asEventId, type EventId } from "@/game/domain/events";
 import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
 import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
 import {
@@ -87,6 +87,7 @@ function makeJob(overrides: {
   focusNpcId?: string;
   utterance?: string;
   sceneRequestKind?: PendingNarrativeJob["sceneRequestKind"];
+  eventIds?: readonly EventId[];
 } = {}): PendingNarrativeJob {
   const result = createPendingNarrativeJob({
     jobId: asNarrativeJobId("job_1"),
@@ -107,7 +108,7 @@ function makeJob(overrides: {
       triggeredEvents: [],
       rejectedEffects: [],
     },
-    domainEventRange: { fromLedgerIndex: 1, toLedgerIndexExclusive: 2 },
+    domainEventIds: overrides.eventIds ?? [INITIALIZED_LEDGER[0]!.eventId],
     focusNpcId: overrides.focusNpcId !== undefined ? asNpcId(overrides.focusNpcId) : undefined,
     requestedAt: "2026-01-02",
     objectiveTransition: overrides.transition ?? { before: null, completed: [], after: null, mode: "unchanged" },
@@ -191,7 +192,7 @@ describe("buildSceneGenerationContext", () => {
       speechAuthority: expect.objectContaining({
         speakerNpcId: npc1.id,
         allowedFactIds: [],
-        allowedInteractionActionIds: [],
+        allowedEventIds: [],
       }),
     })]);
     expect(context.story.currentAct).toBe(1);
@@ -436,19 +437,21 @@ describe("buildSceneGenerationContext", () => {
       stage: 1,
       status: "active" as const,
     };
+    const investigationEvent = makeCommittedEvent(
+      { type: "fact_discovered", factId: fact.factId, approachId: "search", evidenceQuality: "noisy", tensionDelta: 12 },
+      { sequence: 1 },
+    );
     const worldWithInvestigation = makeWorld({
       worldFacts: [fact],
       quests: [quest],
       eventLedger: [
         ...INITIALIZED_LEDGER,
-        makeCommittedEvent(
-          { type: "fact_discovered", factId: fact.factId, approachId: "search", evidenceQuality: "noisy", tensionDelta: 12 },
-          { sequence: 1 },
-        ),
+        investigationEvent,
       ],
     });
     const job = makeJob({
       summary: { kind: "investigate", factId: fact.factId },
+      eventIds: [investigationEvent.eventId],
       transition: { before: null, completed: [], after: { questId: quest.id, objectiveIndex: 0, label: "查明真相" }, mode: "unchanged" },
       beats: [{ beatId: "fact_discovered_0", kind: "fact_discovered", subjectIds: [String(fact.factId)], instruction: `发现了线索：${fact.text}` }],
     });
@@ -548,6 +551,7 @@ describe("buildSceneGenerationContext", () => {
         knownFactIds: [secretB],
         hiddenFactIds: [secretB],
         interactionHistory: [{
+          eventId: asEventId("evt:guest:1"),
           turnNumber: 1, actionId: "guest_1", locationId: asLocationId("loc_1"),
           dialogueAct: "ask", topic: { kind: "general" }, topicSummary: "闲谈",
           outcome: "positive", relationshipDelta: 1, learnedFactIds: [],
@@ -557,6 +561,7 @@ describe("buildSceneGenerationContext", () => {
       },
     };
     const bossHistory: NpcInteraction = {
+      eventId: asEventId("evt:boss:9"),
       turnNumber: 9, actionId: IMPORTANT_ACTION_ID, locationId: asLocationId("loc_1"),
       dialogueAct: "ask", topic: { kind: "fact", factId: secretB }, topicSummary: "询问线索",
       outcome: "negative", relationshipDelta: -2, learnedFactIds: [],

@@ -11,7 +11,7 @@ import { asEnemyId, asGenerationId, asLocationId, asNpcId, asFactId, asQuestId }
 import { createInitialWorldState } from "@/game/domain/worldState";
 import type { SceneGenerationContext } from "./sceneGenerationContext";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
-import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
+import { asNarrativeJobId, asTurnId, asEventId } from "@/game/domain/events";
 import type { MandatoryNarrativeBeat, ObjectiveTransition } from "@/game/domain/narrativeBeat";
 import { buildStylePolicy } from "./stylePolicy";
 import { createNpcResponsePolicy } from "@/game/gameplay/rpg/narrativeContext";
@@ -23,7 +23,7 @@ const FIXTURE_NPC_SPEECH_AUTHORITY: NpcSpeechAuthority = {
   allowedFactIds: [asFactId("fact_a")],
   withheldFactIds: [],
   allowedFactCards: [{ factId: asFactId("fact_a"), text: "已知" }],
-  allowedInteractionActionIds: ["inter_1"],
+  allowedEventIds: [asEventId("inter_1")],
   recentInteractions: [],
   identityAnchors: {
     selfConcept: "谨慎的掌柜",
@@ -148,7 +148,7 @@ function makeJob(overrides: {
       triggeredEvents: [],
       rejectedEffects: [],
     },
-    domainEventRange: { fromLedgerIndex: 0, toLedgerIndexExclusive: 1 },
+    domainEventIds: [asEventId("turn-1:event-1")],
     focusNpcId: overrides.focusNpcId !== undefined ? asNpcId(overrides.focusNpcId) : asNpcId("npc_1"),
     requestedAt: "2026-01-02",
     objectiveTransition: overrides.transition ?? { before: null, completed: [], after: null, mode: "unchanged" },
@@ -313,7 +313,7 @@ describe("approveScenePerformance (Task 6)", () => {
             emotion: "neutral",
             answeredBeatIds: [],
             usedFactIds: [],
-            usedInteractionActionIds: [],
+            usedEventIds: [],
           },
           objectiveLink: null,
           choices: [
@@ -346,6 +346,13 @@ describe("approveScenePerformance (Task 6)", () => {
     expect(result.choiceRegistry).toHaveLength(2);
     expect(new Set(result.choiceRegistry.map((x) => x.choiceToken)).size).toBe(2);
     expect(result.choiceRegistry.every((x) => x.basedOnRevision === 8)).toBe(true);
+    expect(result.eventDrafts).toHaveLength(1);
+    expect(result.eventDrafts[0]).toEqual(expect.objectContaining({
+      eventKey: "narrative_scene_presented:scene-1",
+      episodeKey: "turn_1",
+      causeKeys: [{ kind: "event_id", eventId: "turn-1:event-1" }],
+      payload: expect.objectContaining({ type: "narrative_scene_presented", sceneId: "scene-1" }),
+    }));
     // 场景表演契约不含候选事件：candidateEventPool 原样保留
     expect(result.candidateEventPool.map((c) => c.id)).toEqual(["pool-1"]);
   });
@@ -370,7 +377,7 @@ describe("approveScenePerformance (Task 6)", () => {
           emotion: "neutral",
           answeredBeatIds: [],
           usedFactIds: [],
-          usedInteractionActionIds: [],
+          usedEventIds: [],
         },
         choices: [
           { candidateId: "candidate_1", label: `回应老板：“${previousLine}”` },
@@ -407,7 +414,7 @@ describe("approveScenePerformance (Task 6)", () => {
           emotion: "neutral",
           answeredBeatIds: [],
           usedFactIds: [],
-          usedInteractionActionIds: [],
+          usedEventIds: [],
         },
         choices: [
           { candidateId: "candidate_1", label: "既然你愿意继续说，就把下一步和能够核对的凭据交代清楚。" },
@@ -520,7 +527,7 @@ describe("approveScenePerformance (Task 6)", () => {
     const result = approveScenePerformance({
       context: makeContext(),
       proposal: makeProposal({
-        npcLine: { npcId: "ghost", text: "你是谁", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [] },
+        npcLine: { npcId: "ghost", text: "你是谁", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedEventIds: [] },
       }),
       basedOnRevision: 8,
       existingCandidateEventPool: [],
@@ -534,7 +541,7 @@ describe("approveScenePerformance (Task 6)", () => {
     const result = approveScenePerformance({
       context: makeContext(),
       proposal: makeProposal({
-        npcLine: { npcId: "npc_1", text: "这是秘密", emotion: "neutral", answeredBeatIds: [], usedFactIds: ["fact_forbidden"], usedInteractionActionIds: [] },
+        npcLine: { npcId: "npc_1", text: "这是秘密", emotion: "neutral", answeredBeatIds: [], usedFactIds: ["fact_forbidden"], usedEventIds: [] },
       }),
       basedOnRevision: 8,
       existingCandidateEventPool: [],
@@ -548,7 +555,7 @@ describe("approveScenePerformance (Task 6)", () => {
     const result = approveScenePerformance({
       context: makeContext(),
       proposal: makeProposal({
-        npcLine: { npcId: "npc_1", text: "我知道这个", emotion: "neutral", answeredBeatIds: [], usedFactIds: ["fact_a"], usedInteractionActionIds: [] },
+        npcLine: { npcId: "npc_1", text: "我知道这个", emotion: "neutral", answeredBeatIds: [], usedFactIds: ["fact_a"], usedEventIds: [] },
       }),
       basedOnRevision: 8,
       existingCandidateEventPool: [],
@@ -580,7 +587,7 @@ describe("approveScenePerformance (Task 6)", () => {
             allowedFactIds: [asFactId("fact_a")],
             withheldFactIds: [],
             allowedFactCards: [{ factId: asFactId("fact_a"), text: "已知" }],
-            allowedInteractionActionIds: [],
+            allowedEventIds: [],
             recentInteractions: [],
             identityAnchors: {
               selfConcept: "守规矩的掌柜",
@@ -602,7 +609,7 @@ describe("approveScenePerformance (Task 6)", () => {
           emotion: "neutral",
           answeredBeatIds: [],
           usedFactIds: ["fact_a", "fact_a"],
-          usedInteractionActionIds: [],
+          usedEventIds: [],
         },
       }),
       basedOnRevision: 8,
@@ -621,7 +628,7 @@ describe("approveScenePerformance (Task 6)", () => {
           emotion: "neutral",
           answeredBeatIds: [],
           usedFactIds: [],
-          usedInteractionActionIds: [],
+          usedEventIds: [],
         },
       }),
       basedOnRevision: 8,
@@ -638,7 +645,7 @@ describe("approveScenePerformance (Task 6)", () => {
     const result = approveScenePerformance({
       context: makeContext(),
       proposal: makeProposal({
-        npcLine: { npcId: "npc_1", text: "上次你问我的事……", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: ["other_npc_action"] },
+        npcLine: { npcId: "npc_1", text: "上次你问我的事……", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedEventIds: ["other_npc_action"] },
       }),
       basedOnRevision: 8,
       existingCandidateEventPool: [],
@@ -652,7 +659,7 @@ describe("approveScenePerformance (Task 6)", () => {
     const result = approveScenePerformance({
       context: makeContext(),
       proposal: makeProposal({
-        npcLine: { npcId: "npc_1", text: "上次你问我的事……", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: ["inter_1"] },
+        npcLine: { npcId: "npc_1", text: "上次你问我的事……", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedEventIds: ["inter_1"] },
       }),
       basedOnRevision: 8,
       existingCandidateEventPool: [],
@@ -710,7 +717,7 @@ describe("approveScenePerformance (Task 6)", () => {
           { beatId: "player_utterance", text: "你提出了你的疑问。" },
           { beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉" },
         ],
-        npcLine: { npcId: "npc_2", text: "这件事交给他", emotion: "neutral", answeredBeatIds: ["player_utterance"], usedFactIds: [], usedInteractionActionIds: [] },
+        npcLine: { npcId: "npc_2", text: "这件事交给他", emotion: "neutral", answeredBeatIds: ["player_utterance"], usedFactIds: [], usedEventIds: [] },
       }),
       basedOnRevision: 8,
       existingCandidateEventPool: [],
@@ -728,7 +735,7 @@ describe("approveScenePerformance (Task 6)", () => {
           { beatId: "player_utterance", text: "你提出了你的疑问。" },
           { beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉" },
         ],
-        npcLine: { npcId: "npc_1", text: "这件事我也正想说。你先把手里的线索交给我核对。", emotion: "warm", answeredBeatIds: ["player_utterance"], usedFactIds: [], usedInteractionActionIds: [] },
+        npcLine: { npcId: "npc_1", text: "这件事我也正想说。你先把手里的线索交给我核对。", emotion: "warm", answeredBeatIds: ["player_utterance"], usedFactIds: [], usedEventIds: [] },
       }),
       basedOnRevision: 8,
       existingCandidateEventPool: [],
@@ -749,7 +756,7 @@ describe("approveScenePerformance (Task 6)", () => {
         objectiveTarget: { questId: "quest_0", objectiveIndex: 0, entityId: "npc_1", entityName: "老板" },
       }),
       proposal: makeProposal({
-        npcLine: { npcId: "npc_1", text: "你想问什么？", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [] },
+        npcLine: { npcId: "npc_1", text: "你想问什么？", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedEventIds: [] },
         objectiveLink: { questId: "quest_0", objectiveIndex: 0, mode: "hint" },
       }),
       basedOnRevision: 8,
@@ -823,9 +830,9 @@ describe("approveScenePerformance (Task 6)", () => {
           { beatId: "quest_advanced", text: "主线推进到新掌柜。", referencedEntityIds: ["npc_2"] },
           { beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉" },
         ],
-        npcLine: { npcId: "npc_1", text: "告示的来历我会说清楚。新掌柜掌握的是下一页卷宗。", emotion: "neutral", answeredBeatIds: ["player_utterance"], usedFactIds: [], usedInteractionActionIds: [] },
+        npcLine: { npcId: "npc_1", text: "告示的来历我会说清楚。新掌柜掌握的是下一页卷宗。", emotion: "neutral", answeredBeatIds: ["player_utterance"], usedFactIds: [], usedEventIds: [] },
         objectiveLink: { questId: "quest_0", objectiveIndex: 1, mode: "handoff" },
-        npcDialogues: [{ npcId: "npc_2", text: "客官若要查旧案，去找赵四。店里的出入他记得最清楚。", usedFactIds: [], usedInteractionActionIds: [] }],
+        npcDialogues: [{ npcId: "npc_2", text: "客官若要查旧案，去找赵四。店里的出入他记得最清楚。", usedFactIds: [], usedEventIds: [] }],
         choices: [
           { candidateId: "candidate_1", label: "表示愿意支持新掌柜" },
           { candidateId: "candidate_2", label: "质疑新掌柜的说法" },
@@ -870,9 +877,9 @@ describe("approveScenePerformance (Task 6)", () => {
           { beatId: "quest_advanced", text: "线索把你引向新掌柜。", referencedEntityIds: ["npc_2"] },
           { beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" },
         ],
-        npcLine: { npcId: "npc_2", text: "客官找我有什么事？我知道一些情况。", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [] },
+        npcLine: { npcId: "npc_2", text: "客官找我有什么事？我知道一些情况。", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedEventIds: [] },
         objectiveLink: { questId: "quest_0", objectiveIndex: 1, mode: "handoff" },
-        npcDialogues: [{ npcId: "npc_1", text: "旧案我会说清楚。你去找新掌柜，他见过关键来客。", usedFactIds: [], usedInteractionActionIds: [] }],
+        npcDialogues: [{ npcId: "npc_1", text: "旧案我会说清楚。你去找新掌柜，他见过关键来客。", usedFactIds: [], usedEventIds: [] }],
       }),
       basedOnRevision: 8,
       existingCandidateEventPool: [],
@@ -910,9 +917,9 @@ describe("approveScenePerformance (Task 6)", () => {
           { beatId: "quest_advanced", text: "线索带你走向下一处。" },
           { beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" },
         ],
-        npcLine: { npcId: "npc_1", text: "旧案我会说清楚。你去找新掌柜，他知道下一步。", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [] },
+        npcLine: { npcId: "npc_1", text: "旧案我会说清楚。你去找新掌柜，他知道下一步。", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedEventIds: [] },
         objectiveLink: { questId: "quest_0", objectiveIndex: 1, mode: "handoff" },
-        npcDialogues: [{ npcId: "npc_2", text: "客官若要查旧案，先坐下喝茶。店里的出入我记得几分。", usedFactIds: [], usedInteractionActionIds: [] }],
+        npcDialogues: [{ npcId: "npc_2", text: "客官若要查旧案，先坐下喝茶。店里的出入我记得几分。", usedFactIds: [], usedEventIds: [] }],
       }),
       basedOnRevision: 8,
       existingCandidateEventPool: [],
@@ -929,7 +936,7 @@ describe("approveScenePerformance (Task 6)", () => {
         focusNpcContext: { ...makeContext().focusNpcContext!, id: asNpcId("npc_1") },
       }),
       proposal: makeProposal({
-        npcLine: { npcId: "npc_1", text: "旧案我会说清楚。你先听我把线索交代完。", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [] },
+        npcLine: { npcId: "npc_1", text: "旧案我会说清楚。你先听我把线索交代完。", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedEventIds: [] },
       }),
       basedOnRevision: 8,
       existingCandidateEventPool: [],
@@ -1001,7 +1008,7 @@ describe("approveScenePerformance (Task 6)", () => {
         objectiveTarget: { questId: "quest_0", objectiveIndex: 1, entityId: "item_1", entityName: "盟誓印谱" },
       }),
       proposal: makeProposal({
-        npcLine: { npcId: "npc_1", text: "线索已经指向街道。你现在过去，就能赶上留下的痕迹。", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [] },
+        npcLine: { npcId: "npc_1", text: "线索已经指向街道。你现在过去，就能赶上留下的痕迹。", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedEventIds: [] },
         objectiveLink: { questId: "quest_0", objectiveIndex: 1, mode: "progress" },
         choices: [{ candidateId: "candidate_1", label: "我这就去核对。" }],
       }),
@@ -1109,7 +1116,7 @@ describe("approveScenePerformance (Task 6)", () => {
           emotion: "neutral",
           answeredBeatIds: [],
           usedFactIds: [],
-          usedInteractionActionIds: [],
+          usedEventIds: [],
         },
         objectiveLink: { questId: "quest_0", objectiveIndex: 0, mode: "hint" },
         choices: [

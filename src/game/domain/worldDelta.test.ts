@@ -157,6 +157,7 @@ describe("ApprovedWorldDelta", () => {
         },
         startingItemIds: [],
       }),
+      eventDrafts: [],
       previewStoryState: createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(),
         gameLength: "short",
         initialEntityCounts: { locations: 1, npcs: 1, quests: 1, events: 0 },

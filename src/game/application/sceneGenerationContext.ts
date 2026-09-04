@@ -59,7 +59,7 @@ export type NpcSceneContext = {
   readonly sceneVisibleFactIds: readonly FactId[];
   /** 最近交互的规则摘要（不含玩家原文）。 */
   readonly recentInteractionSummaries: readonly string[];
-  /** Task 6：该 NPC 最近交互的 actionId（供审批校验 usedInteractionActionIds 归属）。 */
+  /** Task 6：该 NPC 最近交互的 actionId（供审批校验 usedEventIds 归属）。 */
   readonly recentInteractionActionIds: readonly string[];
   /** Qualitative relation only; cumulative dimensions never enter scene context. */
   readonly relationship: {
@@ -141,7 +141,7 @@ export type ObjectiveTargetRef = {
 
 /**
  * Task 4：本回合已结算的调查方式结果（investigate + player 主动选择时存在）。
- * 从 job.domainEventRange 覆盖的 eventLedger 中解析 fact_discovered 事件；
+ * 从 job.domainEventIds 指向的 committed events 中解析 fact_discovered 事件；
  * 自动揭示（无 approachId）或范围内未命中时不存在。approachLabel 回退"现场调查"。
  */
 export type ResolvedInvestigationContext = {
@@ -620,7 +620,7 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
         hiddenFactCards: [],
         sceneVisibleFactIds: speechAuthority.allowedFactIds,
         recentInteractionSummaries: speechAuthority.recentInteractions.slice(-3).map((h) => h.summary),
-        recentInteractionActionIds: speechAuthority.allowedInteractionActionIds,
+        recentInteractionActionIds: speechAuthority.allowedEventIds.map(String),
         relationship: speechAuthority.relationship === undefined ? {} : {
           stage: speechAuthority.relationship.stage,
           trend: speechAuthority.relationship.trend,
@@ -691,9 +691,10 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
   // approach）时存在；自动揭示（无 approachId）或范围外未命中时不存在。
   const resolvedInvestigation = (() => {
     if (job.actionSummary.kind !== "investigate") return undefined;
-    const upper = Math.min(job.domainEventRange.toLedgerIndexExclusive, ws.eventLedger.length);
-    for (let index = job.domainEventRange.fromLedgerIndex; index < upper; index += 1) {
-      const event = ws.eventLedger[index];
+    const eventById = new Map(ws.eventLedger.map((event) => [String(event.eventId), event]));
+    for (const eventId of job.domainEventIds) {
+      const event = eventById.get(String(eventId));
+      if (event === undefined) return undefined;
       if (event.kind !== "fact_discovered") continue;
       const payload = event.payload as { factId: FactId; approachId?: string; evidenceQuality?: "clean" | "noisy"; tensionDelta?: number };
       if (String(payload.factId) !== String(job.actionSummary.factId)) continue;

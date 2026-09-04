@@ -10,6 +10,7 @@ import type { NarrativeRuntimeState } from "@/game/domain/narrative";
 import { runBoundedAttempts } from "@/game/core/retry";
 import type { AiFailureKind } from "@/game/domain/narrativeGenerationFailure";
 import { buildWorldDeltaEntityContextClosure } from "./entityContextProjection";
+import { commitEventDrafts } from "@/game/domain/eventLedger";
 
 // A next-act package contains five independently unique world entities. A
 // provider repair may correct one named collision at a time, so leave room for
@@ -119,6 +120,14 @@ export async function generatePendingNarrativeBundle(
         // Choice tokens must be forged against that revision, otherwise the
         // read model correctly treats every newly-generated choice as stale.
         basedOnRevision: record.revision + 1,
+        eventContext: {
+          turnId: job.turnId,
+          turnNumber: job.turnNumber,
+          actionId: job.actionId,
+          domainEventIds: job.domainEventIds,
+          episodeKey: String(job.turnId),
+          eventKey: `blueprint_expanded:${job.jobId}:bundle`,
+        },
         now: deps.now,
         ...(deps.auditLink === undefined ? {} : { auditLink: deps.auditLink }),
       });
@@ -195,10 +204,26 @@ export async function generatePendingNarrativeBundle(
     narrative: readyNarrative,
   };
 
+  const eventCommit = commitEventDrafts({
+    ledger: record.worldState.eventLedger,
+    drafts: approved.eventDrafts,
+    source: {
+      turnId: job.turnId,
+      actionId: job.actionId,
+      turnNumber: job.turnNumber,
+      committedAt: deps.now(),
+    },
+    entityStore: approved.nextWorldState.entityStore,
+  });
+  if (!eventCommit.ok) {
+    return { ok: false, code: "AI_RESPONSE_INVALID", failureKind: "AI_RESPONSE_INVALID" };
+  }
+  const nextWorldState = { ...approved.nextWorldState, eventLedger: eventCommit.ledger };
+
   const commitResult = await deps.repository.applyState({
     gameId: record.gameId,
     expectedRevision: record.revision,
-    nextWorldState: approved.nextWorldState,
+    nextWorldState,
     nextStoryState,
   });
 

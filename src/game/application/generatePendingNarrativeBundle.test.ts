@@ -6,8 +6,8 @@ import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { GenerationMetadata } from "@/game/domain/worldEntity";
 import { createWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
-import { asNpcId, asLocationId } from "@/game/domain/worldEntity";
-import { asNarrativeJobId, asTurnId, CommittedNarrativeEvent } from "@/game/domain/events";
+import { asNpcId, asLocationId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
+import { asEpisodeId, asEventId, asNarrativeJobId, asTurnId, CommittedNarrativeEvent } from "@/game/domain/events";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import { createGame, createFixtureOpeningSource } from "./createGame";
@@ -51,7 +51,12 @@ function createMinimalWorldState(): WorldState {
       defeatedEnemyIds: [],
       factions: [],
     },
-    eventLedger: [{ type: "game_initialized", generation: GENERATION } as unknown as CommittedNarrativeEvent],
+    eventLedger: [{
+      eventId: asEventId("turn_test_0:event_1"), sequence: 0, turnId: asTurnId("turn_test_0"), turnNumber: 0,
+      episodeId: asEpisodeId("episode:turn_test_0"), kind: "game_initialized", actorIds: [PLAYER_ENTITY_ID],
+      targetIds: [], locationId: LOC_0, causeEventIds: [], factIds: [], questIds: [], outcome: "neutral",
+      salience: 50, committedAt: "2026-01-01", payload: { type: "game_initialized", generation: GENERATION },
+    } as CommittedNarrativeEvent],
   });
 }
 
@@ -84,7 +89,7 @@ function createPendingJob(): PendingNarrativeJob {
       triggeredEvents: [],
       rejectedEffects: [],
     },
-    domainEventRange: { fromLedgerIndex: 0, toLedgerIndexExclusive: 1 },
+    domainEventIds: [asEventId("turn_test_0:event_1")],
     focusNpcId: asNpcId("npc_0"),
     requestedAt: "2026-01-01T00:00:00.000Z",
     objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
@@ -276,6 +281,7 @@ describe("generatePendingNarrativeBundle", () => {
     const quest = initialized.worldState.quests[0]!;
     const pendingJob: PendingNarrativeJob = {
       ...createPendingJob(),
+      domainEventIds: [initialized.worldState.eventLedger[0]!.eventId],
       focusNpcId: npc.id,
       actionSummary: { kind: "talk", npcId: npc.id },
       objectiveTransition: {
@@ -313,7 +319,7 @@ describe("generatePendingNarrativeBundle", () => {
               segments: [{ beatId: "atmosphere", text: "老酒鬼放下酒坛，等你开口。" }],
               npcLine: {
                 npcId: String(npc.id), text: "这件事不能在街上说。", emotion: "guarded",
-                answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [],
+                answeredBeatIds: [], usedFactIds: [], usedEventIds: [],
               },
               objectiveLink: { questId: String(quest.id), objectiveIndex: 0, mode: "progress" },
               choices: [

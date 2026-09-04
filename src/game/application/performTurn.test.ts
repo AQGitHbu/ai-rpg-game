@@ -21,7 +21,7 @@ import {
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { EventCandidate } from "@/game/domain/candidateEvent";
 import { asLocationId, asNpcId, asGenerationId, asEnemyId, asQuestId, asItemId, asFactId, asEndingId } from "@/game/domain/worldEntity";
-import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
+import { asEventId, asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
@@ -163,14 +163,14 @@ function buildFocusedDialogueStoryState(focusNpcId = asNpcId("npc_1")): StorySta
         turn: 0,
         narration: "老板等着你的回应。",
         usedFactIds: [],
-        npcLine: { npcId: focusNpcId, text: "你怎么看？", emotion: "neutral", usedFactIds: [], usedInteractionActionIds: [] },
+        npcLine: { npcId: focusNpcId, text: "你怎么看？", emotion: "neutral", usedFactIds: [], usedEventIds: [] },
         choices: [
           { choiceToken: support.choice.choiceToken, label: support.choice.label },
           { choiceToken: challenge.choice.choiceToken, label: challenge.choice.label },
         ],
         source: "fixture",
         event: { kind: "dialogue", focusNpcId },
-        npcDialogues: [{ npcId: focusNpcId, npcName: "老板", npcRole: "路人", speechPages: ["你怎么看？"], usedFactIds: [], usedInteractionActionIds: [] }],
+        npcDialogues: [{ npcId: focusNpcId, npcName: "老板", npcRole: "路人", speechPages: ["你怎么看？"], usedFactIds: [], usedEventIds: [] }],
       },
       choiceRegistry: [support.choice, challenge.choice],
     },
@@ -224,7 +224,7 @@ function makePendingJob(): PendingNarrativeJob {
       actionId: "act_existing", status: "success", eventKind: "dialogue",
       facts: [], stateChanges: [], costs: [], rewards: [], triggeredEvents: [], rejectedEffects: [],
     },
-    domainEventRange: { fromLedgerIndex: 0, toLedgerIndexExclusive: 1 },
+    domainEventIds: [asEventId("turn-1:event-1")],
     requestedAt: "2026-01-02",
     objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
     mandatoryBeats: [],
@@ -664,7 +664,7 @@ describe("performTurn 单次 CAS 提交", () => {
     expect(generation.job.turnNumber).toBe(1);
     expect(generation.job.actionSummary).toEqual({ kind: "talk", npcId: "npc_1" });
     expect(generation.job.focusNpcId).toBe("npc_1");
-    expect(generation.job.domainEventRange).toEqual({ fromLedgerIndex: 1, toLedgerIndexExclusive: 2 });
+    expect(generation.job.domainEventIds).toEqual(["act_1:npc_met:npc_1"]);
     expect(generation.job.requestedAt).toBe("2026-01-02");
   });
 
@@ -754,7 +754,7 @@ describe("performTurn 单次 CAS 提交", () => {
             scene: {
               segments: [{ beatId: "arrival", text: "守夜人站在门前。" }],
               event: { kind: "travel", locationId: loc2.id },
-              npcLine: { npcId: npc2.id, text: "来者何人？", emotion: "guarded", usedFactIds: [], usedInteractionActionIds: [], answeredBeatIds: [] },
+              npcLine: { npcId: npc2.id, text: "来者何人？", emotion: "guarded", usedFactIds: [], usedEventIds: [], answeredBeatIds: [] },
               objectiveLink: null,
               choiceSeeds: [
                 { label: "表明身份", action: { type: "talk", npcId: npc2.id, dialogueAct: "support" } },
@@ -1126,7 +1126,7 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
             turn: 1,
             narration: "老板等着你的下一句话。",
             usedFactIds: [],
-            npcLine: { npcId: asNpcId("npc_1"), text: "请继续。", emotion: "neutral", usedFactIds: [], usedInteractionActionIds: [] },
+            npcLine: { npcId: asNpcId("npc_1"), text: "请继续。", emotion: "neutral", usedFactIds: [], usedEventIds: [] },
             choices: [
               { choiceToken: "tok-1", label: "继续询问" },
               { choiceToken: "tok-2", label: "提出质疑" },
@@ -1337,7 +1337,7 @@ describe("performTurn 叙事节拍与目标转换（Task 4）", () => {
 
 // ---------------------------------------------------------------------------
 // Task 3：规则层自动揭示——NPC 交接后同一回合自动发现无 approach 的必经事实，
-// 与 npc_met/quest_completed 一起在单次 CAS 提交，job 覆盖完整 domainEventRange。
+// 与 npc_met/quest_completed 一起在单次 CAS 提交，job 覆盖完整 domainEventIds。
 // ---------------------------------------------------------------------------
 
 describe("performTurn — 自动揭示必经事实（Task 3）", () => {
@@ -1385,6 +1385,10 @@ describe("performTurn — 自动揭示必经事实（Task 3）", () => {
     const generation = pendingNarrative(applied.nextStoryState.narrative);
     expect(generation.status).toBe("provider_pending");
     if (generation.status !== "provider_pending") return;
-    expect(generation.job.domainEventRange).toEqual({ fromLedgerIndex: 1, toLedgerIndexExclusive: 4 });
+    expect(generation.job.domainEventIds).toEqual([
+      "act_handoff:npc_met:npc_1",
+      "act_handoff:fact_discovered:fact_1",
+      "act_handoff:quest_completed:quest_0",
+    ]);
   });
 });

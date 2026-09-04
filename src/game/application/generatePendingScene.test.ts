@@ -3,8 +3,8 @@ import { describe, it, expect, vi } from "vitest";
 import { generatePendingScene } from "./generatePendingScene";
 import { createInitialWorldState, type LocationEntry, type NpcEntry, type WorldFactEntry, type WorldState } from "@/game/domain/worldState";
 import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
-import { asFactId, asItemId, asLocationId, asNpcId, asGenerationId, type GenerationMetadata } from "@/game/domain/worldEntity";
-import { asNarrativeJobId, asTurnId, type CommittedNarrativeEvent } from "@/game/domain/events";
+import { asFactId, asItemId, asLocationId, asNpcId, asGenerationId, PLAYER_ENTITY_ID, type GenerationMetadata } from "@/game/domain/worldEntity";
+import { asEpisodeId, asEventId, asNarrativeJobId, asTurnId, type CommittedNarrativeEvent } from "@/game/domain/events";
 import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
 import {
   createWorldStateFixtureWith,
@@ -63,7 +63,12 @@ const BASE_PROJECTION: EntityCompatibilityProjection = {
   factions: [],
 };
 
-const INITIALIZED_LEDGER: readonly CommittedNarrativeEvent[] = [{ type: "game_initialized", generation: GENERATION } as unknown as CommittedNarrativeEvent];
+const INITIALIZED_LEDGER: readonly CommittedNarrativeEvent[] = [{
+  eventId: asEventId("turn-1:event-1"), sequence: 0, turnId: asTurnId("turn-1"), turnNumber: 0,
+  episodeId: asEpisodeId("episode:turn-1"), kind: "game_initialized", actorIds: [PLAYER_ENTITY_ID],
+  targetIds: [], locationId: loc.id, causeEventIds: [], factIds: [], questIds: [], outcome: "neutral",
+  salience: 50, committedAt: "2026-01-01", payload: { type: "game_initialized", generation: GENERATION },
+}];
 
 function makeWorldState(overrides: WorldStateFixtureOverrides = {}): WorldState {
   return createWorldStateFixtureWith(
@@ -105,7 +110,7 @@ function makeJob(fixture: JobFixture): PendingNarrativeJob {
       triggeredEvents: [],
       rejectedEffects: [],
     },
-    domainEventRange: { fromLedgerIndex: 1, toLedgerIndexExclusive: 2 },
+    domainEventIds: [asEventId("turn-1:event-1")],
     focusNpcId: fixture.focusNpcId !== undefined ? asNpcId(fixture.focusNpcId) : undefined,
     requestedAt: "2026-01-02",
     objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
@@ -334,7 +339,7 @@ describe("generatePendingScene", () => {
               npcId: String(otherNpc.id),
               text: "我不该提起这件秘密，但它确实发生过。",
               usedFactIds: [String(secretFact.factId)],
-              usedInteractionActionIds: [],
+              usedEventIds: [],
             }],
             objectiveLink: null,
             choices,
@@ -407,7 +412,7 @@ describe("generatePendingScene", () => {
         kind: "pending",
         job: makeJob({ summary: { kind: "explore" }, eventKind: "observe" }),
       }),
-      worldState: isolatedWorld,
+      worldState: { ...isolatedWorld, eventLedger: INITIALIZED_LEDGER },
       storyState: {
         ...createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
         narrative: {
@@ -582,7 +587,7 @@ describe("generatePendingScene", () => {
               emotion: "warm",
               answeredBeatIds: ["player_utterance"],
               usedFactIds: [],
-              usedInteractionActionIds: [],
+              usedEventIds: [],
             },
             objectiveLink: null,
             choices: [
@@ -645,7 +650,7 @@ describe("generatePendingScene", () => {
             { beatId: "player_utterance", text: "你提出了你的疑问。" },
             { beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" },
           ],
-          npcLine: { npcId: "npc_1", text: "这件事我也正想说。你先把手里的线索交给我核对。", emotion: "warm", answeredBeatIds: ["player_utterance"], usedFactIds: [], usedInteractionActionIds: [] },
+          npcLine: { npcId: "npc_1", text: "这件事我也正想说。你先把手里的线索交给我核对。", emotion: "warm", answeredBeatIds: ["player_utterance"], usedFactIds: [], usedEventIds: [] },
           objectiveLink: null,
           choices: [
             { candidateId: "candidate_1", label: "支持" },

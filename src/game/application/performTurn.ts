@@ -205,7 +205,7 @@ export async function performTurn(
     record.revision,
     asTurnId(command.actionId),
     command.interaction.kind,
-    { now: deps.now },
+    { now: deps.now, turnId: asTurnId(command.actionId) },
   );
 
   if (!resolved.ok) return { ok: false, code: "ACTION_REJECTED", feedback: resolved.feedback };
@@ -483,10 +483,9 @@ async function commitResolution(input: CommitResolutionInput): Promise<PerformTu
         ? clipPlayerUtterance(input.action.rawText)
         : undefined,
     resolvedEvent: input.primaryResult,
-    domainEventRange: {
-      fromLedgerIndex: input.baseLedgerLength,
-      toLedgerIndexExclusive: input.nextWorldState.eventLedger.length,
-    },
+    domainEventIds: input.nextWorldState.eventLedger
+      .slice(input.baseLedgerLength)
+      .map((event) => event.eventId),
     focusNpcId: input.action.type === "talk" ? input.action.npcId : undefined,
     ...(input.action.type === "talk"
       ? {
