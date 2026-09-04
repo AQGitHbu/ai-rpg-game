@@ -44,7 +44,7 @@
 - 每条 line/dialogue 都必须带 `usedFactIds` 与 `usedInteractionActionIds`（opening 首句 interaction 为空）；`validateNpcSpeechReferences` 拒绝格式错误、重复、未披露、非 speaker 所有或不在当前 authority allowlist 的引用，拒绝整包而非静默裁剪。
 - 焦点块继续只投影最近 5 条结构化 interaction、active goals、关系 stage/trend/open commitments 和有限 evidence；`responseTier` 由规则组件派生，AI 不自行计算 affinity 或关系后果。缺少 authority 或正式 focus 台词时，read model fail closed 到权威 `ask` 入口。
 
-## Plan 4 事件记忆边界（已实现，待验收）
+## Plan 4 事件记忆边界（已实现并合入 main）
 
 - v5 `CommittedNarrativeEvent` 是规则、初始化、world delta、scene write-back 和 battle 的唯一账本记录；v8 `StoryState.memory` 每次提交前由完整 ledger 重建，SQLite reload 会校验 ledger 与 memory 的 deep equality。
 - `retrieveNarrativeMemory` 只接受 Event/Entity/Location/Fact/Quest 等结构化引用，按 required event、任务/事实、实体、因果、地点、显著度、sequence 和 episode ID 稳定排序；`renderNarrativeMemory` 只生成有界 memory cards。

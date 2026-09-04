@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "phase": "structured-events-episodic-memory",
-  "status": "implemented",
-  "implementationStatus": "implemented",
+  "status": "completed",
+  "implementationStatus": "merged",
   "targetBranch": "codex/structured-events-episodic-memory",
   "worktreeName": "structured-events-episodic-memory",
   "repositories": ["ai-rpg-game"],

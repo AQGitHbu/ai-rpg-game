@@ -12,7 +12,7 @@
 |---|---|---|---|
 | 共享基础设施 | `共同规范/共享模块开发流程.md` | `共同规范/共享模块目录.json` | 仅按触发条件读取 |
 | 项目脚手架 | `agent/项目脚手架.md` | — | 已建立；提供 `branch:finish` 合并后 worktree/分支收尾入口；SQLite 仓储测试使用每进程独占的 OS 临时目录，兼容 Windows/Git Bash 管道运行 |
-| 当前开发阶段 | `agent/当前开发阶段.md` | `agent/current-phase.json` | 「结构化 Event 与 Episodic Memory」（Plan 4）已实现，机器状态为 `implemented / implemented`，待完整门禁与合并。当前为 WorldState v5 / StoryState v8 / EntityStore v2，目标已落地为稳定 Event ID、参与者/地点/因果/显著度、可重建 Episode、结构化召回和 NPC Event provenance；保持一次生成逐步消费、战败回滚、六个 API 与短/中篇完整可玩。明确排除 Plan 5/6 的 Outline/Arc/scene planning、Plan 7/8 的分段长局与向量索引、misinformation、新 provider 调用和共享 package 改动。Plan 见 `superpowers/plans/2026-09-02-structured-events-episodic-memory.md` |
+| 当前开发阶段 | `agent/当前开发阶段.md` | `agent/current-phase.json` | 「结构化 Event 与 Episodic Memory」（Plan 4）已完成并合入 main，机器状态为 `completed / merged`。当前为 WorldState v5 / StoryState v8 / EntityStore v2，稳定 Event ID、参与者/地点/因果/显著度、可重建 Episode、结构化召回和 NPC Event provenance 已落地；保持一次生成逐步消费、战败回滚、六个 API 与短/中篇完整可玩。明确排除 Plan 5/6 的 Outline/Arc/scene planning、Plan 7/8 的分段长局与向量索引、misinformation、新 provider 调用和共享 package 改动。Plan 见 `superpowers/plans/2026-09-02-structured-events-episodic-memory.md` |
 | NPC 人格、知识与关系图 | `agent/NPC人格知识与关系图.md` | `策划文档/AI生成RPG_MVP.md` §7 | Plan 3 已完成真实 API 中篇验收；Plan 4 已把 knowledge source、relationship evidence、interaction 和 speech references 收敛到真实 Event provenance，并由 ledger 校验；NPC identity/dynamicState/knowledge/relationships/history 仍是唯一组件 |
 | 生产链边界 | `agent/当前开发阶段.md` | — | 只允许无版本后缀的生产命名；旧 route、旧 application/UI 链、兼容 facade、类型隔离和旧存档迁移均不存在。历史文档只作决策记录 |
 | MVP 核心闭环 | `agent/MVP核心闭环.md` | `策划文档/AI生成RPG_MVP.md` | 创建/恢复、选择驱动推进、探索、物品、战斗、分支和多结局可由显式 offline fixture 完整游玩；生产 AI 失败显示 stable failure 并手动重试 |
@@ -125,4 +125,4 @@
 - `retrieveNarrativeMemory` 与 `renderNarrativeMemory` 已接入场景上下文，按结构化引用稳定检索并输出有界 memory cards；完整 ledger、玩家原文、secret Fact 正文、其他 NPC history 和裸关系数值不会进入 Prompt。
 - NPC knowledge、relationship evidence、interaction、battle chain 和 ending cause 均受真实 Event provenance 与顺序校验；battle rollback 不保留失败链，24 回合/4+ reload journey 已覆盖长间隔召回和当前状态优先。
 - provider pending 的 narrative bundle 写回在同一 CAS 前先提交场景事件并重建 `StoryState.memory`，通过 SQLite ledger/memory 一致性校验；真实中篇五幕实机已从新局走到胜利结局。
-- 当前状态为 `implemented / implemented`、待完整门禁和合并；Plan 5/6 的 Outline/Arc/scene planning 与 Plan 7/8 的长篇分段存储、归档、向量索引和 misinformation 仍未实现。
+- 当前状态为 `completed / merged`；Plan 5/6 的 Outline/Arc/scene planning 与 Plan 7/8 的长篇分段存储、归档、向量索引和 misinformation 仍未实现。

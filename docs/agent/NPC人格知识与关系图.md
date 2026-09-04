@@ -1,10 +1,10 @@
-# NPC 人格、知识与关系图（Plan 3/4 已实现，待验收）
+# NPC 人格、知识与关系图（Plan 3/4 已实现并合入 main）
 
 ## 系统定位
 
 Plan 3 将 NPC 的固定人格、动态状态、知识来源、结构化交互、承诺和 NPC→玩家 / NPC→NPC 有向关系边收敛到 Entity Store 的唯一权威组件。对话、调查、赠物、明确 NPC 任务和共同战斗都读取同一投影；AI 只能在创建 NPC 时提出有界材料，不能直接修改既有 NPC 或提交关系数值。
 
-Plan 3 已合入 `main`；Plan 4 在当前目标分支中已实现 Event provenance、账本完整性与长间隔记忆回归，完整门禁和合并仍待验收。
+Plan 3 与 Plan 4 均已合入 `main`；Plan 4 的 Event provenance、账本完整性与长间隔记忆回归已通过完整门禁。
 
 ## 权威组件
 
@@ -71,7 +71,7 @@ Plan 3 已合入 `main`；Plan 4 在当前目标分支中已实现 Event provena
 
 ## 最近维护
 
-2026-09-04：Plan 4 已将 NPC knowledge、relationship evidence、interaction 与 speech references 接入真实 Event provenance，并由完整 ledger validation 与长间隔 journey 覆盖；完整门禁与合并仍待验收。
+2026-09-04：Plan 4 已将 NPC knowledge、relationship evidence、interaction 与 speech references 接入真实 Event provenance，并由完整 ledger validation 与长间隔 journey 覆盖；完整门禁通过并已合入 main。
 
 2026-09-02：Plan 3 代码、离线门禁、真实 API 中篇回归、全量测试与生产构建验收完成并已位于 main；阶段已收尾，后续开发入口切换到 Plan 4。
 
