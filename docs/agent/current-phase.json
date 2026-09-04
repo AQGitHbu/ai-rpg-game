@@ -42,6 +42,7 @@
     "npm test -- src/game/application/testing/livingOutlineJourney.test.ts src/game/application/testing/episodicMemoryJourney.test.ts src/game/application/testing/npcContinuityJourney.test.ts src/game/application/testing/narrativeGroundingJourney.test.ts src/game/application/testing/investigationChoiceJourney.test.ts src/game/application/testing/dynamicMaterializationJourney.test.ts src/game/application/testing/mediumActJourney.test.ts src/game/application/testing/storyDivergenceJourney.test.ts",
     "npm run build",
     "git diff --check",
-    "npm run phase:status"
+    "npm run handoff:check:docs",
+    "npm run handoff:check"
   ]
 }
