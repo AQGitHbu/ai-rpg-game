@@ -6,6 +6,7 @@ import {
   derivePacingNeed,
 } from "./storyState";
 import { asLocationId } from "./worldEntity";
+import { createEmptyEpisodicMemory } from "./episodicMemory";
 
 const initialNarrative = {
   status: "ready",
@@ -30,16 +31,18 @@ const initialInput = {
 } as const;
 
 describe("StoryState", () => {
-  it("initializes the v7 schema at turn zero with the supplied runtime", () => {
+  it("initializes the v8 schema at turn zero with the supplied runtime and empty memory", () => {
     const ss = createInitialStoryState(initialInput);
 
-    expect(STORY_STATE_SCHEMA_VERSION).toBe(7);
-    expect(ss.version).toBe(7);
+    expect(STORY_STATE_SCHEMA_VERSION).toBe(8);
+    expect(ss.version).toBe(8);
     expect(ss.turnNumber).toBe(0);
     expect(ss.narrative).toBe(initialNarrative);
+    expect(ss.memory).toEqual(createEmptyEpisodicMemory());
   });
 
-  it("classifies legacy v2/v3/v4/v5/v6 without silently migrating them", () => {
+  it("classifies legacy v1-v7 without silently migrating them", () => {
+    expect(classifyStoryStateSchemaVersion(1)).toEqual({ ok: false, code: "UNSUPPORTED_RECORD" });
     expect(classifyStoryStateSchemaVersion(2)).toEqual({
       ok: false,
       code: "UNSUPPORTED_RECORD",
@@ -60,10 +63,8 @@ describe("StoryState", () => {
       ok: false,
       code: "UNSUPPORTED_RECORD",
     });
-    expect(classifyStoryStateSchemaVersion(7)).toEqual({
-      ok: true,
-      version: 7,
-    });
+    expect(classifyStoryStateSchemaVersion(7)).toEqual({ ok: false, code: "UNSUPPORTED_RECORD" });
+    expect(classifyStoryStateSchemaVersion(8)).toEqual({ ok: true, version: 8 });
   });
 
   it("createInitialStoryState sets act=1, tension=30, reveal", () => {

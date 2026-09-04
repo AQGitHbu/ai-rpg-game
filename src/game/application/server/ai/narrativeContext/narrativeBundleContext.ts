@@ -21,6 +21,7 @@ import {
   type NarrativePromptCompilation,
 } from "./contextBlock";
 import { createNarrativePromptCompilation } from "./renderNarrativeContext";
+import type { EpisodicMemoryState } from "@/game/domain/episodicMemory";
 
 export const NARRATIVE_BUNDLE_CONTEXT_MAX_ESTIMATED_TOKENS = 8_000;
 
@@ -95,10 +96,12 @@ function clipText(text: string, max: number): string {
   return chars.length <= max ? text : `${chars.slice(0, max).join("")}……`;
 }
 
-function isRecentBeat(value: unknown): value is { readonly turn: number; readonly kind: string; readonly summary: string } {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const beat = value as Record<string, unknown>;
-  return Number.isFinite(beat.turn) && typeof beat.kind === "string" && typeof beat.summary === "string";
+function recentBeatsFromMemory(memory: EpisodicMemoryState): readonly { readonly turn: number; readonly kind: string; readonly summary: string }[] {
+  return memory.episodes.slice(-5).map((episode) => ({
+    turn: episode.toTurn,
+    kind: episode.summaryKeys[0] ?? episode.kind,
+    summary: episode.summaryKeys.join(" / "),
+  }));
 }
 
 function focusNpcContent(worldState: WorldState, job: PendingNarrativeJob): string {
@@ -199,7 +202,7 @@ export function buildDecisionNarrativeContextBlocks(
     ? undefined
     : worldState.npcs.find((npc) => String(npc.id) === String(job.focusNpcId));
   const previousScene = recentScene(storyState);
-  const recentBeats = storyState.recentBeats.filter(isRecentBeat).slice(-5);
+  const recentBeats = recentBeatsFromMemory(storyState.memory);
   const privateFactIds = new Set(worldState.npcs.flatMap((npc) => npc.memory.hiddenFactIds.map(String)));
   const visibleFacts = worldState.worldFacts.filter((fact) =>
     fact.discovered && !privateFactIds.has(String(fact.factId)),

@@ -6,7 +6,8 @@ import { asGameId } from "./server/persistence/gameRepository";
 import { createInitialWorldState, type LocationEntry } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { EventCandidate } from "@/game/domain/candidateEvent";
-import { asLocationId, asGenerationId, asEnemyId } from "@/game/domain/worldEntity";
+import { asLocationId, asGenerationId, asEnemyId, asFactId } from "@/game/domain/worldEntity";
+import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 
@@ -79,20 +80,28 @@ describe("writeBackScene", () => {
     await repo.createInitialGame({ gameId, worldState, storyState, createdAt: "2026-01-01" });
 
     const originalWorldState = getRecord()!.worldState;
+    const nextWorldState: WorldState = {
+      ...originalWorldState,
+      eventLedger: [
+        makeCommittedEvent({ type: "fact_discovered", factId: asFactId("fact_scene") } as never, { sequence: 0 }),
+      ],
+    };
     const newNarrative = { ...storyState.narrative, mode: "ai" as const };
 
     const result = await writeBackScene(repo, {
       gameId,
       expectedRevision: 0,
-      nextWorldState: originalWorldState,
+      nextWorldState,
       nextStoryState: { ...storyState, narrative: newNarrative, candidateEventPool: storyState.candidateEventPool },
     });
 
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.record.storyState.narrative.mode).toBe("ai");
-      expect(result.record.worldState).toBe(originalWorldState);
+      expect(result.record.worldState).toBe(nextWorldState);
       expect(result.record.storyState.tension).toBe(storyState.tension);
+      expect(result.record.storyState.memory.reducedThroughSequence).toBe(0);
+      expect(result.record.storyState.memory.episodes).toHaveLength(1);
     }
   });
 

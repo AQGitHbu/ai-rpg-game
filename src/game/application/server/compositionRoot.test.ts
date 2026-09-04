@@ -16,6 +16,7 @@ import { createServerGameEntryPoints, getServerGameEntryPoints } from "./composi
 import { asGameId, type ApplyStateInput, type GameRecord, type GameRepository } from "./persistence/gameRepository";
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
+import { createEmptyEpisodicMemory } from "@/game/domain/episodicMemory";
 
 describe("getServerGameEntryPoints", () => {
   it("returns one process-wide entry point so route bundles share the narrative ensure lock", () => {
@@ -61,9 +62,7 @@ function createFailedStateFakeRepository(): {
         battle: { status: "idle" },
       } as unknown as WorldState,
       storyState: {
-        recentBeats: [],
-        npcContacts: [],
-        reducedThroughEventCount: 0,
+        memory: createEmptyEpisodicMemory(),
         narrative: generation,
         evolution: { status: "idle" },
       } as unknown as StoryState,

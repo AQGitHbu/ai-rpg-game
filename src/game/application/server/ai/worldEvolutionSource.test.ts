@@ -18,6 +18,8 @@ import type { EvolutionNeed } from "@/game/domain/worldDelta";
 import type { WorldEvolutionSourceContext } from "../../worldEvolutionSource";
 import { bindNpcToTownSlot, createTownRuntime } from "@/game/gameplay/rpg/town";
 import { createWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
+import { rebuildEpisodicMemory } from "@/game/domain/episodicMemory";
+import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
 
 function makeWorld(): WorldState {
   return createInitialWorldState({
@@ -745,14 +747,20 @@ describe("world source 内容修复契约", () => {
       storyState: {
         ...base.storyState,
         nextPacingNeed: "complicate",
-        recentBeats: [{ turn: 1, kind: "npc_met", summary: "遇见客栈掌柜。" }],
+        memory: rebuildEpisodicMemory([
+          makeCommittedEvent({ type: "npc_met", npcId: asNpcId("npc_1") }, {
+            turnNumber: 1,
+            locationId: asLocationId("loc_a"),
+            targetIds: [asNpcId("npc_1")],
+          }),
+        ]),
         contract: { ...base.storyState.contract, centralConflict: "商队失踪牵出内应" },
       },
     });
 
     expect(prompt).toContain("中心冲突=商队失踪牵出内应");
     expect(prompt).toContain("nextPacingNeed=complicate");
-    expect(prompt).toContain("遇见客栈掌柜。");
+    expect(prompt).toContain("npc_met");
     expect(prompt).toContain("追查失踪商队");
     for (const field of ["newItem", "newEnemy", "newFact"]) expect(prompt).toContain(field);
     expect(prompt).not.toContain("eventLedger");

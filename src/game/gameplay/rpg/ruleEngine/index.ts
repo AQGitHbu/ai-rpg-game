@@ -19,8 +19,6 @@ import { advanceStoryProgression } from "./advanceStoryProgression";
 import { approveCandidateEvents, compileCandidateEvent } from "@/game/gameplay/rpg/candidateEvents";
 import { advanceStoryReveal } from "@/game/gameplay/rpg/worldEvolution";
 import { validateEntityStoreProvenance } from "@/game/domain/entity";
-import { reconcileMaterializedView } from "@/game/domain/materializedView";
-import type { RecentBeat, NpcContact } from "@/game/domain/materializedView";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 
 const DIALOGUE_REQUIRED_TURNS = 2;
@@ -290,23 +288,6 @@ export function resolveTurn(
     : { nextWorldState: afterCandidateWs, nextStoryState, drafts: [] as readonly NarrativeEventDraft[] };
   const finalDomainEvents: NarrativeEventDraft[] = [...domainEventsWithCandidate, ...ending.drafts];
 
-  // Step 6: 物化视图增量归约
-  const prevBeats = storyState.recentBeats as readonly RecentBeat[];
-  const prevContacts = storyState.npcContacts as readonly NpcContact[];
-  const prev = { recentBeats: prevBeats, npcContacts: prevContacts, reducedThroughEventCount: storyState.reducedThroughEventCount };
-  const newView = reconcileMaterializedView(
-    prev,
-    ending.nextWorldState.eventLedger,
-    ending.nextWorldState.currentLocationId,
-  );
-
-  const nextStoryStateWithView: StoryState = {
-    ...nextStoryState,
-    recentBeats: newView.recentBeats as readonly unknown[],
-    npcContacts: newView.npcContacts as readonly unknown[],
-    reducedThroughEventCount: newView.reducedThroughEventCount,
-  };
-
   // eventLedger 与 finalDomainEvents 严格对齐：通过 commitEventDrafts 一次提交
   const commitSource: EventCommitSource = {
     turnId,
@@ -356,7 +337,7 @@ export function resolveTurn(
     domainEvents: committedEvents,
     nextWorldState,
     previousStoryState: storyState,
-    nextStoryState: nextStoryStateWithView,
+    nextStoryState,
   });
 
   return { ok: true, resolution };

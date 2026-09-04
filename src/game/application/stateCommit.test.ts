@@ -85,7 +85,7 @@ function buildTestState(): { worldState: WorldState; storyState: StoryState } {
 }
 
 describe("commitState", () => {
-  it("writes state with CAS and reconciles materialized views", async () => {
+  it("writes state with CAS and reconciles episodic memory", async () => {
     const { repo } = createInMemoryRepo();
     const { worldState, storyState } = buildTestState();
     const gameId = asGameId("g1");
@@ -103,7 +103,7 @@ describe("commitState", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.record.revision).toBe(1);
-      expect(result.record.storyState.recentBeats.length).toBeGreaterThan(0);
+      expect(result.record.storyState.memory.episodes.length).toBeGreaterThan(0);
     }
   });
 

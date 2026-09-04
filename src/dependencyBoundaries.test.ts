@@ -786,7 +786,7 @@ describe("server-only modules stay out of client-importable code", () => {
       "game/domain/storyBudget.ts",
       "game/domain/action.ts",
       "game/domain/resolvedEvent.ts",
-      "game/domain/materializedView.ts"
+      "game/domain/episodicMemory.ts"
     ]) {
       const file = resolve(sourceRoot, relative);
       expect(statSync(file).isFile(), relative).toBe(true);

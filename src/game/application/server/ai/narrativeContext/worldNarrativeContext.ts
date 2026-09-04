@@ -7,6 +7,7 @@ import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 import { compileNarrativeContext } from "./compileNarrativeContext";
 import type { NarrativeContextBlock, NarrativePromptCompilation } from "./contextBlock";
 import { createNarrativePromptCompilation } from "./renderNarrativeContext";
+import type { EpisodicMemoryState } from "@/game/domain/episodicMemory";
 
 export const WORLD_CONTEXT_MAX_ESTIMATED_TOKENS = 8_000;
 
@@ -32,12 +33,12 @@ function worldBlock(input: WorldBlockInput): NarrativeContextBlock {
   };
 }
 
-function isRecentBeat(value: unknown): value is RecentBeat {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const record = value as Record<string, unknown>;
-  return Number.isFinite(record.turn)
-    && typeof record.kind === "string"
-    && typeof record.summary === "string";
+function recentBeatsFromMemory(memory: EpisodicMemoryState): readonly RecentBeat[] {
+  return memory.episodes.slice(-5).map((episode) => ({
+    turn: episode.toTurn,
+    kind: episode.summaryKeys[0] ?? episode.kind,
+    summary: episode.summaryKeys.join(" / "),
+  }));
 }
 
 function genreRule(gameType: string): string {
@@ -173,8 +174,7 @@ export function buildWorldNarrativeContextBlocks(
     interaction.summary,
   ])).filter((text) => text.trim() !== "");
   const privateRecentBeatMarkers = [...hiddenFactIds, ...privateFactTexts, ...privateInteractionTexts];
-  const recentBeats = story.recentBeats
-    .filter(isRecentBeat)
+  const recentBeats = recentBeatsFromMemory(story.memory)
     .filter((beat) => !privateRecentBeatMarkers.some((marker) => beat.summary.includes(marker)))
     .slice(-5);
   const neighboringLocationIds = new Set(currentLocation?.connectedLocationIds.map(String) ?? []);

@@ -19,8 +19,9 @@ import {
   PLAYER_ENTITY_ID,
 } from "@/game/domain/worldEntity";
 import type { NpcMemory } from "@/game/domain/worldState";
-import { asNarrativeJobId, asEventId } from "@/game/domain/events";
+import { asNarrativeJobId, asEventId, asTurnId } from "@/game/domain/events";
 import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
+import { rebuildEpisodicMemory } from "@/game/domain/episodicMemory";
 import { createFixtureOpeningCandidateSource } from "../../createGame";
 import { createWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 
@@ -270,7 +271,15 @@ describe("createNarrativeBundleSource", () => {
       currentAct: 2,
       tension: 55,
       nextPacingNeed: "complicate",
-      recentBeats: [{ turn: 4, kind: "fact_discovered", summary: "玩家查到旧账册。" }],
+      memory: rebuildEpisodicMemory([
+        makeCommittedEvent({ type: "fact_discovered", factId: publicFactId }, {
+          turnId: asTurnId("turn:4"),
+          eventId: asEventId("turn:4:fact_discovered"),
+          turnNumber: 4,
+          locationId: asLocationId("loc_0"),
+          factIds: [publicFactId],
+        }),
+      ]),
       contract: {
         version: 1,
         targetActs: 3,
@@ -300,7 +309,7 @@ describe("createNarrativeBundleSource", () => {
     expect(systemPrompt).toContain("currentAct=2");
     expect(systemPrompt).toContain("tension=55");
     expect(systemPrompt).toContain("nextPacingNeed=complicate");
-    expect(systemPrompt).toContain("玩家查到旧账册");
+    expect(systemPrompt).toContain("fact_discovered");
     expect(systemPrompt).toContain("anchors 五个字段都必需");
     expect(systemPrompt).toContain("horizon");
     expect(systemPrompt).toContain("capabilityBoundaries");

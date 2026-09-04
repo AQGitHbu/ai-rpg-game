@@ -537,10 +537,6 @@ describe("performTurn 单次 CAS 提交", () => {
     };
     const story: StoryState = {
       ...baseStory,
-      // The repository's commit boundary keeps the materialized cursor aligned
-      // with the authoritative ledger. Keep this real-game fixture consistent
-      // before asserting an exact rollback snapshot.
-      reducedThroughEventCount: world.eventLedger.length,
       narrative: {
         ...baseStory.narrative,
         currentScene: beforeScene,

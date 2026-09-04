@@ -16,7 +16,10 @@ import type {
   GameRepository,
   GetCurrentGameResult,
 } from "./gameRepository";
-import { STORY_STATE_SCHEMA_VERSION, type StoryState } from "@/game/domain/storyState";
+import {
+  classifyStoryStateSchemaVersion,
+  type StoryState,
+} from "@/game/domain/storyState";
 import { WORLD_STATE_SCHEMA_VERSION } from "@/game/domain/worldState";
 import { parseNarrativeRuntimeState } from "@/game/domain/narrative";
 import { parseOpeningVariationProfile, type OpeningNoveltyRecord } from "@/game/domain/openingNovelty";
@@ -44,8 +47,6 @@ const INITIAL_REVISION = 0;
 
 /** JSON 内部的旧 WorldState 世代（含 v3 单层 npcState 形状与 v4 扁平 GameEvent ledger）：整体按旧存档处理。 */
 const LEGACY_WORLD_SCHEMA_VERSIONS: readonly number[] = [1, 2, 3, 4];
-/** JSON 内部的旧 StoryState 世代。 */
-const LEGACY_STORY_SCHEMA_VERSIONS: readonly number[] = [1, 2, 3, 4, 5, 6];
 
 function isLegacyVersion(value: unknown, legacyVersions: readonly number[]): boolean {
   return typeof value === "number" && Number.isInteger(value) && legacyVersions.includes(value);
@@ -187,14 +188,17 @@ function interpretGameRow(row: Record<string, unknown>): GetCurrentGameResult {
     return corrupt("UNPARSEABLE_RECORD");
   }
 
-  // v4 起 NPC record 携带分层组件；更早的 WorldState / StoryState 世代是旧存档，
+  // v4 起 NPC record 携带分层组件；更早的 WorldState 世代是旧存档，
   // 一律明确归类为 UNSUPPORTED_RECORD（不迁移、不填充默认值、不伪装成损坏内容）。
-  if (isLegacyVersion(worldState["version"], LEGACY_WORLD_SCHEMA_VERSIONS)
-    || isLegacyVersion(storyState["version"], LEGACY_STORY_SCHEMA_VERSIONS)) {
+  if (isLegacyVersion(worldState["version"], LEGACY_WORLD_SCHEMA_VERSIONS)) {
     return corrupt("UNSUPPORTED_RECORD");
   }
-  if (worldState["version"] !== WORLD_STATE_SCHEMA_VERSION || storyState["version"] !== STORY_STATE_SCHEMA_VERSION) {
+  if (worldState["version"] !== WORLD_STATE_SCHEMA_VERSION) {
     return corrupt("VERSION_MISMATCH");
+  }
+  const storySchema = classifyStoryStateSchemaVersion(storyState["version"]);
+  if (!storySchema.ok) {
+    return corrupt(storySchema.code === "UNSUPPORTED_RECORD" ? "UNSUPPORTED_RECORD" : "VERSION_MISMATCH");
   }
   const parsedWorldState = validatePersistableWorldState(worldState);
   if (!parsedWorldState.ok) return corrupt("ENTITY_STATE_INVALID");

@@ -16,6 +16,9 @@ import type { WorldEvolutionSourceContext } from "@/game/application/worldEvolut
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { compileWorldNarrativeContext } from "./worldNarrativeContext";
 import { asEventId } from "@/game/domain/events";
+import { asTurnId } from "@/game/domain/events";
+import { rebuildEpisodicMemory } from "@/game/domain/episodicMemory";
+import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
 
 function makeWorldContext(need: EvolutionNeed) {
   const locA = asLocationId("loc_a");
@@ -160,7 +163,7 @@ function makeWorldContext(need: EvolutionNeed) {
   return {
     worldState: createWorldStateFixture({ generation, projection }),
     storyState: {
-      version: 7,
+      version: 8,
       turnNumber: 7,
       currentAct: 2,
       targetActs: 3,
@@ -181,12 +184,15 @@ function makeWorldContext(need: EvolutionNeed) {
       narrative: createFixtureNarrativeRuntimeState(),
       prologueShown: true,
       prologueText: "",
-      recentBeats: [
-        { turn: 6, kind: "fact_discovered", summary: "账册指向北巷的货运线。" },
-        { turn: 7, kind: "npc_met", summary: "PRIVATE_INTERACTION_MEMORY_MARKER" },
-      ],
-      npcContacts: [],
-      reducedThroughEventCount: 8,
+      memory: rebuildEpisodicMemory([
+        makeCommittedEvent({ type: "fact_discovered", factId: publicFactId }, {
+          turnId: asTurnId("turn:6"),
+          eventId: asEventId("turn:6:fact_discovered"),
+          turnNumber: 6,
+          locationId: locA,
+          factIds: [publicFactId],
+        }),
+      ]),
       contract: {
         version: 1,
         targetActs: 3,
@@ -222,7 +228,7 @@ describe("worldNarrativeContext", () => {
     expect(prompt).toContain("tension=55");
     expect(prompt).toContain("complicate");
     expect(prompt).toContain("追查失踪商队");
-    expect(prompt).toContain("Fact discovered: fact_public");
+    expect(prompt).toContain("fact_discovered");
     expect(prompt).toContain("loc_a=客栈");
     expect(prompt).toContain("npc_1=老板");
   });
@@ -270,7 +276,7 @@ describe("worldNarrativeContext", () => {
     expect(prompt).not.toContain("fact_hidden");
     expect(prompt).not.toContain("UNREVEALED_ID_MARKER");
     expect(prompt).not.toContain("掌柜私下替内应传递密信");
-    expect(prompt).toContain("账册指向北巷的货运线。");
+    expect(prompt).toContain("fact_public");
     expect(JSON.stringify(compileWorldNarrativeContext(makeWorldContext({ kind: "next_act", act: 3 })).manifest))
       .not.toContain("fact_hidden");
     expect(JSON.stringify(compileWorldNarrativeContext(makeWorldContext({ kind: "next_act", act: 3 })).manifest))

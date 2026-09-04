@@ -10,7 +10,7 @@ import type {
   EnemyId,
 } from "@/game/domain/worldEntity";
 import type { NarrativeEmotion } from "@/game/domain/narrative";
-import type { RecentBeat } from "@/game/domain/materializedView";
+import type { EpisodicMemoryState } from "@/game/domain/episodicMemory";
 import type { MandatoryNarrativeBeat, ObjectiveRef, ObjectiveTransition } from "@/game/domain/narrativeBeat";
 import type { WorldState } from "@/game/domain/worldState";
 import { entitiesOfKind, projectEntityStore } from "@/game/domain/entity";
@@ -193,6 +193,16 @@ export type SceneGenerationRepair = {
   readonly attempt: number;
   readonly reason: NarrativeGenerationRepairReason;
 };
+
+type RecentBeat = Readonly<{ turn: number; kind: string; summary: string }>;
+
+function recentBeatsFromMemory(memory: EpisodicMemoryState): readonly RecentBeat[] {
+  return memory.episodes.slice(-5).map((episode) => ({
+    turn: episode.toTurn,
+    kind: episode.summaryKeys[0] ?? episode.kind,
+    summary: episode.summaryKeys.join(" / "),
+  }));
+}
 
 export type SceneGenerationContext = {
   /** 仅用于关联 scene AI 审计事件，不进入 prompt 的世界事实字段。 */
@@ -790,7 +800,7 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
       ...(activeQuest === undefined ? {} : { activeQuest }),
       stylePolicy: buildStylePolicy(ws.generation.setup),
     },
-    recentBeats: (ss.recentBeats as readonly RecentBeat[]).slice(-5),
+    recentBeats: recentBeatsFromMemory(ss.memory),
     legalActionCandidates: ws.battle.status === "active"
       ? [
           { kind: "battle_action" as const, label: "攻击", targetId: "attack" },
