@@ -13,6 +13,7 @@ import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import { createGame, createFixtureOpeningSource } from "./createGame";
 import { asGameId } from "./server/persistence/gameRepository";
 import { projectGameSessionView } from "./gameSessionView";
+import { rebuildEpisodicMemory } from "@/game/domain/episodicMemory";
 
 const GENERATION: GenerationMetadata = {
   generationId: "gen_test" as never,
@@ -341,6 +342,7 @@ describe("generatePendingNarrativeBundle", () => {
     expect(saved.storyState.narrative.choiceRegistry.every((choice) => choice.basedOnRevision === saved.revision)).toBe(true);
     expect(saved.storyState.narrative.dialogueSession).toEqual({ npcId: npc.id, turnCount: 1, requiredTurns: 2, completed: false });
     expect(projectGameSessionView(saved.worldState, saved.storyState, saved.revision, "test-session").narrative.npcDialogues[0]?.choices).toHaveLength(2);
+    expect(saved.storyState.memory).toEqual(rebuildEpisodicMemory(saved.worldState.eventLedger));
   });
 
   it("把审批拒绝码与理由带给第二次尝试，而不是泛化提示", async () => {

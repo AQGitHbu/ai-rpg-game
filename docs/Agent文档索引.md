@@ -124,4 +124,5 @@
 - `WorldState.version=5`、`StoryState.version=8`、`EntityStore.version=2` 已在目标 worktree 实现；`CommittedNarrativeEvent` 由 canonical commit helper 统一铸造，完整 ledger 可确定性重建 Episode、近期场景与 NPC contacts。
 - `retrieveNarrativeMemory` 与 `renderNarrativeMemory` 已接入场景上下文，按结构化引用稳定检索并输出有界 memory cards；完整 ledger、玩家原文、secret Fact 正文、其他 NPC history 和裸关系数值不会进入 Prompt。
 - NPC knowledge、relationship evidence、interaction、battle chain 和 ending cause 均受真实 Event provenance 与顺序校验；battle rollback 不保留失败链，24 回合/4+ reload journey 已覆盖长间隔召回和当前状态优先。
+- provider pending 的 narrative bundle 写回在同一 CAS 前先提交场景事件并重建 `StoryState.memory`，通过 SQLite ledger/memory 一致性校验；真实中篇五幕实机已从新局走到胜利结局。
 - 当前状态为 `implemented / implemented`、待完整门禁和合并；Plan 5/6 的 Outline/Arc/scene planning 与 Plan 7/8 的长篇分段存储、归档、向量索引和 misinformation 仍未实现。
