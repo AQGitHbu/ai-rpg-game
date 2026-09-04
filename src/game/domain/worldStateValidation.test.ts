@@ -6,7 +6,8 @@ import type { EndingEntry, LocationEntry } from "./worldEntries";
 import { asCombatantId, type BattleCombatant } from "./combat";
 import type { GenerationMetadata } from "./worldEntity";
 import type { BattleState } from "./worldState";
-import { validateWorldStateEntityReferences } from "./worldStateValidation";
+import { validateWorldStateEntityReferences, validateWorldStateEventLedger } from "./worldStateValidation";
+import { makeCommittedEvent } from "./testing/committedEventFactory";
 import { createWorldStateFixture } from "./testing/worldStateFixture.testutil";
 import type { EntityCompatibilityProjection } from "./entity/entityProjection";
 
@@ -216,5 +217,36 @@ describe("WorldState 层 Entity 引用校验", () => {
       endings: ending([]),
       ending: { endingId: asEndingId("ending_0"), outcome: "success" },
     }))).toEqual([]);
+  });
+});
+
+describe("WorldState event ledger 完整性校验", () => {
+  it("拒绝重复 eventId、sequence gap 与 future cause", () => {
+    const first = makeCommittedEvent({ type: "player_intent_expressed", intentCode: "unmapped_freeform" }, { sequence: 0 });
+    const duplicate = makeCommittedEvent({ type: "player_intent_expressed", intentCode: "unmapped_freeform" }, {
+      sequence: 1,
+      eventId: first.eventId,
+    });
+    expect(validateWorldStateEventLedger([first, duplicate]).map((issue) => issue.code)).toEqual(["duplicate_event_id"]);
+
+    const future = makeCommittedEvent({ type: "player_intent_expressed", intentCode: "unmapped_freeform" }, { sequence: 1 });
+    const prior = makeCommittedEvent({ type: "player_intent_expressed", intentCode: "unmapped_freeform" }, { sequence: 0, causeEventIds: [future.eventId] });
+    expect(validateWorldStateEventLedger([prior, future]).map((issue) => issue.code)).toEqual(["future_cause_event"]);
+
+    const gap = makeCommittedEvent({ type: "player_intent_expressed", intentCode: "unmapped_freeform" }, { sequence: 3 });
+    expect(validateWorldStateEventLedger([first, gap]).map((issue) => issue.code)).toContain("sequence_gap");
+  });
+
+  it("拒绝 cause 指向不存在的事件与 envelope 中不存在的实体", () => {
+    const event = makeCommittedEvent({ type: "fact_discovered", factId: FACT_0 }, {
+      sequence: 0,
+      causeEventIds: ["missing:1" as never],
+      targetIds: ["npc_missing" as never],
+    });
+    const store = fixture({}).entityStore;
+    expect(validateWorldStateEventLedger([event], store).map((issue) => issue.code)).toEqual([
+      "unknown_cause_event",
+      "unknown_event_entity_ref",
+    ]);
   });
 });

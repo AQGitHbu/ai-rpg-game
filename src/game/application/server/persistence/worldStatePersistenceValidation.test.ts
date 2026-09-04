@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import type { CommittedNarrativeEvent, NarrativeEventPayload } from "@/game/domain/events";
-import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
+import { makeCommittedEvent, resetTestEventSequence } from "@/game/domain/testing/committedEventFactory";
 import { createWorldStateFixtureWith, emptyProjection, updateWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 import { WORLD_STATE_SCHEMA_VERSION } from "@/game/domain/worldState";
 import { asEnemyId, asGenerationId, asLocationId } from "@/game/domain/worldEntity";
+import { projectEntityStore, type NpcEntityRecord } from "@/game/domain/entity";
 import { validatePersistableWorldState } from "./worldStatePersistenceValidation";
 
 const state = () => createWorldStateFixtureWith({
@@ -25,6 +26,7 @@ function stateWithEnemy() {
 }
 
 describe("validatePersistableWorldState", () => {
+  beforeEach(() => resetTestEventSequence());
   it(`accepts v${WORLD_STATE_SCHEMA_VERSION} state and rebuilds compatibility projections from entityStore`, () => {
     const valid = state();
     expect(valid.version).toBe(WORLD_STATE_SCHEMA_VERSION);
@@ -39,6 +41,42 @@ describe("validatePersistableWorldState", () => {
     const valid = state();
     expect(validatePersistableWorldState({ ...valid, version: WORLD_STATE_SCHEMA_VERSION - 1 })).toMatchObject({ ok: false, code: "wrong_world_version" });
     expect(validatePersistableWorldState({ ...valid, version: WORLD_STATE_SCHEMA_VERSION + 1 })).toMatchObject({ ok: false, code: "wrong_world_version" });
+  });
+
+  it("拒绝 ledger 重复 ID、断裂序号、future cause 与未知实体引用", () => {
+    const valid = state();
+    const event = makeCommittedEvent({ type: "player_intent_expressed", intentCode: "unmapped_freeform" }, { sequence: 0 });
+    expect(validatePersistableWorldState({ ...valid, eventLedger: [event, { ...event, sequence: 1 }] })).toMatchObject({ ok: false });
+    expect(validatePersistableWorldState({ ...valid, eventLedger: [{ ...event, sequence: 2 }] })).toMatchObject({ ok: false });
+    expect(validatePersistableWorldState({ ...valid, eventLedger: [{ ...event, targetIds: ["npc_missing"], sequence: 0 }] })).toMatchObject({ ok: false });
+  });
+
+  it("拒绝 NPC provenance 指向未参与该事件的实体", () => {
+    const valid = state();
+    const event = makeCommittedEvent({ type: "player_intent_expressed", intentCode: "unmapped_freeform" }, { sequence: 0 });
+    const withNpc = updateWorldStateFixture(state(), {
+      npcs: [{
+        id: "npc_1" as any, name: "证人", role: "证人", description: "证人", locationId: "loc" as any,
+        isCompanion: false, tags: [], met: true,
+        memory: {
+          npcId: "npc_1" as any, knownFactIds: [], hiddenFactIds: [], interactionHistory: [],
+          relationship: { affinity: 0 }, emotion: "neutral", goals: [],
+        },
+      }],
+    });
+    const entityStore = {
+      ...withNpc.entityStore,
+      records: withNpc.entityStore.records.map((record) => record.core.kind === "npc" && record.core.id === "npc_1"
+        ? { ...(record as NpcEntityRecord), history: { ...(record as NpcEntityRecord).history, interactions: [{
+            turnNumber: 0, actionId: "a", eventId: event.eventId, locationId: "loc" as any,
+            dialogueAct: "freeform" as const, topicSummary: "general", outcome: "neutral" as const, relationshipDelta: 0,
+            learnedFactIds: [], summary: "交互记录",
+          }] } }
+        : record),
+    };
+    expect(validatePersistableWorldState({ ...withNpc, ...projectEntityStore(entityStore), entityStore, eventLedger: [event] })).toMatchObject({
+      ok: false, code: "invalid_entity_store", issueCode: "invalid_event_provenance",
+    });
   });
 
   it("rejects a missing store, duplicate id and compatibility projection tampering", () => {

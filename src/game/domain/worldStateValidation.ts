@@ -1,7 +1,8 @@
 import type { EndingRequirement } from "./worldEntries";
 import type { WorldState } from "./worldState";
-import { entitiesOfKind, validateEntityStoreStructure } from "./entity/entityStore";
+import { entitiesOfKind, validateEntityStoreStructure, type EntityStore } from "./entity/entityStore";
 import { validateEntityReferences } from "./entity/entityProjection";
+import { isWellFormedEventId, type CommittedNarrativeEvent } from "./events";
 
 // ---------------------------------------------------------------------------
 // WorldState 层引用校验：battle 与 endings 对 Entity 的权威引用不在 store 内，
@@ -19,6 +20,73 @@ export type WorldStateEntityReferenceIssue = Readonly<{
   entityId: string;
   referencedId?: string;
 }>;
+
+export type WorldStateEventLedgerIssue = Readonly<{
+  code:
+    | "invalid_event_id"
+    | "duplicate_event_id"
+    | "sequence_gap"
+    | "unknown_cause_event"
+    | "future_cause_event"
+    | "unknown_event_entity_ref";
+  eventId: string;
+  referencedId?: string;
+}>;
+
+/**
+ * Cross-document checks for the v5 append-only ledger. The envelope parser
+ * owns local shape validation; this pass owns identities, causal ordering,
+ * and references that only the entity store can resolve.
+ */
+export function validateWorldStateEventLedger(
+  ledger: readonly CommittedNarrativeEvent[],
+  entityStore?: EntityStore,
+): readonly WorldStateEventLedgerIssue[] {
+  const issues: WorldStateEventLedgerIssue[] = [];
+  const eventById = new Map<string, CommittedNarrativeEvent>();
+  const knownEntityIds = entityStore === undefined
+    ? undefined
+    : new Set(entityStore.records.map((record) => String(record.core.id)));
+
+  for (const [index, event] of ledger.entries()) {
+    const eventId = String(event.eventId);
+    if (!isWellFormedEventId(eventId)) {
+      issues.push({ code: "invalid_event_id", eventId });
+    }
+    if (event.sequence !== index) {
+      issues.push({ code: "sequence_gap", eventId });
+    }
+    if (eventById.has(eventId)) {
+      issues.push({ code: "duplicate_event_id", eventId });
+    } else {
+      eventById.set(eventId, event);
+    }
+  }
+
+  for (const event of ledger) {
+    const eventId = String(event.eventId);
+    for (const causeId of event.causeEventIds) {
+      const cause = eventById.get(String(causeId));
+      if (cause === undefined) {
+        issues.push({ code: "unknown_cause_event", eventId, referencedId: String(causeId) });
+      } else if (cause.sequence >= event.sequence) {
+        issues.push({ code: "future_cause_event", eventId, referencedId: String(causeId) });
+      }
+    }
+    if (knownEntityIds === undefined) continue;
+    for (const referencedId of [...event.actorIds, ...event.targetIds]) {
+      if (!knownEntityIds.has(String(referencedId))) {
+        issues.push({ code: "unknown_event_entity_ref", eventId, referencedId: String(referencedId) });
+      }
+    }
+    for (const referencedId of [event.locationId, ...event.factIds, ...event.questIds]) {
+      if (referencedId !== null && !knownEntityIds.has(String(referencedId))) {
+        issues.push({ code: "unknown_event_entity_ref", eventId, referencedId: String(referencedId) });
+      }
+    }
+  }
+  return issues;
+}
 
 type KnownBattleIds = ReadonlySet<string>;
 

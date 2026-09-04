@@ -20,10 +20,11 @@ import {
   classifyStoryStateSchemaVersion,
   type StoryState,
 } from "@/game/domain/storyState";
-import { WORLD_STATE_SCHEMA_VERSION } from "@/game/domain/worldState";
-import { parseNarrativeRuntimeState } from "@/game/domain/narrative";
+import { classifyWorldStateSchemaVersion, WORLD_STATE_SCHEMA_VERSION } from "@/game/domain/worldState";
+import type { CommittedNarrativeEvent } from "@/game/domain/events";
 import { parseOpeningVariationProfile, type OpeningNoveltyRecord } from "@/game/domain/openingNovelty";
 import { validatePersistableWorldState } from "./worldStatePersistenceValidation";
+import { parsePersistableStoryState } from "./storyStatePersistenceValidation";
 import type { GameTypeId } from "@/game/domain/newGame";
 import type { SqliteClient, SqliteClientFactory, SqliteStatement } from "./sqliteClient";
 
@@ -44,13 +45,6 @@ const GAME_RECORD_VERSION = 1;
 /** 旧 v2 存档的表级 record_version：明确识别为 legacy，不迁移不伪装。 */
 const UNSUPPORTED_RECORD_VERSION = 0;
 const INITIAL_REVISION = 0;
-
-/** JSON 内部的旧 WorldState 世代（含 v3 单层 npcState 形状与 v4 扁平 GameEvent ledger）：整体按旧存档处理。 */
-const LEGACY_WORLD_SCHEMA_VERSIONS: readonly number[] = [1, 2, 3, 4];
-
-function isLegacyVersion(value: unknown, legacyVersions: readonly number[]): boolean {
-  return typeof value === "number" && Number.isInteger(value) && legacyVersions.includes(value);
-}
 
 const SCHEMA_STATEMENTS: readonly SqliteStatement[] = [
   {
@@ -155,6 +149,11 @@ function serializeValidatedWorldState(value: unknown): string | null {
   return validated.ok ? JSON.stringify(validated.value) : null;
 }
 
+function serializeValidatedStoryState(value: unknown, ledger: readonly CommittedNarrativeEvent[]): string | null {
+  const validated = parsePersistableStoryState(value, ledger);
+  return validated.ok ? JSON.stringify(validated.value) : null;
+}
+
 function interpretGameRow(row: Record<string, unknown>): GetCurrentGameResult {
   const gameId = row["game_id"];
   const recordVersion = row["record_version"];
@@ -188,26 +187,20 @@ function interpretGameRow(row: Record<string, unknown>): GetCurrentGameResult {
     return corrupt("UNPARSEABLE_RECORD");
   }
 
-  // v4 起 NPC record 携带分层组件；更早的 WorldState 世代是旧存档，
-  // 一律明确归类为 UNSUPPORTED_RECORD（不迁移、不填充默认值、不伪装成损坏内容）。
-  if (isLegacyVersion(worldState["version"], LEGACY_WORLD_SCHEMA_VERSIONS)) {
-    return corrupt("UNSUPPORTED_RECORD");
-  }
-  if (worldState["version"] !== WORLD_STATE_SCHEMA_VERSION) {
-    return corrupt("VERSION_MISMATCH");
-  }
+  const worldSchema = classifyWorldStateSchemaVersion(worldState["version"]);
+  if (!worldSchema.ok) return corrupt(worldSchema.code === "UNSUPPORTED_RECORD" ? "UNSUPPORTED_RECORD" : "VERSION_MISMATCH");
   const storySchema = classifyStoryStateSchemaVersion(storyState["version"]);
   if (!storySchema.ok) {
     return corrupt(storySchema.code === "UNSUPPORTED_RECORD" ? "UNSUPPORTED_RECORD" : "VERSION_MISMATCH");
   }
   const parsedWorldState = validatePersistableWorldState(worldState);
   if (!parsedWorldState.ok) return corrupt("ENTITY_STATE_INVALID");
-  const parsedNarrative = parseNarrativeRuntimeState(storyState["narrative"]);
-  if (!parsedNarrative.ok) return corrupt("UNPARSEABLE_RECORD");
-  const parsedStoryState = {
-    ...storyState,
-    narrative: parsedNarrative.value,
-  } as unknown as StoryState;
+  const parsedStoryState = parsePersistableStoryState(storyState, parsedWorldState.value.eventLedger);
+  if (!parsedStoryState.ok) {
+    return corrupt(parsedStoryState.code === "UNSUPPORTED_RECORD"
+      ? "UNSUPPORTED_RECORD"
+      : parsedStoryState.code === "VERSION_MISMATCH" ? "VERSION_MISMATCH" : "ENTITY_STATE_INVALID");
+  }
 
   return {
     ok: true,
@@ -215,7 +208,7 @@ function interpretGameRow(row: Record<string, unknown>): GetCurrentGameResult {
     record: {
       gameId: asGameId(gameId),
       worldState: parsedWorldState.value,
-      storyState: parsedStoryState,
+      storyState: parsedStoryState.value,
       revision,
       createdAt,
     },
@@ -270,7 +263,8 @@ export function createSqliteGameRepository(
         }
         const worldStateJson = serializeValidatedWorldState(input.worldState);
         if (worldStateJson === null) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
-        const storyStateJson = JSON.stringify(input.storyState);
+        const storyStateJson = serializeValidatedStoryState(input.storyState, input.worldState.eventLedger);
+        if (storyStateJson === null) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
         await tx.execute({
           sql: `INSERT INTO game_records (game_id, record_version, world_state_json, story_state_json, created_at, revision)
                 VALUES (?, ?, ?, ?, ?, ?)`,
@@ -369,7 +363,8 @@ export function createSqliteGameRepository(
         }
         const worldStateJson = serializeValidatedWorldState(input.worldState);
         if (worldStateJson === null) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
-        const storyStateJson = JSON.stringify(input.storyState);
+        const storyStateJson = serializeValidatedStoryState(input.storyState, input.worldState.eventLedger);
+        if (storyStateJson === null) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
 
         await tx.execute({
           sql: `INSERT INTO game_records (game_id, record_version, world_state_json, story_state_json, created_at, revision)
@@ -460,7 +455,9 @@ export function createSqliteGameRepository(
         }
         const worldStateJson = serializeValidatedWorldState(input.nextWorldState);
         if (worldStateJson === null) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
-        let storyStateJson: string | null = options.preserveAcknowledgedPrologue === true ? null : JSON.stringify(input.nextStoryState);
+        const validatedNextStoryState = parsePersistableStoryState(input.nextStoryState, input.nextWorldState.eventLedger);
+        if (!validatedNextStoryState.ok) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+        let storyStateJson: string | null = options.preserveAcknowledgedPrologue === true ? null : JSON.stringify(validatedNextStoryState.value);
 
         // prologueShown 是只会从 false → true 的展示元数据。场景生成可能在
         // 序幕确认前读取旧快照，因此必须在同一个 write transaction 内读取
@@ -475,8 +472,8 @@ export function createSqliteGameRepository(
             return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
           }
           storyStateJson = JSON.stringify({
-            ...input.nextStoryState,
-            prologueShown: currentStory["prologueShown"] === true || input.nextStoryState.prologueShown,
+            ...validatedNextStoryState.value,
+            prologueShown: currentStory["prologueShown"] === true || validatedNextStoryState.value.prologueShown,
           });
         }
         if (storyStateJson === null) {
@@ -525,11 +522,13 @@ export function createSqliteGameRepository(
         }
         const parsedWorldState = validatePersistableWorldState(worldState);
         if (!parsedWorldState.ok) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+        const parsedStoryState = parsePersistableStoryState(storyState, parsedWorldState.value.eventLedger);
+        if (!parsedStoryState.ok) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
 
         const record: GameRecord = {
           gameId: asGameId(row["game_id"] as string),
           worldState: parsedWorldState.value,
-          storyState: storyState as unknown as StoryState,
+          storyState: parsedStoryState.value,
           revision: row["revision"] as number,
           createdAt: row["created_at"] as string,
         };

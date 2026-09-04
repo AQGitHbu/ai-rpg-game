@@ -2,9 +2,9 @@ import { entitiesOfKind, parseEntityStore, projectEntityStore, validateEntityCom
 import type { EntityCompatibilityProjection, EntityStore } from "@/game/domain/entity";
 import { parseCommittedEventLedger, type CommittedNarrativeEvent } from "@/game/domain/events";
 import type { GenerationMetadata } from "@/game/domain/worldEntity";
-import { WORLD_STATE_SCHEMA_VERSION, type BattleState, type EndingState, type WorldState } from "@/game/domain/worldState";
+import { classifyWorldStateSchemaVersion, WORLD_STATE_SCHEMA_VERSION, type BattleState, type EndingState, type WorldState } from "@/game/domain/worldState";
 import type { EndingEntry } from "@/game/domain/worldEntries";
-import { validateWorldStateEntityReferences } from "@/game/domain/worldStateValidation";
+import { validateWorldStateEntityReferences, validateWorldStateEventLedger } from "@/game/domain/worldStateValidation";
 import {
   MODERN_BATTLE_KEYS,
   hasExactKeys,
@@ -21,7 +21,7 @@ import {
 
 export type PersistableWorldStateValidationResult =
   | { readonly ok: true; readonly value: WorldState }
-  | { readonly ok: false; readonly code: "wrong_world_version" | "invalid_world_envelope" | "invalid_entity_store" | "invalid_entity_reference" | "projection_mismatch"; readonly issueCode?: string; readonly entityId?: string };
+  | { readonly ok: false; readonly code: "wrong_world_version" | "invalid_world_envelope" | "invalid_entity_store" | "invalid_entity_reference" | "invalid_event_ledger" | "projection_mismatch"; readonly issueCode?: string; readonly entityId?: string };
 
 type JsonObject = Record<string, unknown>;
 const PROJECTION_KEYS = ["player", "locations", "currentLocationId", "unlockedLocationIds", "visitedLocationIds", "npcs", "items", "inventory", "worldFacts", "quests", "enemies", "defeatedEnemyIds", "factions"] as const;
@@ -62,7 +62,11 @@ function isGeneration(value: unknown): value is GenerationMetadata {
 
 function isBattleSnapshot(value: unknown): boolean {
   if (!isObject(value) || !hasExactKeys(value, ["entityStore", "eventLedger"]) || !Array.isArray(value.eventLedger)) return false;
-  return parseEntityStore(value.entityStore).ok && parseCommittedEventLedger(value.eventLedger).ok;
+  const store = parseEntityStore(value.entityStore);
+  const ledger = parseCommittedEventLedger(value.eventLedger);
+  if (!store.ok || !ledger.ok) return false;
+  return validateWorldStateEventLedger(ledger.value, store.store).length === 0
+    && validateEntityStoreProvenance(store.store, ledger.value).length === 0;
 }
 
 function findUnknownBattleCompanionReference(
@@ -223,7 +227,7 @@ function isGameEvent(value: unknown): value is CommittedNarrativeEvent {
 /** SQLite 边界唯一接受的 WorldState 解析器（版本与 WORLD_STATE_SCHEMA_VERSION 同源）；兼容投影始终由 store 重建。 */
 export function validatePersistableWorldState(value: unknown): PersistableWorldStateValidationResult {
   if (!isObject(value)) return { ok: false, code: "invalid_world_envelope" };
-  if (value.version !== WORLD_STATE_SCHEMA_VERSION) return { ok: false, code: "wrong_world_version" };
+  if (!classifyWorldStateSchemaVersion(value.version).ok) return { ok: false, code: "wrong_world_version" };
   if (!hasExactKeys(value, WORLD_KEYS) || !isGeneration(value.generation) || !isBattle(value.battle) || !Array.isArray(value.endings) || !value.endings.every(isEndingEntry) || !isEndingState(value.ending) || !Array.isArray(value.eventLedger)) {
     return { ok: false, code: "invalid_world_envelope" };
   }
@@ -235,6 +239,10 @@ export function validatePersistableWorldState(value: unknown): PersistableWorldS
   const parsedLedger = parseCommittedEventLedger(value.eventLedger);
   if (!parsedLedger.ok) {
     return { ok: false, code: "invalid_world_envelope" };
+  }
+  const ledgerIssue = validateWorldStateEventLedger(parsedLedger.value, parsedStore.store)[0];
+  if (ledgerIssue !== undefined) {
+    return { ok: false, code: "invalid_event_ledger", issueCode: ledgerIssue.code, entityId: ledgerIssue.eventId };
   }
   const provenanceIssue = validateEntityStoreProvenance(parsedStore.store, parsedLedger.value)[0];
   if (provenanceIssue !== undefined) {

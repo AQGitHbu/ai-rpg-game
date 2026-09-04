@@ -13,6 +13,7 @@ import type { LocationEntry } from "@/game/domain/worldState";
 import { createWorldStateFixtureWith, emptyProjection, type WorldStateFixtureOverrides } from "@/game/domain/testing/worldStateFixture.testutil";
 import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
 import { createInitialStoryState } from "@/game/domain/storyState";
+import { rebuildEpisodicMemory } from "@/game/domain/episodicMemory";
 import { asLocationId, asGenerationId, asFactId, type GenerationMetadata } from "@/game/domain/worldEntity";
 import { asEventId, asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
@@ -359,7 +360,7 @@ describe("sqliteGameRepository", () => {
         lastPresentedScene: storyState.narrative.status === "ready"
           ? storyState.narrative.currentScene
           : null,
-        failure: { kind: "AI_CALL_FAILED", phase: "scene", failedAt: "2026-01-01" },
+        failure: { kind: "AI_CALL_FAILED", phase: "scene", failedAt: "2026-01-01T00:00:00.000Z" },
       },
     };
     const gameId = asGameId("g-retry-cas");
@@ -783,7 +784,12 @@ describe("sqliteGameRepository：stale 后旧值保留", () => {
           { sequence: initialLedgerLength + i - 1, turnNumber: i, committedAt: `2026-01-01T00:00:${String(i).padStart(2, "0")}Z` },
         )],
       };
-      nextStory = { ...nextStory, turnNumber: i, tension: Math.max(0, 100 - i) };
+      nextStory = {
+        ...nextStory,
+        turnNumber: i,
+        tension: Math.max(0, 100 - i),
+        memory: rebuildEpisodicMemory(nextWorld.eventLedger),
+      };
       const r = await repo.applyState({
         gameId,
         expectedRevision: i - 1,
