@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "phase": "structured-events-episodic-memory",
-  "status": "planned",
-  "implementationStatus": "not_started",
+  "status": "implemented",
+  "implementationStatus": "implemented",
   "targetBranch": "codex/structured-events-episodic-memory",
   "worktreeName": "structured-events-episodic-memory",
   "repositories": ["ai-rpg-game"],
@@ -37,7 +37,7 @@
     "npm test",
     "npm run test:foundation-journey",
     "npm run journey:foundation",
-    "npm test -- src/game/application/testing/episodicMemoryJourney.test.ts src/game/application/testing/npcContinuityJourney.test.ts src/game/application/testing/narrativeGroundingJourney.test.ts src/game/application/testing/dynamicMaterializationJourney.test.ts src/game/application/testing/mediumActJourney.test.ts src/game/application/testing/storyDivergenceJourney.test.ts",
+    "npm test -- src/game/application/testing/episodicMemoryJourney.test.ts src/game/application/testing/npcContinuityJourney.test.ts src/game/application/testing/narrativeGroundingJourney.test.ts src/game/application/testing/investigationChoiceJourney.test.ts src/game/application/testing/dynamicMaterializationJourney.test.ts src/game/application/testing/mediumActJourney.test.ts src/game/application/testing/storyDivergenceJourney.test.ts",
     "npm run build",
     "npm run phase:status"
   ]

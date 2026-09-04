@@ -523,7 +523,9 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     };
     const prompt = buildLiveScenePrompt(context, buildSelectableSceneCandidates(context));
 
-    expect(prompt.indexOf("## [current_resolution]")).toBeLessThan(prompt.indexOf("## [relevant_events]"));
+    const currentResolutionIndex = prompt.indexOf("## [current_resolution]");
+    expect(currentResolutionIndex).toBeGreaterThanOrEqual(0);
+    expect(currentResolutionIndex).toBeLessThan(prompt.indexOf("## [current_location]"));
     expect(prompt).toContain("服务端已结算");
     expect(prompt).toContain("不得改写已结算结果");
 
@@ -763,7 +765,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(prompt).toContain("currentAct=1");
     expect(prompt).toContain("tension=30");
     expect(prompt).toContain("nextPacingNeed=reveal");
-    expect(prompt).toContain("NPC met: npc_1");
+    expect(prompt).toContain("历史交互 Event IDs（不可引用）=[turn-1:interaction-1]");
     expect(prompt).toContain("turn-1:interaction-1");
     expect(prompt).not.toContain("绝不外泄的私密"); // 私密事实正文绝不出现
     expect(prompt).not.toContain("eventLedger");

@@ -550,7 +550,6 @@ describe("episodic memory long-gap journey", () => {
         salience: 80,
       });
       const questCompletedId = ledger.at(-1)!.eventId;
-      let battleStartedId: CommittedNarrativeEvent["eventId"];
       ledger = appendEvent(ledger, { type: "battle_started", enemyId: ENEMY }, {
         key: "turn-24-battle-start",
         turn: 24,
@@ -563,7 +562,7 @@ describe("episodic memory long-gap journey", () => {
         outcome: "neutral",
         salience: 70,
       });
-      battleStartedId = ledger.at(-1)!.eventId;
+      const battleStartedId = ledger.at(-1)!.eventId;
       ledger = appendEvent(ledger, { type: "battle_round_resolved", enemyId: ENEMY, round: 1, playerHp: 90, enemyHp: 18, action: "attack", results: [] }, {
         key: "turn-24-battle-round-1",
         turn: 24,

@@ -19,6 +19,7 @@ import {
   type WorldStateFixtureOverrides,
 } from "@/game/domain/testing/worldStateFixture.testutil";
 import { createInitialStoryState } from "@/game/domain/storyState";
+import { rebuildEpisodicMemory } from "@/game/domain/episodicMemory";
 import type { EventCandidate } from "@/game/domain/candidateEvent";
 import { asLocationId, asNpcId, asGenerationId, asEnemyId, asQuestId, asItemId, asFactId, asEndingId } from "@/game/domain/worldEntity";
 import { asEventId, asNarrativeJobId, asTurnId } from "@/game/domain/events";
@@ -430,15 +431,26 @@ describe("performTurn 单次 CAS 提交", () => {
     };
     const base = buildWorldState();
     const beforeLedger = base.eventLedger;
+    const battleStarted = makeCommittedEvent(
+      { type: "battle_started", enemyId: enemy.id },
+      {
+        eventId: asEventId("battle:rollback"),
+        turnId: asTurnId("battle-start"),
+        sequence: beforeLedger.length,
+        targetIds: [enemy.id],
+        locationId: loc1.id,
+      },
+    );
     const world = buildWorldState({
       enemies: [enemy],
+      eventLedger: [...beforeLedger, battleStarted],
       battle: {
         status: "active",
         enemyId: enemy.id,
         playerHp: 1,
         enemyHp: enemy.stats.hp,
         round: 1,
-        battleKey: "battle-rollback",
+        battleKey: "battle:rollback",
         preBattleSnapshot: {
           entityStore: base.entityStore,
           eventLedger: beforeLedger,
@@ -608,7 +620,10 @@ describe("performTurn 单次 CAS 提交", () => {
     expect(ended).toMatchObject({ ok: true });
     const restored = record();
     if (restored === null) throw new Error("restored record must persist");
-    expect(restored.storyState).toEqual(story);
+    expect(restored.storyState).toEqual({
+      ...story,
+      memory: rebuildEpisodicMemory(world.eventLedger),
+    });
     expect(restored.worldState.eventLedger).toEqual(world.eventLedger);
   });
 
@@ -660,7 +675,10 @@ describe("performTurn 单次 CAS 提交", () => {
     expect(generation.job.turnNumber).toBe(1);
     expect(generation.job.actionSummary).toEqual({ kind: "talk", npcId: "npc_1" });
     expect(generation.job.focusNpcId).toBe("npc_1");
-    expect(generation.job.domainEventIds).toEqual(["act_1:npc_met:npc_1"]);
+    expect(generation.job.domainEventIds).toEqual([
+      "act_1:npc_interaction_recorded:npc_1:act_1",
+      "act_1:npc_met:npc_1",
+    ]);
     expect(generation.job.requestedAt).toBe("2026-01-02");
   });
 
@@ -690,7 +708,7 @@ describe("performTurn 单次 CAS 提交", () => {
       stateChanges: [{ path: "npcs[npc_1].met", description: "与老板交谈", operation: "set" }],
       costs: [],
       rewards: [],
-      triggeredEvents: ["npc_met"],
+      triggeredEvents: ["npc_interaction_recorded", "npc_met"],
       rejectedEffects: [],
     });
     // basedOnRevision 等于提交后的 revision（record.revision = expectedRevision + 1）
@@ -1366,7 +1384,7 @@ describe("performTurn — 自动揭示必经事实（Task 3）", () => {
     const applied = applyCalls()[0]!;
     // 事实发现、任务完成与 npc_met 同回合按序落账（自动事件无 approach 元数据）
     expect(applied.nextWorldState.eventLedger.map((event) => event.kind)).toEqual([
-      "game_initialized", "npc_met", "fact_discovered", "quest_completed",
+      "game_initialized", "npc_interaction_recorded", "npc_met", "fact_discovered", "quest_completed",
     ]);
     const autoEvent = applied.nextWorldState.eventLedger.find((event) => event.kind === "fact_discovered");
     if (autoEvent?.payload.type === "fact_discovered") {
@@ -1382,6 +1400,7 @@ describe("performTurn — 自动揭示必经事实（Task 3）", () => {
     expect(generation.status).toBe("provider_pending");
     if (generation.status !== "provider_pending") return;
     expect(generation.job.domainEventIds).toEqual([
+      "act_handoff:npc_interaction_recorded:npc_1:act_handoff",
       "act_handoff:npc_met:npc_1",
       "act_handoff:fact_discovered:fact_1",
       "act_handoff:quest_completed:quest_0",

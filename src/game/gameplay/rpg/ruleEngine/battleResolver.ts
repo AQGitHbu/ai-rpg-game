@@ -1,5 +1,5 @@
 import type { WorldState, BattleStartSnapshot } from "@/game/domain/worldState";
-import type { EnemyId, PlayerEntityId } from "@/game/domain/worldEntity";
+import type { EnemyId } from "@/game/domain/worldEntity";
 import { asEventId, asTurnId, eventIdFor, type NarrativeEventDraft, type TurnId } from "@/game/domain/events";
 import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import type { StateChange } from "@/game/domain/resolvedEvent";

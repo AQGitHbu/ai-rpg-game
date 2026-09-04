@@ -935,6 +935,22 @@ describe("one canonical executable chain remains", () => {
     expect(existsSync(resolve(repositoryRoot, "public/assets", retiredAssetDirectory))).toBe(false);
   });
 
+  it("keeps event ledger writes and initialization construction canonical", () => {
+    const ledgerWritePatterns = [
+      /eventLedger\s*:\s*\[\s*\.\.\./,
+      /\.eventLedger\s*\.(?:push|concat)\s*\(/,
+    ];
+    const ledgerWriteOffenders = productionFiles
+      .filter((file) => ledgerWritePatterns.some((pattern) => pattern.test(readFileSync(file, "utf8"))))
+      .map(toPosixRelative);
+    expect(ledgerWriteOffenders).toEqual([]);
+
+    const initializationPayloadFiles = productionFiles
+      .filter((file) => /payload:\s*\{\s*type:\s*"game_initialized"/.test(readFileSync(file, "utf8")))
+      .map(toPosixRelative);
+    expect(initializationPayloadFiles).toEqual(["game/domain/eventLedger.ts"]);
+  });
+
   it("has no versioned executable naming outside persisted schema/fixture values", () => {
     const offenders = productionFiles.flatMap((file) => {
       const source = readFileSync(file, "utf8");

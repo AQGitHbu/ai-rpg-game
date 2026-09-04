@@ -14,6 +14,7 @@ export const CROSS_REPO_FAMILY_START_COMMAND =
 
 // 已收尾阶段：分支已合并回 main、worktree 已按规范清理，交接检查转为存档一致性模式。
 export const CLOSED_PHASE_STATUSES = Object.freeze(["completed"]);
+export const IMPLEMENTED_PHASE_STATUS = "implemented";
 
 export function isClosedPhase(config) {
   return CLOSED_PHASE_STATUSES.includes(config.status);
@@ -114,11 +115,14 @@ function runHandoffCheck() {
       );
     }
   } else {
-    if (config.status !== "planned") {
-      failures.push(`当前交接状态应为 planned 或已收尾（completed），实际为 ${config.status}`);
+    if (config.status !== "planned" && config.status !== IMPLEMENTED_PHASE_STATUS) {
+      failures.push(`当前交接状态应为 planned、implemented 或已收尾（completed），实际为 ${config.status}`);
     }
-    if (config.implementationStatus !== "not_started") {
-      failures.push(`当前阶段交接前实现状态应为 not_started，实际为 ${config.implementationStatus}`);
+    if (config.status === "planned" && config.implementationStatus !== "not_started") {
+      failures.push(`planned 阶段实现状态应为 not_started，实际为 ${config.implementationStatus}`);
+    }
+    if (config.status === IMPLEMENTED_PHASE_STATUS && config.implementationStatus !== IMPLEMENTED_PHASE_STATUS) {
+      failures.push(`implemented 阶段实现状态应为 implemented，实际为 ${config.implementationStatus}`);
     }
   }
 

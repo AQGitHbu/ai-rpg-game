@@ -4,6 +4,7 @@ import {
   CLOSED_PHASE_STATUSES,
   CROSS_REPO_FAMILY_REPOSITORIES,
   CROSS_REPO_FAMILY_START_COMMAND,
+  IMPLEMENTED_PHASE_STATUS,
   collectPhasePolicyFailures,
   collectWorktreeConsistencyFailures,
   isClosedPhase,
@@ -126,6 +127,14 @@ test("completed 状态被识别为已收尾阶段", () => {
   assert.equal(isClosedPhase({ status: "completed" }), true);
   assert.equal(isClosedPhase({ status: "in_progress" }), false);
   assert.equal(isClosedPhase({ status: "planned" }), false);
+});
+
+test("implemented/implemented 状态可表示待合并验收阶段", () => {
+  assert.equal(IMPLEMENTED_PHASE_STATUS, "implemented");
+  assert.deepEqual(
+    collectPhasePolicyFailures({ ...legacyConfig, status: "implemented", implementationStatus: "implemented" }, "任意 Plan"),
+    [],
+  );
 });
 
 test("进行中阶段声明的 worktree 必须存在于 git worktree list", () => {

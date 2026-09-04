@@ -30,10 +30,10 @@
   → GameSessionView
 ```
 
-## Narrative Prompt 编译器（2026-08-23，2026-08-30 更新）
+## Narrative Prompt 编译器（2026-08-23，2026-08-30，2026-09-04 更新）
 
 - v7 生产决策路径中，`liveNarrativeBundleSource` 只通过 `compileDecisionNarrativeContext` 生成 Prompt；规则、上下文和完整 narrative bundle schema 的唯一定义在 `narrativeBundleContext.ts` 中，source 不再手工维护第二份决策 Prompt。
-- 决策编译块会投影：题材与规则约束、Story Contract、当前幕/张力/节奏/预算、玩家安全事实、公开事实、强制节拍与 `objectiveLink`、当前位置、焦点 NPC 最近五条结构化交互与响应政策、最近 beats、本回合输入、已占用实体名与物品持有状态、权威 descriptor graph、world delta 约束、上一场景和 repair 指令。
+- 决策编译块会投影：题材与规则约束、Story Contract、当前幕/张力/节奏/预算、玩家安全事实、公开事实、强制节拍与 `objectiveLink`、当前位置、焦点 NPC 最近五条结构化交互与响应政策、最近 beats、本回合输入、已占用实体名与物品持有状态、权威 descriptor graph、world delta 约束、上一场景、结构化 episodic memory cards 和 repair 指令。
 - 决策编译块明确不投影：完整 `GameRecord`、完整 `eventLedger`、其他 NPC 的交互历史、任何 NPC 的私密事实正文、玩家长期自由文本历史、隐藏 registry/effect/debug 结构。
 - 编译产物的 manifest 只进入审计上下文 `context.narrativeContext` 作为元数据；source 不保存第二份 Prompt 副本，也不把渲染后的 Prompt 文本写入存档或 manifest。初始化 opening 分支仍使用现有专用 Prompt，没有 manifest。
 
@@ -43,6 +43,13 @@
 - `secret` Fact 不因 NPC 已知就自动可说；`conditional` Fact 需要允许的关系 stage。其他 NPC 的私密事实正文、其他 NPC history、玩家自由文本和裸关系数字不会进入 prompt、manifest 或台词审批上下文。
 - 每条 line/dialogue 都必须带 `usedFactIds` 与 `usedInteractionActionIds`（opening 首句 interaction 为空）；`validateNpcSpeechReferences` 拒绝格式错误、重复、未披露、非 speaker 所有或不在当前 authority allowlist 的引用，拒绝整包而非静默裁剪。
 - 焦点块继续只投影最近 5 条结构化 interaction、active goals、关系 stage/trend/open commitments 和有限 evidence；`responseTier` 由规则组件派生，AI 不自行计算 affinity 或关系后果。缺少 authority 或正式 focus 台词时，read model fail closed 到权威 `ask` 入口。
+
+## Plan 4 事件记忆边界（已实现，待验收）
+
+- v5 `CommittedNarrativeEvent` 是规则、初始化、world delta、scene write-back 和 battle 的唯一账本记录；v8 `StoryState.memory` 每次提交前由完整 ledger 重建，SQLite reload 会校验 ledger 与 memory 的 deep equality。
+- `retrieveNarrativeMemory` 只接受 Event/Entity/Location/Fact/Quest 等结构化引用，按 required event、任务/事实、实体、因果、地点、显著度、sequence 和 episode ID 稳定排序；`renderNarrativeMemory` 只生成有界 memory cards。
+- Prompt 不包含完整 ledger JSON、玩家原文、secret Fact 正文、其他 NPC history 或裸关系数值。NPC knowledge、relationship evidence、interaction 与台词引用必须指向 ledger 中已提交且顺序正确的 Event。
+- battle rollback 不会把失败尝试写入永久 ledger；后续胜利只通过胜利 battle Episode 与其 cause chain 进入召回。
 
 ## 已冻结约束
 

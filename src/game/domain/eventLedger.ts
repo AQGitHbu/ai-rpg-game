@@ -1,20 +1,15 @@
 import type {
   CommittedNarrativeEvent,
   NarrativeEventDraft,
-  NarrativeEventPayload,
   EventId,
-  EventCauseKey,
   TurnId,
 } from "./events";
-import { eventIdFor, asEventId, asEpisodeId, episodeIdForTurn } from "./events";
+import { eventIdFor, asEpisodeId, asTurnId, episodeIdForTurn } from "./events";
 import type {
-  PlayerEntityId,
-  NpcId,
-  EnemyId,
   LocationId,
-  FactId,
-  QuestId,
+  GenerationMetadata,
 } from "./worldEntity";
+import { PLAYER_ENTITY_ID } from "./worldEntity";
 import type { EntityStore } from "./entity/entityStore";
 
 // ---------------------------------------------------------------------------
@@ -52,6 +47,41 @@ export type EventCommitResult =
       readonly eventIdByKey: ReadonlyMap<string, EventId>;
     }>
   | EventCommitError;
+
+/**
+ * 初始化事件的唯一构造入口。开局调用方只提供已编译的世界 store，
+ * 不再各自手工拼出 game_initialized payload。
+ */
+export function commitInitializationEvent(input: {
+  readonly generation: GenerationMetadata;
+  readonly locationId: LocationId;
+  readonly entityStore: EntityStore;
+  readonly committedAt: string;
+}): EventCommitResult {
+  const turnId = asTurnId(`init:${input.generation.generationId}`);
+  return commitEventDrafts({
+    ledger: [],
+    drafts: [{
+      eventKey: "game_initialized",
+      episodeKey: "initialization",
+      actorIds: [PLAYER_ENTITY_ID],
+      targetIds: [PLAYER_ENTITY_ID],
+      locationId: input.locationId,
+      causeKeys: [],
+      factIds: [],
+      questIds: [],
+      outcome: "neutral",
+      salience: 100,
+      payload: { type: "game_initialized", generation: input.generation },
+    }],
+    source: {
+      turnId,
+      turnNumber: 0,
+      committedAt: input.committedAt,
+    },
+    entityStore: input.entityStore,
+  });
+}
 
 // ---------------------------------------------------------------------------
 // 引用校验辅助
@@ -220,12 +250,6 @@ export function commitEventDrafts(input: {
   }
 
   // Phase 3: 幂等检查 + 追加
-  const existingEventIdByKey = new Map<string, EventId>();
-  for (const e of ledger) {
-    // 从 eventId 中提取 eventKey（格式：turnId:eventKey）
-    // 但我们没有 eventKey → 只能用 eventId 直接比较
-  }
-
   const appended: CommittedNarrativeEvent[] = [];
   const newLedger = [...ledger];
   const eventIdByKey = new Map<string, EventId>();

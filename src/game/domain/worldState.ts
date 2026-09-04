@@ -1,10 +1,8 @@
 import type {
   LocationId, NpcId, ItemId, QuestId, EnemyId, EndingId, GenerationMetadata,
 } from "./worldEntity";
-import { PLAYER_ENTITY_ID } from "./worldEntity";
-import type { CommittedNarrativeEvent, NarrativeEventDraft, NarrativeEventPayload, EventId, TurnId } from "./events";
-import { asTurnId, eventIdFor, episodeIdForTurn } from "./events";
-import { commitEventDrafts, type EventCommitSource } from "./eventLedger";
+import type { CommittedNarrativeEvent } from "./events";
+import { commitInitializationEvent } from "./eventLedger";
 import type { ActiveBattleCombatState } from "./combat";
 import type {
   EnemyEntry, FactionEntry, EndingEntry, ItemEntry, LocationEntry, NpcEntry,
@@ -148,27 +146,6 @@ export function createInitialWorldState(input: {
   // 最小开局状态——只有玩家与起始地点两条 record；其余实体由开局编译追加。
   if (input.startingItemIds.length > 0) throw new InitialWorldStateInvariantError();
 
-  // 使用 commitEventDrafts 构造唯一 initialization Event
-  const turnId = asTurnId(`init:${input.generation.generationId}`);
-  const initDraft: NarrativeEventDraft = {
-    eventKey: "game_initialized",
-    episodeKey: "initialization",
-    actorIds: [PLAYER_ENTITY_ID],
-    targetIds: [PLAYER_ENTITY_ID],
-    locationId: input.startingLocation.id,
-    causeKeys: [],
-    factIds: [],
-    questIds: [],
-    outcome: "neutral",
-    salience: 100,
-    payload: { type: "game_initialized", generation: input.generation },
-  };
-  const source: EventCommitSource = {
-    turnId,
-    turnNumber: 0,
-    committedAt: input.committedAt ?? "1970-01-01T00:00:00Z",
-  };
-
   const ws = createWorldStateFromProjection({
     generation: input.generation,
     projection: {
@@ -189,11 +166,11 @@ export function createInitialWorldState(input: {
     eventLedger: [],
   });
 
-  const commitResult = commitEventDrafts({
-    ledger: [],
-    drafts: [initDraft],
-    source,
+  const commitResult = commitInitializationEvent({
+    generation: input.generation,
+    locationId: input.startingLocation.id,
     entityStore: ws.entityStore,
+    committedAt: input.committedAt ?? "1970-01-01T00:00:00Z",
   });
   if (!commitResult.ok) throw new InitialWorldStateInvariantError();
 

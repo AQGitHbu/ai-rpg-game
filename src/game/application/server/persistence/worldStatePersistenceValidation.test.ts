@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import type { CommittedNarrativeEvent, NarrativeEventPayload } from "@/game/domain/events";
+import type { CommittedNarrativeEvent } from "@/game/domain/events";
 import { makeCommittedEvent, resetTestEventSequence } from "@/game/domain/testing/committedEventFactory";
 import { createWorldStateFixtureWith, emptyProjection, updateWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 import { WORLD_STATE_SCHEMA_VERSION } from "@/game/domain/worldState";
-import { asEnemyId, asGenerationId, asLocationId } from "@/game/domain/worldEntity";
+import { asEnemyId, asGenerationId, asItemId, asLocationId, asNpcId } from "@/game/domain/worldEntity";
 import { projectEntityStore, type NpcEntityRecord } from "@/game/domain/entity";
 import { validatePersistableWorldState } from "./worldStatePersistenceValidation";
 
@@ -52,14 +52,13 @@ describe("validatePersistableWorldState", () => {
   });
 
   it("拒绝 NPC provenance 指向未参与该事件的实体", () => {
-    const valid = state();
     const event = makeCommittedEvent({ type: "player_intent_expressed", intentCode: "unmapped_freeform" }, { sequence: 0 });
     const withNpc = updateWorldStateFixture(state(), {
       npcs: [{
-        id: "npc_1" as any, name: "证人", role: "证人", description: "证人", locationId: "loc" as any,
+        id: asNpcId("npc_1"), name: "证人", role: "证人", description: "证人", locationId: asLocationId("loc"),
         isCompanion: false, tags: [], met: true,
         memory: {
-          npcId: "npc_1" as any, knownFactIds: [], hiddenFactIds: [], interactionHistory: [],
+          npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [],
           relationship: { affinity: 0 }, emotion: "neutral", goals: [],
         },
       }],
@@ -68,7 +67,7 @@ describe("validatePersistableWorldState", () => {
       ...withNpc.entityStore,
       records: withNpc.entityStore.records.map((record) => record.core.kind === "npc" && record.core.id === "npc_1"
         ? { ...(record as NpcEntityRecord), history: { ...(record as NpcEntityRecord).history, interactions: [{
-            turnNumber: 0, actionId: "a", eventId: event.eventId, locationId: "loc" as any,
+            turnNumber: 0, actionId: "a", eventId: event.eventId, locationId: asLocationId("loc"),
             dialogueAct: "freeform" as const, topicSummary: "general", outcome: "neutral" as const, relationshipDelta: 0,
             learnedFactIds: [], summary: "交互记录",
           }] } }
@@ -283,9 +282,9 @@ describe("validatePersistableWorldState", () => {
     const result = validatePersistableWorldState({
       ...valid,
       eventLedger: [
-        makeCommittedEvent({ type: "npc_dialogue_completed", npcId: "npc_1" as any } as unknown as NarrativeEventPayload),
-        makeCommittedEvent({ type: "npc_dialogue_completed", npcId: "npc_1" as any } as unknown as NarrativeEventPayload, { actionId: "dialogue_action" } as Partial<CommittedNarrativeEvent>),
-        makeCommittedEvent({ type: "item_given", itemId: "item_1" as any, npcId: "npc_1" as any, locationId: "loc" as any } as unknown as NarrativeEventPayload, { actionId: "give_action" } as Partial<CommittedNarrativeEvent>),
+        makeCommittedEvent({ type: "npc_dialogue_completed", npcId: asNpcId("npc_1") }),
+        makeCommittedEvent({ type: "npc_dialogue_completed", npcId: asNpcId("npc_1") }, { actionId: "dialogue_action" }),
+        makeCommittedEvent({ type: "item_given", itemId: asItemId("item_1"), npcId: asNpcId("npc_1"), locationId: asLocationId("loc") }, { actionId: "give_action" }),
       ],
     });
     expect(result).toMatchObject({ ok: true });

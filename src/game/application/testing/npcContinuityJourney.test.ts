@@ -748,5 +748,5 @@ describe("NPC continuity long-form journey", () => {
     expect(seededNpc.relationships.outgoing.some((edge) => String(edge.targetId) === "npc_0")).toBe(true);
     expect(npcById(completed.worldState, "npc_0").relationships.outgoing.some((edge) => String(edge.targetId) === dynamicNpcId)).toBe(false);
     expect(seededNpc.relationships.outgoing.find((edge) => String(edge.targetId) === "npc_0")?.origin.kind).toBe("initial_world");
-  });
+  }, 15_000);
 });

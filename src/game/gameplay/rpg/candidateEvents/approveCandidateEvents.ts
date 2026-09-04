@@ -33,7 +33,7 @@ export type ApproveCandidateEventsResult = {
   readonly nextStoryState: StoryState;
 };
 
-export type ApproveCandidateEventsDeps = Readonly<{}>;
+export type ApproveCandidateEventsDeps = Readonly<{ readonly now?: () => string }>;
 
 /** MVP：每回合最多批准 1 条候选事件（Spec §11.3）。 */
 export const MAX_CANDIDATE_APPROVED_PER_TURN = 1;

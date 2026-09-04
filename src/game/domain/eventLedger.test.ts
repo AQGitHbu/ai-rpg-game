@@ -317,7 +317,7 @@ describe("commitEventDrafts: envelope and ID rules", () => {
     const source = buildTurnSource("turn:1", 1);
     const draft: NarrativeEventDraft = {
       ...makeLocationVisitedDraft(),
-      actorIds: ["" as any],
+      actorIds: ["" as unknown as typeof PLAYER_ENTITY_ID],
     };
     const r = commitEventDrafts({ ledger: [], drafts: [draft], source, entityStore: store });
     expect(r.ok).toBe(false);
@@ -339,9 +339,9 @@ describe("commitEventDrafts: envelope and ID rules", () => {
       questIds: [],
       outcome: "success" as const,
       salience: 20,
-      payload: { type: "narrative_choice", choiceToken: "x" } as any, // not in new union
+      payload: { type: "narrative_choice", choiceToken: "x" } as unknown as NarrativeEventPayload, // not in new union
     };
-    const r = commitEventDrafts({ ledger: [], drafts: [draft] as any, source, entityStore: store });
+    const r = commitEventDrafts({ ledger: [], drafts: [draft] as unknown as NarrativeEventDraft[], source, entityStore: store });
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.code).toBe("UNKNOWN_PAYLOAD_TYPE");

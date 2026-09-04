@@ -1,5 +1,4 @@
-import type { CommittedNarrativeEvent, NarrativeEventPayload } from "@/game/domain/events";
-import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
+import { commitInitializationEvent } from "@/game/domain/eventLedger";
 import {
   projectEntityStore,
   type EntityCompatibilityProjection,
@@ -79,9 +78,18 @@ const BASE_PROJECTION: EntityCompatibilityProjection = {
 };
 
 /** 与 createInitialWorldState 一致：开局事件仍在账本里。 */
-const INITIALIZED_LEDGER: readonly CommittedNarrativeEvent[] = [
-  makeCommittedEvent({ type: "game_initialized", generation: GENERATION } as unknown as NarrativeEventPayload),
-];
+const INITIALIZED_WORLD = createWorldStateFixtureWith(
+  { generation: GENERATION, base: BASE_PROJECTION },
+  { eventLedger: [] },
+);
+const INITIALIZATION_COMMIT = commitInitializationEvent({
+  generation: GENERATION,
+  locationId: LOC_1_ID,
+  entityStore: INITIALIZED_WORLD.entityStore,
+  committedAt: "1970-01-01T00:00:00Z",
+});
+if (!INITIALIZATION_COMMIT.ok) throw new Error("narrative context initialization fixture is invalid");
+const INITIALIZED_LEDGER = INITIALIZATION_COMMIT.ledger;
 
 /** 基础世界：客栈 + 老板 + 盟誓印谱 + 野狼 + 未发现事实（外加 loc_1 连通的山道）。 */
 export function baseWorld(overrides: WorldStateFixtureOverrides = {}): WorldState {
