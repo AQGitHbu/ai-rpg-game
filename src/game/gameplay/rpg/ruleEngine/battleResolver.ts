@@ -23,6 +23,13 @@ function battleStartCause(battle: ActiveBattle): NarrativeEventDraft["causeKeys"
   return battle.battleKey === undefined ? [] : [{ kind: "event_id", eventId: asEventId(battle.battleKey) }];
 }
 
+function battleRoundEventKey(enemyId: EnemyId, round: number, ledgerLength: number): string {
+  // A player may submit multiple decisions while the combat state still has
+  // the same logical round. The append position keeps each committed round
+  // event unique while remaining deterministic for a retry of this state.
+  return `battle_round_resolved:${enemyId}:${round}:${ledgerLength}`;
+}
+
 function isModernBattle(battle: ActiveBattle): battle is ActiveBattle & ActiveBattleCombatState {
   return Array.isArray(battle.combatants)
     && Array.isArray(battle.turnOrder)
@@ -75,8 +82,9 @@ function modernResult(
   const hp = snapshotHp(advanced.state.combatants, battle.enemyId);
   const drafts: NarrativeEventDraft[] = [];
   const episodeKey = battle.battleKey ? `battle:${battle.battleKey}` : "turn";
+  const roundEventKey = battleRoundEventKey(battle.enemyId, advanced.state.round, ws.eventLedger.length);
   const roundDraft: NarrativeEventDraft = {
-    eventKey: `battle_round_resolved:${battle.enemyId}:${advanced.state.round}`,
+    eventKey: roundEventKey,
     episodeKey,
     actorIds: [PLAYER_ENTITY_ID],
     targetIds: [battle.enemyId],
@@ -428,7 +436,7 @@ export function battleAction(
 
   if (enemyHp <= 0) {
     // 胜利！不触发反击
-    const roundDraftKey = `battle_round_resolved:${battle.enemyId}:${battle.round}`;
+    const roundDraftKey = battleRoundEventKey(battle.enemyId, battle.round, ws.eventLedger.length);
     drafts.push({
       eventKey: roundDraftKey,
       episodeKey,
@@ -501,7 +509,7 @@ export function battleAction(
 
   if (playerHp <= 0) {
     // 失败
-    const roundDraftKey = `battle_round_resolved:${battle.enemyId}:${battle.round}`;
+    const roundDraftKey = battleRoundEventKey(battle.enemyId, battle.round, ws.eventLedger.length);
     drafts.push({
       eventKey: roundDraftKey,
       episodeKey,
@@ -547,7 +555,7 @@ export function battleAction(
 
   // 战斗继续
   drafts.push({
-    eventKey: `battle_round_resolved:${battle.enemyId}:${battle.round}`,
+  eventKey: battleRoundEventKey(battle.enemyId, battle.round, ws.eventLedger.length),
     episodeKey,
     actorIds: [PLAYER_ENTITY_ID],
     targetIds: [battle.enemyId],

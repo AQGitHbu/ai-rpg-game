@@ -24,7 +24,10 @@ import type { ItemEntry, WorldState } from "@/game/domain/worldState";
 import type { GameRecord } from "@/game/application/server/persistence/gameRepository";
 import { isAllowedRelationshipStageTransition } from "@/game/gameplay/rpg/npcMemory";
 import { performBattleRound } from "@/game/application/performBattleRound";
-import { asNarrativeJobId, asEventId, asTurnId } from "@/game/domain/events";
+import { asNarrativeJobId, asEpisodeId, asEventId, asTurnId } from "@/game/domain/events";
+import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
+import { rebuildEpisodicMemory } from "@/game/domain/episodicMemory";
+import { commitState } from "@/game/application/stateCommit";
 import { createPreparedContinuationState, type PreparedContinuationState } from "@/game/domain/preparedContinuation";
 import type { FactChange } from "@/game/domain/resolvedEvent";
 
@@ -158,13 +161,45 @@ describe("NPC continuity long-form journey", () => {
     journeys.push(journey);
     await settle(journey);
 
-    const openingRecord = await journey.record();
+    const initialOpeningRecord = await journey.record();
+    const initialOpeningNpc = npcById(initialOpeningRecord.worldState, "npc_0");
+    const provenanceEvents = Array.from({ length: 4 }, (_, index) => makeCommittedEvent({
+      type: "npc_met",
+      npcId: initialOpeningNpc.core.id,
+    }, {
+      eventId: asEventId(`journey:opening:npc-met-${index}`),
+      sequence: initialOpeningRecord.worldState.eventLedger.length + index,
+      turnId: asTurnId(`journey:opening:${index}`),
+      turnNumber: index,
+      episodeId: asEpisodeId("episode:opening"),
+      actorIds: [PLAYER_ENTITY_ID],
+      targetIds: [initialOpeningNpc.core.id],
+      locationId: initialOpeningRecord.worldState.currentLocationId,
+      outcome: "success",
+      salience: 50,
+    }));
+    const provenanceLedger = [...initialOpeningRecord.worldState.eventLedger, ...provenanceEvents];
+    const provenanceCommit = await commitState(journey.repo, {
+      gameId: journey.gameId,
+      expectedRevision: initialOpeningRecord.revision,
+      nextWorldState: {
+        ...initialOpeningRecord.worldState,
+        eventLedger: provenanceLedger,
+      },
+      nextStoryState: {
+        ...initialOpeningRecord.storyState,
+        memory: rebuildEpisodicMemory(provenanceLedger),
+      },
+    });
+    if (!provenanceCommit.ok) throw new Error(`开场 provenance event 提交失败：${provenanceCommit.code}`);
+    const openingRecord = provenanceCommit.record;
     const openingNpc = npcById(openingRecord.worldState, "npc_0");
     const opening = {
       anchors: openingNpc.identity.anchors,
       goals: openingNpc.dynamicState.goals,
       knowledgeSources: openingNpc.knowledge.entries.map((entry) => entry.source),
     };
+    const [supportingEventId, threatSupportingEventId, giftSupportingEventId, interactionEventId] = provenanceEvents.map((event) => event.eventId);
 
     const relationshipBase = playerEdge(openingNpc);
     const supportMutation: EntityMutation = {
@@ -173,7 +208,7 @@ describe("NPC continuity long-form journey", () => {
       targetId: PLAYER_ENTITY_ID,
       signal: "supported",
       source: { kind: "action", actionId: "act_task9_support", turnNumber: 1 },
-      supportingEventId: asEventId("evt:test:supporting"),
+      supportingEventId,
     };
     const afterSupportRecord = await commitNpcMutations(journey, [supportMutation]);
     const afterSupport = playerEdge(npcById(afterSupportRecord.worldState, "npc_0"));
@@ -194,7 +229,7 @@ describe("NPC continuity long-form journey", () => {
       targetId: PLAYER_ENTITY_ID,
       signal: "threatened",
       source: { kind: "action", actionId: "act_task9_threat", turnNumber: 2 },
-      supportingEventId: asEventId("evt:test:supporting"),
+      supportingEventId: threatSupportingEventId,
     };
     const afterThreatRecord = await commitNpcMutations(journey, [threatMutation]);
     const afterThreat = playerEdge(npcById(afterThreatRecord.worldState, "npc_0"));
@@ -213,12 +248,12 @@ describe("NPC continuity long-form journey", () => {
         targetId: PLAYER_ENTITY_ID,
         signal: "gave_item",
         source: { kind: "action", actionId: replayableActionId, turnNumber: 3 },
-        supportingEventId: asEventId("evt:test:supporting"),
+        supportingEventId: giftSupportingEventId,
       },
       {
         kind: "record_npc_interaction",
         npcId: openingNpc.core.id,
-        eventId: asEventId("evt:test:interaction"),
+        eventId: interactionEventId,
         turnNumber: 3,
         actionId: replayableActionId,
         locationId: afterThreatRecord.worldState.currentLocationId,
@@ -508,6 +543,33 @@ describe("NPC continuity long-form journey", () => {
 
       if (dynamicNpcId !== undefined && !knowledgeAudienceProved) {
         const dynamic = npcById(record.worldState, dynamicNpcId);
+        let dynamicProvenanceEventId = record.worldState.eventLedger.find((event) =>
+          [...event.actorIds, ...event.targetIds].some((id) => String(id) === dynamicNpcId),
+        )?.eventId;
+        if (dynamicProvenanceEventId === undefined) {
+          const dynamicProvenanceEvent = makeCommittedEvent({ type: "npc_met", npcId: dynamic.core.id }, {
+            eventId: asEventId(`journey:dynamic:npc-met:${dynamicNpcId}`),
+            sequence: record.worldState.eventLedger.length,
+            turnId: asTurnId(`journey:dynamic:${dynamicNpcId}`),
+            turnNumber: record.storyState.turnNumber,
+            episodeId: asEpisodeId(`episode:dynamic:${dynamicNpcId}`),
+            actorIds: [PLAYER_ENTITY_ID],
+            targetIds: [dynamic.core.id],
+            locationId: record.worldState.currentLocationId,
+            outcome: "success",
+            salience: 50,
+          });
+          const dynamicProvenanceLedger = [...record.worldState.eventLedger, dynamicProvenanceEvent];
+          const dynamicProvenanceCommit = await commitState(journey.repo, {
+            gameId: journey.gameId,
+            expectedRevision: record.revision,
+            nextWorldState: { ...record.worldState, eventLedger: dynamicProvenanceLedger },
+            nextStoryState: { ...record.storyState, memory: rebuildEpisodicMemory(dynamicProvenanceLedger) },
+          });
+          if (!dynamicProvenanceCommit.ok) throw new Error(`动态 NPC provenance event 提交失败：${dynamicProvenanceCommit.code}`);
+          record = dynamicProvenanceCommit.record;
+          dynamicProvenanceEventId = dynamicProvenanceEvent.eventId;
+        }
         const privateFactId = asFactId("fact_task9_private_audience");
         const publicFactId = asFactId("fact_task9_public_audience");
         const audienceFacts: readonly FactEntityRecord[] = [
@@ -541,7 +603,7 @@ describe("NPC continuity long-form journey", () => {
             actionId: "act_task9_private_fact",
             turnNumber: record.storyState.turnNumber + 1,
             disclosure: "secret" as const,
-            eventId: asEventId("evt:test:private"),
+            eventId: dynamicProvenanceEventId,
           };
           const openingKnowledgeBeforeAudience = npcById(record.worldState, "npc_0").knowledge;
           const afterPrivate = await commitNpcFactChangeForTest(journey, privateChange, privateRequest);
@@ -570,7 +632,7 @@ describe("NPC continuity long-form journey", () => {
             actionId: "act_task9_public_fact",
             turnNumber: afterPrivate.storyState.turnNumber + 1,
             speakerNpcId: asNpcId("npc_0"),
-            eventId: asEventId("evt:test:public"),
+            eventId: dynamicProvenanceEventId,
           };
           const afterKnowledge = await commitNpcFactChangeForTest(journey, publicChange, publicRequest);
           const afterDynamic = npcById(afterKnowledge.worldState, dynamicNpcId);
@@ -643,7 +705,7 @@ describe("NPC continuity long-form journey", () => {
               targetId: PLAYER_ENTITY_ID,
               signal: "fought_together",
               source: { kind: "action", actionId: fought[0]!.actionId, turnNumber: fought[0]!.turnNumber },
-              supportingEventId: asEventId("evt:test:supporting"),
+              supportingEventId: fought[0]!.supportingEventIds[0]!,
             };
             const replay = applyEntityMutations(afterBattle.worldState, [victoryReplay]);
             expect(replay.ok).toBe(true);

@@ -22,6 +22,7 @@ import { markNarrativeGenerationFailed } from "./markNarrativeGenerationFailed";
 import { runBoundedAttempts } from "@/game/core/retry";
 import { buildWorldDeltaEntityContextClosure } from "./entityContextProjection";
 import { commitEventDrafts } from "@/game/domain/eventLedger";
+import { rebuildEpisodicMemory } from "@/game/domain/episodicMemory";
 
 export type GeneratePendingSceneDeps = {
   readonly repository: GameRepository;
@@ -391,6 +392,7 @@ export async function generatePendingScene(
     nextWorldState: committedScenarioWs,
     nextStoryState: {
       ...scenarioSs,
+      memory: rebuildEpisodicMemory(eventCommit.ledger),
       narrative: {
         status: "ready",
         mode: pendingRuntime.mode,

@@ -11,6 +11,7 @@ import type { GenerationMetadata } from "@/game/domain/worldEntity";
 import { createWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 import type { StoryState } from "@/game/domain/storyState";
 import { createInitialStoryState } from "@/game/domain/storyState";
+import { rebuildEpisodicMemory } from "@/game/domain/episodicMemory";
 import { asFactId, asLocationId, asNpcId, asQuestId, asGenerationId } from "@/game/domain/worldEntity";
 import { asGameId, type GameRecord } from "@/game/application/server/persistence/gameRepository";
 import { createSqliteGameRepository } from "@/game/application/server/persistence/sqliteGameRepository";
@@ -216,12 +217,13 @@ function worldWithApproachlessFact(): WorldState {
   });
 }
 
-function storyWithDiscoverFact(): StoryState {
-  return createInitialStoryState({
+function storyWithDiscoverFact(eventLedger: WorldState["eventLedger"]): StoryState {
+  const story = createInitialStoryState({
     initialNarrative: createFixtureNarrativeRuntimeState(),
     gameLength: "short",
     initialEntityCounts: { locations: 2, npcs: 1, quests: 1, events: 0 },
   });
+  return { ...story, memory: rebuildEpisodicMemory(eventLedger) };
 }
 
 type InvestigationChoiceJourney = {
@@ -249,8 +251,14 @@ async function createInvestigationChoiceJourney(input: { mode: "offline" | "lega
   await repo.initializeSchema();
 
   const { worldState, storyState } = input.mode === "offline"
-    ? { worldState: worldWithApproaches(), storyState: storyWithDiscoverFact() }
-    : { worldState: worldWithApproachlessFact(), storyState: storyWithDiscoverFact() };
+    ? (() => {
+        const worldState = worldWithApproaches();
+        return { worldState, storyState: storyWithDiscoverFact(worldState.eventLedger) };
+      })()
+    : (() => {
+        const worldState = worldWithApproachlessFact();
+        return { worldState, storyState: storyWithDiscoverFact(worldState.eventLedger) };
+      })();
   const created = await repo.createInitialGame({ gameId, worldState, storyState, createdAt: "2026-08-20T00:00:00.000Z" });
   if (!created.ok) throw new Error(`创建旅程失败：${created.code}`);
 
