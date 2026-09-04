@@ -968,3 +968,80 @@ describe("one canonical executable chain remains", () => {
     expect((config.exclude ?? []).filter((entry) => /(?:src|app|api|component|game\/application)/i.test(entry))).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 退役对话模态样式配套守卫（NPC 对话视觉小说覆盖层）。Plan Task 6 删除旧模态样式
+// 用的 grep 门禁只按前缀白名单过滤（npc-dialogue-overlay / -inline-spinner / -spin），
+// 因此「把旧选择器改名进存活前缀」结构上看不见，会静默留下死样式。这里反向钉住
+// 存活面：globals.css 里每个 .npc-dialogue-* 类选择器都必须被生产源码引用，
+// 每个 --npc-dialogue-* 自定义属性与 npc-dialogue-* keyframes 名必须被消费
+// （这三类都不带点前缀，类名守卫结构上看不见）。
+// ---------------------------------------------------------------------------
+
+/** 纯匹配函数：提取 globals.css 里出现过的 .npc-dialogue-* 类名（去重、排序）。 */
+function extractNpcDialogueClasses(css: string): string[] {
+  return [...new Set([...css.matchAll(/\.npc-dialogue-[A-Za-z0-9_-]+/g)].map((match) => match[0].slice(1)))].sort();
+}
+
+/** 纯匹配函数：其中未被任一生产源码文本引用的类名（单独测其非空洞性）。 */
+function findUnconsumedNpcDialogueClasses(css: string, sources: readonly string[]): string[] {
+  return extractNpcDialogueClasses(css).filter((name) => !sources.some((source) => source.includes(name)));
+}
+
+/** 纯匹配函数：提取 globals.css 里「定义」的 --npc-dialogue-* 自定义属性与 npc-dialogue-* keyframes 名（去重、排序）。 */
+function extractNpcDialogueCssTokens(css: string): string[] {
+  const definitions = [
+    ...css.matchAll(/--(npc-dialogue-[A-Za-z0-9_-]+)\s*:/g),
+    ...css.matchAll(/@keyframes\s+(npc-dialogue-[A-Za-z0-9_-]+)/g),
+  ].map((match) => match[1]);
+  return [...new Set(definitions)].sort();
+}
+
+/** 纯匹配函数：token 在 css 中按词边界出现的次数（防止长 token 前缀互相充数）。 */
+function countCssTokenOccurrences(css: string, token: string): number {
+  // 自定义属性 token 恒以 `--` 前缀出现（`--x:` 定义与 `var(--x)` 消费），keyframes 名则裸出现；
+  // `(?:--)?` 同时吸收两种形态，lookaround 排除更长标识符的前后缀。
+  return [...css.matchAll(new RegExp(`(?<![\\w-])(?:--)?${token}(?![\\w-])`, "g"))].length;
+}
+
+/** 纯匹配函数：自定义属性/keyframes 名中定义后从未被消费（CSS 内 var()/animation 或生产源码）的死 token。 */
+function findUnconsumedNpcDialogueCssTokens(css: string, sources: readonly string[]): string[] {
+  return extractNpcDialogueCssTokens(css).filter((token) => countCssTokenOccurrences(css, token) <= 1
+    && !sources.some((source) => source.includes(token)));
+}
+
+describe("retired npc-dialogue styles do not survive in globals.css", () => {
+  const globalsCss = readFileSync(resolve(sourceRoot, "app/globals.css"), "utf8");
+  const productionSources = walk(sourceRoot, false)
+    .filter((file) => toPosixRelative(file) !== "dependencyBoundaries.test.ts")
+    .map((file) => readFileSync(file, "utf8"));
+
+  it("every surviving .npc-dialogue-* class is referenced by production source", () => {
+    expect(findUnconsumedNpcDialogueClasses(globalsCss, productionSources)).toEqual([]);
+  });
+
+  it("catches a renamed dead selector and really sees the overlay block (guard is not vacuous)", () => {
+    // 过闸形态：选择器落在存活前缀内，但没有任何生产源码引用它。
+    expect(
+      findUnconsumedNpcDialogueClasses(".npc-dialogue-overlay-retired-modal { display: none; }", productionSources),
+    ).toEqual(["npc-dialogue-overlay-retired-modal"]);
+    // 扫描面非空：路径或正则空转会让上一条断言变成恒真。
+    const liveClasses = extractNpcDialogueClasses(globalsCss);
+    expect(liveClasses).toContain("npc-dialogue-overlay-box");
+    expect(liveClasses).toContain("npc-dialogue-inline-spinner");
+    expect(liveClasses.length).toBeGreaterThanOrEqual(15);
+  });
+
+  it("every surviving --npc-dialogue-* custom property / npc-dialogue-* keyframes is consumed", () => {
+    const tokens = extractNpcDialogueCssTokens(globalsCss);
+    // 扫描面非空：两类 token 当前都在 globals.css 里真实存活。
+    expect(tokens).toContain("npc-dialogue-overlay-figure-height");
+    expect(tokens).toContain("npc-dialogue-overlay-next-bob");
+    expect(tokens).toContain("npc-dialogue-spin");
+    // 死 token 形态：只有定义处一次出现，CSS 与生产源码都不再引用。
+    expect(findUnconsumedNpcDialogueCssTokens(globalsCss, productionSources)).toEqual([]);
+    const deadProbe = "--npc-dialogue-overlay-retired-modal";
+    const probeCss = `:root { ${deadProbe}: 1px; }`;
+    expect(findUnconsumedNpcDialogueCssTokens(probeCss, productionSources)).toEqual([deadProbe.slice(2)]);
+  });
+});

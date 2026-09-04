@@ -73,6 +73,32 @@ describe("projectGameSessionView", () => {
     return { choiceToken, sceneId, basedOnRevision, label, action, semanticSummary: `approved:${choiceToken}` };
   }
 
+  describe("relationshipTier 投影（五档边界）", () => {
+    function viewWithAffinity(affinity: number) {
+      const nextWorld = {
+        ...ws,
+        npcs: ws.npcs.map((entry) => ({
+          ...entry,
+          memory: { ...entry.memory, relationship: { affinity } },
+        })),
+      };
+      return projectGameSessionView(nextWorld, ss, 0, "test-ending-session");
+    }
+
+    it("按档位边界投影 relationshipTier", () => {
+      expect(viewWithAffinity(-100).currentLocation.npcs[0]?.relationshipTier).toBe("hostile");
+      expect(viewWithAffinity(-60).currentLocation.npcs[0]?.relationshipTier).toBe("hostile");
+      expect(viewWithAffinity(-59).currentLocation.npcs[0]?.relationshipTier).toBe("cold");
+      expect(viewWithAffinity(-20).currentLocation.npcs[0]?.relationshipTier).toBe("cold");
+      expect(viewWithAffinity(-19).currentLocation.npcs[0]?.relationshipTier).toBe("neutral");
+      expect(viewWithAffinity(0).currentLocation.npcs[0]?.relationshipTier).toBe("neutral");
+      expect(viewWithAffinity(19).currentLocation.npcs[0]?.relationshipTier).toBe("neutral");
+      expect(viewWithAffinity(20).currentLocation.npcs[0]?.relationshipTier).toBe("friendly");
+      expect(viewWithAffinity(59).currentLocation.npcs[0]?.relationshipTier).toBe("friendly");
+      expect(viewWithAffinity(60).currentLocation.npcs[0]?.relationshipTier).toBe("trusted");
+    });
+  });
+
   // ── Task 4 fixtures：已审批调查方式 / 无调查方式的事实 ─────────────────────
   const approachFact = {
     factId: asFactId("fact_approach"),

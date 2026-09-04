@@ -10,6 +10,16 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-27-npc-dialogue-ui-vn-overlay-design.md`
 
+## 实现偏差记录（2026-08-29 评审后回填）
+
+全部任务已完成，复选框随实现勾选。以下为与计划代码清单的已确认偏差，最终行为以 `docs/agent/NPC对话驱动叙事场景触发.md` 为准：
+
+- 覆盖层补渲染 NPC 身份行（role）与给予道具分组可见标签（评审 Finding A/B）。
+- 覆盖层补焦点陷阱（Tab/Shift+Tab 循环）与 IME 组合输入守卫（翻页与 Escape 均忽略 `isComposing`）。
+- 好感徽标定位于右上角返回按钮下方（`top: 116px`，窄视口 124px），避开 HUD 顶栏动作按钮；覆盖层支持 Escape 关闭（与关闭按钮同一锁定门禁）。
+- 死样式守卫除 `.npc-dialogue-*` 类名外，也钉住 `--npc-dialogue-*` 自定义属性与 `npc-dialogue-*` keyframes 的存活消费。
+- 计划外搭车提交：`src/app/icon.svg`（favicon 404 修复）与 `eslint.config.mjs`（`tmp/**` 忽略）。
+
 ## Global Constraints
 
 - 分支放 `.worktrees/`，不用 `git checkout` 切分支（`AGENTS.md` 核心约束）。
@@ -46,7 +56,7 @@
 **Files:**
 - 无代码变更；确认 `docs/superpowers/specs/2026-08-27-npc-dialogue-ui-vn-overlay-design.md` 与本 plan 文件均已提交
 
-- [ ] **Step 1: 确认工作区状态并补提交 spec/plan（如未提交）**
+- [x] **Step 1: 确认工作区状态并补提交 spec/plan（如未提交）**
 
 ```bash
 git status --porcelain
@@ -55,7 +65,7 @@ git add "docs/superpowers/specs/2026-08-27-npc-dialogue-ui-vn-overlay-design.md"
 git commit -m "docs: NPC 对话界面重构设计（视觉小说式覆盖层）spec 与实现计划"
 ```
 
-- [ ] **Step 2: 创建 worktree 分支**
+- [x] **Step 2: 创建 worktree 分支**
 
 ```bash
 git worktree add .worktrees/npc-dialogue-overlay-ui -b npc-dialogue-overlay-ui main
@@ -64,7 +74,7 @@ cd .worktrees/npc-dialogue-overlay-ui
 
 若 worktree 内缺少 `.foundation` junction，先执行 `npm run bootstrap:foundation`（仅链接，不复制）。
 
-- [ ] **Step 3: 基线门禁**
+- [x] **Step 3: 基线门禁**
 
 ```bash
 npm ci && npm run typecheck && npm run test:components
@@ -86,7 +96,7 @@ Expected: 全部通过（基线绿）。失败则停止并报告，不进入后�
 - Consumes: `relationshipTierOf(value: RelationshipValue): RelationshipTier`（`@/game/domain/relationship`，纯函数；档位判定 `<=-60` hostile、`<=-20` cold、`<20` neutral、`<60` friendly、其余 trusted）
 - Produces: `GameSessionView["currentLocation"]["npcs"][number]["relationshipTier"]: RelationshipTier`；facade 导出 `RelationshipTier` 类型。后续 Task 2 的徽标与 Task 5 的匹配逻辑消费此字段。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 在 `src/game/application/gameSessionView.test.ts` 的外层 `describe("projectGameSessionView", ...)` **内部**插入新 describe（fixture `ws`/`ss` 定义于 :29-38，文件末尾是另一个顶层 describe，追加到文件末尾会取不到 `ws`；建议插在 `// ── Task 4 fixtures` 注释（约 :50）之前）。该文件既有用例的调用形式为 `projectGameSessionView(ws, ss, 0, "test-ending-session")`（四参：worldState、storyState、revision、endingSessionIdentity）：
 
@@ -120,7 +130,7 @@ Expected: 全部通过（基线绿）。失败则停止并报告，不进入后�
 
 fixture `npc1`（当前地点 loc_1 唯一 NPC）的 `memory.relationship.affinity` 为 `0`（:26）；`ws.npcs.map` 覆写手法与既有用例 :292 一致。不设"缺省回落"用例：`npc.memory.relationship` 在 `WorldState` 类型上必存在，旧存档缺省回落由上游 worldState 迁移保证，投影层没有兜底分支可测。
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 ```bash
 npx vitest run src/game/application/gameSessionView.test.ts -t "relationshipTier"
@@ -128,7 +138,7 @@ npx vitest run src/game/application/gameSessionView.test.ts -t "relationshipTier
 
 Expected: FAIL（`relationshipTier` 为 `undefined` / 类型错误）。
 
-- [ ] **Step 3: 实现投影**
+- [x] **Step 3: 实现投影**
 
 `gameSessionView.ts` 顶部 imports 追加：
 
@@ -155,7 +165,7 @@ import { relationshipTierOf, type RelationshipTier } from "@/game/domain/relatio
         relationshipTier: relationshipTierOf(npc.memory.relationship),
 ```
 
-- [ ] **Step 4: 补齐手搭夹具（必填字段会破坏 typecheck）**
+- [x] **Step 4: 补齐手搭夹具（必填字段会破坏 typecheck）**
 
 `relationshipTier` 是必填字段，所有手搭 `GameSessionView` 字面量的 npcs 条目都会报类型错误（`tsconfig.json` 含 `**/*.tsx`，测试文件同样被 typecheck 覆盖）。运行：
 
@@ -165,7 +175,7 @@ npm run typecheck
 
 以 tsc 报错清单为准逐一修复：给每个手搭夹具的 npcs 条目对象补 `relationshipTier: "neutral"`。已知点位（不止于此，以报错为准）：`src/components/AdventureGameShell.test.tsx` 的 `buildView`（:57 返回类型 `GameSessionView`，npcs 条目见 :73、:445、:500、:545-546、:880、:1676、:1729、:1879-1880）、`src/components/sharedUiContract.test.tsx:45`、`src/game/application/testing/providerTriggerMatrix.test.ts:304`。`npcs: []` 的空数组夹具无需改动。
 
-- [ ] **Step 5: facade 导出**
+- [x] **Step 5: facade 导出**
 
 `src/game/application/index.ts` 追加（与既有 `export type { AiFailureKind } ...` 同区）：
 
@@ -173,7 +183,7 @@ npm run typecheck
 export type { RelationshipTier } from "@/game/domain/relationship";
 ```
 
-- [ ] **Step 6: 运行测试与门禁**
+- [x] **Step 6: 运行测试与门禁**
 
 ```bash
 npx vitest run src/game/application/gameSessionView.test.ts
@@ -182,7 +192,7 @@ npm run test:boundaries && npm run typecheck
 
 Expected: 全部 PASS（夹具已在 Step 4 补齐；`gameSessionView.test.ts:1217` 断言的是 `currentLocation` 顶层键，不受嵌套字段影响）。
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/game/application/gameSessionView.ts src/game/application/gameSessionView.test.ts src/game/application/index.ts src/components/AdventureGameShell.test.tsx src/components/sharedUiContract.test.tsx src/game/application/testing/providerTriggerMatrix.test.ts
@@ -207,11 +217,11 @@ git commit -m "feat(application): 投影 NPC 好感档位 relationshipTier 到�
   - `export function NpcDialogueOverlay(props: NpcDialogueOverlayProps)`
   - Props：`dialogue`（`NpcDialogueView`）、`gameType: NewGameInput["gameType"]`（驱动 `AdventureVisual` 程序化立绘风格，spec §2.1/§3）、`busy: boolean`、`phase: DialoguePhase`、`pendingPlayerResponse: string | null`、`pendingChoiceToken: string | null`、`resetInputNonce: number`、`handoffAcknowledgement: { label: string } | null`、`relationshipTier: RelationshipTier | null`、`onSubmit: (interaction: PlayerInteraction, playerResponse: string) => void`、`onAcknowledge?: () => void`、`onClose: () => void`
 
-- [ ] **Step 1: 迁移等待快照类型与 reducer**
+- [x] **Step 1: 迁移等待快照类型与 reducer**
 
 新建 `NpcDialogueOverlay.tsx`，把 `LocationSceneScreen.tsx:31-54`（`DialogueUiState`、`DialogueUiAction`、`DialoguePhase`、`SubmittedDialogue`）与 `:56-74`（`reduceDialogueUiState`）原样复制过来并全部加 `export`（含 `SubmittedDialogue`，Task 5 编排需要）。`:24` 的 `Dialogue` 别名改为 `export type Dialogue = NpcDialogueView;`（等价类型，避免 import `GameSessionView`）。本任务不改任何逻辑。
 
-- [ ] **Step 2: 写骨架失败测试**
+- [x] **Step 2: 写骨架失败测试**
 
 `NpcDialogueOverlay.test.tsx`：
 
@@ -302,7 +312,7 @@ describe("NpcDialogueOverlay 骨架", () => {
 });
 ```
 
-- [ ] **Step 3: 运行确认失败**
+- [x] **Step 3: 运行确认失败**
 
 ```bash
 npx vitest run src/components/NpcDialogueOverlay.test.tsx
@@ -310,7 +320,7 @@ npx vitest run src/components/NpcDialogueOverlay.test.tsx
 
 Expected: FAIL（组件不存在）。
 
-- [ ] **Step 4: 实现骨架组件**
+- [x] **Step 4: 实现骨架组件**
 
 `NpcDialogueOverlay.tsx` 在迁移的导出之下追加：
 
@@ -427,7 +437,7 @@ export function NpcDialogueOverlay({
 
 注意：`"use client";` 必须位于文件第一行，先于 imports 与 Step 1 迁移来的类型声明（TS 纯类型声明位于指令之后不受影响）；若迁移后首行不是 `"use client"`，把它提到第一行。
 
-- [ ] **Step 5: 新增样式区块**
+- [x] **Step 5: 新增样式区块**
 
 `globals.css` 末尾追加（变量取自 `:1-13`；布局按 spec §2.1）：
 
@@ -460,7 +470,7 @@ export function NpcDialogueOverlay({
 .npc-dialogue-overlay-figure {
   position: absolute;
   left: 5%;
-  bottom: 27%;
+  bottom: 20%;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -474,18 +484,21 @@ export function NpcDialogueOverlay({
   pointer-events: none;
 }
 
+/* spec §2.1：立绘占位约 55% 屏高（旧稿的 19vw 只有约 24% 屏高）。
+   窄屏以 100vw 兜底并保留 226px 下限，宽度始终取高度的 3/4 维持竖版比例。 */
 .npc-dialogue-overlay-avatar {
+  --npc-dialogue-figure-height: clamp(226px, min(55dvh, 100vw), 613px);
   position: relative;
   z-index: 1;
-  width: clamp(120px, 14vw, 190px);
-  height: clamp(160px, 19vw, 255px);
+  height: var(--npc-dialogue-figure-height);
+  width: calc(var(--npc-dialogue-figure-height) * 0.75);
   display: grid;
   place-items: center;
   border: 2px solid var(--game-accent);
   border-radius: 14px 14px 0 0;
   background: var(--game-accent-soft);
   color: var(--game-accent);
-  font-size: clamp(2.4rem, 5vw, 3.6rem);
+  font-size: clamp(2.6rem, 10dvh, 8rem);
   font-weight: 700;
   text-shadow: 0 2px 10px rgb(0 0 0 / 60%);
 }
@@ -548,7 +561,9 @@ export function NpcDialogueOverlay({
 }
 ```
 
-- [ ] **Step 6: 运行测试与类型检查**
+注：立绘尺寸（`--npc-dialogue-figure-height` 的 `min(55dvh, 100vw)` 与宽度 3/4 比例、`bottom: 20%`）按 spec §2.1「立绘占位约 55% 屏高」取值。
+
+- [x] **Step 6: 运行测试与类型检查**
 
 ```bash
 npx vitest run src/components/NpcDialogueOverlay.test.tsx
@@ -557,7 +572,7 @@ npm run typecheck
 
 Expected: PASS。
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/components/NpcDialogueOverlay.tsx src/components/NpcDialogueOverlay.test.tsx src/app/globals.css
@@ -576,7 +591,7 @@ git commit -m "feat(components): NPC 对话覆盖层骨架（对话框/名字横
 - Consumes: Task 2 骨架
 - Produces: 组件内部 `pageIndex` 行为契约——末页才显示选项面板（Task 4 依赖 `isLastPage`）；内容键 = `npcId + "\u0001" + speechPages.join("\u0001")`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 追加到 `NpcDialogueOverlay.test.tsx`：
 
@@ -649,7 +664,7 @@ describe("NpcDialogueOverlay 翻页", () => {
 });
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 ```bash
 npx vitest run src/components/NpcDialogueOverlay.test.tsx
@@ -657,7 +672,7 @@ npx vitest run src/components/NpcDialogueOverlay.test.tsx
 
 Expected: 翻页用例 FAIL（无翻页逻辑）。「点击关闭按钮只关闭、不翻页」在实现翻页前会先行通过，作为回归保护保留。选项面板出现时机（`对话选项`）在 Task 4 落地——本任务没有任何断言依赖面板存在，因此本任务结束时全套测试必须全绿，不允许红着提交。
 
-- [ ] **Step 3: 实现翻页**
+- [x] **Step 3: 实现翻页**
 
 首行 react 导入改为 `import { useState, useEffect, useRef, type KeyboardEvent, type MouseEvent } from "react";`。组件内加入（`locked` 定义之后、return 之前）：
 
@@ -747,7 +762,7 @@ Expected: 翻页用例 FAIL（无翻页逻辑）。「点击关闭按钮只关�
 }
 ```
 
-- [ ] **Step 4: 运行测试**
+- [x] **Step 4: 运行测试**
 
 ```bash
 npx vitest run src/components/NpcDialogueOverlay.test.tsx
@@ -755,7 +770,7 @@ npx vitest run src/components/NpcDialogueOverlay.test.tsx
 
 Expected: 全部 PASS（本任务不含任何依赖选项面板的断言）。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/components/NpcDialogueOverlay.tsx src/components/NpcDialogueOverlay.test.tsx src/app/globals.css
@@ -775,7 +790,7 @@ git commit -m "feat(components): 对话覆盖层点击/键盘翻页与内容键�
 - Consumes: Task 3 的 `isLastPage`、`locked`
 - Produces: 焦点选项（恰好两个固定选择）、赠物、自由输入、startChoice、handoff、闲聊"知道了"、等待快照渲染——全部经 `onSubmit`/`onAcknowledge`/`onClose` 回调，不新增提交路径
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```tsx
 describe("NpcDialogueOverlay 选项面板", () => {
@@ -924,7 +939,7 @@ describe("NpcDialogueOverlay 选项面板", () => {
 });
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 ```bash
 npx vitest run src/components/NpcDialogueOverlay.test.tsx
@@ -932,7 +947,7 @@ npx vitest run src/components/NpcDialogueOverlay.test.tsx
 
 Expected: 新用例 FAIL（选项面板未实现）。
 
-- [ ] **Step 3: 实现选项面板**
+- [x] **Step 3: 实现选项面板**
 
 react 导入补上 `type FormEvent`（变为 `import { useState, useEffect, useRef, type FormEvent, type KeyboardEvent, type MouseEvent } from "react";`）。组件内（`advancePage` 之后）移植原模态的判定与提交逻辑：
 
@@ -1083,7 +1098,7 @@ react 导入补上 `type FormEvent`（变为 `import { useState, useEffect, useR
         className={`npc-dialogue-overlay-box${isAmbientChat ? " npc-dialogue-overlay-box--ambient" : ""}`}
 ```
 
-- [ ] **Step 4: 面板样式追加**
+- [x] **Step 4: 面板样式追加**
 
 ```css
 .npc-dialogue-overlay-panel {
@@ -1179,7 +1194,7 @@ react 导入补上 `type FormEvent`（变为 `import { useState, useEffect, useR
 }
 ```
 
-- [ ] **Step 5: 运行测试与门禁**
+- [x] **Step 5: 运行测试与门禁**
 
 ```bash
 npx vitest run src/components/NpcDialogueOverlay.test.tsx
@@ -1188,7 +1203,7 @@ npm run typecheck
 
 Expected: 全部 PASS。
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/components/NpcDialogueOverlay.tsx src/components/NpcDialogueOverlay.test.tsx src/app/globals.css
@@ -1207,7 +1222,7 @@ git commit -m "feat(components): 对话覆盖层选项面板、自由输入与�
 - Consumes: Task 1 `relationshipTier`、Task 2-4 `NpcDialogueOverlay` 与其导出
 - Produces: 场景视图最终行为——对话期间侧栏/行动栏隐藏、HUD 可见但被覆盖层拦截
 
-- [ ] **Step 1: 删除旧模态与本地类型，改为导入**
+- [x] **Step 1: 删除旧模态与本地类型，改为导入**
 
 `LocationSceneScreen.tsx`：
 
@@ -1228,7 +1243,7 @@ import {
 
 2. 整体删除 `NpcDialogueModal` 函数（约 :245-464）。
 
-- [ ] **Step 2: 渲染覆盖层并隐藏面板**
+- [x] **Step 2: 渲染覆盖层并隐藏面板**
 
 徽标匹配（`displayedDialogue` 定义之后）：
 
@@ -1280,7 +1295,7 @@ import {
 
 其余编排逻辑（`submitDialogueInteractionFor`、revision 同步 effect、busy 恢复 effect、`handleNpcCardClick`、测试环境自动打开 `initialOpenDialogueNpcId`）一律不动。
 
-- [ ] **Step 3: 新增覆盖层集成用例（spec §5 徽标匹配、§7 面板取舍）**
+- [x] **Step 3: 新增覆盖层集成用例（spec §5 徽标匹配、§7 面板取舍）**
 
 在 `src/components/LocationSceneScreen.test.tsx` 追加新 describe（复用既有 `viewWithInvestigationApproaches()` 夹具做基底；vitest 环境下 `isTest` 自动打开第一个活跃对话，无需模拟点击）：
 
@@ -1340,7 +1355,7 @@ describe("LocationSceneScreen：对话覆盖层集成", () => {
 
 注意：把文件 :3 既有 type import 扩展为 `import type { GameSessionView, NpcDialogueView } from "@/game/application";`，勿重复导入；夹具 npcs 条目带 Task 1 新增的必填 `relationshipTier`，无对话的既有基线夹具（`npcs: []`）不受影响。
 
-- [ ] **Step 4: 运行组件测试**
+- [x] **Step 4: 运行组件测试**
 
 ```bash
 npx vitest run src/components/LocationSceneScreen.test.tsx
@@ -1349,7 +1364,7 @@ npm run test:components
 
 Expected: `NpcDialogueOverlay.test.tsx`、`LocationSceneScreen.test.tsx`（含新集成用例）PASS；`AdventureGameShell.test.tsx` 可能出现 DOM 查询失败，全部记录到 Task 6 处理，不在本任务临时绕过。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/components/LocationSceneScreen.tsx src/components/NpcDialogueOverlay.tsx src/components/LocationSceneScreen.test.tsx
@@ -1368,7 +1383,7 @@ git commit -m "refactor(components): 场景视图接入 NPC 对话覆盖层并�
 - Consumes: Task 5 的最终 DOM
 - Produces: `npm run test:components` 全绿；无残留死样式
 
-- [ ] **Step 1: 适配失败的壳层测试**
+- [x] **Step 1: 适配失败的壳层测试**
 
 ```bash
 npm run test:components
@@ -1387,7 +1402,7 @@ npm run test:components
 - `:519`：`dialogue.querySelector(".npc-dialogue-speech-text--player")` 改为 `.npc-dialogue-overlay-speech--player`（此处必须在 Step 3 样式清理前改完，否则 `npc-dialogue-speech` 子串会挡住零引用 grep 门禁）。
 - `:355`/`:1185`：等待态自由输入断言（`自定义回应` 不在文档中）在 Task 4 等待分支移除输入行后应继续原样通过，不得放宽。
 
-- [ ] **Step 2: 运行组件测试直至全绿**
+- [x] **Step 2: 运行组件测试直至全绿**
 
 ```bash
 npm run test:components
@@ -1395,7 +1410,7 @@ npm run test:components
 
 Expected: PASS。
 
-- [ ] **Step 3: 清理旧对话样式**
+- [x] **Step 3: 清理旧对话样式**
 
 先确认无引用（在 `src/` 内搜索，逐一确认后才删）：
 
@@ -1419,7 +1434,7 @@ grep -n "npc-dialogue-" src/app/globals.css | grep -v "npc-dialogue-overlay\|npc
 
 Expected: 无输出。
 
-- [ ] **Step 4: 门禁**
+- [x] **Step 4: 门禁**
 
 ```bash
 npm run typecheck && npm run test:components
@@ -1427,7 +1442,7 @@ npm run typecheck && npm run test:components
 
 Expected: PASS。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/components/AdventureGameShell.test.tsx src/app/globals.css
@@ -1441,7 +1456,7 @@ git commit -m "test(components): 壳层对话用例适配覆盖层布局并清�
 **Files:**
 - Modify: `docs/agent/NPC对话驱动叙事场景触发.md`
 
-- [ ] **Step 1: 更新实现事实文档**
+- [x] **Step 1: 更新实现事实文档**
 
 `docs/agent/NPC对话驱动叙事场景触发.md`「主要文件」节追加一条：
 
@@ -1457,7 +1472,7 @@ git commit -m "test(components): 壳层对话用例适配覆盖层布局并清�
 
 检查 `docs/Agent文档索引.md`：该文档已被索引则无需改动；未索引才补一行。
 
-- [ ] **Step 2: 全量门禁**
+- [x] **Step 2: 全量门禁**
 
 ```bash
 npm run test:boundaries && npm run typecheck && npm run test:components && npm run test:game-application
@@ -1466,14 +1481,14 @@ npm test
 
 Expected: 全部 PASS。失败则定位修复后重跑；不带 `--no-verify` 类绕过。
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add "docs/agent/NPC对话驱动叙事场景触发.md"
 git commit -m "docs(agent): 记录 NPC 对话覆盖层组件与测试入口"
 ```
 
-- [ ] **Step 4: 浏览器手动验收**
+- [x] **Step 4: 浏览器手动验收**
 
 ```bash
 npm run dev
@@ -1481,7 +1496,7 @@ npm run dev
 
 真实走一遍：进入地点 → 点击侧栏 NPC → 覆盖层打开（侧栏/行动栏隐藏、HUD 可见不可点）→ 逐页翻阅台词 → 末页出现两个选项与输入框 → 提交后等待快照（已选项+spinner、入口锁定）→ 新台词直接出现 → 右上角徽标显示档位 → 点非焦点 NPC 出闲聊"知道了" → ✕ 关闭后面板恢复。核对 `docs/策划文档/` 无玩法文案需要调整（本次无玩法变化）。
 
-- [ ] **Step 5: 收尾**
+- [x] **Step 5: 收尾**
 
 按仓库流程从主工作区执行 `npm run branch:merge -- npc-dialogue-overlay-ui`（fast-forward 合并 + worktree 安全清理）；不使用 `git worktree remove`。
 

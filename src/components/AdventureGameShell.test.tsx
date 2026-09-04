@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState, type Dispatch, type SetStateAction } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -82,7 +82,7 @@ function buildView(options: { battle?: GameSessionView["battle"] } = {}): GameSe
     currentLocation: {
       name: "客栈", description: "一间客栈", scale: "scene",
       actions: [choice(TOKENS.explore, "探索客栈", "explore")],
-      npcs: [{ npcId: "npc_1", name: "老板", role: "路人", talkChoice: choice(TOKENS.dialogueOne, "与老板交谈", "dialogue") }],
+      npcs: [{ npcId: "npc_1", name: "老板", role: "路人", talkChoice: choice(TOKENS.dialogueOne, "与老板交谈", "dialogue"), relationshipTier: "neutral" }],
       town: null,
     },
     obtainableItems: [{ name: "铜钥匙", description: "旧钥匙", choice: choice(TOKENS.item, "拾取铜钥匙", "item") }],
@@ -335,7 +335,10 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(within(selectedChoice).getByTestId("npc-dialogue-spinner")).toBeInTheDocument();
     expect(within(dialogue).getByRole("button", { name: "表示理解" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "返回地图" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /老板/ })).toBeDisabled();
+    // 旧断言检查等待态下侧栏「老板」卡片 disabled；对话显示时侧栏整体不再渲染（spec §2.2），
+    // 该入口锁定语义由三处覆盖：上方对覆盖层自身全部选项/关闭按钮的禁用断言、
+    // NpcDialogueOverlay.test.tsx「等待态：…全部禁用」「等待态锁定关闭按钮并隐藏自由输入」、
+    // LocationSceneScreen.test.tsx「对话打开时隐藏侧栏与行动栏」。
 
     await act(async () => {
       setView?.(readyView);
@@ -454,7 +457,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
       ...buildView(),
       currentLocation: {
         ...buildView().currentLocation,
-        npcs: [{ npcId: "npc_lao_zhou", name: "老周", role: "茶摊老板", talkChoice: null }],
+        npcs: [{ npcId: "npc_lao_zhou", name: "老周", role: "茶摊老板", talkChoice: null, relationshipTier: "neutral" }],
       },
       narrative: {
         ...buildView().narrative,
@@ -472,9 +475,10 @@ describe("AdventureGameShell canonical opaque choices", () => {
     renderShell(idleView);
     await enterScene(user);
 
-    // 点击老周卡片打开闲聊弹窗（纯本地打开，不消耗回合）
-    await user.click(screen.getByRole("button", { name: /老周/ }));
-
+    // 测试环境（isTest）默认打开首个活跃对话：闲聊覆盖层已直接展示，侧栏此时已隐藏。
+    // 「点击侧栏卡片本地打开对话、零提交」这一腿由本文件
+    // 「offers non-focus NPC only the real talk action」/
+    // 「starts the authoritative provider talk on NPC click …」两用例继续守住。
     expect(screen.getByText(/调查酒楼后巷的车轮印/)).toBeInTheDocument();
     // 不存在可提交的“与老周交谈”按钮，也不存在自由输入
     expect(screen.queryByRole("button", { name: "与老周交谈" })).not.toBeInTheDocument();
@@ -509,7 +513,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
       },
       currentLocation: {
         ...buildView().currentLocation,
-        npcs: [{ npcId: "npc_chen", name: "陈半仙", role: "算命先生", talkChoice: null }],
+        npcs: [{ npcId: "npc_chen", name: "陈半仙", role: "算命先生", talkChoice: null, relationshipTier: "neutral" }],
       },
       narrative: {
         ...buildView().narrative,
@@ -528,7 +532,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
 
     const dialogue = screen.getByRole("dialog", { name: "与陈半仙对话" });
     expect(dialogue).toHaveTextContent(playerResponse);
-    expect(dialogue.querySelector(".npc-dialogue-speech-text--player")).toBeNull();
+    expect(dialogue.querySelector(".npc-dialogue-overlay-speech--player")).toBeNull();
     const responseButton = within(dialogue).getByRole("button", { name: playerResponse });
     expect(responseButton).toBeInTheDocument();
     expect(within(dialogue).getAllByRole("button")).toHaveLength(2);
@@ -554,8 +558,8 @@ describe("AdventureGameShell canonical opaque choices", () => {
           choice(TOKENS.dialogueTwo, "与老郎中交谈", "dialogue"),
         ],
         npcs: [
-          { npcId: "npc_1", name: "赵铁嘴", role: "告示栏旁的算命先生", talkChoice: choice(TOKENS.dialogueOne, "与赵铁嘴交谈", "dialogue") },
-          { npcId: "npc_2", name: "老郎中", role: "医馆掌柜", talkChoice: choice(TOKENS.dialogueTwo, "与老郎中交谈", "dialogue") },
+          { npcId: "npc_1", name: "赵铁嘴", role: "告示栏旁的算命先生", talkChoice: choice(TOKENS.dialogueOne, "与赵铁嘴交谈", "dialogue"), relationshipTier: "neutral" },
+          { npcId: "npc_2", name: "老郎中", role: "医馆掌柜", talkChoice: choice(TOKENS.dialogueTwo, "与老郎中交谈", "dialogue"), relationshipTier: "neutral" },
         ],
       },
       story: {
@@ -889,7 +893,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
         ...base.currentLocation,
         npcs: [
           ...base.currentLocation.npcs,
-          { npcId: "npc_2", name: "传讯人", role: "信使", talkChoice: choice("c_messenger_talk", "与传讯人交谈", "dialogue") },
+          { npcId: "npc_2", name: "传讯人", role: "信使", talkChoice: choice("c_messenger_talk", "与传讯人交谈", "dialogue"), relationshipTier: "neutral" },
         ],
       },
       narrative: {
@@ -1207,9 +1211,9 @@ describe("AdventureGameShell canonical opaque choices", () => {
     renderShell();
     await enterScene(user);
 
-    expect(screen.getByRole("heading", { name: "老板" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "与老板对话" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "关闭对话" }));
-    expect(screen.queryByRole("heading", { name: "老板" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "与老板对话" })).not.toBeInTheDocument();
   });
 
   it("auto-switches to the scene view when the player moves to a new location", () => {
@@ -1275,8 +1279,11 @@ describe("AdventureGameShell canonical opaque choices", () => {
       onReturnMap={vi.fn()}
     />);
 
-    expect(screen.getByRole("dialog", { name: "与老板对话" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "老板" })).toBeInTheDocument();
+    // 名字横幅在新布局是覆盖层内的 <span>（旧模态用的是 <h3>）：仍钉住
+    // 「pending 期间对话内容与 NPC 名字未被通用加载态替换」，而非只看外壳存在。
+    const dialogue = screen.getByRole("dialog", { name: "与老板对话" });
+    expect(dialogue).toBeInTheDocument();
+    expect(within(dialogue).getByText("老板")).toBeInTheDocument();
     expect(screen.queryByText("正在编排下一幕……")).not.toBeInTheDocument();
   });
 
@@ -1293,6 +1300,8 @@ describe("AdventureGameShell canonical opaque choices", () => {
       onReturnMap={vi.fn()}
     />);
 
+    // 测试环境自动打开首个对话；旁注在对话打开时由覆盖层接管整条隐藏，先本地关闭再断言旁注内容。
+    fireEvent.click(screen.getByRole("button", { name: "关闭对话" }));
     expect(screen.getAllByText("夜市灯火通明。")).toHaveLength(1);
   });
 
@@ -1311,6 +1320,8 @@ describe("AdventureGameShell canonical opaque choices", () => {
       onReturnMap={vi.fn()}
     />);
 
+    // 对话打开时旁注整条隐藏，先本地关闭再断言旁注内容净化规则。
+    fireEvent.click(screen.getByRole("button", { name: "关闭对话" }));
     const sideNote = screen.getByRole("region", { name: "地点旁注" });
     expect(sideNote).toHaveTextContent("客栈");
     expect(sideNote).toHaveTextContent("你身处青石镇，灯笼沿着街檐亮起。");
@@ -1334,6 +1345,8 @@ describe("AdventureGameShell canonical opaque choices", () => {
       onReturnMap={vi.fn()}
     />);
 
+    // 对话打开时旁注整条隐藏，先本地关闭再断言旁注内容净化规则。
+    fireEvent.click(screen.getByRole("button", { name: "关闭对话" }));
     const sideNote = screen.getByRole("region", { name: "地点旁注" });
     expect(sideNote).toHaveTextContent("你身处断碑谷，荒碑夹着一线山谷。");
     expect(sideNote).not.toHaveTextContent("。你身处");
@@ -1381,9 +1394,8 @@ describe("AdventureGameShell canonical opaque choices", () => {
       onReturnMap={vi.fn()}
     />);
 
-    const sideNote = screen.getByRole("region", { name: "地点旁注" });
-    expect(sideNote).not.toHaveTextContent("角色回应");
-    expect(sideNote).not.toHaveTextContent("这句对白只应在人物对话里出现。");
+    // 对话打开时旁注整条隐藏：NPC 台词不可能泄进旁注，覆盖层对话框是唯一台词出口。
+    expect(screen.queryByRole("region", { name: "地点旁注" })).not.toBeInTheDocument();
     expect(screen.getByRole("dialog", { name: "与老板对话" })).toHaveTextContent("这句对白只应在人物对话里出现。");
   });
 
@@ -1569,6 +1581,9 @@ describe("AdventureGameShell canonical opaque choices", () => {
     />);
 
     expect(screen.queryByText(/欢迎光临|晚风还要凉/u)).not.toBeInTheDocument();
+    // 测试环境默认已打开该 NPC 的空台词覆盖层，侧栏随之整体隐藏；
+    // 先关闭回到场景视图，才能复现本用例要测的「点击侧栏 NPC 卡片补发权威 ask 回合」动线。
+    await user.click(screen.getByLabelText("关闭对话"));
     await user.click(screen.getByRole("button", { name: /老板.*路人/ }));
     // Task 9: NPC card click only opens dialogue panel; no auto-submit.
     expect(onSubmit).not.toHaveBeenCalled();
@@ -1680,7 +1695,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
         ...base.currentLocation,
         npcs: [
           ...base.currentLocation.npcs,
-          { npcId: "npc_2", name: "猎人", role: "游侠", talkChoice: choice("c_hunter_talk", "与猎人交谈", "dialogue") },
+          { npcId: "npc_2", name: "猎人", role: "游侠", talkChoice: choice("c_hunter_talk", "与猎人交谈", "dialogue"), relationshipTier: "neutral" },
         ],
       },
       narrative: {
@@ -1706,6 +1721,9 @@ describe("AdventureGameShell canonical opaque choices", () => {
       onReturnMap={vi.fn()}
     />);
 
+    // 覆盖层内不提供多 NPC 切换（spec §2.2）：测试环境已自动打开焦点 NPC 老板的对话，
+    // 侧栏因此隐藏。先关闭它回到场景视图，再点击非焦点 NPC「猎人 · 游侠」卡片。
+    await userEvent.click(screen.getByLabelText("关闭对话"));
     await userEvent.click(screen.getByRole("button", { name: /猎人游侠/ }));
     expect(screen.queryByRole("button", { name: /聊几句/ })).not.toBeInTheDocument();
     expect(screen.queryByText("正在准备对话……")).not.toBeInTheDocument();
@@ -1733,7 +1751,7 @@ describe("AdventureGameShell three-layer navigation", () => {
       currentLocation: {
         name: "客栈", description: "一间客栈", scale: "town",
         actions: [choice(TOKENS.explore, "探索客栈", "explore")],
-        npcs: [{ npcId: "npc_1", name: "老板", role: "路人", talkChoice: choice(TOKENS.dialogueOne, "与老板交谈", "dialogue") }],
+        npcs: [{ npcId: "npc_1", name: "老板", role: "路人", talkChoice: choice(TOKENS.dialogueOne, "与老板交谈", "dialogue"), relationshipTier: "neutral" }],
         town: townFixture,
       },
     };
@@ -1883,8 +1901,8 @@ describe("AdventureGameShell three-layer navigation", () => {
       currentLocation: {
         ...view.currentLocation,
         npcs: [
-          { npcId: clickedBuilding.npcId, name: clickedBuilding.npcName, role: "掌柜", talkChoice: choice(TOKENS.dialogueOne, `与${clickedBuilding.npcName}交谈`, "dialogue") },
-          { npcId: "npc_2", name: "目标人", role: "信使", talkChoice: choice(TOKENS.dialogueTwo, "与目标人交谈", "dialogue") },
+          { npcId: clickedBuilding.npcId, name: clickedBuilding.npcName, role: "掌柜", talkChoice: choice(TOKENS.dialogueOne, `与${clickedBuilding.npcName}交谈`, "dialogue"), relationshipTier: "neutral" },
+          { npcId: "npc_2", name: "目标人", role: "信使", talkChoice: choice(TOKENS.dialogueTwo, "与目标人交谈", "dialogue"), relationshipTier: "neutral" },
         ],
         town: {
           ...view.currentLocation.town!,

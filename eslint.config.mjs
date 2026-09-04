@@ -5,7 +5,7 @@ const config = [
   ...nextVitals,
   ...nextTs,
   {
-    ignores: [".worktrees/**", ".foundation/**"]
+    ignores: [".worktrees/**", ".foundation/**", "tmp/**"]
   },
   {
     files: ["**/*.ts", "**/*.tsx"],

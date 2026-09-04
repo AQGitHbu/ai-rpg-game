@@ -9,6 +9,7 @@ import { paginateSpeechText } from "@/game/domain/speechPagination";
 import { locationScaleOf } from "@/game/domain/worldEntity";
 import type { ItemCategory, ItemRarity, ItemStatLine } from "@/game/domain/worldEntity";
 import { resolveItemPresentation, type ItemIconKey } from "@/game/domain/itemPresentation";
+import { relationshipTierOf, type RelationshipTier } from "@/game/domain/relationship";
 import type { StoryState } from "@/game/domain/storyState";
 import { isTravelTarget, type WorldState } from "@/game/domain/worldState";
 import type { AiFailureKind } from "@/game/domain/narrativeGenerationFailure";
@@ -111,6 +112,8 @@ export type GameSessionView = {
       readonly name: string;
       readonly role: string;
       readonly talkChoice: PlayerChoiceView | null;
+      /** 好感档位投影：只给档位不给数值（关系绝不裸给数字）。 */
+      readonly relationshipTier: RelationshipTier;
     }[];
     /** Task 7：scale="town" 地点的受控读模型（快照/标签/已绑定建筑条目），scene 为 null。 */
     readonly town: TownView | null;
@@ -938,6 +941,7 @@ export function projectGameSessionView(
               "dialogue",
             )
           : null,
+        relationshipTier: relationshipTierOf(npc.memory.relationship),
       })),
       town: projectedTownView,
     },

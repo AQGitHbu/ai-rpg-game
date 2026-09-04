@@ -1,10 +1,18 @@
 "use client";
 
-import { useState, useEffect, useReducer, useRef, type FormEvent } from "react";
+import { useState, useEffect, useReducer, useRef } from "react";
 import { type GameSessionView, type NewGameInput } from "@/game/application";
 import type { PlayerInteraction } from "./gameActionRequest";
 import { AdventureVisual } from "./adventureVisuals";
 import { normalizeDisplayText, removeCoveredClauses } from "./displayText";
+import {
+  NpcDialogueOverlay,
+  reduceDialogueUiState,
+  type Dialogue,
+  type DialoguePhase,
+  type DialogueUiState,
+  type SubmittedDialogue,
+} from "./NpcDialogueOverlay";
 
 type LocationSceneScreenProps = {
   readonly view: GameSessionView;
@@ -21,57 +29,10 @@ type LocationSceneScreenProps = {
   readonly sceneBuildingId?: string | null;
 };
 
-type Dialogue = NonNullable<GameSessionView["narrative"]["npcDialogues"]>[number];
-
 type BattleFeedback = {
   readonly kind: "player-action" | "enemy-hit" | "player-hit" | "resolved";
   readonly message: string;
 };
-
-type DialogueUiState = {
-  readonly npcId: string | null;
-  readonly revision: number;
-  readonly pendingPlayerResponse: string | null;
-  readonly pendingChoiceToken: string | null;
-  /**
-   * 已提交对白仅用于本页等待态展示。pending read model 不保证保留 choices，
-   * 因此不能由它重建已选回应、其它固定选项或给予道具选项。
-   */
-  readonly pendingDialogue: Dialogue | null;
-};
-
-type DialogueUiAction =
-  | { readonly kind: "set"; readonly npcId: string | null }
-  | { readonly kind: "submit"; readonly playerResponse: string; readonly choiceToken: string | null; readonly dialogue: Dialogue }
-  | { readonly kind: "clear_pending" }
-  | { readonly kind: "sync_revision"; readonly revision: number; readonly close: boolean };
-
-type DialoguePhase = "choice" | "waiting";
-
-type SubmittedDialogue = {
-  readonly revision: number;
-  readonly turnNumber: number;
-};
-
-function reduceDialogueUiState(state: DialogueUiState, action: DialogueUiAction): DialogueUiState {
-  switch (action.kind) {
-    case "set": return { ...state, npcId: action.npcId, pendingPlayerResponse: null, pendingChoiceToken: null, pendingDialogue: null };
-    case "submit": return {
-      ...state,
-      pendingPlayerResponse: action.playerResponse,
-      pendingChoiceToken: action.choiceToken,
-      pendingDialogue: action.dialogue,
-    };
-    case "clear_pending": return { ...state, pendingPlayerResponse: null, pendingChoiceToken: null, pendingDialogue: null };
-    case "sync_revision": return {
-      revision: action.revision,
-      npcId: action.close ? null : state.npcId,
-      pendingPlayerResponse: action.close ? null : state.pendingPlayerResponse,
-      pendingChoiceToken: action.close ? null : state.pendingChoiceToken,
-      pendingDialogue: action.close ? null : state.pendingDialogue,
-    };
-  }
-}
 
 /**
  * 地点旁注只负责回答“我现在在哪里、这里发生了什么”。
@@ -224,215 +185,6 @@ const ITEM_HOTSPOT_POSITIONS = [
   { top: "62%", left: "52%" },
 ] as const;
 
-function NpcDialogueModal({
-  dialogue,
-  gameType,
-  busy,
-  phase,
-  pendingPlayerResponse,
-  pendingChoiceToken,
-  resetInputNonce,
-  handoffAcknowledgement,
-  onAcknowledge,
-  onSubmit,
-  onClose,
-}: {
-  readonly dialogue: Dialogue;
-  readonly gameType: NewGameInput["gameType"];
-  readonly busy: boolean;
-  readonly phase: DialoguePhase;
-  readonly pendingPlayerResponse: string | null;
-  readonly pendingChoiceToken: string | null;
-  readonly resetInputNonce: number;
-  readonly handoffAcknowledgement?: Dialogue["handoffAcknowledgement"] | null;
-  readonly onSubmit: (interaction: PlayerInteraction, playerResponse: string) => void;
-  readonly onAcknowledge?: () => void;
-  readonly onClose: () => void;
-}) {
-  const [text, setText] = useState("");
-  const previousResetInputNonce = useRef(resetInputNonce);
-
-  useEffect(() => {
-    if (previousResetInputNonce.current === resetInputNonce) return;
-    previousResetInputNonce.current = resetInputNonce;
-    setText("");
-  }, [resetInputNonce]);
-
-  // 焦点 NPC 的正式对话严格由两个批准选项或自由输入标识；
-  // 非焦点 NPC 的单个 talk choice 是唯一的正式交谈入口。
-  const hasFocusInteraction = dialogue.freeInputEnabled || dialogue.choices.length === 2;
-
-  async function submitFreeText(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    const normalized = text.trim();
-    if (normalized === "") return;
-    onSubmit({ kind: "free_text", text: normalized, targetNpcId: dialogue.npcId }, normalized);
-  }
-
-  const waitingChoices = [
-    ...dialogue.choices,
-    ...dialogue.giveChoices.map((entry) => entry.choice),
-  ];
-
-  return (
-    <div 
-      className="npc-dialogue-backdrop" 
-      role="dialog" 
-      aria-modal="true" 
-      aria-label={`与${dialogue.name}对话`}
-      aria-busy={phase === "waiting"}
-    >
-      <section className="npc-dialogue-panel">
-        <button
-          type="button"
-          className="npc-dialogue-close"
-          aria-label="关闭对话"
-          onClick={onClose}
-          disabled={busy || phase === "waiting"}
-        >
-          ×
-        </button>
-
-        <div className="npc-dialogue-stage">
-          {/* 长方形竖版头像 */}
-          <figure className="npc-dialogue-figure">
-            <div className="npc-dialogue-portrait" aria-hidden="true">
-              <AdventureVisual gameType={gameType} kind="npc" label="" decorative />
-            </div>
-            <h3>{dialogue.name}</h3>
-            <span>{dialogue.role}</span>
-          </figure>
-
-          <div className="npc-dialogue-speech">
-            {dialogue.speechPages.map((page, index) => (
-              <p key={`${dialogue.npcId}-${index}`} className="npc-dialogue-speech-text">{normalizeDisplayText(page)}</p>
-            ))}
-            {pendingPlayerResponse !== null && pendingChoiceToken === null ? (
-              <p className="npc-dialogue-speech-text npc-dialogue-speech-text--player">
-                {normalizeDisplayText(pendingPlayerResponse)}
-                {phase === "waiting" ? <span data-testid="npc-dialogue-spinner" className="npc-dialogue-inline-spinner" aria-hidden="true" /> : null}
-              </p>
-            ) : null}
-          </div>
-        </div>
-
-        {phase === "waiting" ? (
-          <>
-            <div className="npc-dialogue-choices" role="group" aria-label="对话选项">
-              {waitingChoices.map((choice) => (
-                <button
-                  key={choice.choiceToken}
-                  type="button"
-                  disabled={true}
-                  aria-current={choice.choiceToken === pendingChoiceToken ? "true" : undefined}
-                  className={choice.choiceToken === pendingChoiceToken ? "npc-dialogue-choice--selected" : undefined}
-                >
-                  {choice.label}
-                  {choice.choiceToken === pendingChoiceToken ? <span data-testid="npc-dialogue-spinner" className="npc-dialogue-inline-spinner" aria-hidden="true" /> : null}
-                </button>
-              ))}
-            </div>
-            <p className="npc-dialogue-status" role="status" aria-live="polite">正在等待{dialogue.name}回应……</p>
-          </>
-        ) : hasFocusInteraction ? (
-          /* 焦点 NPC：显示固定选项 + 给予道具 + 自由输入 */
-          <>
-            <div className="npc-dialogue-choices" role="group" aria-label="对话选项">
-              {dialogue.choices.map((choice) => (
-                <button
-                  key={choice.choiceToken}
-                  type="button"
-                  disabled={busy}
-                  onClick={() => onSubmit({ kind: "fixed_choice", choiceToken: choice.choiceToken }, choice.label)}
-                >
-                  {choice.label}
-                </button>
-              ))}
-            </div>
-
-            {/* 给予道具：把背包物品交给当前对话 NPC，走正式 give_item 回合 */}
-            {dialogue.giveChoices.length > 0 ? (
-              <div className="npc-dialogue-give" role="group" aria-label="给予道具">
-                <span className="npc-dialogue-give-label">给予道具</span>
-                {dialogue.giveChoices.map((entry) => (
-                  <button
-                    key={entry.choice.choiceToken}
-                    type="button"
-                    disabled={busy}
-                    onClick={() => onSubmit({ kind: "fixed_choice", choiceToken: entry.choice.choiceToken }, entry.choice.label)}
-                  >
-                    {entry.choice.label}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-
-            {dialogue.freeInputEnabled ? (
-              <>
-                {dialogue.giveChoices.length > 0 ? (
-                  <p className="npc-dialogue-input-hint">自定义输入仅用于对白；交付道具请点击上方选项。</p>
-                ) : null}
-                <form className="npc-dialogue-input" onSubmit={(event) => void submitFreeText(event)}>
-                  <input
-                    aria-label="自定义回应"
-                    value={text}
-                    disabled={busy}
-                    placeholder="输入回应……"
-                    onChange={(event) => setText(event.target.value)}
-                    maxLength={240}
-                  />
-                  <button type="submit" disabled={busy || text.trim() === ""}>发送</button>
-                </form>
-              </>
-            ) : null}
-          </>
-        ) : (
-          /* 非焦点 NPC：零回合展示；剧情交接只保留一个真实下一步，
-             普通闲聊才允许用 dismiss 关闭。 */
-          <>
-            {dialogue.choices.length > 0 ? (
-              <div className="npc-dialogue-choices" role="group" aria-label="对话选项">
-                {dialogue.choices.map((choice) => (
-                  <button
-                    key={choice.choiceToken}
-                    type="button"
-                    disabled={busy}
-                    className="npc-dialogue-talk-cta"
-                    onClick={() => onSubmit({ kind: "fixed_choice", choiceToken: choice.choiceToken }, choice.label)}
-                  >
-                    {choice.label}
-                  </button>
-                ))}
-              </div>
-            ) : handoffAcknowledgement !== null && handoffAcknowledgement !== undefined ? (
-              <div className="npc-dialogue-choices" role="group" aria-label="对话选项">
-                <button
-                  type="button"
-                  className="npc-dialogue-talk-cta"
-                  onClick={onAcknowledge ?? onClose}
-                >
-                  {normalizeDisplayText(handoffAcknowledgement.label)}
-                </button>
-              </div>
-            ) : (
-              <div className="npc-dialogue-choices" role="group" aria-label="对话操作">
-                <button
-                  type="button"
-                  className="npc-dialogue-dismiss-btn"
-                  disabled={busy}
-                  onClick={onClose}
-                >
-                  知道了
-                </button>
-              </div>
-            )}
-          </>
-        )}
-      </section>
-    </div>
-  );
-}
-
 export function LocationSceneScreen({
   view,
   busy,
@@ -572,13 +324,16 @@ export function LocationSceneScreen({
     }
     return null;
   })();
-  const [dialogueUi, dispatchDialogueUi] = useReducer(reduceDialogueUiState, {
+  // 显式标注 reducer 初始态：既固定对话编排的起始形状，也让 brief 要求的
+  // DialogueUiState 导入保持有效引用。
+  const dialogueUiInitialState: DialogueUiState = {
     npcId: initialOpenDialogueNpcId,
     revision: view.revision,
     pendingPlayerResponse: null,
     pendingChoiceToken: null,
     pendingDialogue: null,
-  });
+  };
+  const [dialogueUi, dispatchDialogueUi] = useReducer(reduceDialogueUiState, dialogueUiInitialState);
   const openDialogueNpcId = dialogueUi.npcId;
   const [dialoguePhase, setDialoguePhase] = useState<DialoguePhase>("choice");
   const [dialogueInputResetNonce, setDialogueInputResetNonce] = useState(0);
@@ -627,7 +382,7 @@ export function LocationSceneScreen({
     }
 
     if (previous !== null && current === null) {
-      window.setTimeout(() => setBattleFeedback({ kind: "resolved", message: "战斗状态已更新" }), 0);
+      window.setTimeout(() => setBattleFeedback({ kind: "resolved", message: "战斗结算完成" }), 0);
       const timer = window.setTimeout(() => setBattleFeedback(null), 1800);
       return () => window.clearTimeout(timer);
     }
@@ -679,6 +434,9 @@ export function LocationSceneScreen({
   const displayedDialogue = dialoguePhase === "waiting" && dialogueUi.pendingDialogue !== null
     ? dialogueUi.pendingDialogue
     : openDialogue;
+  const displayedRelationshipTier = displayedDialogue === undefined
+    ? null
+    : view.currentLocation.npcs.find((npc) => npc.npcId === displayedDialogue.npcId)?.relationshipTier ?? null;
 
   // 幕交接时旧焦点 NPC 可能只剩一次普通 ask 入口。若继续保留旧弹窗，
   // 玩家会看到单个“与 NPC 交谈”按钮，却误以为仍在正式双选项对话中。
@@ -709,14 +467,14 @@ export function LocationSceneScreen({
     handoffLeavesCurrentBuilding,
     handoffLeavesCurrentLocation,
     handoffPlayerResponse,
-    dialoguePhase,
     openDialogue,
     pending,
     view.narrative.eventKind,
     view.revision,
   ]);
 
-  // Task 9: NPC card click only opens the dialogue panel; no auto-submit.
+  // 普通 NPC 点击只打开对话弹窗；当前权威 talkChoice 只用于场景目标判定，
+  // 不在打开动作中自动提交回合。
   function submitDialogueInteractionFor(
     dialogue: Dialogue,
     interaction: PlayerInteraction,
@@ -732,7 +490,6 @@ export function LocationSceneScreen({
     onSubmit(interaction, "npc-dialogue");
   }
 
-  // Task 9: NPC card click only opens the dialogue panel; no auto-submit.
   function handleNpcCardClick(npc: typeof sidebarNpcs[number]) {
     setOpenDialogueNpcId(npc.dialogueId);
     setDialoguePhase("choice");
@@ -777,8 +534,8 @@ export function LocationSceneScreen({
         </button>
       </div>
 
-      {/* 右侧 NPC 侧边栏 */}
-      {sidebarNpcs.length > 0 ? (
+      {/* 右侧 NPC 侧边栏：对话打开时整条隐藏，交互一律由覆盖层接管 */}
+      {displayedDialogue === undefined && sidebarNpcs.length > 0 ? (
         <aside className="scene-npc-sidebar" aria-label="场景人物">
           <div className="scene-npc-sidebar-header">
             <span>人物</span>
@@ -839,8 +596,9 @@ export function LocationSceneScreen({
           </div>
         ) : null}
 
-        {/* 叙事场景浮层（固定在底部中偏上） */}
-        {view.narrative.hasScene && displayNarration ? (
+        {/* 叙事场景浮层（固定在底部中偏上）：对话打开时与侧栏/行动栏一并隐藏，
+            否则短视口下 55dvh 立绘会压住旁注文字（浏览器实测 1024x600 碰撞） */}
+        {view.narrative.hasScene && displayNarration && displayedDialogue === undefined ? (
           <section className="scene-narrative scene-narrative--side-note" aria-label="地点旁注">
             <div className="scene-narrative-location-note">
               <span className="scene-narrative-kicker">地点旁注</span>
@@ -855,7 +613,8 @@ export function LocationSceneScreen({
           <p className="location-scene-caption">{displayLocationDescription}</p>
         ) : null}
 
-        {sceneActionRail.length === 0 ? null : (
+        {/* 底部行动栏：对话打开时隐藏，交互动线由覆盖层独占 */}
+        {displayedDialogue === undefined && sceneActionRail.length !== 0 ? (
           <nav className="scene-action-rail--bottom" aria-label="行动栏">
             {sceneActionRail.map((action) => (
               <button
@@ -868,12 +627,12 @@ export function LocationSceneScreen({
               </button>
             ))}
           </nav>
-        )}
+        ) : null}
       </div>
 
-      {/* NPC 对话模态弹层：只有用户主动点击时才弹出 */}
+      {/* NPC 对话覆盖层：只有用户主动点击才弹出 */}
       {displayedDialogue ? (
-        <NpcDialogueModal
+        <NpcDialogueOverlay
           dialogue={displayedDialogue}
           gameType={gameType}
           busy={busy || pending}
@@ -883,6 +642,7 @@ export function LocationSceneScreen({
           pendingPlayerResponse={dialogueUi.pendingPlayerResponse}
           pendingChoiceToken={dialogueUi.pendingChoiceToken}
           resetInputNonce={dialogueInputResetNonce}
+          relationshipTier={displayedRelationshipTier}
           onSubmit={submitDialogueInteraction}
           onAcknowledge={resetDialogue}
           phase={dialoguePhase}
