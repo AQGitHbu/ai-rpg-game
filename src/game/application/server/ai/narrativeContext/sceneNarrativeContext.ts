@@ -301,11 +301,6 @@ export function buildSceneNarrativeContextBlocks(
       content: focusContent(context),
     }),
     sceneBlock({
-      id: "scene:recent-events", slot: "relevant_events", title: "相关近期事件", sourceKind: "recent_beats", sourceRefs: context.recentBeats.map((beat) => String(beat.turn)),
-      authority: "event", retention: "optional", priority: 650,
-      content: `recentBeats：${context.recentBeats.map((beat) => `turn=${beat.turn}；kind=${beat.kind}；summary=${beat.summary}`).join("\n") || "无"}`,
-    }),
-    sceneBlock({
       id: "scene:style-policy", slot: "director_guidance", title: "导演与风格", sourceKind: "style_policy", sourceRefs: [],
       authority: "plan", retention: "mandatory", priority: 825,
       content: `风格=${story.stylePolicy.narration}，${story.stylePolicy.narrationInstruction} ${story.stylePolicy.intensityInstruction}\natmosphere 段只负责当前地点的临场感：使用具体的视觉、声音、气味、温度、触感或空间细节，表现此刻玩家正在经历什么。不要复述 prologue 的故事钩子、背景冲突或玩家动机，不要引入未经服务端批准的新地点、NPC、物品、事实或任务；它不能替代规则节拍，也不能创造剧情事实。`,
@@ -326,6 +321,32 @@ export function buildSceneNarrativeContextBlocks(
       content: outputContract,
     }),
   ];
+
+  const memory = context.narrativeMemory;
+  if (memory !== undefined && memory.requiredEventsText !== "") {
+    blocks.push(sceneBlock({
+      id: "scene:required-events", slot: "relevant_events", title: "本回合已提交事件",
+      sourceKind: "committed_event", sourceRefs: memory.manifestRefs.eventIds.map(String),
+      authority: "event", retention: "mandatory", priority: 980,
+      content: memory.requiredEventsText,
+    }));
+  }
+  if (memory !== undefined && memory.relevantEpisodesText !== "") {
+    blocks.push(sceneBlock({
+      id: "scene:episodic-memory", slot: "relevant_events", title: "相关历史经历",
+      sourceKind: "episodic_memory", sourceRefs: memory.manifestRefs.episodeIds.map(String),
+      authority: "memory", retention: "optional", priority: 700,
+      content: memory.relevantEpisodesText,
+    }));
+  }
+  if (memory !== undefined && memory.recentScenesText !== "") {
+    blocks.push(sceneBlock({
+      id: "scene:recent-scenes", slot: "recent_scenes", title: "近期场景节拍",
+      sourceKind: "episodic_memory", sourceRefs: memory.manifestRefs.sceneEventIds.map(String),
+      authority: "memory", retention: "optional", priority: 680,
+      content: memory.recentScenesText,
+    }));
+  }
 
   if (nonFocus.length > 0) {
     blocks.push(sceneBlock({

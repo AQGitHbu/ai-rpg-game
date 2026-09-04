@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { asFactId, asLocationId, asNpcId, asQuestId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
-import {asNarrativeJobId, asTurnId, asEventId} from "@/game/domain/events";
+import {asNarrativeJobId, asTurnId, asEventId, asEpisodeId} from "@/game/domain/events";
 import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { SceneGenerationContext } from "@/game/application/sceneGenerationContext";
 import type { NpcSpeechAuthority } from "@/game/application/npcSpeechAuthority";
@@ -248,9 +248,17 @@ function makeSceneContext(): SceneGenerationContext {
         contentIntensity: "normal",
       }),
     },
-    recentBeats: [
-      { turn: 11, kind: "fact_discovered", summary: "你在后门锁孔上发现了新鲜松脂痕迹。" },
-    ],
+    narrativeMemory: {
+      requiredEventsText: "eventId=turn-1:event-1; sequence=11; turn=11; kind=fact_discovered",
+      relevantEpisodesText: "episodeId=episode:memory; kind=turn; historyTurns=11-11",
+      relevantEventsText: "eventId=turn-1:event-1; kind=fact_discovered\nepisodeId=episode:memory; kind=turn",
+      recentScenesText: "",
+      manifestRefs: {
+        eventIds: [asEventId("turn-1:event-1")],
+        episodeIds: [asEpisodeId("episode:memory")],
+        sceneEventIds: [],
+      },
+    },
     legalActionCandidates: [
       { kind: "talk", label: "继续追问韩镖头", targetId: "npc_focus" },
       { kind: "move", label: "前往北巷旧道", targetId: "loc_north_lane" },
@@ -405,7 +413,8 @@ describe("sceneNarrativeContext", () => {
     expect(selectedById.get("scene:rules")).toEqual(expect.objectContaining({
       slot: "system_rules", authority: "rule", retention: "mandatory",
     }));
-    expect(selectedById.get("scene:recent-events")?.slot).toBe("relevant_events");
+    expect(selectedById.get("scene:required-events")?.slot).toBe("relevant_events");
+    expect(selectedById.get("scene:episodic-memory")?.slot).toBe("relevant_events");
     expect(selectedById.get("scene:previous-dialogue")?.slot).toBe("recent_scenes");
     expect(selectedById.get("scene:world-canon")).toBeDefined();
     expect(selectedById.get("scene:world-constraints")).toBeDefined();
@@ -454,7 +463,7 @@ describe("sceneNarrativeContext", () => {
     expect(compilation.prompt).toContain("currentAct=2");
     expect(compilation.prompt).toContain("tension=55");
     expect(compilation.prompt).toContain("complicate");
-    expect(compilation.prompt).toContain("你在后门锁孔上发现了新鲜松脂痕迹。");
+    expect(compilation.prompt).toContain("eventId=turn-1:event-1");
     for (const actionId of ["interaction_1", "interaction_2", "interaction_3", "interaction_4", "interaction_5"]) {
       expect(compilation.prompt).toContain(actionId);
     }

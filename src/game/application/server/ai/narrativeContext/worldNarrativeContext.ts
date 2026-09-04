@@ -7,7 +7,10 @@ import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 import { compileNarrativeContext } from "./compileNarrativeContext";
 import type { NarrativeContextBlock, NarrativePromptCompilation } from "./contextBlock";
 import { createNarrativePromptCompilation } from "./renderNarrativeContext";
-import type { EpisodicMemoryState } from "@/game/domain/episodicMemory";
+import {
+  renderNarrativeMemory,
+  retrieveNarrativeMemory,
+} from "@/game/gameplay/rpg/narrativeMemory";
 
 export const WORLD_CONTEXT_MAX_ESTIMATED_TOKENS = 8_000;
 
@@ -17,8 +20,6 @@ type WorldBlockInput = Omit<NarrativeContextBlock, "id" | "title" | "source"> & 
   sourceKind: string;
   sourceRefs?: readonly string[];
 }>;
-
-type RecentBeat = Readonly<{ turn: number; kind: string; summary: string }>;
 
 function worldBlock(input: WorldBlockInput): NarrativeContextBlock {
   return {
@@ -33,12 +34,21 @@ function worldBlock(input: WorldBlockInput): NarrativeContextBlock {
   };
 }
 
-function recentBeatsFromMemory(memory: EpisodicMemoryState): readonly RecentBeat[] {
-  return memory.episodes.slice(-5).map((episode) => ({
-    turn: episode.toTurn,
-    kind: episode.summaryKeys[0] ?? episode.kind,
-    summary: episode.summaryKeys.join(" / "),
-  }));
+function actionEntityIds(action: Action | undefined): readonly string[] {
+  if (action === undefined) return [];
+  switch (action.type) {
+    case "talk": return [String(action.npcId)];
+    case "move": return [String(action.locationId)];
+    case "investigate": return [String(action.factId)];
+    case "take_item": return [String(action.itemId)];
+    case "give_item": return [String(action.itemId), String(action.npcId)];
+    case "attack": return [String(action.enemyId)];
+    case "explore":
+    case "battle_action":
+    case "ack_prologue":
+    case "freeform":
+      return [];
+  }
 }
 
 function genreRule(gameType: string): string {
@@ -165,18 +175,6 @@ export function buildWorldNarrativeContextBlocks(
     .map((entry) => String(entry.factId))));
   const publicFacts = world.worldFacts.filter((fact) => fact.discovered && !hiddenFactIds.has(String(fact.factId)));
   const disclosedPublicFactIds = new Set(publicFacts.map((fact) => String(fact.factId)));
-  const privateFactTexts = world.worldFacts
-    .filter((fact) => hiddenFactIds.has(String(fact.factId)))
-    .map((fact) => fact.text)
-    .filter((text) => text.trim() !== "");
-  const privateInteractionTexts = npcRecords.flatMap((npc) => npc.history.interactions.flatMap((interaction) => [
-    interaction.topicSummary,
-    interaction.summary,
-  ])).filter((text) => text.trim() !== "");
-  const privateRecentBeatMarkers = [...hiddenFactIds, ...privateFactTexts, ...privateInteractionTexts];
-  const recentBeats = recentBeatsFromMemory(story.memory)
-    .filter((beat) => !privateRecentBeatMarkers.some((marker) => beat.summary.includes(marker)))
-    .slice(-5);
   const neighboringLocationIds = new Set(currentLocation?.connectedLocationIds.map(String) ?? []);
   const nearbyLocationIds = new Set([
     ...world.unlockedLocationIds.map(String),
@@ -205,6 +203,27 @@ export function buildWorldNarrativeContextBlocks(
   const activeQuestSummary = activeQuest === undefined
     ? "无活动任务。"
     : `任务=${activeQuest.name}；status=${activeQuest.status}；当前目标=${safeCurrentObjectiveLabel ?? "无"}。`;
+  const narrativeMemory = renderNarrativeMemory({
+    retrieved: retrieveNarrativeMemory({
+      memory: story.memory,
+      ledger: world.eventLedger,
+      relevantEntityIds: [
+        String(world.currentLocationId),
+        ...(activeQuest === undefined ? [] : [String(activeQuest.id)]),
+        ...(targetEntityId === undefined ? [] : [targetEntityId]),
+        ...actionEntityIds(context.action),
+      ],
+      relevantQuestIds: [
+        ...(activeQuest === undefined ? [] : [activeQuest.id]),
+        ...(currentObjective === null ? [] : [currentObjective.questId]),
+      ],
+      relevantFactIds: currentQuestObjective?.kind === "discover_fact"
+        ? [currentQuestObjective.factId]
+        : [],
+      currentLocationId: world.currentLocationId,
+    }),
+    entityStore: world.entityStore,
+  });
 
   const blocks: NarrativeContextBlock[] = [
     worldBlock({
@@ -327,11 +346,18 @@ export function buildWorldNarrativeContextBlocks(
     }));
   }
 
-  if (recentBeats.length > 0) {
+  if (narrativeMemory.relevantEpisodesText !== "") {
     blocks.push(worldBlock({
-      id: "world:relevant-events", slot: "relevant_events", title: "相关近期事件", sourceKind: "recent_beats", sourceRefs: recentBeats.map((beat) => String(beat.turn)),
-      authority: "event", retention: "optional", priority: 650,
-      content: recentBeats.map((beat) => `turn=${beat.turn}；kind=${beat.kind}；summary=${beat.summary}`).join("\n"),
+      id: "world:episodic-memory", slot: "relevant_events", title: "相关历史经历", sourceKind: "episodic_memory", sourceRefs: narrativeMemory.manifestRefs.episodeIds.map(String),
+      authority: "memory", retention: "optional", priority: 700,
+      content: narrativeMemory.relevantEpisodesText,
+    }));
+  }
+  if (narrativeMemory.recentScenesText !== "") {
+    blocks.push(worldBlock({
+      id: "world:recent-scenes", slot: "recent_scenes", title: "近期场景节拍", sourceKind: "episodic_memory", sourceRefs: narrativeMemory.manifestRefs.sceneEventIds.map(String),
+      authority: "memory", retention: "optional", priority: 680,
+      content: narrativeMemory.recentScenesText,
     }));
   }
 

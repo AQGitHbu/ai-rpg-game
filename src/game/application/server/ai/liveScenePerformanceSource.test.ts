@@ -124,9 +124,6 @@ function makeContext(overrides: {
       unresolvedThreadSummaries: ["商队失踪"],
       stylePolicy: buildStylePolicy({ personalityTags: ["冷静"], narrativeStyle: "concise", contentIntensity: "normal" }),
     },
-    recentBeats: [
-      { turn: 0, kind: "npc_met", summary: "NPC met: npc_1" },
-    ],
     legalActionCandidates: overrides.legalActionCandidates ?? [
       { kind: "talk", label: "与老板交谈", targetId: "npc_1" },
       { kind: "explore", label: "查看四周" },
@@ -523,7 +520,6 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     });
     const context: SceneGenerationContext = {
       ...makeContext({ job }),
-      recentBeats: [{ turn: 0, kind: "old_memory", summary: "玩家仍未获得盟誓印谱" }],
     };
     const prompt = buildLiveScenePrompt(context, buildSelectableSceneCandidates(context));
 

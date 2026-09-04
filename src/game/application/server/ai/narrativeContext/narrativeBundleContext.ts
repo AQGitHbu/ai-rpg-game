@@ -21,7 +21,10 @@ import {
   type NarrativePromptCompilation,
 } from "./contextBlock";
 import { createNarrativePromptCompilation } from "./renderNarrativeContext";
-import type { EpisodicMemoryState } from "@/game/domain/episodicMemory";
+import {
+  renderNarrativeMemory,
+  retrieveNarrativeMemory,
+} from "@/game/gameplay/rpg/narrativeMemory";
 
 export const NARRATIVE_BUNDLE_CONTEXT_MAX_ESTIMATED_TOKENS = 8_000;
 
@@ -96,12 +99,20 @@ function clipText(text: string, max: number): string {
   return chars.length <= max ? text : `${chars.slice(0, max).join("")}……`;
 }
 
-function recentBeatsFromMemory(memory: EpisodicMemoryState): readonly { readonly turn: number; readonly kind: string; readonly summary: string }[] {
-  return memory.episodes.slice(-5).map((episode) => ({
-    turn: episode.toTurn,
-    kind: episode.summaryKeys[0] ?? episode.kind,
-    summary: episode.summaryKeys.join(" / "),
-  }));
+function actionSummaryEntityIds(action: PendingNarrativeJob["actionSummary"]): readonly string[] {
+  switch (action.kind) {
+    case "talk": return [String(action.npcId)];
+    case "move": return [String(action.locationId)];
+    case "investigate": return [String(action.factId)];
+    case "take_item": return [String(action.itemId)];
+    case "give_item": return [String(action.itemId), String(action.npcId)];
+    case "attack": return [String(action.enemyId)];
+    case "explore":
+    case "battle_action":
+    case "ack_prologue":
+    case "freeform":
+      return [];
+  }
 }
 
 function focusNpcContent(worldState: WorldState, job: PendingNarrativeJob): string {
@@ -202,12 +213,34 @@ export function buildDecisionNarrativeContextBlocks(
     ? undefined
     : worldState.npcs.find((npc) => String(npc.id) === String(job.focusNpcId));
   const previousScene = recentScene(storyState);
-  const recentBeats = recentBeatsFromMemory(storyState.memory);
   const privateFactIds = new Set(worldState.npcs.flatMap((npc) => npc.memory.hiddenFactIds.map(String)));
   const visibleFacts = worldState.worldFacts.filter((fact) =>
     fact.discovered && !privateFactIds.has(String(fact.factId)),
   );
   const activeQuest = worldState.quests.find((quest) => quest.status === "active" && quest.kind === "main");
+  const narrativeMemory = renderNarrativeMemory({
+    retrieved: retrieveNarrativeMemory({
+      memory: storyState.memory,
+      ledger: worldState.eventLedger,
+      requiredEventIds: job.domainEventIds,
+      relevantEntityIds: [
+        String(worldState.currentLocationId),
+        ...actionSummaryEntityIds(job.actionSummary),
+        ...job.mandatoryBeats.flatMap((beat) => beat.subjectIds),
+        ...(job.focusNpcId === undefined ? [] : [String(job.focusNpcId)]),
+        ...(activeQuest === undefined ? [] : [String(activeQuest.id)]),
+      ],
+      relevantQuestIds: [
+        ...(job.objectiveTransition.before === null ? [] : [job.objectiveTransition.before.questId]),
+        ...job.objectiveTransition.completed.map((entry) => entry.questId),
+        ...(job.objectiveTransition.after === null ? [] : [job.objectiveTransition.after.questId]),
+      ],
+      relevantFactIds: job.resolvedEvent.facts.map((entry) => entry.factId),
+      currentLocationId: worldState.currentLocationId,
+      focusNpcId: job.focusNpcId,
+    }),
+    entityStore: worldState.entityStore,
+  });
   const style = buildStylePolicy(worldState.generation.setup);
   const expectedObjectiveLink = job.objectiveTransition.after === null
     ? "null"
@@ -310,12 +343,6 @@ export function buildDecisionNarrativeContextBlocks(
       content: `${itemStateSection(entityContext)}\n尚未拾取的物品只能被观察、发现或拾取；规则动作完成前，不得写成玩家已经持有、拿出或使用，也不得让选项假定玩家已经持有。`,
     }),
     block({
-      id: "bundle:recent-events", slot: "relevant_events", title: "相关近期事件",
-      authority: "event", retention: "optional", priority: 650,
-      source: { kind: "recent_beats", refs: recentBeats.map((beat) => String(beat.turn)) },
-      content: `recentBeats：\n${recentBeats.length === 0 ? "（无）" : recentBeats.map((beat) => `- turn=${beat.turn}；kind=${beat.kind}；summary=${beat.summary}`).join("\n")}`,
-    }),
-    block({
       id: "bundle:director-guidance", slot: "director_guidance", title: "导演与风格",
       authority: "plan", retention: "mandatory", priority: 825,
       source: { kind: "style_policy", refs: [] },
@@ -352,6 +379,31 @@ export function buildDecisionNarrativeContextBlocks(
       content: "若 worldDelta.newFact 非 null，investigationApproaches 必须恰好包含 2–3 条合法条目；若无法提供完整列表就输出 newFact:null，绝不能输出只有 1 条或不完整的列表。",
     }),
   ];
+
+  if (narrativeMemory.requiredEventsText !== "") {
+    blocks.push(block({
+      id: "bundle:required-events", slot: "relevant_events", title: "本回合已提交事件",
+      authority: "event", retention: "mandatory", priority: 980,
+      source: { kind: "committed_event", refs: narrativeMemory.manifestRefs.eventIds.map(String) },
+      content: narrativeMemory.requiredEventsText,
+    }));
+  }
+  if (narrativeMemory.relevantEpisodesText !== "") {
+    blocks.push(block({
+      id: "bundle:episodic-memory", slot: "relevant_events", title: "相关历史经历",
+      authority: "memory", retention: "optional", priority: 700,
+      source: { kind: "episodic_memory", refs: narrativeMemory.manifestRefs.episodeIds.map(String) },
+      content: narrativeMemory.relevantEpisodesText,
+    }));
+  }
+  if (narrativeMemory.recentScenesText !== "") {
+    blocks.push(block({
+      id: "bundle:recent-scenes", slot: "recent_scenes", title: "近期场景节拍",
+      authority: "memory", retention: "optional", priority: 680,
+      source: { kind: "episodic_memory", refs: narrativeMemory.manifestRefs.sceneEventIds.map(String) },
+      content: narrativeMemory.recentScenesText,
+    }));
+  }
 
   if (previousScene !== null) {
     blocks.push(block({

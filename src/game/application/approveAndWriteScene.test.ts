@@ -197,7 +197,6 @@ function makeContext(overrides: {
       unresolvedThreadSummaries: [],
       stylePolicy: buildStylePolicy({ personalityTags: ["冷静"], narrativeStyle: "concise", contentIntensity: "normal" }),
     },
-    recentBeats: [],
     legalActionCandidates: overrides.legalActionCandidates ?? [
       { kind: "talk", label: "与老板交谈", targetId: "npc_1" },
       { kind: "explore", label: "查看四周" },

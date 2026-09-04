@@ -10,7 +10,6 @@ import type {
   EnemyId,
 } from "@/game/domain/worldEntity";
 import type { NarrativeEmotion } from "@/game/domain/narrative";
-import type { EpisodicMemoryState } from "@/game/domain/episodicMemory";
 import type { MandatoryNarrativeBeat, ObjectiveRef, ObjectiveTransition } from "@/game/domain/narrativeBeat";
 import type { WorldState } from "@/game/domain/worldState";
 import { entitiesOfKind, projectEntityStore } from "@/game/domain/entity";
@@ -31,6 +30,11 @@ import type { GameTypeId } from "@/game/domain/newGame";
 import type { DialogueAct, DialogueTopic } from "@/game/domain/action";
 import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
 import type { NarrativeGenerationRepairReason } from "@/game/domain/narrativeGenerationFailure";
+import {
+  renderNarrativeMemory,
+  retrieveNarrativeMemory,
+  type RenderedNarrativeMemory,
+} from "@/game/gameplay/rpg/narrativeMemory";
 
 /**
  * SceneGenerator 的最小输入 DTO（spec §7.1 / §10.1-10.2）：
@@ -194,14 +198,20 @@ export type SceneGenerationRepair = {
   readonly reason: NarrativeGenerationRepairReason;
 };
 
-type RecentBeat = Readonly<{ turn: number; kind: string; summary: string }>;
-
-function recentBeatsFromMemory(memory: EpisodicMemoryState): readonly RecentBeat[] {
-  return memory.episodes.slice(-5).map((episode) => ({
-    turn: episode.toTurn,
-    kind: episode.summaryKeys[0] ?? episode.kind,
-    summary: episode.summaryKeys.join(" / "),
-  }));
+function actionSummaryEntityIds(action: PendingNarrativeJob["actionSummary"]): readonly string[] {
+  switch (action.kind) {
+    case "talk": return [String(action.npcId)];
+    case "move": return [String(action.locationId)];
+    case "investigate": return [String(action.factId)];
+    case "take_item": return [String(action.itemId)];
+    case "give_item": return [String(action.itemId), String(action.npcId)];
+    case "attack": return [String(action.enemyId)];
+    case "explore":
+    case "battle_action":
+    case "ack_prologue":
+    case "freeform":
+      return [];
+  }
 }
 
 export type SceneGenerationContext = {
@@ -251,7 +261,8 @@ export type SceneGenerationContext = {
     /** Task 8：开局呈现政策（人格标签/叙事风格/内容强度 → 指令）。 */
     readonly stylePolicy: StylePolicy;
   };
-  readonly recentBeats: readonly RecentBeat[];
+  /** Bounded structural memory cards for the live scene provider. */
+  readonly narrativeMemory?: RenderedNarrativeMemory;
   readonly legalActionCandidates: readonly LegalActionCandidate[];
   readonly legalEventTargets: LegalEventTargets;
   readonly worldConstraints: readonly string[];
@@ -726,6 +737,27 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
   })();
 
   const objectiveTarget = resolveObjectiveTarget(ws, transition.after);
+  const narrativeMemory = renderNarrativeMemory({
+    retrieved: retrieveNarrativeMemory({
+      memory: ss.memory,
+      ledger: ws.eventLedger,
+      requiredEventIds: job.domainEventIds,
+      relevantEntityIds: [
+        ...actionSummaryEntityIds(job.actionSummary),
+        ...beatSubjectIds,
+        ...(objectiveTarget === null ? [] : [objectiveTarget.entityId]),
+      ],
+      relevantQuestIds: [
+        ...(transition.before === null ? [] : [transition.before.questId]),
+        ...transition.completed.map((entry) => entry.questId),
+        ...(transition.after === null ? [] : [transition.after.questId]),
+      ],
+      relevantFactIds: job.resolvedEvent.facts.map((entry) => entry.factId),
+      currentLocationId: ws.currentLocationId,
+      focusNpcId,
+    }),
+    entityStore: ws.entityStore,
+  });
   const upcomingLinearObjectives = buildUpcomingLinearObjectives(ws, transition.after);
   const preparedProjection = buildPreparedStepDescriptors({
     worldState: ws,
@@ -800,7 +832,7 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
       ...(activeQuest === undefined ? {} : { activeQuest }),
       stylePolicy: buildStylePolicy(ws.generation.setup),
     },
-    recentBeats: recentBeatsFromMemory(ss.memory),
+    narrativeMemory,
     legalActionCandidates: ws.battle.status === "active"
       ? [
           { kind: "battle_action" as const, label: "攻击", targetId: "attack" },

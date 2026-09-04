@@ -148,7 +148,6 @@ function makeContext(job: PendingNarrativeJob, focus?: FocusNpcContext): SceneGe
       unresolvedThreadSummaries: [],
       stylePolicy: buildStylePolicy(),
     },
-    recentBeats: [],
     legalActionCandidates: [
       { kind: "move", label: `前往${loc2.name}`, targetId: loc2.id },
       { kind: "explore", label: "查看四周" },
