@@ -4,7 +4,7 @@ import type { Action, Interaction } from "@/game/domain/action";
 import type { ResolvedEvent } from "@/game/domain/resolvedEvent";
 import type { NarrativeEventKind } from "@/game/domain/narrative";
 import type { NarrativeEventDraft, TurnId, CommittedNarrativeEvent } from "@/game/domain/events";
-import { asTurnId } from "@/game/domain/events";
+import { asTurnId, eventIdFor } from "@/game/domain/events";
 import { commitEventDrafts, type EventCommitSource } from "@/game/domain/eventLedger";
 import type { TurnResolution } from "@/game/domain/turnResolution";
 import { createTurnResolution } from "@/game/domain/turnResolution";
@@ -14,10 +14,11 @@ import { resolveByType, autoResolveCurrentInvestigation } from "./resolveByType"
 import { npcUsedAction, reconcileQuests } from "./reconcileQuests";
 import { resolveEnding } from "./resolveEnding";
 import { updateStoryMetrics } from "./updateStoryMetrics";
-import { propagateKnownFacts } from "./propagateKnownFacts";
+import { propagateKnownFactsWithDrafts } from "./propagateKnownFacts";
 import { advanceStoryProgression } from "./advanceStoryProgression";
 import { approveCandidateEvents, compileCandidateEvent } from "@/game/gameplay/rpg/candidateEvents";
 import { advanceStoryReveal } from "@/game/gameplay/rpg/worldEvolution";
+import { validateEntityStoreProvenance } from "@/game/domain/entity";
 import { reconcileMaterializedView } from "@/game/domain/materializedView";
 import type { RecentBeat, NpcContact } from "@/game/domain/materializedView";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
@@ -89,7 +90,7 @@ export type RuleEngineResult =
   | { readonly ok: true; readonly nextWorldState: WorldState; readonly nextStoryState: StoryState; readonly resolvedEvent: ResolvedEvent }
   | { readonly ok: false; readonly code: ValidationCode; readonly feedback: string };
 
-export type RuleEngineDeps = { readonly now: () => string };
+export type RuleEngineDeps = { readonly now: () => string; readonly turnId: TurnId };
 
 /** resolveTurn 的返回值：拒绝路径返回稳定 code + feedback，不携带任何写入。 */
 export type ResolveTurnResult =
@@ -131,6 +132,7 @@ export function resolveTurn(
     now: deps.now,
     actionId,
     turnNumber: storyState.turnNumber,
+    turnId,
   });
   if (!resolved.ok) {
     return { ok: false, code: "INTENT_NOT_ROUTED", feedback: resolved.feedback };
@@ -167,10 +169,13 @@ export function resolveTurn(
   }
 
   // P4 Step 1: NPC knownFactIds 传播（知识写入必须带本轮真实 actionId/turn）
-  const propagatedWs = propagateKnownFacts(resolved.nextWorldState, resolved.facts, {
+  const propagated = propagateKnownFactsWithDrafts(resolved.nextWorldState, resolved.facts, {
     actionId,
     turnNumber: storyState.turnNumber,
+    eventId: eventIdFor(deps.turnId, `fact_propagated:${actionId}`),
+    turnId: deps.turnId,
   });
+  const propagatedWs = propagated.worldState;
 
   // Spec §13.1 固定顺序：resolve → propagate → reconcile quests → advance act/
   // derive endingAllowed → approve candidate events → update tension/progress →
@@ -193,7 +198,7 @@ export function resolveTurn(
   // 当前会话是 talk_to_npc 是否完成的权威游标。即使本回合不是正式回应，
   // 也要持续传入；否则 ask 写入的 met=true 或随后一次移动/探索会让通用
   // objective 判定绕过两轮会话，直接完成当前 NPC 目标。
-  const quests = reconcileQuests(propagatedWs, deps, dialogueSession === undefined
+  const quests = reconcileQuests(propagatedWs, { now: deps.now }, dialogueSession === undefined
     ? undefined
     : {
         talkToNpcSession: {
@@ -205,12 +210,18 @@ export function resolveTurn(
             participantNpcId: String(action.npcId),
             actionId,
             turnNumber: storyState.turnNumber,
+            turnId,
             actionWasAlreadyUsed: npcUsedAction(worldState, String(action.npcId), actionId),
           },
         } : {}),
       });
   // 初步 domainEvents：resolver + 对话完成 + quest（ending 在 Step 5 追加）
-  const domainEvents: NarrativeEventDraft[] = [...resolved.drafts, ...dialogueEvents, ...quests.drafts];
+  const domainEvents: NarrativeEventDraft[] = [
+    ...resolved.drafts,
+    ...propagated.drafts,
+    ...dialogueEvents,
+    ...quests.drafts,
+  ];
 
   // Step 1b: 先在本规则回合内推进一次 reveal 游标，再判断抵达后是否已经进入
   // discover_fact。此前这里仍使用回合开始时的 dialogueStoryState，导致 move
@@ -228,12 +239,12 @@ export function resolveTurn(
   const autoInvestigation = autoResolveCurrentInvestigation(ruleWorldState, ruleStoryState);
   if (autoInvestigation.drafts.length > 0) {
     ruleWorldState = autoInvestigation.nextWorldState;
-    const afterAutoInvestigation = reconcileQuests(ruleWorldState, deps);
+    const afterAutoInvestigation = reconcileQuests(ruleWorldState, { now: deps.now });
     ruleWorldState = afterAutoInvestigation.nextWorldState;
     questEvents = [...questEvents, ...autoInvestigation.drafts, ...afterAutoInvestigation.drafts];
   }
   const allQuestEvents = questEvents;
-  domainEvents.splice(0, domainEvents.length, ...resolved.drafts, ...dialogueEvents, ...allQuestEvents);
+  domainEvents.splice(0, domainEvents.length, ...resolved.drafts, ...propagated.drafts, ...dialogueEvents, ...allQuestEvents);
 
   // Step 2: 幕推进 + storyProgress + endingAllowed 推导（§13.1 在 resolveEnding 之前）
   const progression = advanceStoryProgression(
@@ -317,6 +328,10 @@ export function resolveTurn(
     }
     committedEvents = commitResult.appended;
     nextWorldState = { ...ending.nextWorldState, eventLedger: commitResult.ledger };
+  }
+  const provenanceIssue = validateEntityStoreProvenance(nextWorldState.entityStore, nextWorldState.eventLedger)[0];
+  if (provenanceIssue !== undefined) {
+    return { ok: false, code: "INVALID_RESOLUTION", feedback: `NPC 事件证据无效: ${provenanceIssue.entityId ?? "unknown"}` };
   }
 
   // 构建最终 ResolvedEvent（作为 TurnResolution.primaryResult）

@@ -10,7 +10,7 @@ import type { NpcInteraction } from "@/game/domain/worldEntries";
 import { asEnemyId, asFactId, asLocationId, asNpcId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import type { FactId } from "@/game/domain/worldEntity";
 import { asCombatantId } from "@/game/domain/combat";
-import { asTurnId } from "@/game/domain/events";
+import { asTurnId, asEventId } from "@/game/domain/events";
 import { createInitialWorldState } from "@/game/domain/worldState";
 import { npcCreationComponentsForProjection } from "@/game/domain/testing/worldStateFixture.testutil";
 import { createInitialStoryState } from "@/game/domain/storyState";
@@ -303,6 +303,7 @@ function factRecord(id: FactId, text: string): FactEntityRecord {
 
 function npcInteraction(actionId: string, turnNumber: number, learnedFactIds: readonly FactId[] = []): NpcInteraction {
   return {
+    eventId: asEventId(`evt:interact:${actionId}:${turnNumber}`),
     turnNumber,
     actionId,
     locationId: LOC_0,
@@ -350,11 +351,11 @@ function layeredNpcRecord(): NpcEntityRecord {
         },
         {
           factId: asFactId("fact_1"), certainty: "suspected", disclosure: "conditional",
-          source: { kind: "action", mode: "npc_revealed", actionId: "seed_act_1", learnedAtTurn: 1, sourceNpcId: RIVAL_NPC_ID },
+          source: { kind: "action", mode: "npc_revealed", actionId: "seed_act_1", learnedAtTurn: 1, sourceNpcId: RIVAL_NPC_ID, eventId: asEventId("evt:seed:1") },
         },
         {
           factId: asFactId("fact_2"), certainty: "known", disclosure: "secret",
-          source: { kind: "action", mode: "player_told", actionId: "seed_act_2", learnedAtTurn: 2 },
+          source: { kind: "action", mode: "player_told", actionId: "seed_act_2", learnedAtTurn: 2, eventId: asEventId("evt:seed:2") },
         },
       ],
     },
@@ -373,6 +374,7 @@ function layeredNpcRecord(): NpcEntityRecord {
           evidence: [{
             evidenceId: "ev_seed_3", actionId: "seed_act_3", turnNumber: 3,
             signal: "broke_promise", severity: "major", summaryKey: "broke_promise",
+            supportingEventIds: [asEventId("evt:seed:3")],
           }],
           origin: { kind: "initial_world", createdAtTurn: 0, reasonKey: "seed_rivalry" },
           lastChangedAtTurn: 3,
@@ -390,10 +392,12 @@ function layeredNpcRecord(): NpcEntityRecord {
             {
               evidenceId: "ev_seed_4", actionId: "seed_act_4", turnNumber: 4,
               signal: "shared_fact", severity: "normal", summaryKey: "shared_fact",
+              supportingEventIds: [asEventId("evt:seed:4")],
             },
             {
               evidenceId: "ev_seed_5", actionId: "seed_act_5", turnNumber: 5,
               signal: "fought_together", severity: "major", summaryKey: "fought_together",
+              supportingEventIds: [asEventId("evt:seed:5")],
             },
           ],
           origin: { kind: "action", actionId: "seed_act_5", turnNumber: 5 },
@@ -514,16 +518,18 @@ async function writeNpcLayersMidBattle(harness: InMemoryHarness): Promise<number
     factId: MID_BATTLE_FACT_ID,
     certainty: "known",
     disclosure: "public",
-    source: { kind: "action", mode: "player_told", actionId: "mid_battle_act", turnNumber: 2 },
+    source: { kind: "action", mode: "player_told", actionId: "mid_battle_act", turnNumber: 2, eventId: asEventId("evt:mid:2") },
   }, {
     kind: "apply_relationship_signal",
     fromNpcId: NPC_ID,
     targetId: PLAYER_ENTITY_ID,
     signal: "supported",
     source: { kind: "action", actionId: "mid_battle_act", turnNumber: 2 },
+    supportingEventId: asEventId("evt:mid:2"),
   }, {
     kind: "record_npc_interaction",
     npcId: NPC_ID,
+    eventId: asEventId("evt:mid:2"),
     turnNumber: 2,
     actionId: "mid_battle_act",
     locationId: LOC_0,
@@ -719,7 +725,7 @@ describe("performBattleRound：NPC 分层组件的战前快照与回滚", () => 
       0,
       asTurnId("stale_candidate_round"),
       "fixed_choice",
-      { now: CLOCK },
+      { now: CLOCK, turnId: asTurnId("stale_candidate_round") },
     );
     expect(resolved.ok).toBe(true);
     if (!resolved.ok) return;
@@ -908,6 +914,7 @@ describe("performBattleRound：同伴共同战斗关系证据", () => {
       targetId: PLAYER_ENTITY_ID,
       signal: "fought_together",
       source: { kind: "action", actionId: "battle_victory_1", turnNumber: 0 },
+      supportingEventId: asEventId("evt:victory:1"),
     }]);
     expect(replay.ok).toBe(true);
     if (replay.ok) {

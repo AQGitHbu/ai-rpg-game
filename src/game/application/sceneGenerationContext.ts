@@ -452,6 +452,7 @@ function buildUpcomingLinearObjectives(
     const authority = buildNpcSpeechAuthority({
       store: ws.entityStore,
       speakerNpcId: npc.id,
+      eventLedger: ws.eventLedger,
       sceneVisibleFactIds: entitiesOfKind(ws.entityStore, "fact")
         .filter((fact) => fact.fact.discovered)
         .map((fact) => fact.core.id),
@@ -516,6 +517,7 @@ function enrichPreparedStepDescriptors(
     const speechAuthority = buildNpcSpeechAuthority({
       store: ws.entityStore,
       speakerNpcId: arrivalNpc.id,
+      eventLedger: ws.eventLedger,
       sceneVisibleFactIds,
       targetContext: { targetId: PLAYER_ENTITY_ID },
     });
@@ -606,6 +608,7 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
       const speechAuthority = buildNpcSpeechAuthority({
         store: ws.entityStore,
         speakerNpcId: n.id,
+        eventLedger: ws.eventLedger,
         sceneVisibleFactIds: ws.worldFacts.filter((fact) => fact.discovered).map((fact) => fact.factId),
         targetContext: { targetId: PLAYER_ENTITY_ID },
       });

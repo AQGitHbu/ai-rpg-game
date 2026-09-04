@@ -106,6 +106,7 @@ export {
   EntityStoreInvariantError,
   getEntity,
   parseEntityStore,
+  validateEntityStoreProvenance,
   validateEntityStoreStructure,
   type EntityStore,
   type EntityStoreValidationCode,

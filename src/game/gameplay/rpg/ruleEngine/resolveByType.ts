@@ -1,7 +1,8 @@
 import type { ItemEntry, WorldState } from "@/game/domain/worldState";
 import { findLocation, findNpc, findItem } from "@/game/domain/worldState";
 import type { Action } from "@/game/domain/action";
-import type { NarrativeEventDraft } from "@/game/domain/events";
+import type { NarrativeEventDraft, TurnId } from "@/game/domain/events";
+import { eventIdFor } from "@/game/domain/events";
 import type { ResolvedEventStatus, StateChange, FactChange } from "@/game/domain/resolvedEvent";
 import type { StoryState } from "@/game/domain/storyState";
 import { startBattle, battleAction } from "./battleResolver";
@@ -30,6 +31,8 @@ export type ResolveDeps = {
   readonly actionId: string;
   /** 当前回合号（写入 NpcInteraction.turnNumber）。 */
   readonly turnNumber: number;
+  /** Task 4：当前回合的稳定 turnId，用于预铸 eventId。 */
+  readonly turnId: TurnId;
 };
 
 function giftRelationshipSignal(item: ItemEntry): "gave_item" | "offered_help" {
@@ -120,13 +123,14 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
         now: deps.now,
         actionId: deps.actionId,
         turnNumber: deps.turnNumber,
+        turnId: deps.turnId,
       });
       const mutated = applyRuleMutations(ws, dialogue.mutations);
       if (mutated === null) return { ok: false, feedback: "世界状态不一致。" };
       return {
         ok: true,
         nextWorldState: mutated,
-        drafts: [dialogue.draft],
+        drafts: dialogue.drafts,
         feedback: dialogue.feedback,
         status: dialogue.status,
         stateChanges: [...dialogue.stateChanges],
@@ -177,8 +181,11 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
         return { ok: false, feedback: "世界状态不一致。" };
       }
       if (!ws.inventory.includes(action.itemId)) return { ok: false, feedback: "无法交付这件物品。" };
-      const draft: NarrativeEventDraft = {
-        eventKey: `item_given:${action.itemId}:${action.npcId}`,
+      const itemEventKey = `item_given:${action.itemId}:${action.npcId}`;
+      const relationshipEventKey = `npc_relationship_changed:${action.npcId}:${PLAYER_ENTITY_ID}:${giftRelationshipSignal(item)}`;
+      const interactionEventKey = `npc_interaction_recorded:${action.npcId}:${deps.actionId}`;
+      const drafts: NarrativeEventDraft[] = [{
+        eventKey: itemEventKey,
         episodeKey: "turn",
         actorIds: [PLAYER_ENTITY_ID],
         targetIds: [action.npcId],
@@ -189,7 +196,40 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
         outcome: "success",
         salience: 45,
         payload: { type: "item_given", itemId: action.itemId, npcId: action.npcId, locationId: ws.currentLocationId },
-      };
+      }, {
+        eventKey: relationshipEventKey,
+        episodeKey: "turn",
+        actorIds: [action.npcId],
+        targetIds: [PLAYER_ENTITY_ID],
+        locationId: ws.currentLocationId,
+        causeKeys: [{ kind: "same_batch", eventKey: itemEventKey }],
+        factIds: [],
+        questIds: [],
+        outcome: "success",
+        salience: 40,
+        payload: {
+          type: "npc_relationship_changed",
+          fromNpcId: action.npcId,
+          targetId: PLAYER_ENTITY_ID,
+          signal: giftRelationshipSignal(item),
+        },
+      }, {
+        eventKey: interactionEventKey,
+        episodeKey: "turn",
+        actorIds: [PLAYER_ENTITY_ID],
+        targetIds: [action.npcId],
+        locationId: ws.currentLocationId,
+        causeKeys: [{ kind: "same_batch", eventKey: itemEventKey }],
+        factIds: [],
+        questIds: [],
+        outcome: "success",
+        salience: 35,
+        payload: {
+          type: "npc_interaction_recorded",
+          npcId: action.npcId,
+          dialogueAct: "offer",
+        },
+      }];
       const mutated = applyRuleMutations(ws, [
         { kind: "transfer_item", itemId: action.itemId, owner: { kind: "npc", npcId: action.npcId } },
         {
@@ -198,12 +238,14 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
           targetId: PLAYER_ENTITY_ID,
           signal: giftRelationshipSignal(item),
           source: { kind: "action", actionId: deps.actionId, turnNumber: deps.turnNumber },
+          supportingEventId: eventIdFor(deps.turnId, `npc_relationship_changed:${action.npcId}:${PLAYER_ENTITY_ID}:${giftRelationshipSignal(item)}`),
         },
         {
           kind: "record_npc_interaction",
           npcId: action.npcId,
           turnNumber: deps.turnNumber,
           actionId: deps.actionId,
+          eventId: eventIdFor(deps.turnId, `npc_interaction_recorded:${action.npcId}:${deps.actionId}`),
           locationId: ws.currentLocationId,
           dialogueAct: "offer",
           topicSummary: `收到玩家交付的${item.name}`,
@@ -216,7 +258,7 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
         { path: "inventory", description: `交出物品 ${item.name}`, operation: "remove" },
         { path: `npcs[${String(action.npcId)}].memory`, description: `${npc.name} 收下物品，关系改善`, operation: "set" },
       ];
-      return { ok: true, nextWorldState: mutated, drafts: [draft], feedback: `你把${item.name}交给了${npc.name}。`, status: "success", stateChanges, facts: [] };
+      return { ok: true, nextWorldState: mutated, drafts, feedback: `你把${item.name}交给了${npc.name}。`, status: "success", stateChanges, facts: [] };
     }
     case "explore": {
       // 无状态行动也产生主事件（Task 29）：explore → location_explored，不得 success + 空事件。

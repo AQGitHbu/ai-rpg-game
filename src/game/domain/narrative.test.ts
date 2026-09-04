@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { asNarrativeJobId, asTurnId } from "./events";
+import { asEventId, asNarrativeJobId, asTurnId } from "./events";
 import type { ResolvedEvent } from "./resolvedEvent";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "./pendingNarrativeJob";
 import { asLocationId, asNpcId } from "./worldEntity";
@@ -36,7 +36,7 @@ function providerJob(): PendingNarrativeJob {
     actionSummary: { kind: "talk", npcId: asNpcId("npc_1") },
     utterance: "我想打听矿坑的事",
     resolvedEvent: canonicalResolvedEvent(),
-    domainEventRange: { fromLedgerIndex: 12, toLedgerIndexExclusive: 15 },
+    domainEventIds: [asEventId("turn-1:event-12")],
     focusNpcId: asNpcId("npc_1"),
     requestedAt: "2026-08-08T08:00:00.000Z",
     objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
@@ -103,7 +103,7 @@ describe("NarrativeSceneState", () => {
     expect(fallback?.speechSource).toBe("fixture");
     expect(fallback?.speechPurpose).toBe("ambient");
     expect(fallback?.usedFactIds).toEqual([]);
-    expect(fallback?.usedInteractionActionIds).toEqual([]);
+    expect(fallback?.usedEventIds).toEqual([]);
   });
 
   it("requires both reference arrays on persisted NPC lines and dialogues", () => {

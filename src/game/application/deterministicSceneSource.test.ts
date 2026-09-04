@@ -13,7 +13,7 @@ import { approveScenePerformance } from "./approveAndWriteScene";
 import type { LocationEntry, NpcEntry } from "@/game/domain/worldState";
 import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
 import { asLocationId, asNpcId, asFactId, asQuestId } from "@/game/domain/worldEntity";
-import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
+import {asNarrativeJobId, asTurnId, asEventId} from "@/game/domain/events";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { ResolvedEvent, ResolvedEventStatus } from "@/game/domain/resolvedEvent";
 import type { SceneGenerationContext } from "./sceneGenerationContext";
@@ -85,7 +85,7 @@ function makeJob(overrides: JobOverrides = {}): PendingNarrativeJob {
     actionSummary: overrides.summary ?? { kind: "move", locationId: asLocationId("loc_2") },
     utterance: overrides.utterance,
     resolvedEvent: makeResolvedEvent(overrides.status, overrides.eventKind),
-    domainEventRange: { fromLedgerIndex: 1, toLedgerIndexExclusive: 2 },
+    domainEventIds: [asEventId("turn-1:event-1")],
     focusNpcId: overrides.focusNpcId !== undefined ? asNpcId(overrides.focusNpcId) : undefined,
     requestedAt: "2026-01-02",
     objectiveTransition: overrides.transition ?? { before: null, completed: [], after: null, mode: "unchanged" },
@@ -917,8 +917,7 @@ describe("deterministicSceneSource", () => {
     const focus = {
       ...makeFocusContext("friendly"),
       role: "旧案卷宗保管人",
-      recentInteractions: [{
-        actionId: "act_support",
+      recentInteractions: [{ eventId: asEventId("evt:test:act_support"), actionId: "act_support",
         dialogueAct: "support" as const,
         topicSummary: "旧案",
         outcome: "positive" as const,

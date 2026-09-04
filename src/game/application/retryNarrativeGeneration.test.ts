@@ -6,7 +6,7 @@ import { asGameId } from "./server/persistence/gameRepository";
 import { createInitialWorldState } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { asGenerationId, asLocationId } from "@/game/domain/worldEntity";
-import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
+import { asEventId, asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 
 const gameId = asGameId("retry-game");
@@ -30,7 +30,7 @@ function makeJob(): PendingNarrativeJob {
       triggeredEvents: [],
       rejectedEffects: [],
     },
-    domainEventRange: { fromLedgerIndex: 0, toLedgerIndexExclusive: 0 },
+    domainEventIds: [asEventId("turn_retry:event")],
     requestedAt: "2026-08-21T00:00:00.000Z",
     objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
     mandatoryBeats: [],

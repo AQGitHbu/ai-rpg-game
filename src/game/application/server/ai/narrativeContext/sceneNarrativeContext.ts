@@ -103,16 +103,16 @@ function focusContent(context: SceneGenerationContext): string {
   if (focus === undefined) return "无焦点 NPC；npcLine 必须为 null。";
   const authority = focus.speechAuthority;
   if (authority === undefined || focus.identityAnchors === undefined) {
-    const historicalActionIds = [...new Set(focus.recentInteractions.map((interaction) => interaction.actionId))].slice(-5);
-    return `id=${focus.id}；${focus.name}（${focus.role}）；公开档案=${focus.publicProfile}；speech authority unavailable；已知线索=不可用；历史交互 IDs（不可引用）=[${historicalActionIds.join(", ") || "无"}]；不得引用事实、关系或数值字段，usedFactIds 与 usedInteractionActionIds 必须为 []。`;
+    const historicalEventIds = [...new Set(focus.recentInteractions.map((interaction) => String(interaction.eventId)))].slice(-5);
+    return `id=${focus.id}；${focus.name}（${focus.role}）；公开档案=${focus.publicProfile}；speech authority unavailable；已知线索=不可用；历史交互 Event IDs（不可引用）=[${historicalEventIds.join(", ") || "无"}]；不得引用事实、关系或数值字段，usedFactIds 与 usedEventIds 必须为 []。`;
   }
   const anchors = authority.identityAnchors;
   const relations = authority.relationships
     .map((relation) => `${relation.targetId}：stage=${relation.stage}；trend=${relation.trend}；openCommitments=${relation.openCommitments.map((commitment) => `${commitment.kind}:${commitment.description}`).join("、") || "无"}`)
     .join("\n") || "无明确相关关系";
   const interactions = authority.recentInteractions
-    .map((interaction) => `${interaction.actionId}：dialogueAct=${interaction.dialogueAct}；topicSummary=${interaction.topicSummary}；outcome=${interaction.outcome}；summary=${interaction.summary}`)
-    .join("\n") || "无（usedInteractionActionIds 必须为 []）";
+    .map((interaction) => `${interaction.eventId}：dialogueAct=${interaction.dialogueAct}；topicSummary=${interaction.topicSummary}；outcome=${interaction.outcome}；summary=${interaction.summary}`)
+    .join("\n") || "无（usedEventIds 必须为 []）";
   return `id=${focus.id}；${focus.name}（${focus.role}）；公开档案=${focus.publicProfile}；\n` +
     `人格锚点：selfConcept=${anchors.selfConcept}；values=${anchors.values.join("、") || "无"}；speechStyle=${anchors.speechStyle}；capabilityBoundaries=${anchors.capabilityBoundaries.join("、") || "无"}；taboos=${anchors.taboos.join("、") || "无"}；\n` +
     `回应政策：tier=${focus.responsePolicy.tier}；tone=${focus.responsePolicy.toneInstruction}；initiative=${focus.responsePolicy.initiative}；允许披露事实 ID=[${authority.allowedFactIds.join(", ")}]；私密知识必须扣留，正文不得编造或泄露；\n` +
@@ -160,7 +160,7 @@ function preparedArrivalContent(
     .map((relation) => `${relation.targetId}：stage=${relation.stage}；trend=${relation.trend}；openCommitments=${relation.openCommitments.map((commitment) => `${commitment.kind}:${commitment.description}`).join("、") || "无"}`)
     .join("\n") || "无明确相关关系";
   const interactions = authority.recentInteractions
-    .map((interaction) => `${interaction.actionId}：topicSummary=${interaction.topicSummary}；outcome=${interaction.outcome}；summary=${interaction.summary}`)
+    .map((interaction) => `${interaction.eventId}：topicSummary=${interaction.topicSummary}；outcome=${interaction.outcome}；summary=${interaction.summary}`)
     .join("\n") || "无";
   return `arrivalNpc=${arrival.id}（${arrival.name}；${arrival.role}；公开身份=${arrival.publicProfile}；人格锚点=${anchors.selfConcept}；values=${anchors.values.join("、") || "无"}；speechStyle=${anchors.speechStyle}；capabilityBoundaries=${anchors.capabilityBoundaries.join("、") || "无"}；taboos=${anchors.taboos.join("、") || "无"}；activeGoals=${authority.activeGoals.join("、") || "无"}；相关关系=\n${relations}；证据 keys=${authority.evidenceKeys.join("、") || "无"}；可说事实=${factCards(authority.allowedFactCards)}；最近交互=\n${interactions}）；合法 choices=仅服务端候选`;
 }
@@ -190,7 +190,7 @@ function preparedContinuationsJsonShape(descriptors: readonly PreparedSceneStepD
       ? `[{"candidateId":"${descriptor.choiceCandidates[0]?.candidateId ?? "第一个合法候选ID"}","label":"玩家对白或动作"},{"candidateId":"${descriptor.choiceCandidates[1]?.candidateId ?? "第二个合法候选ID"}","label":"另一句玩家对白或动作"}]`
       : "[]";
     const npcLine = arrival
-      ? `{"npcId":"${descriptor.arrivalNpc?.id ?? "目标 NPC ID"}","text":"抵达后目标 NPC 的两句直接对白","emotion":"neutral","answeredBeatIds":[],"usedFactIds":[],"usedInteractionActionIds":[]}`
+      ? `{"npcId":"${descriptor.arrivalNpc?.id ?? "目标 NPC ID"}","text":"抵达后目标 NPC 的两句直接对白","emotion":"neutral","answeredBeatIds":[],"usedFactIds":[],"usedEventIds":[]}`
       : "null";
     return `{"stepId":"${descriptor.stepId}","segments":[{"beatId":"${ATMOSPHERE_BEAT_ID}","text":"续行场景正文"}],"npcLine":${npcLine},"objectiveLink":null或{"questId":"${descriptor.authority.questId}","objectiveIndex":${descriptor.authority.objectiveIndex},"mode":"hint"},"choices":${choices}}`;
   }).join(",");
@@ -215,7 +215,7 @@ export function buildSceneNarrativeContextBlocks(
     : `主线=${story.activeQuest.name}；主线说明=${story.activeQuest.description}；当前目标=${story.activeQuest.objectiveLabel}（${story.activeQuest.objectiveKind}，序号${story.activeQuest.objectiveIndex}）`;
   const authorityReady = focus?.speechAuthority !== undefined && focus.identityAnchors !== undefined;
   const allowedFactIds = authorityReady ? focus.speechAuthority!.allowedFactIds.map(String) : [];
-  const allowedInteractionIds = authorityReady ? focus.speechAuthority!.allowedInteractionActionIds : [];
+  const allowedInteractionIds = authorityReady ? focus.speechAuthority!.allowedEventIds.map(String) : [];
   const objective = after === null
     ? "无当前目标；objectiveLink 必须为 null。"
     : `当前目标：${after.label}；objectiveLink 必须为 {"questId":"${after.questId}","objectiveIndex":${after.objectiveIndex},"mode":"${objectiveMode(context)}"}。`;
@@ -243,11 +243,11 @@ export function buildSceneNarrativeContextBlocks(
     ? "本轮是上一名 NPC 对话的收尾：npcLine 是该 NPC 的最后一句直接回应；final handoff 必须返回零个当前 choices，并且恰好返回一个 handoffAcknowledgement，作为玩家对该 NPC 的具体致意。不要返回任何当前可执行选项，不要返回“知道了”、纯确认或脱离上下文的继续调查。"
     : "普通场景必须返回两个语义不同的合法当前 choices，且不得返回 handoffAcknowledgement；两个选项都要直接回应本轮 NPC 台词，并至少一个推进当前主线目标。";
   const outputContract = [
-    `JSON={"segments":[{"beatId":"必须从上面节拍列表逐字复制的ID","text":"旁白","referencedEntityIds":["可选的服务端实体ID"]}],"npcLine":null或{"npcId":"在场ID","text":"第一句直接回应。第二句补充线索或下一步。","emotion":"neutral","answeredBeatIds":[],"usedFactIds":[],"usedInteractionActionIds":[]},"npcDialogues":[{"npcId":"非焦点在场NPC ID","text":"一句到两句符合身份和当前场景的直接闲聊"}],"objectiveLink":null或{"questId":"目标questId","objectiveIndex":0,"mode":"hint"},${choiceShape},${preparedContinuationsJsonShape(preparedDescriptors)}}`,
+    `JSON={"segments":[{"beatId":"必须从上面节拍列表逐字复制的ID","text":"旁白","referencedEntityIds":["可选的服务端实体ID"]}],"npcLine":null或{"npcId":"在场ID","text":"第一句直接回应。第二句补充线索或下一步。","emotion":"neutral","answeredBeatIds":[],"usedFactIds":[],"usedEventIds":[]},"npcDialogues":[{"npcId":"非焦点在场NPC ID","text":"一句到两句符合身份和当前场景的直接闲聊"}],"objectiveLink":null或{"questId":"目标questId","objectiveIndex":0,"mode":"hint"},${choiceShape},${preparedContinuationsJsonShape(preparedDescriptors)}}`,
     beats.segmentInstruction,
     finalDialogueContract,
     `NPC 台词硬约束：有焦点 NPC 时 npcLine 不能为 null，text 必须恰好包含两句以“。”、“！”或“？”结尾的直接对白；两句之间用中文句号分隔。不要使用任何引号、角色名、动作、表情或“说道/答道”等舞台说明，不要用分号代替第二句。${previousDialogue === undefined ? "无上一轮 NPC 对话；这是当前对话的开场。" : `${previousDialogue}\n若有上一轮 NPC 原话，必须先直接承接其中的问题、信息或拒答，再补充本轮可核验线索或下一步；不得突然切换到无关案件。`}若有 player_utterance，answeredBeatIds 必须包含对应的精确 beatId，并由该焦点 NPC 先回应玩家，再给出可核验线索或下一步。不得说“想听哪一段/想问什么/我知道了”。只能说 NPC 可说线索，不能编造私密知识。任何具体地点、人物、时间、物品或证物，都必须能在主线剧情摘要、NPC 可说事实或场景可见事实中找到依据；如果没有依据，只能使用当前 objectiveLink/目标实体给出的下一步，不得自行补出新的核验细节。非焦点 npcDialogues 中每条 text 必须是直接闲聊，不得包含任务推进、私密事实、动作旁白或通用兜底句。选项生成顺序：先完成 npcLine，再根据本轮 npcLine 的文本和 usedFactIds 生成 choices；上一轮选择只用于理解承接关系，不得直接复用为本轮可见选项。choices 的 candidateId 必须逐字使用上方候选动作中的合法 ID；候选动作只提供服务端合法的 candidateId 和动作语义，不提供可直接复用的自然语言选项。label 是玩家实际要说的话或动作，不要加“回应某人/追问某人”等前缀，不要机械复述 NPC 原话；动作选项必须用全角括号包裹。${finalDialogueHandoff ? "final handoff 的 handoffAcknowledgement 必须是玩家对当前 NPC 的具体致意，不得是可执行 choice。" : "请依据主线剧情上下文、NPC 可说事实和本轮台词写出两句自然、具体、互不重复的玩家对白或动作。"}`,
-    `ID 复核：segments.beatId 只能逐字复制“已解决的本轮规则结果节拍”列表中的 ID，禁止创造 item_given、dialogue_response 等新 ID；segments.referencedEntityIds 只能从 [${(context.narrativeReferenceIds ?? []).join(", ")}] 选择；npcLine.usedFactIds 只能从 [${allowedFactIds.join(", ")}] 选择，npcLine.usedInteractionActionIds 只能从 [${allowedInteractionIds.join(", ")}] 选择；没有对应引用时必须输出空数组。输出前逐项核对这些 ID。玩家可见旁白必须是连续、具体的剧情正文；不得输出“主线推进到第X幕”“已完成：”“当前目标：”等系统元话术，任务状态由 HUD 单独展示。`,
+    `ID 复核：segments.beatId 只能逐字复制“已解决的本轮规则结果节拍”列表中的 ID，禁止创造 item_given、dialogue_response 等新 ID；segments.referencedEntityIds 只能从 [${(context.narrativeReferenceIds ?? []).join(", ")}] 选择；npcLine.usedFactIds 只能从 [${allowedFactIds.join(", ")}] 选择，npcLine.usedEventIds 只能从 [${allowedInteractionIds.join(", ")}] 选择；没有对应引用时必须输出空数组。输出前逐项核对这些 ID。玩家可见旁白必须是连续、具体的剧情正文；不得输出“主线推进到第X幕”“已完成：”“当前目标：”等系统元话术，任务状态由 HUD 单独展示。`,
   ].join("\n");
   const blocks: NarrativeContextBlock[] = [
     sceneBlock({

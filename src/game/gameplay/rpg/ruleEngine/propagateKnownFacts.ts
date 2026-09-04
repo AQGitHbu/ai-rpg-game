@@ -1,12 +1,15 @@
 import type { WorldState } from "@/game/domain/worldState";
 import type { FactChange } from "@/game/domain/resolvedEvent";
-import type { NpcId } from "@/game/domain/worldEntity";
+import { PLAYER_ENTITY_ID, type NpcId } from "@/game/domain/worldEntity";
+import type { EventId } from "@/game/domain/events";
+import { eventIdFor, type NarrativeEventDraft, type TurnId } from "@/game/domain/events";
 import {
   applyEntityMutations,
   EntityMutationInvariantError,
   knowledgeReferences,
   type EntityMutation,
 } from "@/game/gameplay/rpg/entityWorld";
+import type { NpcEntityRecord } from "@/game/domain/entity";
 import { knowledgeWritesFromFactChange } from "@/game/gameplay/rpg/npcMemory";
 
 // ---------------------------------------------------------------------------
@@ -29,12 +32,27 @@ import { knowledgeWritesFromFactChange } from "@/game/gameplay/rpg/npcMemory";
 export function propagateKnownFacts(
   ws: WorldState,
   factChanges: readonly FactChange[],
-  deps: Readonly<{ actionId: string; turnNumber: number; speakerNpcId?: NpcId }>,
+  deps: Readonly<{ actionId: string; turnNumber: number; eventId: EventId; turnId?: TurnId; speakerNpcId?: NpcId }>,
 ): WorldState {
-  if (factChanges.length === 0) return ws;
+  return propagateKnownFactsWithDrafts(ws, factChanges, deps).worldState;
+}
+
+export type PropagateKnownFactsResult = Readonly<{
+  worldState: WorldState;
+  drafts: readonly NarrativeEventDraft[];
+}>;
+
+/** Apply knowledge writes and return the matching event drafts for the same turn batch. */
+export function propagateKnownFactsWithDrafts(
+  ws: WorldState,
+  factChanges: readonly FactChange[],
+  deps: Readonly<{ actionId: string; turnNumber: number; eventId: EventId; turnId?: TurnId; speakerNpcId?: NpcId }>,
+): PropagateKnownFactsResult {
+  if (factChanges.length === 0) return { worldState: ws, drafts: [] };
 
   const references = knowledgeReferences(ws.entityStore.records);
   const mutations: EntityMutation[] = [];
+  const drafts: NarrativeEventDraft[] = [];
   for (const change of factChanges) {
     // 规则层的结果只有三种对待方式，且逐条对应改线前的可观察行为：
     // - ok:false ⇒ 整条 change 零写入，继续下一条。这正是改线前对非法来源与未知 fact 的
@@ -48,6 +66,19 @@ export function propagateKnownFacts(
     const mapped = knowledgeWritesFromFactChange(change, deps, references);
     if (!mapped.ok) continue;
     for (const write of mapped.writes) {
+      const foundRecord = ws.entityStore.records.find((record) =>
+        record.core.kind === "npc" && String(record.core.id) === String(write.npcId));
+      const npcRecord: NpcEntityRecord | undefined = foundRecord !== undefined && foundRecord.core.kind === "npc"
+        ? foundRecord as NpcEntityRecord
+        : undefined;
+      const existing = npcRecord === undefined
+        ? undefined
+        : npcRecord.knowledge.entries.find((entry) => String(entry.factId) === String(write.factId));
+      const changesKnowledge = existing === undefined
+        || (existing.certainty === "suspected" && write.certainty === "known");
+      const eventKey = `npc_knowledge_changed:${write.npcId}:${write.factId}:${deps.actionId}`;
+      const writeEventId = deps.turnId === undefined ? deps.eventId : eventIdFor(deps.turnId, eventKey);
+      const source = { ...write.source, eventId: writeEventId };
       // certainty / disclosure / source 一律照映射结果原样交给写入面：来源策略不在这里再判一次。
       mutations.push({
         kind: "record_npc_knowledge",
@@ -55,14 +86,35 @@ export function propagateKnownFacts(
         factId: write.factId,
         certainty: write.certainty,
         disclosure: write.disclosure,
-        source: write.source,
+        source,
       });
+      if (changesKnowledge) {
+        const sourceNpcId = source.kind === "action" ? source.sourceNpcId : undefined;
+        drafts.push({
+          eventKey,
+          episodeKey: "turn",
+          actorIds: sourceNpcId === undefined ? [PLAYER_ENTITY_ID] : [sourceNpcId],
+          targetIds: [write.npcId],
+          locationId: ws.currentLocationId,
+          causeKeys: [],
+          factIds: [write.factId],
+          questIds: [],
+          outcome: "success",
+          salience: 30,
+          payload: {
+            type: "npc_knowledge_changed",
+            npcId: write.npcId,
+            factId: write.factId,
+            change: existing === undefined ? "learned" : "certainty_upgraded",
+          },
+        });
+      }
     }
   }
 
   // 零写入的唯一证据仍是「原样带回调用方那个对象」：幂等来自权威的 changed:false，
   // 而不是本地再去重（改线前的 Map + 兼容 knownFactIds 过滤器两者都在这里被删掉）。
-  if (mutations.length === 0) return ws;
+  if (mutations.length === 0) return { worldState: ws, drafts: [] };
   // 存在性与说话人已按 canonical 引用集合预筛。certainty 只可能来自 deps 的缺省：本层签名不提供该
   // 字段，默认 known 是映射面 npcKnowledge 给的，本层只是原样转发。R5-4b 已定归属——将来要实现
   // 「传闻不得硬化」，是在调用方传 certainty，不是回来加预筛过滤器；那一天这一支必须改成逐条失败处理，
@@ -70,5 +122,5 @@ export function propagateKnownFacts(
   // 不再是改线前那种「拿合法输入也会撞墙」的正常路径。
   const applied = applyEntityMutations(ws, mutations);
   if (!applied.ok) throw new EntityMutationInvariantError(applied);
-  return applied.worldState;
+  return { worldState: applied.worldState, drafts };
 }

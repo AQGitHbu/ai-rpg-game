@@ -350,6 +350,7 @@ function interactionsViewOf(
   return Object.freeze(tail.map((item) => Object.freeze({
     turnNumber: item.turnNumber,
     actionId: item.actionId,
+    eventId: item.eventId,
     locationId: item.locationId,
     dialogueAct: item.dialogueAct,
     ...(item.topic === undefined ? {} : { topic: item.topic }),

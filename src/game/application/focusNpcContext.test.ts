@@ -11,7 +11,9 @@ import {
 } from "@/game/domain/worldState";
 import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
 import { asLocationId, asNpcId, asFactId, asGenerationId, type GenerationMetadata } from "@/game/domain/worldEntity";
-import { asNarrativeJobId, asTurnId, type CommittedNarrativeEvent } from "@/game/domain/events";
+import { asNarrativeJobId, asTurnId, type CommittedNarrativeEvent, asEventId } from "@/game/domain/events";
+import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
+import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
 import {
   createWorldStateFixtureWith,
@@ -59,7 +61,10 @@ function makeNpc(id: ReturnType<typeof asNpcId>, overrides: Partial<NpcEntry> = 
 }
 
 function makeInteraction(overrides: Partial<NpcInteraction> = {}): NpcInteraction {
+  const actionId = overrides.actionId ?? "act_1";
+  const turnNumber = overrides.turnNumber ?? 1;
   return {
+    eventId: asEventId(`evt:focus:${actionId}:${turnNumber}`),
     turnNumber: 1,
     actionId: "act_1",
     locationId: LOC_1,
@@ -87,7 +92,7 @@ function makeJob(actionId: string): PendingNarrativeJob {
       actionId, status: "success", eventKind: "dialogue",
       facts: [], stateChanges: [], costs: [], rewards: [], triggeredEvents: [], rejectedEffects: [],
     },
-    domainEventRange: { fromLedgerIndex: 0, toLedgerIndexExclusive: 1 },
+    domainEventIds: [asEventId("turn-1:event-1")],
     focusNpcId: NPC_1,
     requestedAt: "2026-01-02",
     objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
@@ -161,7 +166,37 @@ const BASE_PROJECTION: EntityCompatibilityProjection = {
   factions: [],
 };
 
-const INITIALIZED_LEDGER: readonly CommittedNarrativeEvent[] = [{ type: "game_initialized", generation: GENERATION } as unknown as CommittedNarrativeEvent];
+const INTERACTION_LEDGER: readonly CommittedNarrativeEvent[] = [
+  ...bossHistory.map((interaction) => makeCommittedEvent({
+    type: "npc_interaction_recorded",
+    npcId: NPC_1,
+    dialogueAct: interaction.dialogueAct,
+  }, {
+    eventId: interaction.eventId,
+    turnNumber: interaction.turnNumber,
+    actorIds: [PLAYER_ENTITY_ID],
+    targetIds: [NPC_1],
+    locationId: interaction.locationId,
+    actionId: interaction.actionId,
+  })),
+  ...(guestNpc.memory.interactionHistory.map((interaction) => makeCommittedEvent({
+    type: "npc_interaction_recorded",
+    npcId: NPC_2,
+    dialogueAct: interaction.dialogueAct,
+  }, {
+    eventId: interaction.eventId,
+    turnNumber: interaction.turnNumber,
+    actorIds: [PLAYER_ENTITY_ID],
+    targetIds: [NPC_2],
+    locationId: interaction.locationId,
+    actionId: interaction.actionId,
+  }))),
+];
+
+const INITIALIZED_LEDGER: readonly CommittedNarrativeEvent[] = [
+  { type: "game_initialized", generation: GENERATION } as unknown as CommittedNarrativeEvent,
+  ...INTERACTION_LEDGER,
+];
 
 function makeWorldState(overrides: WorldStateFixtureOverrides = {}): WorldState {
   return createWorldStateFixtureWith(
@@ -230,8 +265,7 @@ describe("buildFocusNpcContext", () => {
     expect(context.recentInteractions[0]?.actionId).toBe("act_1");
     expect(context.recentInteractions[4]?.actionId).toBe("act_5");
     // 条目只含规范化字段，绝不含玩家原话
-    expect(context.recentInteractions[0]).toEqual({
-      actionId: "act_1",
+    expect(context.recentInteractions[0]).toEqual({ eventId: asEventId("evt:focus:act_1:2"), actionId: "act_1",
       dialogueAct: "support",
       topicSummary: "询问线索",
       outcome: "positive",

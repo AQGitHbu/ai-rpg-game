@@ -4,7 +4,8 @@ import { createInitialWorldState, type EnemyEntry, type NpcEntry, type LocationE
 import { entitiesOfKind, projectEntityStore, type EntityCompatibilityProjection } from "@/game/domain/entity";
 import { createWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 import { asLocationId, asNpcId, asQuestId, asGenerationId, asItemId, asFactId, asEnemyId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
-import type { NarrativeEventDraft, CommittedNarrativeEvent, NarrativeEventPayload } from "@/game/domain/events";
+import type {NarrativeEventDraft, CommittedNarrativeEvent, NarrativeEventPayload} from "@/game/domain/events";
+import { asTurnId, asEventId } from "@/game/domain/events";
 import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
 import type { WorldState } from "@/game/domain/worldState";
 
@@ -34,7 +35,7 @@ describe("reconcileQuests", () => {
     startingLocation: loc,
     startingItemIds: [],
   });
-  const deps = { now: () => "2026-01-01" };
+  const deps = { now: () => "2026-01-01", turnId: asTurnId("test:turn:reconcile") };
 
   it("completes active quest when talk_to_npc objective satisfied", () => {
     const npc: NpcEntry = {
@@ -105,7 +106,7 @@ describe("reconcileQuests", () => {
     });
     const result = reconcileQuests(ws, deps, {
       talkToNpcSession: { npcId: npc.id, completed: true },
-      actionContext: { participantNpcId: npc.id, actionId: "quest_action_1", turnNumber: 4 },
+      actionContext: { participantNpcId: npc.id, actionId: "quest_action_1", turnNumber: 4 , turnId: asTurnId("test:turn:4") },
     });
     expect(result.nextWorldState.quests[0]?.status).toBe("completed");
     const npcRecord = entitiesOfKind(result.nextWorldState.entityStore, "npc").find((record) => record.core.id === npc.id);
@@ -138,7 +139,7 @@ describe("reconcileQuests", () => {
     });
     const result = reconcileQuests(ws, deps, {
       talkToNpcSession: { npcId: npc.id, completed: true },
-      actionContext: { participantNpcId: npc.id, actionId: "neutral_action", turnNumber: 5 },
+      actionContext: { participantNpcId: npc.id, actionId: "neutral_action", turnNumber: 5 , turnId: asTurnId("test:turn:5") },
     });
     expect(result.drafts.filter((event) => event.payload.type === "quest_completed")).toHaveLength(4);
     const npcRecord = entitiesOfKind(result.nextWorldState.entityStore, "npc").find((record) => record.core.id === npc.id);
@@ -151,8 +152,9 @@ describe("reconcileQuests", () => {
       id: asNpcId("npc_1"), name: "n", role: "r", description: "t",
       locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: true,
       memory: {
-        npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [{
-          turnNumber: 3, actionId, locationId: asLocationId("loc_1"), dialogueAct: "ask",
+        npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [],
+        interactionHistory: [{
+          eventId: asEventId("evt:interact:3"), turnNumber: 3, actionId, locationId: asLocationId("loc_1"), dialogueAct: "ask",
           topicSummary: "dialogue", outcome: "positive", learnedFactIds: [], relationshipDelta: 3, summary: "dialogue",
         }], relationship: { affinity: 3 }, emotion: "neutral", goals: [],
       },
@@ -166,7 +168,7 @@ describe("reconcileQuests", () => {
     });
     const result = reconcileQuests(ws, deps, {
       talkToNpcSession: { npcId: npc.id, completed: true },
-      actionContext: { participantNpcId: npc.id, actionId, turnNumber: 3 },
+      actionContext: { participantNpcId: npc.id, actionId, turnNumber: 3, turnId: asTurnId("test:turn:3") },
     });
     expect(result.nextWorldState.quests[0]?.status).toBe("completed");
     const npcRecord = entitiesOfKind(result.nextWorldState.entityStore, "npc").find((record) => record.core.id === npc.id);
@@ -182,7 +184,7 @@ describe("reconcileQuests", () => {
       memory: {
         npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [],
         interactionHistory: Array.from({ length: 10 }, (_, index) => ({
-          turnNumber: index + 10, actionId: `newer_${index}`, locationId: asLocationId("loc_1"), dialogueAct: "ask",
+          eventId: asEventId(`evt:interact:${index + 10}`), turnNumber: index + 10, actionId: `newer_${index}`, locationId: asLocationId("loc_1"), dialogueAct: "ask",
           topicSummary: "newer", outcome: "positive", learnedFactIds: [], relationshipDelta: 0, summary: "newer",
         })),
         relationship: { affinity: 0 }, emotion: "neutral", goals: [],
@@ -201,7 +203,7 @@ describe("reconcileQuests", () => {
     }, [replayEvidence]);
     const result = reconcileQuests(ws, deps, {
       talkToNpcSession: { npcId: npc.id, completed: true },
-      actionContext: { participantNpcId: npc.id, actionId, turnNumber: 20 },
+      actionContext: { participantNpcId: npc.id, actionId, turnNumber: 20, turnId: asTurnId("test:turn:20") },
     });
     expect(result.nextWorldState.quests[0]?.status).toBe("completed");
     const npcRecord = entitiesOfKind(result.nextWorldState.entityStore, "npc").find((record) => record.core.id === npc.id);
@@ -215,7 +217,7 @@ describe("reconcileQuests", () => {
       locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: true,
       memory: {
         npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [{
-          turnNumber: 4, actionId, locationId: asLocationId("loc_1"), dialogueAct: "ask",
+          eventId: asEventId("evt:interact:current:4"), turnNumber: 4, actionId, locationId: asLocationId("loc_1"), dialogueAct: "ask",
           topicSummary: "current", outcome: "positive", learnedFactIds: [], relationshipDelta: 0, summary: "current",
         }], relationship: { affinity: 0 }, emotion: "neutral", goals: [],
       },
@@ -229,7 +231,7 @@ describe("reconcileQuests", () => {
     });
     const result = reconcileQuests(ws, deps, {
       talkToNpcSession: { npcId: npc.id, completed: true },
-      actionContext: { participantNpcId: npc.id, actionId, turnNumber: 4, actionWasAlreadyUsed: false },
+      actionContext: { participantNpcId: npc.id, actionId, turnNumber: 4, turnId: asTurnId("test:turn:4"), actionWasAlreadyUsed: false },
     });
     const npcRecord = entitiesOfKind(result.nextWorldState.entityStore, "npc").find((record) => record.core.id === npc.id);
     expect(npcRecord?.relationships.outgoing.flatMap((edge) => edge.evidence)).toMatchObject([
@@ -255,7 +257,7 @@ describe("reconcileQuests 完整 outcome", () => {
     });
     return overrides === undefined ? ws : withProjection(ws, overrides);
   }
-  const deps = { now: () => "2026-01-01" };
+  const deps = { now: () => "2026-01-01", turnId: asTurnId("test:turn:outcome") };
   const loc2: LocationEntry = {
     id: asLocationId("loc_2"), name: "街市", description: "t", kind: "main",
     connectedLocationIds: [], npcIds: [], availableItemIds: [], tags: [],

@@ -4,7 +4,7 @@ import { createWorldStateFixture } from "@/game/domain/testing/worldStateFixture
 import {
   asEnemyId, asFactId, asGenerationId, asItemId, asLocationId, asNpcId, asQuestId,
 } from "@/game/domain/worldEntity";
-import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
+import { asNarrativeJobId, asTurnId, asEventId } from "@/game/domain/events";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { EntityCompatibilityProjection } from "@/game/domain/entity";
 import type { NpcEntry } from "@/game/domain/worldEntries";
@@ -35,6 +35,7 @@ function npc(id: typeof focusNpc, locationId: typeof loc0, overrides: Partial<Np
 
 function projection(): EntityCompatibilityProjection {
   const interactions = Array.from({ length: 6 }, (_, index) => ({
+    eventId: asEventId(`evt:interact:${index + 1}`),
     turnNumber: index + 1,
     actionId: `action_${index + 1}`,
     locationId: loc0,
@@ -92,7 +93,7 @@ function job(overrides: Partial<PendingNarrativeJob> = {}): PendingNarrativeJob 
     jobId: asNarrativeJobId("job_1"), turnId: asTurnId("turn_1"), actionId: "action_7",
     basedOnRevision: 2, turnNumber: 7, actionSummary: { kind: "talk", npcId: focusNpc },
     resolvedEvent: { actionId: "action_7", status: "success", eventKind: "dialogue", facts: [], stateChanges: [], costs: [], rewards: [], triggeredEvents: [], rejectedEffects: [] },
-    domainEventRange: { fromLedgerIndex: 0, toLedgerIndexExclusive: 1 }, focusNpcId: focusNpc,
+    domainEventIds: [asEventId("turn_1:event_1")], focusNpcId: focusNpc,
     requestedAt: "2026-08-31T00:00:00.000Z",
     objectiveTransition: { before: null, completed: [], after: { questId, objectiveIndex: 0, label: "询问线人" }, mode: "unchanged" },
     mandatoryBeats: [{ beatId: "item", kind: "item_obtained", subjectIds: ["item_nearby"], instruction: "获得铜钥" }],

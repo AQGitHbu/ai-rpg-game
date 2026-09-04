@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { asEventId } from "@/game/domain/events";
 import { PLAYER_ENTITY_ID, asFactId, asLocationId, asNpcId } from "../worldEntity";
 import type { NpcInteraction } from "../worldEntries";
 import {
@@ -88,6 +89,7 @@ const LEARNED_ENTRY: NpcKnowledgeEntry = {
     actionId: "act_3",
     learnedAtTurn: 4,
     sourceNpcId: asNpcId("npc_1"),
+    eventId: asEventId("evt:test:knowledge"),
   },
 };
 
@@ -102,6 +104,7 @@ const EVIDENCE: RelationshipEvidence = {
   signal: "supported",
   severity: "normal",
   summaryKey: "npc.relationship.signal.supported",
+  supportingEventIds: [asEventId("evt:evidence:1")],
 };
 
 const DEBT: RelationshipCommitment = {
@@ -142,6 +145,7 @@ const RELATIONSHIPS: NpcRelationshipComponent = {
 
 function interaction(actionId = "act_1", turnNumber = 1): NpcInteraction {
   return {
+    eventId: asEventId(`evt:interact:${actionId}:${turnNumber}`),
     turnNumber,
     actionId,
     locationId: asLocationId("loc_0"),
@@ -436,7 +440,7 @@ describe("validateNpcKnowledge", () => {
     const inMemory: NpcKnowledgeComponent = {
       entries: [{
         ...LEARNED_ENTRY,
-        source: { kind: "action", mode: "npc_revealed", actionId: "act_5", learnedAtTurn: 6, sourceNpcId: undefined },
+        source: { kind: "action", mode: "npc_revealed", actionId: "act_5", learnedAtTurn: 6, sourceNpcId: undefined , eventId: asEventId("evt:test:knowledge") },
       }],
     };
     expect(validateNpcKnowledge(inMemory)).toEqual([]);
@@ -475,6 +479,11 @@ describe("validateNpcKnowledge", () => {
     expect(codesOf(issues)).toContain("value_out_of_closed_set");
     expect(codesOf(issues)).toContain("invalid_field_value");
     expect(pathsOf(issues)).toContain("knowledge.entries[0].source.actionId");
+
+    const malformedEvent = tampered({ entries: [LEARNED_ENTRY] }, (d) => {
+      (draftList(d, "entries")[0].source as Draft).eventId = "missing-turn-separator";
+    });
+    expect(pathsOf(validateNpcKnowledge(malformedEvent))).toContain("knowledge.entries[0].source.eventId");
   });
 
   it("rejects a non-string sourceNpcId on an action entry", () => {

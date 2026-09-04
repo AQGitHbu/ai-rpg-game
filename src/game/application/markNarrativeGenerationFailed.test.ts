@@ -5,7 +5,7 @@ import { asGameId } from "./server/persistence/gameRepository";
 import { createInitialWorldState } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { asGenerationId, asLocationId } from "@/game/domain/worldEntity";
-import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
+import { asEventId, asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import type { GameRecord, GameRepository } from "./server/persistence/gameRepository";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 
@@ -24,7 +24,7 @@ function fixture(): { record: GameRecord; repository: GameRepository } {
   const job: PendingNarrativeJob = {
     jobId: asNarrativeJobId("job_failed"), turnId: asTurnId("turn_failed"), actionId: "action_failed", basedOnRevision: 1, turnNumber: 1,
     actionSummary: { kind: "explore" }, resolvedEvent: { actionId: "action_failed", status: "success", eventKind: "observe", facts: [], stateChanges: [], costs: [], rewards: [], triggeredEvents: [], rejectedEffects: [] },
-    domainEventRange: { fromLedgerIndex: 0, toLedgerIndexExclusive: 0 }, requestedAt: "now", objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" }, mandatoryBeats: [],
+    domainEventIds: [asEventId("turn_failed:event")], requestedAt: "now", objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" }, mandatoryBeats: [],
     generationKind: "npc_fixed_choice", sceneRequestKind: "npc_response",
   };
   const record: GameRecord = {

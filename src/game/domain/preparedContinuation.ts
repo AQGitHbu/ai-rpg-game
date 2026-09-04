@@ -201,21 +201,21 @@ function isNarrativeEvent(value: unknown): value is NarrativeEventState {
 
 function isNpcLine(value: unknown): value is NarrativeNpcLineState {
   return isRecord(value)
-    && hasOnlyKeys(value, ["npcId", "text", "emotion", "usedFactIds", "usedInteractionActionIds", "answeredBeatIds"])
+    && hasOnlyKeys(value, ["npcId", "text", "emotion", "usedFactIds", "usedEventIds", "answeredBeatIds"])
     && isNonEmptyString(value.npcId)
     && isNonEmptyString(value.text)
     && PREPARED_NARRATIVE_EMOTIONS.includes(value.emotion as string)
     && isStringArray(value.usedFactIds)
-    && isStringArray(value.usedInteractionActionIds)
+    && isStringArray(value.usedEventIds)
     && areUniqueNpcSpeechReferenceIds(value.usedFactIds)
-    && areUniqueNpcSpeechReferenceIds(value.usedInteractionActionIds)
+    && areUniqueNpcSpeechReferenceIds(value.usedEventIds)
     && (value.answeredBeatIds === undefined || isStringArray(value.answeredBeatIds));
 }
 
 function isNpcDialogue(value: unknown): value is NpcDialogueInScene {
   return isRecord(value)
     && hasOnlyKeys(value, [
-      "npcId", "npcName", "npcRole", "speechPages", "usedFactIds", "usedInteractionActionIds",
+      "npcId", "npcName", "npcRole", "speechPages", "usedFactIds", "usedEventIds",
       "speechSource", "speechPurpose", "smallTalk",
     ])
     && isNonEmptyString(value.npcId)
@@ -223,9 +223,9 @@ function isNpcDialogue(value: unknown): value is NpcDialogueInScene {
     && typeof value.npcRole === "string"
     && isStringArray(value.speechPages)
     && isStringArray(value.usedFactIds)
-    && isStringArray(value.usedInteractionActionIds)
+    && isStringArray(value.usedEventIds)
     && areUniqueNpcSpeechReferenceIds(value.usedFactIds)
-    && areUniqueNpcSpeechReferenceIds(value.usedInteractionActionIds)
+    && areUniqueNpcSpeechReferenceIds(value.usedEventIds)
     && (value.speechSource === undefined || value.speechSource === "generated" || value.speechSource === "fixture")
     && (value.speechPurpose === undefined || value.speechPurpose === "focus" || value.speechPurpose === "ambient")
     && (value.smallTalk === undefined || (

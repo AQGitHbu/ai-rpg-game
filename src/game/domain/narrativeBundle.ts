@@ -30,7 +30,7 @@ export type ScenePerformanceNpcLine = {
   readonly emotion: NarrativeEmotion;
   readonly answeredBeatIds: readonly string[];
   readonly usedFactIds: readonly string[];
-  readonly usedInteractionActionIds: readonly string[];
+  readonly usedEventIds: readonly string[];
 };
 
 /** 同一场景 API 为非焦点 NPC 生成的零回合闲聊台词。 */
@@ -38,7 +38,7 @@ export type ScenePerformanceNpcDialogue = {
   readonly npcId: string;
   readonly text: string;
   readonly usedFactIds: readonly string[];
-  readonly usedInteractionActionIds: readonly string[];
+  readonly usedEventIds: readonly string[];
 };
 
 /** objectiveLink 必须与 ObjectiveTransition.after 一致（无 after 时必须为 null）。 */
@@ -244,26 +244,26 @@ function isScenePerformanceSegment(value: unknown): boolean {
 
 function isScenePerformanceNpcLine(value: unknown): boolean {
   if (!isRecord(value)) return false;
-  if (!hasOnlyKeys(value, ["npcId", "text", "emotion", "answeredBeatIds", "usedFactIds", "usedInteractionActionIds"])) return false;
+  if (!hasOnlyKeys(value, ["npcId", "text", "emotion", "answeredBeatIds", "usedFactIds", "usedEventIds"])) return false;
   return isNonEmptyString(value.npcId)
     && isNonEmptyString(value.text)
     && NARRATIVE_EMOTIONS.includes(value.emotion as string)
     && isStringArray(value.answeredBeatIds)
     && isStringArray(value.usedFactIds)
-    && isStringArray(value.usedInteractionActionIds)
+    && isStringArray(value.usedEventIds)
     && areUniqueNpcSpeechReferenceIds(value.usedFactIds)
-    && areUniqueNpcSpeechReferenceIds(value.usedInteractionActionIds);
+    && areUniqueNpcSpeechReferenceIds(value.usedEventIds);
 }
 
 function isScenePerformanceNpcDialogue(value: unknown): boolean {
   if (!isRecord(value)) return false;
-  if (!hasOnlyKeys(value, ["npcId", "text", "usedFactIds", "usedInteractionActionIds"])) return false;
+  if (!hasOnlyKeys(value, ["npcId", "text", "usedFactIds", "usedEventIds"])) return false;
   return isNonEmptyString(value.npcId)
     && isNonEmptyString(value.text)
     && isStringArray(value.usedFactIds)
-    && isStringArray(value.usedInteractionActionIds)
+    && isStringArray(value.usedEventIds)
     && areUniqueNpcSpeechReferenceIds(value.usedFactIds)
-    && areUniqueNpcSpeechReferenceIds(value.usedInteractionActionIds);
+    && areUniqueNpcSpeechReferenceIds(value.usedEventIds);
 }
 
 function isScenePerformanceObjectiveLink(value: unknown): boolean {
@@ -476,14 +476,14 @@ function isPreparedSceneSeedState(value: unknown): boolean {
   if (value.npcLine !== null) {
     const line = value.npcLine as unknown;
     if (!isRecord(line)
-      || !hasOnlyKeys(line, ["npcId", "text", "emotion", "usedFactIds", "usedInteractionActionIds", "answeredBeatIds"])
+      || !hasOnlyKeys(line, ["npcId", "text", "emotion", "usedFactIds", "usedEventIds", "answeredBeatIds"])
       || !isNonEmptyString(line.npcId)
       || !isNonEmptyString(line.text)
       || !NARRATIVE_EMOTIONS.includes(line.emotion as string)
       || !isStringArray(line.usedFactIds)
-      || !isStringArray(line.usedInteractionActionIds)
+      || !isStringArray(line.usedEventIds)
       || !areUniqueNpcSpeechReferenceIds(line.usedFactIds)
-      || !areUniqueNpcSpeechReferenceIds(line.usedInteractionActionIds)
+      || !areUniqueNpcSpeechReferenceIds(line.usedEventIds)
       || (line.answeredBeatIds !== undefined && !isStringArray(line.answeredBeatIds))) return false;
   }
   if (value.npcDialogues !== undefined) {
@@ -491,7 +491,7 @@ function isPreparedSceneSeedState(value: unknown): boolean {
     for (const dialogue of value.npcDialogues) {
       if (!isRecord(dialogue)
         || !hasOnlyKeys(dialogue, [
-          "npcId", "npcName", "npcRole", "speechPages", "usedFactIds", "usedInteractionActionIds",
+          "npcId", "npcName", "npcRole", "speechPages", "usedFactIds", "usedEventIds",
           "speechSource", "speechPurpose", "smallTalk",
         ])
         || !isNonEmptyString(dialogue.npcId)
@@ -499,9 +499,9 @@ function isPreparedSceneSeedState(value: unknown): boolean {
         || typeof dialogue.npcRole !== "string"
         || !isStringArray(dialogue.speechPages)
         || !isStringArray(dialogue.usedFactIds)
-        || !isStringArray(dialogue.usedInteractionActionIds)
+        || !isStringArray(dialogue.usedEventIds)
         || !areUniqueNpcSpeechReferenceIds(dialogue.usedFactIds)
-        || !areUniqueNpcSpeechReferenceIds(dialogue.usedInteractionActionIds)) return false;
+        || !areUniqueNpcSpeechReferenceIds(dialogue.usedEventIds)) return false;
     }
   }
   // objectiveLink

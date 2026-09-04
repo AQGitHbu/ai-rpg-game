@@ -6,6 +6,8 @@ import { RELATIONSHIP_MAX, RELATIONSHIP_MIN } from "../relationship";
 import type { FactChangeSource } from "../resolvedEvent";
 import type { NpcInteraction } from "../worldEntries";
 import type { FactId, NpcId, PlayerEntityId } from "../worldEntity";
+import type { EventId } from "../events";
+import { isWellFormedEventId } from "../events";
 
 // ---------------------------------------------------------------------------
 // Plan 3：NPC 分层组件的固定形状、封闭值域与纯 validator。
@@ -282,12 +284,14 @@ export type NpcDynamicStateComponent = Readonly<{
 }>;
 
 /** 知识来源判别联合：初始世界事实与经由某个已提交行动学到的事实。 */
+/** 知识来源判别联合：initial_world 分支无 eventId；action 分支必须有 eventId。 */
 export type NpcKnowledgeSource =
   | Readonly<{ kind: "initial_world"; learnedAtTurn: number }>
   | Readonly<{
       kind: "action";
       mode: FactChangeSource;
       actionId: string;
+      eventId: EventId;
       learnedAtTurn: number;
       sourceNpcId?: NpcId;
     }>;
@@ -330,6 +334,8 @@ export type RelationshipEvidence = Readonly<{
   severity: RelationshipSeverity;
   /** 固定枚举/规则 key，不保存玩家原文。 */
   summaryKey: string;
+  /** Task 4：至少一个支撑事件 ID，保留 actionId/turnNumber 作为幂等与诊断。 */
+  supportingEventIds: readonly EventId[];
 }>;
 
 export type RelationshipCommitment =
@@ -467,6 +473,10 @@ function checkText(issues: Issues, value: unknown, path: string): void {
   if (!isString(value) || isBlankText(value)) issues.push(issue("invalid_field_value", path));
 }
 
+function checkEventId(issues: Issues, value: unknown, path: string): void {
+  if (!isString(value) || !isWellFormedEventId(value)) issues.push(issue("invalid_field_value", path));
+}
+
 function checkTurnCounter(issues: Issues, value: unknown, path: string): void {
   if (!isTurnCounter(value)) issues.push(issue("number_out_of_range", path));
 }
@@ -580,7 +590,7 @@ export function validateNpcDynamicState(
 const KNOWLEDGE_KEYS = ["entries"] as const;
 const KNOWLEDGE_ENTRY_KEYS = ["factId", "certainty", "disclosure", "source"] as const;
 const KNOWLEDGE_INITIAL_SOURCE_KEYS = ["kind", "learnedAtTurn"] as const;
-const KNOWLEDGE_ACTION_SOURCE_KEYS = ["kind", "mode", "actionId", "learnedAtTurn"] as const;
+const KNOWLEDGE_ACTION_SOURCE_KEYS = ["kind", "mode", "actionId", "eventId", "learnedAtTurn"] as const;
 const KNOWLEDGE_ACTION_SOURCE_KEYS_ALLOWED = [...KNOWLEDGE_ACTION_SOURCE_KEYS, "sourceNpcId"] as const;
 
 function validateKnowledgeSource(issues: Issues, raw: unknown, path: string): void {
@@ -603,6 +613,7 @@ function validateKnowledgeSource(issues: Issues, raw: unknown, path: string): vo
     }
     checkClosedSet(issues, raw.mode, `${path}.mode`, FACT_CHANGE_SOURCES);
     checkText(issues, raw.actionId, `${path}.actionId`);
+    checkEventId(issues, raw.eventId, `${path}.eventId`);
     checkTurnCounter(issues, raw.learnedAtTurn, `${path}.learnedAtTurn`);
     if (raw.sourceNpcId !== undefined) checkText(issues, raw.sourceNpcId, `${path}.sourceNpcId`);
     return;
@@ -653,7 +664,7 @@ const DEBT_COMMITMENT_KEYS = [
 const PROMISE_COMMITMENT_KEYS = [
   "kind", "commitmentId", "promisor", "status", "description", "source",
 ] as const;
-const EVIDENCE_KEYS = ["evidenceId", "actionId", "turnNumber", "signal", "severity", "summaryKey"] as const;
+const EVIDENCE_KEYS = ["evidenceId", "actionId", "turnNumber", "signal", "severity", "summaryKey", "supportingEventIds"] as const;
 const RELATIONSHIP_INITIAL_SOURCE_KEYS = ["kind", "createdAtTurn", "reasonKey"] as const;
 const RELATIONSHIP_ACTION_SOURCE_KEYS = ["kind", "actionId", "turnNumber"] as const;
 
@@ -694,6 +705,14 @@ function validateEvidence(issues: Issues, raw: unknown, path: string): void {
   checkTurnCounter(issues, raw.turnNumber, `${path}.turnNumber`);
   checkClosedSet(issues, raw.signal, `${path}.signal`, RELATIONSHIP_SIGNALS);
   checkClosedSet(issues, raw.severity, `${path}.severity`, RELATIONSHIP_SEVERITIES);
+  // Task 4：supportingEventIds 必须是非空数组且每项为非空字符串。
+  if (!Array.isArray(raw.supportingEventIds) || raw.supportingEventIds.length === 0) {
+    issues.push(issue("invalid_component_shape", `${path}.supportingEventIds`));
+  } else {
+    for (let i = 0; i < raw.supportingEventIds.length; i++) {
+      checkEventId(issues, raw.supportingEventIds[i], `${path}.supportingEventIds[${i}]`);
+    }
+  }
 }
 
 function validateCommitment(issues: Issues, raw: unknown, path: string): void {
@@ -828,7 +847,7 @@ const HISTORY_KEYS = ["interactions"] as const;
 // 任何必需或可选字段而本表未同步时，所有合法记录都会在存档解析期被判成
 // invalid_component_shape，且没有任何编译期信号——因此下面用类型锁住，不靠人记。
 const INTERACTION_REQUIRED_KEYS = [
-  "turnNumber", "actionId", "locationId", "dialogueAct", "topicSummary", "outcome",
+  "turnNumber", "actionId", "eventId", "locationId", "dialogueAct", "topicSummary", "outcome",
   "relationshipDelta", "learnedFactIds", "summary",
 ] as const;
 const INTERACTION_KEYS_ALLOWED = [...INTERACTION_REQUIRED_KEYS, "topic"] as const;
@@ -865,6 +884,7 @@ function validateInteraction(issues: Issues, raw: unknown, path: string): void {
   }
   checkTurnCounter(issues, raw.turnNumber, `${path}.turnNumber`);
   checkText(issues, raw.actionId, `${path}.actionId`);
+  checkEventId(issues, raw.eventId, `${path}.eventId`);
   checkText(issues, raw.locationId, `${path}.locationId`);
   checkText(issues, raw.topicSummary, `${path}.topicSummary`);
   checkText(issues, raw.summary, `${path}.summary`);

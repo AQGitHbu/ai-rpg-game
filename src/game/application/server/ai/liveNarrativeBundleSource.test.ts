@@ -16,9 +16,11 @@ import {
   asFactId,
   asItemId,
   asGenerationId,
+  PLAYER_ENTITY_ID,
 } from "@/game/domain/worldEntity";
 import type { NpcMemory } from "@/game/domain/worldState";
-import { asNarrativeJobId } from "@/game/domain/events";
+import { asNarrativeJobId, asEventId } from "@/game/domain/events";
+import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
 import { createFixtureOpeningCandidateSource } from "../../createGame";
 import { createWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 
@@ -59,8 +61,11 @@ function makeWorldState(): WorldState {
   });
 }
 
-function withProjection(base: WorldState, overrides: Partial<EntityCompatibilityProjection>): WorldState {
-  const projection = { ...projectEntityStore(base.entityStore), ...overrides };
+function withProjection(base: WorldState, overrides: Partial<EntityCompatibilityProjection> & Readonly<{
+  readonly eventLedger?: readonly WorldState["eventLedger"][number][];
+}>): WorldState {
+  const { eventLedger = base.eventLedger, ...projectionOverrides } = overrides;
+  const projection = { ...projectEntityStore(base.entityStore), ...projectionOverrides };
   return createWorldStateFixture({
     generation: base.generation,
     projection: {
@@ -73,7 +78,7 @@ function withProjection(base: WorldState, overrides: Partial<EntityCompatibility
     battle: base.battle,
     endings: base.endings,
     ending: base.ending,
-    eventLedger: base.eventLedger,
+    eventLedger,
   });
 }
 
@@ -105,7 +110,7 @@ function makeJob(): PendingNarrativeJob {
       triggeredEvents: [],
       rejectedEffects: [],
     },
-    domainEventRange: { fromLedgerIndex: 0, toLedgerIndexExclusive: 1 },
+    domainEventIds: [asEventId("turn-1:event-1")],
     focusNpcId: asNpcId("npc_1"),
     requestedAt: "2026-01-02",
     objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
@@ -125,7 +130,7 @@ const validBundleResponse = {
       emotion: "neutral",
       answeredBeatIds: [],
       usedFactIds: [],
-      usedInteractionActionIds: [],
+      usedEventIds: [],
     },
     objectiveLink: null,
     choices: [
@@ -209,6 +214,7 @@ describe("createNarrativeBundleSource", () => {
     const privateFactId = asFactId("fact_private");
     const publicFactId = asFactId("fact_public");
     const interactionHistory = Array.from({ length: 5 }, (_, index) => ({
+      eventId: asEventId(`evt:interact:${index + 1}`),
       turnNumber: index + 1,
       actionId: `interaction_${index + 1}`,
       locationId: asLocationId("loc_0"),
@@ -243,6 +249,21 @@ describe("createNarrativeBundleSource", () => {
           goals: ["查清商队失踪原因"],
         },
       }],
+      eventLedger: [
+        ...base.eventLedger,
+        ...interactionHistory.map((interaction) => makeCommittedEvent({
+          type: "npc_interaction_recorded",
+          npcId: focusNpcId,
+          dialogueAct: interaction.dialogueAct,
+        }, {
+          eventId: interaction.eventId,
+          turnNumber: interaction.turnNumber,
+          actorIds: [PLAYER_ENTITY_ID],
+          targetIds: [focusNpcId],
+          locationId: interaction.locationId,
+          actionId: interaction.actionId,
+        })),
+      ],
     });
     const storyState: StoryState = {
       ...makeStoryState(),
@@ -285,7 +306,7 @@ describe("createNarrativeBundleSource", () => {
     expect(systemPrompt).toContain("capabilityBoundaries");
     expect(systemPrompt).not.toContain('goals":["..."]');
     for (let index = 1; index <= 5; index += 1) {
-      expect(systemPrompt).toContain(`interaction_${index}`);
+      expect(systemPrompt).toContain(`evt:interact:${index}`);
     }
     expect(systemPrompt).not.toContain("DO_NOT_LEAK_OTHER_NPC_SECRET");
     expect(auditContext).toEqual(expect.objectContaining({
@@ -736,13 +757,13 @@ describe("createNarrativeBundleSource", () => {
         },
         currentScene: {
           segments: [{ beatId: "closing", text: "柳三娘递来一枚铜钱。" }],
-          npcLine: { npcId: "npc_1", text: "去枯柳驿看看。", emotion: "warm", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [] },
+          npcLine: { npcId: "npc_1", text: "去枯柳驿看看。", emotion: "warm", answeredBeatIds: [], usedFactIds: [], usedEventIds: [] },
           objectiveLink: { questId: "nextMainQuest", text: "旧格式" },
           choices: [],
         },
         continuationScenes: [{
           segments: [{ beatId: "arrival", text: "你抵达枯柳驿。" }],
-          npcLine: { npcId: "npc_dyn_1", text: "来者何人？", emotion: "guarded", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [] },
+          npcLine: { npcId: "npc_dyn_1", text: "来者何人？", emotion: "guarded", answeredBeatIds: [], usedFactIds: [], usedEventIds: [] },
           objectiveLink: { questId: "nextMainQuest", text: "旧格式" },
           choices: [
             { candidateId: "wrong_1", label: "表明身份" },
@@ -862,7 +883,7 @@ describe("createNarrativeBundleSource", () => {
         },
         currentScene: {
           segments: [{ beatId: "closing", text: "线索指向枯柳驿。" }],
-          npcLine: { npcId: "npc_1", text: "去枯柳驿看看。", emotion: "warm", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [] },
+          npcLine: { npcId: "npc_1", text: "去枯柳驿看看。", emotion: "warm", answeredBeatIds: [], usedFactIds: [], usedEventIds: [] },
           objectiveLink: null,
           choices: [],
         },
@@ -870,7 +891,7 @@ describe("createNarrativeBundleSource", () => {
           stepKey,
           scene: {
             segments: [{ beatId: "arrival", text: "你抵达枯柳驿。" }],
-            npcLine: { npcId: "npc_dyn_1", text: "来者何人？", emotion: "guarded", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [] },
+            npcLine: { npcId: "npc_dyn_1", text: "来者何人？", emotion: "guarded", answeredBeatIds: [], usedFactIds: [], usedEventIds: [] },
             objectiveLink: null,
             choices: [
               { candidateId: `${stepKey}_choice_1`, label: "表明身份" },
@@ -996,7 +1017,7 @@ describe("createNarrativeBundleSource", () => {
             emotion: "guarded",
             answeredBeatIds: [],
             usedFactIds: ["fact_0"],
-            usedInteractionActionIds: [],
+            usedEventIds: [],
           },
           objectiveLink: null,
           choices: [
@@ -1046,7 +1067,7 @@ describe("createNarrativeBundleSource", () => {
       opening,
       currentScene: {
         segments: [{ beatId: "opening", text: "客栈里风声低沉。" }],
-        npcLine: { npcId: "npc_0", text: "我等你很久了。", emotion: "guarded", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [] },
+        npcLine: { npcId: "npc_0", text: "我等你很久了。", emotion: "guarded", answeredBeatIds: [], usedFactIds: [], usedEventIds: [] },
         objectiveLink: null,
         choices: [{ candidateId: "support", label: "我愿意帮忙。" }, { candidateId: "challenge", label: "先说清楚缘由。" }],
       },
@@ -1083,7 +1104,7 @@ describe("createNarrativeBundleSource", () => {
       opening,
       currentScene: {
         segments: [{ beatId: "opening", text: "客栈里风声低沉。" }],
-        npcLine: { npcId: "npc_0", text: "我等你很久了。", emotion: "guarded", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [] },
+        npcLine: { npcId: "npc_0", text: "我等你很久了。", emotion: "guarded", answeredBeatIds: [], usedFactIds: [], usedEventIds: [] },
         objectiveLink: null,
         choices: [{ candidateId: "support", label: "我愿意帮忙。" }, { candidateId: "challenge", label: "先说清楚缘由。" }],
       },

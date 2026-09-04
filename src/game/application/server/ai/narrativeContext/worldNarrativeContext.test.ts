@@ -15,6 +15,7 @@ import { createWorldStateFixture } from "@/game/domain/testing/worldStateFixture
 import type { WorldEvolutionSourceContext } from "@/game/application/worldEvolutionSource";
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { compileWorldNarrativeContext } from "./worldNarrativeContext";
+import { asEventId } from "@/game/domain/events";
 
 function makeWorldContext(need: EvolutionNeed) {
   const locA = asLocationId("loc_a");
@@ -86,8 +87,7 @@ function makeWorldContext(need: EvolutionNeed) {
         npcId,
         knownFactIds: [publicFactId],
         hiddenFactIds: [hiddenFactId],
-        interactionHistory: [{
-          turnNumber: 4,
+        interactionHistory: [{ eventId: asEventId("evt:test:action_private:4"), turnNumber: 4,
           actionId: "action_private",
           locationId: locA,
           dialogueAct: "ask",

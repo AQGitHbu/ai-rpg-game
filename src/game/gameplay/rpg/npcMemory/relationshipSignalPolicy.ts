@@ -23,6 +23,7 @@ import {
   type NpcRelationshipSeedStance,
 } from "@/game/domain/entity";
 import type { NpcId, PlayerEntityId } from "@/game/domain/worldEntity";
+import type { EventId } from "@/game/domain/events";
 
 // ---------------------------------------------------------------------------
 // Plan 3 Task 3A：关系规则层（gameplay/rpg/npcMemory）。
@@ -705,6 +706,8 @@ export type RelationshipSignalInput = Readonly<{
   signal: RelationshipSignal;
   actionId: string;
   turnNumber: number;
+  /** Task 4：预铸的 npc_relationship_changed 事件 ID，写入 evidence.supportingEventIds。 */
+  supportingEventId: EventId;
 }>;
 
 export type ApplyRelationshipSignalInput = RelationshipSignalInput &
@@ -769,6 +772,7 @@ export function applyRelationshipSignal(input: ApplyRelationshipSignalInput): Ap
       signal: input.signal,
       severity: signalRule.severity,
       summaryKey: signalRule.summaryKey,
+      supportingEventIds: [input.supportingEventId],
     }),
   ]);
   // 本行动已经写过 ⇒ stage 已用掉唯一一档预算。
@@ -955,6 +959,7 @@ export function applyRelationshipSignalToComponent(
     signal: input.signal,
     actionId: input.actionId,
     turnNumber: input.turnNumber,
+    supportingEventId: input.supportingEventId,
   });
   if (!result.ok) return { ok: false, changed: false, code: result.code, relationships };
   if (!result.changed) return { ok: true, changed: false, relationships, edge: result.edge };

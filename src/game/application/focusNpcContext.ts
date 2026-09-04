@@ -116,6 +116,7 @@ export function buildFocusNpcContext(
     store: record.worldState.entityStore,
     speakerNpcId: npcId,
     sceneVisibleFactIds: sceneVisibleFactIds(record),
+    eventLedger: record.worldState.eventLedger,
     targetContext: targetContextOf(record, targetContext),
   });
   if (authority === null) {

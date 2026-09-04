@@ -1,5 +1,6 @@
 import type { WorldState, QuestOutcome } from "@/game/domain/worldState";
-import type { NarrativeEventDraft } from "@/game/domain/events";
+import type { NarrativeEventDraft, EventId } from "@/game/domain/events";
+import { eventIdFor, asTurnId } from "@/game/domain/events";
 import { entitiesOfKind } from "@/game/domain/entity";
 import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import { isObjectiveSatisfied } from "@/game/gameplay/rpg/narrativeContext/objectiveRules";
@@ -15,6 +16,8 @@ export type QuestActionContext = {
   readonly participantNpcId: string;
   readonly actionId: string;
   readonly turnNumber: number;
+  /** Task 4：当前回合的稳定 turnId，用于预铸 eventId。 */
+  readonly turnId: ReturnType<typeof asTurnId>;
   /** 由 resolveTurn 根据回合开始状态计算；不得来自 Action/AI payload。 */
   readonly actionWasAlreadyUsed?: boolean;
 };
@@ -122,12 +125,32 @@ export function reconcileQuests(
     if (npcObjective?.kind === "talk_to_npc") {
       const context = options?.actionContext;
       if (context !== undefined) {
+        const relationshipEventKey = `npc_relationship_changed:${npcObjective.npcId}:${PLAYER_ENTITY_ID}:kept_promise`;
         mutations.push({
           kind: "apply_relationship_signal",
           fromNpcId: npcObjective.npcId,
           targetId: PLAYER_ENTITY_ID,
           signal: "kept_promise",
           source: { kind: "action", actionId: context.actionId, turnNumber: context.turnNumber },
+          supportingEventId: eventIdFor(context.turnId, `npc_relationship_changed:${npcObjective.npcId}:${PLAYER_ENTITY_ID}:kept_promise`),
+        });
+        drafts.push({
+          eventKey: relationshipEventKey,
+          episodeKey: "turn",
+          actorIds: [npcObjective.npcId],
+          targetIds: [PLAYER_ENTITY_ID],
+          locationId: ws.currentLocationId,
+          causeKeys: [{ kind: "same_batch", eventKey: `quest_completed:${quest.id}` }],
+          factIds: [],
+          questIds: [quest.id],
+          outcome: "success",
+          salience: 35,
+          payload: {
+            type: "npc_relationship_changed",
+            fromNpcId: npcObjective.npcId,
+            targetId: PLAYER_ENTITY_ID,
+            signal: "kept_promise",
+          },
         });
       }
     }

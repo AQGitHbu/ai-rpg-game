@@ -5,6 +5,7 @@ import { createInitialWorldState, type LocationEntry } from "@/game/domain/world
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { asLocationId, asQuestId, asEndingId, asGenerationId, asNpcId } from "@/game/domain/worldEntity";
 import type { WorldState } from "@/game/domain/worldState";
+import { asEventId } from "@/game/domain/events";
 
 describe("resolveEnding", () => {
   const loc: LocationEntry = {
@@ -115,8 +116,7 @@ describe("resolveEnding", () => {
       memory: {
         ...openingNpc.memory,
         npcId: asNpcId("npc_final"),
-        interactionHistory: [{
-          turnNumber: 9, actionId: "turn-9", locationId: loc.id, dialogueAct: "support" as const,
+        interactionHistory: [{ eventId: asEventId("evt:test:turn-9:9"), turnNumber: 9, actionId: "turn-9", locationId: loc.id, dialogueAct: "support" as const,
           topicSummary: "general", outcome: "positive" as const, relationshipDelta: 3,
           learnedFactIds: [], summary: "支持终幕知情人",
         }],

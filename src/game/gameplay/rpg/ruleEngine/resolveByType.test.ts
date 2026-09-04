@@ -1,5 +1,6 @@
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
-import type { CommittedNarrativeEvent } from "@/game/domain/events";
+import type {CommittedNarrativeEvent} from "@/game/domain/events";
+import { asTurnId } from "@/game/domain/events";
 import { describe, it, expect } from "vitest";
 import { resolveByType, autoResolveCurrentInvestigation } from "./resolveByType";
 import { updateStoryMetrics } from "./updateStoryMetrics";
@@ -34,7 +35,7 @@ describe("resolveByType", () => {
   };
   const BASE = emptyProjection({ player: PLAYER, locations: [loc1, loc2], currentLocationId: loc1.id });
   const ws = createWorldStateFixture({ generation: GENERATION, projection: BASE });
-  const deps = { now: () => "2026-01-01", actionId: "act_x", turnNumber: 1 };
+  const deps = { now: () => "2026-01-01", actionId: "act_x", turnNumber: 1 , turnId: asTurnId("test:turn:1") };
 
   it("move updates currentLocationId and adds event", () => {
     const result = resolveByType(ws, { type: "move", locationId: asLocationId("loc_2") }, deps);
@@ -100,7 +101,7 @@ describe("resolveByType status and stateChanges", () => {
   };
   const BASE = emptyProjection({ player: PLAYER, locations: [loc1, loc2], currentLocationId: loc1.id });
   const ws = createWorldStateFixture({ generation: GENERATION, projection: BASE });
-  const deps = { now: () => "2026-01-01", actionId: "act_x", turnNumber: 1 };
+  const deps = { now: () => "2026-01-01", actionId: "act_x", turnNumber: 1 , turnId: asTurnId("test:turn:1") };
   const npc1: NpcEntry = {
     id: asNpcId("npc_1"), name: "老板", role: "路人", description: "t",
     locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
@@ -183,7 +184,7 @@ describe("resolveByType — attack", () => {
     };
     return createWorldStateFixtureWith({ generation: GENERATION, base: BASE }, { enemies: [enemy] });
   }
-  const deps = { now: () => "2026-01-01", actionId: "act_x", turnNumber: 1 };
+  const deps = { now: () => "2026-01-01", actionId: "act_x", turnNumber: 1 , turnId: asTurnId("test:turn:1") };
 
   it("attack starts battle and returns active battle state", () => {
     const ws = makeWorldWithEnemy();
@@ -243,7 +244,7 @@ describe("resolveByType — attack", () => {
       items: [item],
       inventory: [item.id],
     });
-    const deps = { now: () => "2026-01-01", actionId: "act_give", turnNumber: 1 };
+    const deps = { now: () => "2026-01-01", actionId: "act_give", turnNumber: 1 , turnId: asTurnId("test:turn:1") };
 
     const wsWithOrdinaryGift = createWorldStateFixtureWith({ generation: GENERATION, base: GIVE_BASE }, {
       npcs: [npc, unrelatedNpc],
@@ -475,7 +476,7 @@ describe("resolveByType — talk 的窄 mutation batch", () => {
 
   it("首次 support 在无 player edge 时写入 +3、met、history 摘要和 warm emotion", () => {
     const ws = worldWithNpc();
-    const result = resolveByType(ws, { type: "talk", npcId: asNpcId("talk_npc"), dialogueAct: "support" }, { now: () => "2026-01-01", actionId: "talk_1", turnNumber: 1 });
+    const result = resolveByType(ws, { type: "talk", npcId: asNpcId("talk_npc"), dialogueAct: "support" }, { now: () => "2026-01-01", actionId: "talk_1", turnNumber: 1 , turnId: asTurnId("test:turn:1") });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const npc = result.nextWorldState.npcs[0]!;
@@ -491,10 +492,10 @@ describe("resolveByType — talk 的窄 mutation batch", () => {
   });
 
   it("第二次 support 使用不同 actionId 时 affinity 到 6 且摘要为再次交谈", () => {
-    const first = resolveByType(worldWithNpc(), { type: "talk", npcId: asNpcId("talk_npc"), dialogueAct: "support" }, { now: () => "2026-01-01", actionId: "talk_1", turnNumber: 1 });
+    const first = resolveByType(worldWithNpc(), { type: "talk", npcId: asNpcId("talk_npc"), dialogueAct: "support" }, { now: () => "2026-01-01", actionId: "talk_1", turnNumber: 1 , turnId: asTurnId("test:turn:1") });
     expect(first.ok).toBe(true);
     if (!first.ok) return;
-    const second = resolveByType(first.nextWorldState, { type: "talk", npcId: asNpcId("talk_npc"), dialogueAct: "support" }, { now: () => "2026-01-01", actionId: "talk_2", turnNumber: 2 });
+    const second = resolveByType(first.nextWorldState, { type: "talk", npcId: asNpcId("talk_npc"), dialogueAct: "support" }, { now: () => "2026-01-01", actionId: "talk_2", turnNumber: 2 , turnId: asTurnId("test:turn:2") });
     expect(second.ok).toBe(true);
     if (second.ok) {
       expect(edge(second.nextWorldState)?.dimensions.affinity).toBe(6);
@@ -503,11 +504,11 @@ describe("resolveByType — talk 的窄 mutation batch", () => {
   });
 
   it("重放相同 actionId 拒绝整次 talk，并保持每条原始 record 身份", () => {
-    const first = resolveByType(worldWithNpc(), { type: "talk", npcId: asNpcId("talk_npc"), dialogueAct: "support" }, { now: () => "2026-01-01", actionId: "talk_replay", turnNumber: 1 });
+    const first = resolveByType(worldWithNpc(), { type: "talk", npcId: asNpcId("talk_npc"), dialogueAct: "support" }, { now: () => "2026-01-01", actionId: "talk_replay", turnNumber: 1 , turnId: asTurnId("test:turn:1") });
     expect(first.ok).toBe(true);
     if (!first.ok) return;
     const beforeRecords = first.nextWorldState.entityStore.records;
-    const replay = resolveByType(first.nextWorldState, { type: "talk", npcId: asNpcId("talk_npc"), dialogueAct: "support" }, { now: () => "2026-01-01", actionId: "talk_replay", turnNumber: 1 });
+    const replay = resolveByType(first.nextWorldState, { type: "talk", npcId: asNpcId("talk_npc"), dialogueAct: "support" }, { now: () => "2026-01-01", actionId: "talk_replay", turnNumber: 1 , turnId: asTurnId("test:turn:1") });
     expect(replay).toEqual({ ok: false, feedback: "世界状态不一致。" });
     expect(first.nextWorldState.entityStore.records).toHaveLength(beforeRecords.length);
     first.nextWorldState.entityStore.records.forEach((record, index) => expect(record).toBe(beforeRecords[index]));
@@ -516,7 +517,7 @@ describe("resolveByType — talk 的窄 mutation batch", () => {
   it("bare ask 不建 player edge，只追加零 delta history 并保持 emotion", () => {
     const ws = worldWithNpc();
     const beforeNpc = npcRecord(ws);
-    const result = resolveByType(ws, { type: "talk", npcId: asNpcId("talk_npc"), dialogueAct: "ask" }, { now: () => "2026-01-01", actionId: "ask_empty", turnNumber: 1 });
+    const result = resolveByType(ws, { type: "talk", npcId: asNpcId("talk_npc"), dialogueAct: "ask" }, { now: () => "2026-01-01", actionId: "ask_empty", turnNumber: 1 , turnId: asTurnId("test:turn:1") });
     expect(result.ok).toBe(true);
     if (result.ok) {
       const afterNpc = npcRecord(result.nextWorldState);
@@ -531,7 +532,7 @@ describe("resolveByType — talk 的窄 mutation batch", () => {
   it("talk 只写窄通道：knowledge identity 不变，而 history/dynamicState/relationships 改变", () => {
     const ws = worldWithNpc();
     const before = npcRecord(ws);
-    const result = resolveByType(ws, { type: "talk", npcId: asNpcId("talk_npc"), dialogueAct: "support" }, { now: () => "2026-01-01", actionId: "narrow", turnNumber: 1 });
+    const result = resolveByType(ws, { type: "talk", npcId: asNpcId("talk_npc"), dialogueAct: "support" }, { now: () => "2026-01-01", actionId: "narrow", turnNumber: 1 , turnId: asTurnId("test:turn:1") });
     expect(result.ok).toBe(true);
     if (result.ok) {
       const after = npcRecord(result.nextWorldState);
@@ -544,7 +545,7 @@ describe("resolveByType — talk 的窄 mutation batch", () => {
 
   it("hostile threaten 返回 failure 但仍写入 threatened 的 fear/hostility/affinity 数值", () => {
     const ws = worldWithNpc({ met: true, memory: { npcId: asNpcId("talk_npc"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: -70 }, emotion: "neutral", goals: [] } });
-    const result = resolveByType(ws, { type: "talk", npcId: asNpcId("talk_npc"), dialogueAct: "threaten" }, { now: () => "2026-01-01", actionId: "threaten", turnNumber: 1 });
+    const result = resolveByType(ws, { type: "talk", npcId: asNpcId("talk_npc"), dialogueAct: "threaten" }, { now: () => "2026-01-01", actionId: "threaten", turnNumber: 1 , turnId: asTurnId("test:turn:1") });
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.status).toBe("failure");
@@ -554,7 +555,7 @@ describe("resolveByType — talk 的窄 mutation batch", () => {
 
   it("批次确实运行：WorldState 身份改变且只追加一个 eventLedger 事件", () => {
     const ws = worldWithNpc();
-    const result = resolveByType(ws, { type: "talk", npcId: asNpcId("talk_npc"), dialogueAct: "support" }, { now: () => "2026-01-01", actionId: "event_batch", turnNumber: 1 });
+    const result = resolveByType(ws, { type: "talk", npcId: asNpcId("talk_npc"), dialogueAct: "support" }, { now: () => "2026-01-01", actionId: "event_batch", turnNumber: 1 , turnId: asTurnId("test:turn:1") });
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.nextWorldState).not.toBe(ws);
@@ -570,7 +571,7 @@ describe("resolveByType — investigate approaches", () => {
     id: asLocationId("loc_1"), name: "客栈", description: "t", kind: "main",
     connectedLocationIds: [], npcIds: [], availableItemIds: [], tags: [],
   };
-  const deps = { now: () => "2026-01-01", actionId: "act_x", turnNumber: 1 };
+  const deps = { now: () => "2026-01-01", actionId: "act_x", turnNumber: 1 , turnId: asTurnId("test:turn:1") };
   const APPROACH_BASE = emptyProjection({ player: PLAYER, locations: [approachLoc], currentLocationId: approachLoc.id });
 
   function worldWithApproaches(): WorldState {

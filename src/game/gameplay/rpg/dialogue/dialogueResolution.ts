@@ -4,7 +4,8 @@ import { relationshipTierOf, type RelationshipTier } from "@/game/domain/relatio
 import type { NarrativeEmotion } from "@/game/domain/narrative";
 import type { RelationshipSignal } from "@/game/domain/entity";
 import { PLAYER_ENTITY_ID, type FactId } from "@/game/domain/worldEntity";
-import type { NarrativeEventDraft } from "@/game/domain/events";
+import type { NarrativeEventDraft, TurnId } from "@/game/domain/events";
+import { eventIdFor } from "@/game/domain/events";
 import type { StateChange } from "@/game/domain/resolvedEvent";
 import { RELATIONSHIP_SIGNAL_POLICY } from "@/game/gameplay/rpg/npcMemory";
 import type { EntityMutation, NpcInteractionPayload } from "@/game/gameplay/rpg/entityWorld/entityMutation";
@@ -21,6 +22,8 @@ export type DialogueDeps = {
   readonly actionId: string;
   /** 当前回合号：写入 NpcInteraction.turnNumber。 */
   readonly turnNumber: number;
+  /** Task 4：当前回合的稳定 turnId，用于预铸 eventId。 */
+  readonly turnId: TurnId;
 };
 
 export type DialogueStatus = "success" | "partial_success" | "failure";
@@ -38,7 +41,7 @@ export type DialogueResolution = {
   readonly signal: RelationshipSignal | null;
   readonly interaction: NpcInteractionPayload;
   readonly mutations: readonly EntityMutation[];
-  readonly draft: NarrativeEventDraft;
+  readonly drafts: readonly NarrativeEventDraft[];
   readonly feedback: string;
   readonly stateChanges: readonly StateChange[];
 };
@@ -163,6 +166,7 @@ export function resolveDialogue(
   const interaction: NpcInteractionPayload = {
     turnNumber: deps.turnNumber,
     actionId: deps.actionId,
+    eventId: eventIdFor(deps.turnId, `npc_interaction_recorded:${npc.id}:${deps.actionId}`),
     locationId: ws.currentLocationId,
     dialogueAct: act,
     topic,
@@ -171,6 +175,11 @@ export function resolveDialogue(
     learnedFactIds,
   };
   const emotion = emotionForOutcome(outcome, npc.memory.emotion);
+  const eventOutcome: NarrativeEventDraft["outcome"] = outcome === "positive"
+    ? "success"
+    : outcome === "negative"
+      ? "failure"
+      : outcome;
   const mutations: EntityMutation[] = [];
   if (signal !== null) {
     mutations.push({
@@ -179,25 +188,68 @@ export function resolveDialogue(
       targetId: PLAYER_ENTITY_ID,
       signal,
       source: { kind: "action", actionId: deps.actionId, turnNumber: deps.turnNumber },
+      supportingEventId: eventIdFor(deps.turnId, `npc_relationship_changed:${npc.id}:${PLAYER_ENTITY_ID}:${signal}`),
     });
   }
   mutations.push({ kind: "record_npc_interaction", npcId: npc.id, ...interaction });
   if (emotion !== npc.memory.emotion) mutations.push({ kind: "set_npc_emotion", npcId: npc.id, emotion });
   // met 写在最后：interaction append 时仍能读到 false，摘要才会记录「首次见面」。
   if (!npc.met) mutations.push({ kind: "set_npc_met", npcId: npc.id, met: true });
-  const draft: NarrativeEventDraft = {
-    eventKey: `npc_met:${action.npcId}`,
+  const interactionEventKey = `npc_interaction_recorded:${action.npcId}:${deps.actionId}`;
+  const relationshipEventKey = signal === null
+    ? undefined
+    : `npc_relationship_changed:${npc.id}:${PLAYER_ENTITY_ID}:${signal}`;
+  const relationshipDrafts: NarrativeEventDraft[] = signal === null ? [] : [{
+    eventKey: relationshipEventKey!,
     episodeKey: "turn",
-    actorIds: [PLAYER_ENTITY_ID],
-    targetIds: [action.npcId],
+    actorIds: [action.npcId],
+    targetIds: [PLAYER_ENTITY_ID],
     locationId: ws.currentLocationId,
-    causeKeys: [],
+    causeKeys: [{ kind: "same_batch", eventKey: interactionEventKey }],
     factIds: [],
     questIds: [],
-    outcome: "success",
-    salience: 50,
-    payload: { type: "npc_met", npcId: action.npcId, interactionKind: "greet" },
-  };
+    outcome: eventOutcome,
+    salience: 40,
+    payload: {
+      type: "npc_relationship_changed",
+      fromNpcId: action.npcId,
+      targetId: PLAYER_ENTITY_ID,
+      signal,
+    },
+  }];
+  const drafts: NarrativeEventDraft[] = [
+    {
+      eventKey: interactionEventKey,
+      episodeKey: "turn",
+      actorIds: [PLAYER_ENTITY_ID],
+      targetIds: [action.npcId],
+      locationId: ws.currentLocationId,
+      causeKeys: [],
+      factIds: learnedFactIds,
+      questIds: [],
+      outcome: eventOutcome,
+      salience: 35,
+      payload: {
+        type: "npc_interaction_recorded",
+        npcId: action.npcId,
+        dialogueAct: act,
+      },
+    },
+    ...relationshipDrafts,
+    {
+      eventKey: `npc_met:${action.npcId}`,
+      episodeKey: "turn",
+      actorIds: [PLAYER_ENTITY_ID],
+      targetIds: [action.npcId],
+      locationId: ws.currentLocationId,
+      causeKeys: [{ kind: "same_batch", eventKey: interactionEventKey }],
+      factIds: [],
+      questIds: [],
+      outcome: "success",
+      salience: 50,
+      payload: { type: "npc_met", npcId: action.npcId, interactionKind: "greet" },
+    },
+  ];
 
   // 与既有 talk 裁决的 stateChanges 契约保持一致：met 变化必有；关系变化仅在部分成功时显式声明
   const stateChanges: StateChange[] = [
@@ -218,7 +270,7 @@ export function resolveDialogue(
     signal,
     interaction,
     mutations,
-    draft,
+    drafts,
     feedback: feedbackFor(npc.name, status, disclosure),
     stateChanges,
   };

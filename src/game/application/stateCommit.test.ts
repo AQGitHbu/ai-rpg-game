@@ -6,7 +6,7 @@ import { asGameId } from "./server/persistence/gameRepository";
 import { createInitialWorldState, type LocationEntry } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { asLocationId, asNpcId, asGenerationId, asQuestId } from "@/game/domain/worldEntity";
-import { asNarrativeJobId, asTurnId, CommittedNarrativeEvent, type NarrativeEventPayload } from "@/game/domain/events";
+import { asEventId, asNarrativeJobId, asTurnId, CommittedNarrativeEvent, type NarrativeEventPayload } from "@/game/domain/events";
 import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { WorldState } from "@/game/domain/worldState";
@@ -25,7 +25,7 @@ function createValidJobFixture(): PendingNarrativeJob {
       actionId: "act_1", status: "success", eventKind: "dialogue",
       facts: [], stateChanges: [], costs: [], rewards: [], triggeredEvents: ["npc_met"], rejectedEffects: [],
     },
-    domainEventRange: { fromLedgerIndex: 1, toLedgerIndexExclusive: 2 },
+    domainEventIds: [asEventId("turn-1:event-1")],
     focusNpcId: asNpcId("npc_1"),
     requestedAt: "2026-01-02",
     objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },

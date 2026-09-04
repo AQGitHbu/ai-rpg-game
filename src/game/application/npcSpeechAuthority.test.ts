@@ -8,8 +8,12 @@ import type {
 } from "@/game/domain/entity";
 import type { NpcInteraction } from "@/game/domain/worldEntries";
 import { asFactId, asLocationId, asNpcId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
+import { asEventId } from "@/game/domain/events";
+import type { CommittedNarrativeEvent } from "@/game/domain/events";
+import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
 import {
   buildNpcSpeechAuthority,
+  validateNpcSpeechReferences,
   type NpcSpeechAuthority,
 } from "./npcSpeechAuthority";
 
@@ -37,6 +41,7 @@ function factRecord(factId: typeof FACT_PUBLIC | typeof FACT_SECRET, text: strin
 
 function interaction(actionId: string, turnNumber: number): NpcInteraction {
   return {
+    eventId: asEventId(`evt:test:${actionId}:${turnNumber}`),
     turnNumber,
     actionId,
     locationId: LOCATION,
@@ -71,6 +76,7 @@ function edge(targetId: DirectedRelationshipEdge["targetId"]): DirectedRelations
       signal: "supported",
       severity: "major",
       summaryKey: "support_received",
+      supportingEventIds: [asEventId("evt:authority:1")],
     }],
     origin: { kind: "initial_world", createdAtTurn: 0, reasonKey: "test" },
     lastChangedAtTurn: 1,
@@ -130,7 +136,7 @@ function authority(): NpcSpeechAuthority {
     store: { version: 2, records: records() },
     speakerNpcId: NPC_A,
     sceneVisibleFactIds: [FACT_PUBLIC, FACT_PUBLIC, FACT_SECRET],
-    targetContext: { targetId: PLAYER_ENTITY_ID, interactionActionIds: ["action_2", "unknown"] },
+    targetContext: { targetId: PLAYER_ENTITY_ID, interactionEventIds: [asEventId("evt:test:action_2:2")] },
   })!;
 }
 
@@ -141,7 +147,7 @@ describe("NpcSpeechAuthority", () => {
     expect(result.allowedFactIds).toEqual([FACT_PUBLIC]);
     expect(result.responseTier).toBe("trusted");
     expect(result.withheldFactIds).toEqual([FACT_SECRET]);
-    expect(result.allowedInteractionActionIds).toEqual(["action_2"]);
+    expect(result.allowedEventIds).toEqual([asEventId("evt:authority:1"), asEventId("evt:test:action_2:2")]);
     expect(result.identityAnchors).toEqual(ANCHORS);
     expect(result.activeGoals).toEqual(["查明失踪的脚印"]);
     expect(result.allowedFactCards).toEqual([{ factId: FACT_PUBLIC, text: "桥下留有新鲜脚印" }]);
@@ -165,7 +171,7 @@ describe("NpcSpeechAuthority", () => {
     expect(first).toEqual(second);
     expect(new Set(first.allowedFactIds).size).toBe(first.allowedFactIds.length);
     expect(new Set(first.withheldFactIds).size).toBe(first.withheldFactIds.length);
-    expect(new Set(first.allowedInteractionActionIds).size).toBe(first.allowedInteractionActionIds.length);
+    expect(new Set(first.allowedEventIds).size).toBe(first.allowedEventIds.length);
     expect(first.relationships.map((relation) => relation.targetId)).toEqual([PLAYER_ENTITY_ID]);
     expect(first.evidenceKeys.length).toBeLessThanOrEqual(3);
   });
@@ -178,7 +184,7 @@ describe("NpcSpeechAuthority", () => {
     })!;
 
     expect(result.allowedFactIds).toEqual([FACT_PUBLIC]);
-    expect(result.allowedInteractionActionIds).toEqual(["action_1", "action_2"]);
+    expect(result.allowedEventIds).toEqual([asEventId("evt:test:action_1:1"), asEventId("evt:test:action_2:2")]);
   });
 
   it("crops relations and evidence to an explicitly requested NPC target", () => {
@@ -278,5 +284,69 @@ describe("NpcSpeechAuthority", () => {
     expect(result.allowedFactCards.map((card) => card.factId)).toEqual(result.allowedFactIds);
     expect(result.allowedFactCards).toEqual([{ factId: FACT_PUBLIC, text: "桥下留有新鲜脚印" }]);
     expect(result.allowedFactIds).not.toContain(asFactId("fact_scene_unknown"));
+  });
+
+  it("filters event references that are absent from the ledger or do not involve the speaker", () => {
+    const validInteraction = makeCommittedEvent({
+      type: "npc_interaction_recorded",
+      npcId: NPC_A,
+      dialogueAct: "ask",
+    }, {
+      eventId: asEventId("evt:test:action_2:2"),
+      actorIds: [NPC_A],
+      targetIds: [PLAYER_ENTITY_ID],
+    });
+    const unrelatedEvent = makeCommittedEvent({
+      type: "npc_interaction_recorded",
+      npcId: NPC_B,
+      dialogueAct: "ask",
+    }, {
+      eventId: asEventId("turn:interaction:unrelated"),
+      actorIds: [NPC_B],
+      targetIds: [PLAYER_ENTITY_ID],
+    });
+    const result = buildNpcSpeechAuthority({
+      store: { version: 2, records: records() },
+      speakerNpcId: NPC_A,
+      sceneVisibleFactIds: [FACT_PUBLIC],
+      eventLedger: [validInteraction, unrelatedEvent],
+      targetContext: {
+        targetId: PLAYER_ENTITY_ID,
+        interactionEventIds: [
+          validInteraction.eventId,
+          unrelatedEvent.eventId,
+          asEventId("turn:interaction:missing"),
+        ],
+      },
+    });
+
+    expect(result?.allowedEventIds).toEqual([validInteraction.eventId]);
+  });
+
+  it("rejects a used event unless the committed ledger proves the speaker participated", () => {
+    const unrelatedEvent = makeCommittedEvent({
+      type: "npc_interaction_recorded",
+      npcId: NPC_B,
+      dialogueAct: "ask",
+    }, {
+      eventId: asEventId("turn:interaction:unrelated"),
+      actorIds: [NPC_B],
+      targetIds: [PLAYER_ENTITY_ID],
+    });
+    const authority = buildNpcSpeechAuthority({
+      store: { version: 2, records: records() },
+      speakerNpcId: NPC_A,
+      sceneVisibleFactIds: [FACT_PUBLIC],
+      eventLedger: [unrelatedEvent],
+      targetContext: { targetId: PLAYER_ENTITY_ID },
+    })!;
+
+    expect(validateNpcSpeechReferences({
+      authority,
+      usedFactIds: [],
+      usedEventIds: [unrelatedEvent.eventId],
+      eventLedger: [unrelatedEvent],
+      speakerNpcId: NPC_A,
+    })).toEqual({ ok: false, code: "invalid_event_reference" });
   });
 });

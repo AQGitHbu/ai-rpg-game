@@ -177,7 +177,7 @@ function compileOpeningNarrative(
     || !choiceIds.includes("challenge")
   ) return null;
 
-  if (!Array.isArray(npcLine.usedFactIds) || !Array.isArray(npcLine.usedInteractionActionIds)) return null;
+  if (!Array.isArray(npcLine.usedFactIds) || !Array.isArray(npcLine.usedEventIds)) return null;
 
   const sceneId = `scene-${String(jobId)}`;
   const choiceRegistry: ApprovedChoice[] = [];
@@ -207,7 +207,7 @@ function compileOpeningNarrative(
       text: npcLine.text,
       emotion: npcLine.emotion,
       usedFactIds: npcLine.usedFactIds as never[],
-      usedInteractionActionIds: [...npcLine.usedInteractionActionIds],
+      usedEventIds: [...npcLine.usedEventIds],
       answeredBeatIds: [...npcLine.answeredBeatIds],
     },
     choices: choiceRegistry.map((choice) => ({
@@ -246,13 +246,16 @@ function approveOpeningSpeech(
     store: worldState.entityStore,
     speakerNpcId: narrative.currentScene.npcLine.npcId,
     sceneVisibleFactIds: visibleFactIds,
+    eventLedger: worldState.eventLedger,
     targetContext: { targetId: PLAYER_ENTITY_ID },
   });
   if (authority === null) return false;
   return validateNpcSpeechReferences({
     authority,
     usedFactIds: narrative.currentScene.npcLine.usedFactIds,
-    usedInteractionActionIds: narrative.currentScene.npcLine.usedInteractionActionIds,
+    usedEventIds: narrative.currentScene.npcLine.usedEventIds,
+    eventLedger: worldState.eventLedger,
+    speakerNpcId: narrative.currentScene.npcLine.npcId,
   }).ok;
 }
 
@@ -671,7 +674,7 @@ export function createFixtureOpeningSource(): NarrativeBundleSource {
               emotion: firstScene.npcLine.emotion,
               usedFactIds,
               answeredBeatIds: [],
-              usedInteractionActionIds: [],
+              usedEventIds: [],
             },
             objectiveLink: null,
             choices: firstScene.choices,

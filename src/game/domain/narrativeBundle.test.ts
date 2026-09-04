@@ -23,7 +23,7 @@ function makeValidScene(): BundleSceneProposal {
       emotion: "neutral",
       answeredBeatIds: [],
       usedFactIds: [],
-      usedInteractionActionIds: [],
+      usedEventIds: [],
     },
     objectiveLink: null,
     choices: [
@@ -85,7 +85,7 @@ describe("NarrativeBundleProposal parser", () => {
       ...makeValidScene(),
       npcLine: {
         ...makeValidScene().npcLine!,
-        usedInteractionActionIds: undefined,
+        usedEventIds: undefined,
       },
     };
     expect(parseNarrativeBundleProposal({
@@ -114,7 +114,7 @@ describe("NarrativeBundleProposal parser", () => {
       ...makeValidBundle(),
       currentScene: {
         ...makeValidScene(),
-        npcLine: { ...makeValidScene().npcLine!, usedInteractionActionIds: ["bad action id"] },
+        npcLine: { ...makeValidScene().npcLine!, usedEventIds: ["bad action id"] },
       },
     }).ok).toBe(false);
   });

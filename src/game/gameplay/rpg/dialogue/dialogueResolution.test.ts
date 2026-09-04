@@ -4,6 +4,7 @@ import type { WorldState, NpcEntry } from "@/game/domain/worldState";
 import { createInitialWorldState } from "@/game/domain/worldState";
 import { asNpcId, asLocationId, asFactId, asGenerationId } from "@/game/domain/worldEntity";
 import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
+import { asTurnId } from "@/game/domain/events";
 import type { DialogueAct, TalkAction } from "@/game/domain/action";
 
 const FACT_KNOWN = asFactId("fact_known");
@@ -54,7 +55,7 @@ function talkOf(action: {
 }
 
 function deps(actionId = "act_1") {
-  return { now: () => "2026-01-01", actionId, turnNumber: 7 };
+  return { now: () => "2026-01-01", actionId, turnNumber: 7, turnId: asTurnId("test:turn:7") };
 }
 
 function mutationKinds(resolution: ReturnType<typeof resolveDialogue>): readonly string[] {
@@ -127,13 +128,37 @@ describe("resolveDialogue — qualitative signal 与原子批次", () => {
     const resolution = resolveDialogue(makeWs(), makeNpc(), talkOf({ act: "support" }), deps());
     const interaction = resolution.interaction;
     expect(Object.keys(interaction).sort()).toEqual([
-      "actionId", "dialogueAct", "learnedFactIds", "locationId", "outcome", "topic", "topicSummary", "turnNumber",
+      "actionId", "dialogueAct", "eventId", "learnedFactIds", "locationId", "outcome", "topic", "topicSummary", "turnNumber",
     ]);
     expect(Object.keys(resolution.mutations[1]!).sort()).toEqual([
-      "actionId", "dialogueAct", "kind", "learnedFactIds", "locationId", "npcId", "outcome", "topic", "topicSummary", "turnNumber",
+      "actionId", "dialogueAct", "eventId", "kind", "learnedFactIds", "locationId", "npcId", "outcome", "topic", "topicSummary", "turnNumber",
     ]);
     expect(interaction).not.toHaveProperty("relationshipDelta");
     expect(interaction).not.toHaveProperty("summary");
+  });
+
+  it("为 interaction 与 relationship mutation 同时产出同语义 key 的事件草稿", () => {
+    const resolution = resolveDialogue(makeWs(), makeNpc(), talkOf({ act: "support" }), deps("dialogue_1"));
+    expect(resolution.drafts.map((draft) => draft.eventKey)).toEqual([
+      "npc_interaction_recorded:npc_1:dialogue_1",
+      "npc_relationship_changed:npc_1:player_0:supported",
+      "npc_met:npc_1",
+    ]);
+    expect(resolution.drafts[1]?.causeKeys).toEqual([{
+      kind: "same_batch",
+      eventKey: "npc_interaction_recorded:npc_1:dialogue_1",
+    }]);
+    expect(resolution.drafts[0]?.payload).toEqual({
+      type: "npc_interaction_recorded",
+      npcId: asNpcId("npc_1"),
+      dialogueAct: "support",
+    });
+    expect(resolution.drafts[1]?.payload).toEqual({
+      type: "npc_relationship_changed",
+      fromNpcId: asNpcId("npc_1"),
+      targetId: PLAYER_ENTITY_ID,
+      signal: "supported",
+    });
   });
 
   it("emotionForOutcome 负责 positive/negative/mixed，重复情绪不提交写入", () => {

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { propagateKnownFacts } from "./propagateKnownFacts";
+import { asEventId, asTurnId } from "@/game/domain/events";
+import { propagateKnownFacts, propagateKnownFactsWithDrafts } from "./propagateKnownFacts";
 import {
   createInitialWorldState,
   type WorldState,
@@ -37,7 +38,7 @@ const generation: GenerationMetadata = {
 };
 
 /** 知识写入必须挂在一次真实行动上：测试固定这份证据。 */
-const EVIDENCE = { actionId: "act_propagate", turnNumber: 4 } as const;
+const EVIDENCE = { actionId: "act_propagate", turnNumber: 4, eventId: asEventId("evt:propagate:4") } as const;
 
 function makeNpc(id: string, locationId = "loc_1", met = true): NpcEntry {
   return {
@@ -119,6 +120,29 @@ function npcRecord(ws: WorldState, npcId: string) {
 }
 
 describe("propagateKnownFacts", () => {
+  it("returns a matching knowledge event draft for every newly written entry", () => {
+    const result = propagateKnownFactsWithDrafts(makeWs(), [{
+      factId: asFactId("f_1"),
+      change: "discovered",
+      source: "player_told",
+      audience: [asNpcId("npc_1")],
+    }], {
+      ...EVIDENCE,
+      turnId: asTurnId("turn:knowledge"),
+    });
+
+    expect(result.drafts).toHaveLength(1);
+    expect(result.drafts[0]?.eventKey).toBe("npc_knowledge_changed:npc_1:f_1:act_propagate");
+    expect(result.drafts[0]?.payload).toEqual({
+      type: "npc_knowledge_changed",
+      npcId: asNpcId("npc_1"),
+      factId: asFactId("f_1"),
+      change: "learned",
+    });
+    expect(result.worldState.entityStore.records.find((record) => record.core.id === asNpcId("npc_1"))?.core.kind)
+      .toBe("npc");
+  });
+
   it("player_told：只传播给显式 audience，不自动传播给同地点所有 met NPC", () => {
     const ws = makeWs();
     const changes: readonly FactChange[] = [
@@ -218,7 +242,7 @@ describe("propagateKnownFacts", () => {
       factId: asFactId("f_1"),
       certainty: "known",
       disclosure: "public",
-      source: { kind: "action", mode: "scene_witness", actionId: EVIDENCE.actionId, learnedAtTurn: EVIDENCE.turnNumber },
+      source: { kind: "action", mode: "scene_witness", actionId: EVIDENCE.actionId, learnedAtTurn: EVIDENCE.turnNumber , eventId: EVIDENCE.eventId },
     }]);
   });
 
@@ -229,7 +253,7 @@ describe("propagateKnownFacts", () => {
     const before = entitiesOfKind(seeded.entityStore, "npc").find((record) => String(record.core.id) === "npc_1")!;
     const replayed = propagateKnownFacts(seeded, [
       { factId: asFactId("f_1"), change: "discovered", source: "public_broadcast", audience: [asNpcId("npc_1")] },
-    ], { actionId: "act_other", turnNumber: 99 });
+    ], { actionId: "act_other", turnNumber: 99, eventId: asEventId("evt:other:99") });
     const after = entitiesOfKind(replayed.entityStore, "npc").find((record) => String(record.core.id) === "npc_1")!;
     expect(after.knowledge).toEqual(before.knowledge);
     // 改线后重放不再走「零 mutation 早退」：写入照样提交，只是被权威幂等掉。
@@ -295,6 +319,7 @@ describe("propagateKnownFacts", () => {
       expect(entries[0]?.source).toEqual({
         kind: "action", mode: "npc_revealed", actionId: EVIDENCE.actionId,
         learnedAtTurn: EVIDENCE.turnNumber, sourceNpcId: asNpcId("npc_3"),
+        eventId: EVIDENCE.eventId,
       });
     }
     expect(npcRecord(result, "npc_3").knowledge.entries).toEqual([]);
@@ -357,11 +382,12 @@ describe("propagateKnownFacts", () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]?.source).toEqual({
       kind: "action", mode: "player_told", actionId: EVIDENCE.actionId, learnedAtTurn: EVIDENCE.turnNumber,
+      eventId: EVIDENCE.eventId,
     });
     // 整次调用重放：两条写入都落到同一条已有 entry 上，权威返回 changed:false，
     // 于是没有任何一条 record 被重建（applyEntityMutations 必然换一个新的 store 包装对象，
     // 但 record 与组件的引用才是「确实没写进去」的见证）。
-    const replayed = propagateKnownFacts(seeded, [pair("player_told"), pair("public_broadcast")], { actionId: "act_other", turnNumber: 99 });
+    const replayed = propagateKnownFacts(seeded, [pair("player_told"), pair("public_broadcast")], { actionId: "act_other", turnNumber: 99, eventId: asEventId("evt:other:99b") });
     // 本例真正的分岔点：重放照样提交了一次批次（所以拿到的不是同一个 WorldState 对象），
     // 却没有任何一条 record 被重建。改线前的兼容过滤器会在这里直接把写入预筛掉，两者才分得开。
     expect(replayed).not.toBe(seeded);
@@ -380,13 +406,13 @@ describe("propagateKnownFacts", () => {
     const seeded = okApply(makeWs(), [{
       kind: "record_npc_knowledge", npcId: asNpcId("npc_1"), factId: asFactId("f_1"),
       certainty: "suspected", disclosure: "public",
-      source: { kind: "action", mode: "player_told", actionId: "act_seed", turnNumber: 2 },
+      source: { kind: "action", mode: "player_told", actionId: "act_seed", turnNumber: 2 , eventId: asEventId("evt:seed:2") },
     }]);
     const seededEntry = npcRecord(seeded, "npc_1").knowledge.entries[0]!;
     expect(seededEntry.certainty).toBe("suspected");
     const result = propagateKnownFacts(seeded, [
       { factId: asFactId("f_1"), change: "discovered", source: "player_told", audience: [asNpcId("npc_1")] },
-    ], { actionId: "act_told_again", turnNumber: 7 });
+    ], { actionId: "act_told_again", turnNumber: 7, eventId: asEventId("evt:told_again:7") });
     const entry = npcRecord(result, "npc_1").knowledge.entries[0]!;
     expect(entry.certainty).toBe("known");
     // 首次来源是历史：升级只改 certainty，连 source 对象都是同一个引用。
@@ -402,7 +428,7 @@ describe("propagateKnownFacts", () => {
     const seeded = okApply(makeWs(), [{
       kind: "record_npc_knowledge", npcId: asNpcId("npc_1"), factId: asFactId("f_1"),
       certainty: "known", disclosure: "secret",
-      source: { kind: "action", mode: "player_told", actionId: "act_seed", turnNumber: 2 },
+      source: { kind: "action", mode: "player_told", actionId: "act_seed", turnNumber: 2 , eventId: asEventId("evt:seed:2") },
     }]);
     const seededEntry = npcRecord(seeded, "npc_1").knowledge.entries[0]!;
     const result = propagateKnownFacts(seeded, [

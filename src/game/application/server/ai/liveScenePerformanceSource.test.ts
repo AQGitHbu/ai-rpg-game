@@ -14,7 +14,7 @@ import type { SceneGenerationContext } from "../../sceneGenerationContext";
 import { buildSelectableSceneCandidates } from "../../sceneChoiceCandidates";
 import { buildStylePolicy } from "../../stylePolicy";
 import { asLocationId, asNpcId, asFactId, asQuestId } from "@/game/domain/worldEntity";
-import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
+import {asNarrativeJobId, asTurnId, asEventId} from "@/game/domain/events";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { MandatoryNarrativeBeat, ObjectiveTransition } from "@/game/domain/narrativeBeat";
 import { ATMOSPHERE_BEAT_ID } from "../../approveAndWriteScene";
@@ -26,7 +26,7 @@ const FIXTURE_NPC_SPEECH_AUTHORITY: NpcSpeechAuthority = {
   allowedFactIds: [asFactId("fact_a")],
   withheldFactIds: [],
   allowedFactCards: [{ factId: asFactId("fact_a"), text: "已知线索" }],
-  allowedInteractionActionIds: ["inter_1"],
+  allowedEventIds: [asEventId("turn-1:interaction-1")],
   recentInteractions: [],
   identityAnchors: {
     selfConcept: "谨慎的掌柜",
@@ -45,7 +45,7 @@ const OTHER_NPC_SPEECH_AUTHORITY: NpcSpeechAuthority = {
   speakerNpcId: asNpcId("npc_2"),
   allowedFactIds: [],
   allowedFactCards: [],
-  allowedInteractionActionIds: [],
+  allowedEventIds: [],
 };
 
 function makeJob(overrides: {
@@ -75,7 +75,7 @@ function makeJob(overrides: {
       triggeredEvents: [],
       rejectedEffects: [],
     },
-    domainEventRange: { fromLedgerIndex: 0, toLedgerIndexExclusive: 1 },
+    domainEventIds: [asEventId("turn-1:event-1")],
     focusNpcId: overrides.focusNpcId !== undefined ? asNpcId(overrides.focusNpcId) : asNpcId("npc_1"),
     requestedAt: "2026-01-02",
     objectiveTransition: overrides.transition ?? { before: null, completed: [], after: null, mode: "unchanged" },
@@ -107,7 +107,7 @@ function makeContext(overrides: {
       hiddenFactCards: [{ factId: asFactId("fact_secret"), text: "绝不外泄的私密" }],
       sceneVisibleFactIds: [asFactId("fact_vis")],
       speechAuthority: FIXTURE_NPC_SPEECH_AUTHORITY,
-      recentInteractionSummaries: ["ask 询问线索 / negative"], recentInteractionActionIds: ["inter_1"],
+      recentInteractionSummaries: ["ask 询问线索 / negative"], recentInteractionActionIds: ["turn-1:interaction-1"],
       relationship: { affinity: 20 }, emotion: "warm",
       goals: ["查清矿坑"], forbiddenKnowledgeIds: [asFactId("fact_secret")],
     }],
@@ -162,7 +162,7 @@ function makeContext(overrides: {
         privateKnowledgeIds: [asFactId("fact_secret")],
       },
       speakableFactCards: [{ factId: asFactId("fact_a"), text: "已知线索" }],
-      recentInteractions: [{ actionId: "inter_1", dialogueAct: "ask", topicSummary: "询问线索", outcome: "negative", summary: "氛围紧张" }],
+      recentInteractions: [{ eventId: asEventId("turn-1:interaction-1"), actionId: "inter_1", dialogueAct: "ask", topicSummary: "询问线索", outcome: "negative", summary: "氛围紧张" }],
       goals: ["查清矿坑"],
       emotion: "warm",
       thisTurn: { relationshipDelta: 0, outcome: "neutral" },
@@ -203,13 +203,13 @@ describe("liveScenePerformanceSource（Task 6）", () => {
         emotion: "neutral",
         answeredBeatIds: [],
         usedFactIds: [],
-        usedInteractionActionIds: [],
+        usedEventIds: [],
       },
       npcDialogues: [{
         npcId: "npc_2",
         text: "那件私事我不该提起，但它确实发生过。",
         usedFactIds: ["fact_secret"],
-        usedInteractionActionIds: [],
+        usedEventIds: [],
       }],
       objectiveLink: null,
       choices: [
@@ -242,13 +242,13 @@ describe("liveScenePerformanceSource（Task 6）", () => {
         emotion: "neutral",
         answeredBeatIds: [],
         usedFactIds: [],
-        usedInteractionActionIds: [],
+        usedEventIds: [],
       },
       npcDialogues: [{
         npcId: "npc_2",
         text: "那件私事我不该提起，但它确实发生过。",
         usedFactIds: ["fact_secret"],
-        usedInteractionActionIds: [],
+        usedEventIds: [],
       }],
       objectiveLink: null,
       choices: [
@@ -318,7 +318,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
           emotion: "guarded",
           answeredBeatIds: [],
           usedFactIds: ["fact_secret"],
-          usedInteractionActionIds: [],
+          usedEventIds: [],
         },
         objectiveLink: null,
         choices: [
@@ -608,7 +608,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
       segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "老板把声音压低了。" }],
       npcLine: {
         npcId: "npc_1", text: "线索就在街道尽头。你现在过去，正好能赶上留下的痕迹。",
-        emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [],
+        emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedEventIds: [],
       },
       objectiveLink: { questId: "quest_0", objectiveIndex: 1, mode: "progress" },
       handoffAcknowledgement: "（你向老板抱拳道谢，转身前往街道。）",
@@ -679,13 +679,13 @@ describe("liveScenePerformanceSource（Task 6）", () => {
         emotion: "neutral",
         answeredBeatIds: [],
         usedFactIds: [],
-        usedInteractionActionIds: [],
+        usedEventIds: [],
       },
       npcDialogues: [{
         npcId: "npc_2",
         text: "客官若要打听旧案，先坐下喝口热茶。店里的出入我记得几分。",
         usedFactIds: [],
-        usedInteractionActionIds: [],
+        usedEventIds: [],
       }],
       objectiveLink: { questId: "quest_0", objectiveIndex: 1, mode: "handoff" },
       choices: [
@@ -702,7 +702,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
         npcId: "npc_2",
         text: "客官若要打听旧案，先坐下喝口热茶。店里的出入我记得几分。",
         usedFactIds: [],
-        usedInteractionActionIds: [],
+        usedEventIds: [],
       },
     ]);
   });
@@ -716,7 +716,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     });
     const base = {
       segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "炉火轻响。" }],
-      npcLine: { npcId: "npc_1", text: "旧案我会说清楚。你先听我把线索交代完。", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [] },
+      npcLine: { npcId: "npc_1", text: "旧案我会说清楚。你先听我把线索交代完。", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedEventIds: [] },
       objectiveLink: null,
       choices: [
         { candidateId: "candidate_1", label: "继续追问" },
@@ -768,7 +768,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(prompt).toContain("tension=30");
     expect(prompt).toContain("nextPacingNeed=reveal");
     expect(prompt).toContain("NPC met: npc_1");
-    expect(prompt).toContain("inter_1");
+    expect(prompt).toContain("turn-1:interaction-1");
     expect(prompt).not.toContain("绝不外泄的私密"); // 私密事实正文绝不出现
     expect(prompt).not.toContain("eventLedger");
     // Task 8：政策指令作为【风格政策】段落整体出现
@@ -781,12 +781,13 @@ describe("liveScenePerformanceSource（Task 6）", () => {
 
   it("prompt retains all five structured focus interactions", () => {
     const base = makeContext();
-    const interactionIds = ["interaction_1", "interaction_2", "interaction_3", "interaction_4", "interaction_5"];
+    const interactionIds = ["evt:perf:0", "evt:perf:1", "evt:perf:2", "evt:perf:3", "evt:perf:4"];
     const context: SceneGenerationContext = {
       ...base,
       focusNpcContext: {
         ...base.focusNpcContext!,
         recentInteractions: interactionIds.map((actionId, index) => ({
+          eventId: asEventId(`evt:perf:${index}`),
           actionId,
           dialogueAct: "ask" as const,
           topicSummary: `主题${index + 1}`,
@@ -847,7 +848,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
           emotion: "neutral",
           answeredBeatIds: [],
           usedFactIds: [],
-          usedInteractionActionIds: [],
+          usedEventIds: [],
         },
         npcDialogues: [],
         objectiveLink: null,
@@ -882,7 +883,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
       emotion: "neutral",
       answeredBeatIds: [],
       usedFactIds: [],
-      usedInteractionActionIds: [],
+      usedEventIds: [],
     });
   });
 
@@ -926,7 +927,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
           emotion: "neutral",
           answeredBeatIds: [],
           usedFactIds: [],
-          usedInteractionActionIds: [],
+          usedEventIds: [],
         },
         objectiveLink: null,
         choices: [
@@ -974,7 +975,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
               emotion: "neutral",
               answeredBeatIds: [],
               usedFactIds: ["fact_a"],
-              usedInteractionActionIds: [],
+              usedEventIds: [],
             },
             objectiveLink: null,
             choices: attempts === 1
@@ -1038,7 +1039,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
           emotion: "neutral",
           answeredBeatIds: [],
           usedFactIds: ["fact_a"],
-          usedInteractionActionIds: [],
+          usedEventIds: [],
         },
         objectiveLink: null,
         choices: staleLabels,
@@ -1528,7 +1529,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
         emotion: "neutral",
         answeredBeatIds: ["player_utterance"],
         usedFactIds: [],
-        usedInteractionActionIds: [],
+        usedEventIds: [],
       },
       objectiveLink: null,
       choices: [
@@ -1569,7 +1570,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
         emotion: "neutral",
         answeredBeatIds: [],
         usedFactIds: [],
-        usedInteractionActionIds: [],
+        usedEventIds: [],
       },
       objectiveLink: null,
       choices: [
@@ -1595,7 +1596,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
         emotion: "neutral",
         answeredBeatIds: [],
         usedFactIds: [],
-        usedInteractionActionIds: [],
+        usedEventIds: [],
       },
       objectiveLink: null,
       choices: [
@@ -1620,7 +1621,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
         emotion: "neutral",
         answeredBeatIds: [],
         usedFactIds: [],
-        usedInteractionActionIds: [],
+        usedEventIds: [],
       },
       objectiveLink: null,
       choices: [
@@ -1645,7 +1646,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
         emotion: "neutral",
         answeredBeatIds: [],
         usedFactIds: [],
-        usedInteractionActionIds: [],
+        usedEventIds: [],
       },
       objectiveLink: null,
       choices: [

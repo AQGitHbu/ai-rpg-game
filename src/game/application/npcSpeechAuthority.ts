@@ -11,6 +11,7 @@ import {
 } from "@/game/domain/entity";
 import type { NpcInteraction } from "@/game/domain/worldEntries";
 import type { FactId, NpcId, PlayerEntityId } from "@/game/domain/worldEntity";
+import { isWellFormedEventId, type CommittedNarrativeEvent, type EventId } from "@/game/domain/events";
 import { relationshipTierOf, type RelationshipTier } from "@/game/domain/relationship";
 import {
   areUniqueNpcSpeechReferenceIds,
@@ -20,11 +21,12 @@ import {
 export type NpcSpeechReferenceRejection =
   | "duplicate_npc_reference"
   | "invalid_fact_reference"
-  | "invalid_interaction_reference";
+  | "invalid_interaction_reference"
+  | "invalid_event_reference";
 
 export type NpcSpeechReferenceAuthority = Pick<
   NpcSpeechAuthority,
-  "allowedFactIds" | "allowedInteractionActionIds"
+  "allowedFactIds" | "allowedEventIds"
 >;
 
 /** The only context used to decide which references a speaker may expose. */
@@ -32,9 +34,11 @@ export type NpcSpeechAuthorityInput = Readonly<{
   readonly store: EntityStore;
   readonly speakerNpcId: NpcId;
   readonly sceneVisibleFactIds: readonly FactId[];
+  /** Optional only for isolated legacy projections; production callers pass the authoritative ledger. */
+  readonly eventLedger?: readonly CommittedNarrativeEvent[];
   readonly targetContext?: Readonly<{
     readonly targetId?: PlayerEntityId | NpcId;
-    readonly interactionActionIds?: readonly string[];
+    readonly interactionEventIds?: readonly EventId[];
   }>;
 }>;
 
@@ -54,6 +58,7 @@ export type NpcSpeechCommitment = Readonly<{
 }>;
 
 export type NpcSpeechInteraction = Readonly<{
+  readonly eventId: EventId;
   readonly actionId: string;
   readonly dialogueAct: NpcInteraction["dialogueAct"];
   readonly topicSummary: string;
@@ -72,7 +77,7 @@ export type NpcSpeechAuthority = Readonly<{
   readonly allowedFactIds: readonly FactId[];
   readonly withheldFactIds: readonly FactId[];
   readonly allowedFactCards: readonly NpcSpeechFactCard[];
-  readonly allowedInteractionActionIds: readonly string[];
+  readonly allowedEventIds: readonly EventId[];
   readonly recentInteractions: readonly NpcSpeechInteraction[];
   readonly identityAnchors: NpcIdentityAnchors;
   readonly activeGoals: readonly string[];
@@ -91,27 +96,53 @@ export type NpcSpeechAuthority = Readonly<{
 export function validateNpcSpeechReferences(input: {
   readonly authority: NpcSpeechReferenceAuthority;
   readonly usedFactIds: readonly string[];
-  readonly usedInteractionActionIds: readonly string[];
+  readonly usedEventIds: readonly string[];
+  readonly eventLedger?: readonly CommittedNarrativeEvent[];
+  readonly speakerNpcId?: NpcId;
 }): { readonly ok: true } | { readonly ok: false; readonly code: NpcSpeechReferenceRejection } {
   if (input.usedFactIds.some((id) => !isWellFormedNpcSpeechReferenceId(id))) {
     return { ok: false, code: "invalid_fact_reference" };
   }
-  if (input.usedInteractionActionIds.some((id) => !isWellFormedNpcSpeechReferenceId(id))) {
-    return { ok: false, code: "invalid_interaction_reference" };
+  if (input.usedEventIds.some((id) => !isWellFormedEventId(id))) {
+    return { ok: false, code: "invalid_event_reference" };
   }
   if (!areUniqueNpcSpeechReferenceIds(input.usedFactIds)
-    || !areUniqueNpcSpeechReferenceIds(input.usedInteractionActionIds)) {
+    || !areUniqueNpcSpeechReferenceIds(input.usedEventIds)) {
     return { ok: false, code: "duplicate_npc_reference" };
   }
   const allowedFacts = new Set(input.authority.allowedFactIds.map(String));
   if (input.usedFactIds.some((id) => !allowedFacts.has(String(id)))) {
     return { ok: false, code: "invalid_fact_reference" };
   }
-  const allowedInteractions = new Set(input.authority.allowedInteractionActionIds.map(String));
-  if (input.usedInteractionActionIds.some((id) => !allowedInteractions.has(String(id)))) {
-    return { ok: false, code: "invalid_interaction_reference" };
+  const allowedEvents = new Set(input.authority.allowedEventIds.map(String));
+  if (input.usedEventIds.some((id) => !allowedEvents.has(String(id)))) {
+    return { ok: false, code: "invalid_event_reference" };
+  }
+  if (input.eventLedger !== undefined && input.speakerNpcId !== undefined) {
+    const committed = new Map(input.eventLedger.map((event) => [String(event.eventId), event]));
+    for (const eventId of input.usedEventIds) {
+      const event = committed.get(String(eventId));
+      if (event === undefined || !eventInvolvesNpc(event, input.speakerNpcId)) {
+        return { ok: false, code: "invalid_event_reference" };
+      }
+    }
   }
   return { ok: true };
+}
+
+function eventInvolvesNpc(event: CommittedNarrativeEvent, npcId: NpcId): boolean {
+  return [...event.actorIds, ...event.targetIds].some((participantId) => String(participantId) === String(npcId));
+}
+
+function validEventIdForSpeaker(
+  eventId: EventId,
+  speakerNpcId: NpcId,
+  ledger: readonly CommittedNarrativeEvent[] | undefined,
+): boolean {
+  if (!isWellFormedEventId(String(eventId))) return false;
+  if (ledger === undefined) return true;
+  const event = ledger.find((candidate) => String(candidate.eventId) === String(eventId));
+  return event !== undefined && eventInvolvesNpc(event, speakerNpcId);
 }
 
 /** A target reference is valid only for an actual NPC or player entity. */
@@ -175,12 +206,13 @@ function relationshipOf(edge: DirectedRelationshipEdge): NpcSpeechRelationship {
 }
 
 function interactionViews(history: readonly NpcInteraction[]): readonly NpcSpeechInteraction[] {
-  const latestByAction = new Map<string, NpcInteraction>();
-  for (const interaction of history) latestByAction.set(interaction.actionId, interaction);
-  return [...latestByAction.values()]
-    .sort((left, right) => left.turnNumber - right.turnNumber || compareId(left.actionId, right.actionId))
+  const latestByEvent = new Map<string, NpcInteraction>();
+  for (const interaction of history) latestByEvent.set(String(interaction.eventId), interaction);
+  return [...latestByEvent.values()]
+    .sort((left, right) => left.turnNumber - right.turnNumber || compareId(String(left.eventId), String(right.eventId)))
     .slice(-5)
     .map((interaction) => ({
+      eventId: interaction.eventId,
       actionId: interaction.actionId,
       dialogueAct: interaction.dialogueAct,
       topicSummary: interaction.topicSummary,
@@ -253,13 +285,30 @@ export function buildNpcSpeechAuthority(input: NpcSpeechAuthorityInput): NpcSpee
     })
     .filter((card): card is NpcSpeechFactCard => card !== undefined);
 
-  const recentInteractions = interactionViews(speakerRecord.history.interactions);
-  const recentActionIds = recentInteractions.map((interaction) => interaction.actionId);
-  const requestedActionIds = input.targetContext?.interactionActionIds;
-  const allowedInteractionActionIds = uniqueSorted(
-    requestedActionIds === undefined
-      ? recentActionIds
-      : requestedActionIds.filter((actionId) => recentActionIds.includes(actionId)),
+  const recentInteractions = interactionViews(speakerRecord.history.interactions)
+    .filter((interaction) => validEventIdForSpeaker(interaction.eventId, input.speakerNpcId, input.eventLedger));
+  // Task 4 Step 3: allowedEventIds by three sources:
+  //   1. speaker's own interaction events
+  //   2. speaker's own knowledge source events
+  //   3. target relationship's latest 3 evidence supportingEventIds
+  const recentInteractionEventIds = recentInteractions.map((interaction) => interaction.eventId);
+  const knowledgeEventIds = speakerRecord.knowledge.entries
+    .filter((entry) => entry.source.kind === "action")
+    .map((entry) => entry.source.kind === "action" ? entry.source.eventId : null)
+    .filter((id): id is EventId => id !== null);
+  const evidenceEventIds = targetEdge === undefined
+    ? []
+    : targetEdge.evidence
+        .slice(-3)
+        .flatMap((evidence) => evidence.supportingEventIds);
+  const requestedEventIds = input.targetContext?.interactionEventIds;
+  const candidateEventIds = requestedEventIds === undefined
+    ? [...recentInteractionEventIds, ...knowledgeEventIds, ...evidenceEventIds]
+    : requestedEventIds.filter((eventId) =>
+        recentInteractionEventIds.some((id) => String(id) === String(eventId)));
+  const allowedEventIds = uniqueSorted(
+    [...candidateEventIds, ...knowledgeEventIds, ...evidenceEventIds]
+      .filter((eventId) => validEventIdForSpeaker(eventId, input.speakerNpcId, input.eventLedger)),
     String,
   );
   const relationships = targetEdge === undefined ? [] : [relationshipOf(targetEdge)];
@@ -275,7 +324,7 @@ export function buildNpcSpeechAuthority(input: NpcSpeechAuthorityInput): NpcSpee
     allowedFactIds,
     withheldFactIds,
     allowedFactCards,
-    allowedInteractionActionIds,
+    allowedEventIds,
     recentInteractions,
     identityAnchors: speakerRecord.identity.anchors,
     activeGoals: speakerRecord.dynamicState.goals

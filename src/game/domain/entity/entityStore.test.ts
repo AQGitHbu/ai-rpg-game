@@ -20,7 +20,10 @@ import {
   getEntity,
   parseEntityStore,
   validateEntityStoreStructure,
+  validateEntityStoreProvenance,
 } from "./entityStore";
+import { asEventId } from "../events";
+import { makeCommittedEvent } from "../testing/committedEventFactory";
 
 // ---------------------------------------------------------------------------
 // 合法 record 构造器：每个测试只篡改它要验证的那一处，避免复合失败原因。
@@ -201,11 +204,13 @@ function evidenceRecord(evidenceId: string, actionId: string): Record<string, un
     signal: "supported",
     severity: "normal",
     summaryKey: "supported",
+    supportingEventIds: [`evt:${evidenceId}`],
   };
 }
 
 function interactionRecord(actionId: string): Record<string, unknown> {
   return {
+    eventId: `evt:interact:${actionId}`,
     turnNumber: 1,
     actionId,
     locationId: "loc_0",
@@ -593,5 +598,69 @@ describe("entity store 类型面拒绝任意 patch 与动态组件", () => {
     // @ts-expect-error lifecycle 只允许四个固定值
     const badLifecycle: EntityLifecycle = "pending";
     expect(badLifecycle).toBeDefined();
+  });
+});
+
+describe("entity store NPC event provenance", () => {
+  it("rejects unknown, duplicate, and non-participant event references", () => {
+    const npc = npcRecord("npc_0");
+    const validId = asEventId("turn:npc:interaction");
+    const validEvent = makeCommittedEvent({
+      type: "npc_interaction_recorded",
+      npcId: asNpcId("npc_0"),
+      dialogueAct: "ask",
+    }, {
+      eventId: validId,
+      actorIds: [asNpcId("npc_0")],
+      targetIds: [PLAYER_ENTITY_ID],
+    });
+    const unknownId = asEventId("turn:npc:missing");
+    const unrelatedEvent = makeCommittedEvent({
+      type: "npc_interaction_recorded",
+      npcId: asNpcId("npc_other"),
+      dialogueAct: "ask",
+    }, {
+      eventId: asEventId("turn:npc:other"),
+      actorIds: [asNpcId("npc_other")],
+      targetIds: [PLAYER_ENTITY_ID],
+    });
+    const withProvenance = {
+      ...npc,
+      history: {
+        interactions: [{
+          ...interactionRecord("act_1"),
+          eventId: validId,
+        }],
+      },
+    } as unknown as EntityRecord;
+    const store = createEntityStore([playerRecord(), withProvenance]);
+
+    expect(validateEntityStoreProvenance(store, [validEvent, unrelatedEvent])).toEqual([]);
+    expect(validateEntityStoreProvenance(store, [unrelatedEvent])).toEqual([
+      expect.objectContaining({ code: "invalid_event_provenance" }),
+    ]);
+
+    const duplicate = {
+      ...withProvenance,
+      history: {
+        interactions: [
+          { ...interactionRecord("act_1"), eventId: validId },
+          { ...interactionRecord("act_2"), eventId: validId },
+        ],
+      },
+    } as unknown as EntityRecord;
+    const duplicateStore = createEntityStore([playerRecord(), duplicate]);
+    expect(validateEntityStoreProvenance(duplicateStore, [validEvent])).toEqual([
+      expect.objectContaining({ code: "invalid_event_provenance" }),
+    ]);
+
+    const unknown = {
+      ...withProvenance,
+      history: { interactions: [{ ...interactionRecord("act_1"), eventId: unknownId }] },
+    } as unknown as EntityRecord;
+    const unknownStore = createEntityStore([playerRecord(), unknown]);
+    expect(validateEntityStoreProvenance(unknownStore, [validEvent])).toEqual([
+      expect.objectContaining({ code: "invalid_event_provenance" }),
+    ]);
   });
 });

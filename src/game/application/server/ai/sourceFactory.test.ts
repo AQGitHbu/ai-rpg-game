@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { resolveLiveNpcLine, resolvePerformanceChoices } from "./liveScenePerformanceSource";
 import { asLocationId } from "@/game/domain/worldEntity";
+import { asEventId } from "@/game/domain/events";
 import { buildStylePolicy } from "../../stylePolicy";
 import {
   createOpeningGenerationSource,
@@ -142,7 +143,7 @@ describe("createLiveScenePerformanceSource 焦点 NPC", () => {
         actionId: "act_talk", status: "success", eventKind: "dialogue",
         facts: [], stateChanges: [], costs: [], rewards: [], triggeredEvents: [], rejectedEffects: [],
       },
-      domainEventRange: { fromLedgerIndex: 0, toLedgerIndexExclusive: 1 },
+      domainEventIds: [asEventId("turn-1:event-1")],
       requestedAt: "2026-01-02",
       objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
       mandatoryBeats: [],
@@ -186,7 +187,7 @@ describe("createLiveScenePerformanceSource 焦点 NPC", () => {
         ok: true,
         content: JSON.stringify({
           segments: [{ beatId: "atmosphere", text: "场景。" }],
-          npcLine: { npcId: "npc_b", text: "维珀开口。", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [] },
+          npcLine: { npcId: "npc_b", text: "维珀开口。", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedEventIds: [] },
           objectiveLink: null,
           choices: [
             { label: "支持", candidateId: "candidate_1" },

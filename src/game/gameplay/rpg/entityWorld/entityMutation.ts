@@ -18,6 +18,7 @@ import {
 } from "@/game/domain/entity";
 import type { NpcInteraction, WorldState } from "@/game/domain/worldState";
 import { PLAYER_ENTITY_ID, type EnemyId, type FactId, type ItemId, type LocationId, type NpcId, type QuestId } from "@/game/domain/worldEntity";
+import type { EventId } from "@/game/domain/events";
 import {
   applyRelationshipCommitment,
   applyRelationshipSignalToComponent,
@@ -69,9 +70,9 @@ export type EntityMutation =
    * 规则层的同行动累计预算对该顺序敏感，见 npcMemory 文件头 (b)/(c)）。
    * 载荷里没有数值 delta、没有 stage、没有 trend、没有证据对象：那些全由规则表决定。
    */
-  | { readonly kind: "apply_relationship_signal"; readonly fromNpcId: NpcId; readonly targetId: RelationshipTargetId; readonly signal: RelationshipSignal; readonly source: RelationshipMutationSource }
+  | { readonly kind: "apply_relationship_signal"; readonly fromNpcId: NpcId; readonly targetId: RelationshipTargetId; readonly signal: RelationshipSignal; readonly source: RelationshipMutationSource; readonly supportingEventId: EventId }
   /** 承诺操作：只接受封闭六类操作名，且不建边（目标边必须已存在）。 */
-  | { readonly kind: "apply_relationship_commitment"; readonly fromNpcId: NpcId; readonly targetId: RelationshipTargetId; readonly operation: RelationshipCommitmentOperation; readonly source: RelationshipMutationSource }
+  | { readonly kind: "apply_relationship_commitment"; readonly fromNpcId: NpcId; readonly targetId: RelationshipTargetId; readonly operation: RelationshipCommitmentOperation; readonly source: RelationshipMutationSource; readonly supportingEventId: EventId }
   | { readonly kind: "transfer_item"; readonly itemId: ItemId; readonly owner: PossessionComponent["owner"] }
   | { readonly kind: "discover_fact"; readonly factId: FactId }
   /**
@@ -123,11 +124,11 @@ type IsExactly<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : fals
  */
 export type RelationshipSignalPayloadKeysLock = Expect<IsExactly<
   keyof Extract<EntityMutation, { readonly kind: "apply_relationship_signal" }>,
-  "kind" | "fromNpcId" | "targetId" | "signal" | "source"
+  "kind" | "fromNpcId" | "targetId" | "signal" | "source" | "supportingEventId"
 >>;
 export type RelationshipCommitmentPayloadKeysLock = Expect<IsExactly<
   keyof Extract<EntityMutation, { readonly kind: "apply_relationship_commitment" }>,
-  "kind" | "fromNpcId" | "targetId" | "operation" | "source"
+  "kind" | "fromNpcId" | "targetId" | "operation" | "source" | "supportingEventId"
 >>;
 
 /**
@@ -154,7 +155,7 @@ export type SetKnowledgeDisclosurePayloadKeysLock = Expect<IsExactly<
  */
 export type RecordInteractionPayloadKeysLock = Expect<IsExactly<
   keyof Extract<EntityMutation, { readonly kind: "record_npc_interaction" }>,
-  "kind" | "npcId" | "turnNumber" | "actionId" | "locationId" | "dialogueAct" | "topic" | "topicSummary" | "outcome" | "learnedFactIds"
+  "kind" | "npcId" | "turnNumber" | "actionId" | "eventId" | "locationId" | "dialogueAct" | "topic" | "topicSummary" | "outcome" | "learnedFactIds"
 >>;
 /** 情绪一支只写 dynamicState.emotion：met / isCompanion / goals 与整块组件都在门外。 */
 export type SetEmotionPayloadKeysLock = Expect<IsExactly<
@@ -620,6 +621,7 @@ function applyOne(records: readonly EntityRecord[], mutation: EntityMutation, ba
         signal: mutation.signal,
         actionId: checkedSource.actionId,
         turnNumber: checkedSource.turnNumber,
+        supportingEventId: mutation.supportingEventId,
       });
       // applied.code 是规则层自己的封闭字面量 union（不是调用方数据），所以裸下标即可：
       // 表覆盖性由上面的 satisfies 锁定，漏一行在 typecheck 就失败，不会落回 undefined。
@@ -799,6 +801,7 @@ function applyOne(records: readonly EntityRecord[], mutation: EntityMutation, ba
       const entry: NpcInteraction = {
         turnNumber: mutation.turnNumber,
         actionId: mutation.actionId,
+        eventId: mutation.eventId,
         locationId: mutation.locationId,
         dialogueAct: mutation.dialogueAct,
         // 逐键装配而非展开载荷：外部多给的键（伪造的 delta / summary / 整块数组）永远进不了条目。

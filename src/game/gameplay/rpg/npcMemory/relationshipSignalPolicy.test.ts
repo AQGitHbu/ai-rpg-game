@@ -17,6 +17,7 @@ import {
   type RelationshipTrend,
 } from "@/game/domain/entity";
 import { PLAYER_ENTITY_ID, asNpcId, type NpcId, type PlayerEntityId } from "@/game/domain/worldEntity";
+import { asEventId } from "@/game/domain/events";
 import {
   RELATIONSHIP_SIGNAL_CAPS,
   RELATIONSHIP_SIGNAL_POLICY,
@@ -152,6 +153,7 @@ function evidenceOf(
     signal,
     severity: rule.severity,
     summaryKey: rule.summaryKey,
+    supportingEventIds: [asEventId("evt:signal:1")],
   };
 }
 
@@ -187,6 +189,7 @@ function bogusEvidence(signal: string, actionId: string): RelationshipEvidence {
     signal: signal as RelationshipSignal,
     severity: "major",
     summaryKey: "relationship.signal.bogus",
+    supportingEventIds: [asEventId("evt:signal:1")],
   };
 }
 
@@ -210,6 +213,7 @@ function applySignal(input: {
     signal: input.signal,
     actionId: input.actionId,
     turnNumber: input.turnNumber ?? 1,
+    supportingEventId: asEventId(`evt:test:${input.actionId}:${input.turnNumber ?? 1}`),
   });
   return accepted(result, `apply ${input.signal}`);
 }
@@ -335,6 +339,7 @@ describe("上下限与 cap", () => {
         signal: index % 2 === 0 ? "kept_promise" : "supported",
         actionId: `act_loop_${index}`,
         turnNumber: index + 1,
+        supportingEventId: asEventId("evt:test:supporting"),
       }), `loop ${index}`);
     }
     for (const key of RELATIONSHIP_DIMENSION_KEYS) {
@@ -349,10 +354,12 @@ describe("上下限与 cap", () => {
     let edge = edgeOf();
     edge = accepted(applyRelationshipSignal({
       edge, fromNpcId: NPC_A, targetId: NPC_B, signal: "kept_promise", actionId: "act_pair", turnNumber: 9,
+      supportingEventId: asEventId("evt:test:supporting"),
     }), "major first");
     expect(edge.dimensions).toEqual(dimsOf({ affinity: 2, trust: 10 }));
     const second = accepted(applyRelationshipSignal({
       edge, fromNpcId: NPC_A, targetId: NPC_B, signal: "supported", actionId: "act_pair", turnNumber: 9,
+      supportingEventId: asEventId("evt:test:supporting"),
     }), "normal second");
     // incoming 为 normal：单维累计上限 5、总和上限 8；major 已经用完预算 ⇒ 维度不再移动
     expect(second.dimensions).toEqual(dimsOf({ affinity: 2, trust: 10 }));
@@ -364,9 +371,11 @@ describe("上下限与 cap", () => {
     let edge = edgeOf();
     edge = accepted(applyRelationshipSignal({
       edge, fromNpcId: NPC_A, targetId: NPC_B, signal: "supported", actionId: "act_sum", turnNumber: 3,
+      supportingEventId: asEventId("evt:test:supporting"),
     }), "supported");
     const total = accepted(applyRelationshipSignal({
       edge, fromNpcId: NPC_A, targetId: NPC_B, signal: "shared_fact", actionId: "act_sum", turnNumber: 3,
+      supportingEventId: asEventId("evt:test:supporting"),
     }), "shared_fact");
     // supported(+3,+2) + shared_fact(+1,+3) = (+4,+5) 合计 9 > 8 ⇒ trust 侧裁掉 1
     expect(total.dimensions).toEqual(dimsOf({ affinity: 4, trust: 4 }));
@@ -390,9 +399,11 @@ describe("幂等", () => {
   it("同一 actionId + from + target + signal 重复应用零写入并返回同一对象", () => {
     const first = accepted(applyRelationshipSignal({
       edge: edgeOf(), fromNpcId: NPC_A, targetId: NPC_B, signal: "supported", actionId: "act_once", turnNumber: 2,
+      supportingEventId: asEventId("evt:test:supporting"),
     }), "first");
     const again = applyRelationshipSignal({
       edge: first, fromNpcId: NPC_A, targetId: NPC_B, signal: "supported", actionId: "act_once", turnNumber: 2,
+      supportingEventId: asEventId("evt:test:supporting"),
     });
     expect(again.ok).toBe(true);
     if (!again.ok) return;
@@ -405,6 +416,7 @@ describe("幂等", () => {
     let edge = applySignal({ signal: "supported", actionId: "act_multi", turnNumber: 5 });
     edge = accepted(applyRelationshipSignal({
       edge, fromNpcId: NPC_A, targetId: NPC_B, signal: "challenged", actionId: "act_multi", turnNumber: 5,
+      supportingEventId: asEventId("evt:test:supporting"),
     }), "second signal");
     expect(edge.evidence.map((entry) => entry.signal)).toEqual(["supported", "challenged"]);
   });
@@ -413,6 +425,7 @@ describe("幂等", () => {
     let edge = applySignal({ signal: "supported", actionId: "act_a1", turnNumber: 1 });
     edge = accepted(applyRelationshipSignal({
       edge, fromNpcId: NPC_A, targetId: NPC_B, signal: "supported", actionId: "act_a2", turnNumber: 2,
+      supportingEventId: asEventId("evt:test:supporting"),
     }), "second action");
     expect(edge.evidence).toHaveLength(2);
     expect(edge.dimensions).toEqual(dimsOf({ affinity: 6, trust: 4 }));
@@ -439,6 +452,7 @@ describe("方向性与排序", () => {
       signal: "supported",
       actionId: "act_dir",
       turnNumber: 6,
+      supportingEventId: asEventId("evt:test:supporting"),
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -459,6 +473,7 @@ describe("方向性与排序", () => {
       signal: "threatened",
       actionId: "act_forward",
       turnNumber: 2,
+      supportingEventId: asEventId("evt:test:supporting"),
     });
     expect(applied.ok).toBe(true);
     if (!applied.ok) return;
@@ -473,6 +488,7 @@ describe("方向性与排序", () => {
       signal: "reassured",
       actionId: "act_reverse",
       turnNumber: 3,
+      supportingEventId: asEventId("evt:test:supporting"),
     });
     expect(reverseResult.ok).toBe(true);
     if (!reverseResult.ok) return;
@@ -508,6 +524,7 @@ describe("方向性与排序", () => {
       signal: "gave_item",
       actionId: "act_create",
       turnNumber: 1,
+      supportingEventId: asEventId("evt:test:supporting"),
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -518,12 +535,14 @@ describe("方向性与排序", () => {
   it("自环与错边都被稳定错误拒绝", () => {
     const self = applyRelationshipSignal({
       edge: undefined, fromNpcId: NPC_A, targetId: NPC_A, signal: "supported", actionId: "act_self", turnNumber: 1,
+      supportingEventId: asEventId("evt:test:supporting"),
     });
     expect(self.ok).toBe(false);
     if (self.ok) return;
     expect(self.code).toBe("self_edge_rejected");
 
     const mismatch = applyRelationshipSignal({
+    supportingEventId: asEventId("evt:test:supporting"),
       edge: edgeOf({ targetId: NPC_C }),
       fromNpcId: NPC_A,
       targetId: NPC_B,
@@ -540,6 +559,7 @@ describe("方向性与排序", () => {
     const badSignal = applyRelationshipSignal({
       edge: edgeOf(), fromNpcId: NPC_A, targetId: NPC_B, signal: "charmed" as RelationshipSignal,
       actionId: "act_bad", turnNumber: 1,
+      supportingEventId: asEventId("evt:test:supporting"),
     });
     expect(badSignal.ok).toBe(false);
     if (badSignal.ok) return;
@@ -547,6 +567,7 @@ describe("方向性与排序", () => {
 
     const badAction = applyRelationshipSignal({
       edge: edgeOf(), fromNpcId: NPC_A, targetId: NPC_B, signal: "supported", actionId: "  ", turnNumber: 1,
+      supportingEventId: asEventId("evt:test:supporting"),
     });
     expect(badAction.ok).toBe(false);
     if (badAction.ok) return;
@@ -554,6 +575,7 @@ describe("方向性与排序", () => {
 
     const badTurn = applyRelationshipSignal({
       edge: edgeOf(), fromNpcId: NPC_A, targetId: NPC_B, signal: "supported", actionId: "act_ok", turnNumber: 1.5,
+      supportingEventId: asEventId("evt:test:supporting"),
     });
     expect(badTurn.ok).toBe(false);
     if (badTurn.ok) return;
@@ -567,6 +589,7 @@ describe("闭集守门：原型链键不得穿透任何表查找", () => {
       const result = applyRelationshipSignal({
         edge: edgeOf(), fromNpcId: NPC_A, targetId: NPC_B, signal: key as RelationshipSignal,
         actionId: "act_proto", turnNumber: 1,
+        supportingEventId: asEventId("evt:test:supporting"),
       });
       expect(result.ok, key).toBe(false);
       if (result.ok) continue;
@@ -605,6 +628,7 @@ describe("闭集守门：原型链键不得穿透任何表查找", () => {
     const rejected = applyRelationshipSignalToComponent({
       relationships, fromNpcId: NPC_A, targetId: NPC_B, signal: "toString" as RelationshipSignal,
       actionId: "act_identity", turnNumber: 1,
+      supportingEventId: asEventId("evt:test:supporting"),
     });
     expect(rejected.ok).toBe(false);
     if (rejected.ok) return;
@@ -975,6 +999,7 @@ describe("commitment 操作", () => {
     const edge = openDebtEdge();
     const again = applyRelationshipSignal({
       edge, fromNpcId: NPC_A, targetId: NPC_B, signal: "gave_item", actionId: "act_gift", turnNumber: 2,
+      supportingEventId: asEventId("evt:test:supporting"),
     });
     expect(again.ok && again.changed).toBe(false);
     const secondGift = applySignal({ signal: "gave_item", actionId: "act_gift_2", turnNumber: 3, edge });

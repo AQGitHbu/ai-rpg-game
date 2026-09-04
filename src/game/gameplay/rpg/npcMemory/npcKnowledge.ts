@@ -7,6 +7,7 @@ import {
 } from "@/game/domain/entity";
 import type { FactChange, FactChangeSource } from "@/game/domain/resolvedEvent";
 import type { FactId, NpcId } from "@/game/domain/worldEntity";
+import type { EventId } from "@/game/domain/events";
 
 // ---------------------------------------------------------------------------
 // Plan 3 Task 4A：知识 entry 语义规则层（gameplay/rpg/npcMemory）。
@@ -311,6 +312,7 @@ export type NpcKnowledgeSourceInput =
       kind: "action";
       mode: FactChangeSource;
       actionId: string;
+      eventId: EventId;
       turnNumber: number;
       sourceNpcId?: NpcId;
     }>;
@@ -345,6 +347,8 @@ export function createNpcKnowledgeSource(input: NpcKnowledgeSourceInput): Create
   if (!isTurnCounter(turnNumber)) return fail("invalid_turn_number");
   const sourceNpcId = ownField(input, "sourceNpcId");
   if (sourceNpcId !== undefined && isBlank(sourceNpcId)) return fail("invalid_source_npc");
+  const eventId = ownField(input, "eventId");
+  if (isBlank(eventId)) return fail("invalid_action_source");
   const speakerCode = checkSpeaker(policy, sourceNpcId);
   if (speakerCode !== undefined) return fail(speakerCode);
 
@@ -354,6 +358,7 @@ export function createNpcKnowledgeSource(input: NpcKnowledgeSourceInput): Create
       kind: "action",
       mode: mode as FactChangeSource,
       actionId: String(actionId),
+      eventId: eventId as EventId,
       learnedAtTurn: turnNumber,
       ...(sourceNpcId === undefined ? {} : { sourceNpcId: sourceNpcId as NpcId }),
     }),
@@ -625,6 +630,8 @@ export function setNpcKnowledgeDisclosure(
 export type NpcKnowledgeBroadcastRequest = Readonly<{
   actionId: string;
   turnNumber: number;
+  /** Task 4：预铸的 npc_knowledge_changed 事件 ID。 */
+  eventId: EventId;
   /** `npc_revealed` 的透露者：只记进接收条目的来源，绝不自动成为 audience 成员。 */
   speakerNpcId?: NpcId;
   /** 缺省 "known" / "public"；需要「怀疑」或保密时必须显式声明。 */
@@ -727,6 +734,7 @@ export function knowledgeWritesFromFactChange(
     kind: "action",
     mode: mode as FactChangeSource,
     actionId,
+    eventId: ownField(request, "eventId") as EventId,
     turnNumber,
     ...(speaker === undefined ? {} : { sourceNpcId: speaker as NpcId }),
   };

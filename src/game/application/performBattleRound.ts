@@ -8,7 +8,7 @@ import type { NarrativeRuntimeState, BattleNarrativeCheckpointState } from "@/ga
 import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import { resolveTurn } from "@/game/gameplay/rpg/ruleEngine";
 import { commitState } from "./stateCommit";
-import { asTurnId } from "@/game/domain/events";
+import { asTurnId, asEventId } from "@/game/domain/events";
 import { consumeNarrativeBundle } from "./consumeNarrativeBundle";
 import { consumePreparedContinuation } from "./consumePreparedContinuation";
 import { projectEntityStore } from "@/game/domain/entity";
@@ -75,6 +75,7 @@ function applyCompanionVictorySignals(
     targetId: PLAYER_ENTITY_ID,
     signal: "fought_together" as const,
     source: { kind: "action" as const, actionId, turnNumber },
+    supportingEventId: asEventId(`evt_fought_together:${actionId}:${npcId}`),
   })));
   return mutation.ok ? mutation.worldState : null;
 }
@@ -129,7 +130,7 @@ export async function performBattleRound(
     record.revision,
     asTurnId(battleActionId),
     input.interactionKind as "fixed_choice" | "free_text",
-    { now: deps.now },
+    { now: deps.now, turnId: asTurnId(battleActionId) },
   );
 
   if (!resolved.ok) return { ok: false, code: "ACTION_REJECTED", feedback: resolved.feedback };

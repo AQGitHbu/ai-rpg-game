@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { asEventId } from "../events";
 import {
   asEnemyId,
   asFactId,
@@ -456,7 +457,7 @@ describe("entity 兼容投影：legacy → store → legacy", () => {
           },
           {
             factId: asFactId("fact_2"), certainty: "suspected", disclosure: "secret",
-            source: { kind: "action", mode: "player_told", actionId: "act_3", learnedAtTurn: 3 },
+            source: { kind: "action", mode: "player_told", actionId: "act_3", eventId: asEventId("turn:act_3"), learnedAtTurn: 3 },
           },
         ],
       };
@@ -471,7 +472,7 @@ describe("entity 兼容投影：legacy → store → legacy", () => {
             description: "带路", source: { kind: "action", actionId: "act_1", turnNumber: 1 },
           }],
           evidence: [{
-            evidenceId: "ev_act_1", actionId: "act_1", turnNumber: 1, signal: "supported", severity: "normal", summaryKey: "supported",
+            evidenceId: "ev_act_1", actionId: "act_1", turnNumber: 1, supportingEventIds: [asEventId("turn:act_1")], signal: "supported", severity: "normal", summaryKey: "supported",
           }],
           origin: { kind: "action", actionId: "act_1", turnNumber: 1 },
           lastChangedAtTurn: 4,
@@ -479,7 +480,7 @@ describe("entity 兼容投影：legacy → store → legacy", () => {
       };
       record.history = {
         interactions: [{
-          turnNumber: 1, actionId: "act_1", locationId: "loc_0", dialogueAct: "ask", topicSummary: "打听井",
+          turnNumber: 1, actionId: "act_1", eventId: asEventId("turn:interaction_1"), locationId: "loc_0", dialogueAct: "ask", topicSummary: "打听井",
           outcome: "positive", relationshipDelta: 1, learnedFactIds: [], summary: "答应带路",
         }],
       };

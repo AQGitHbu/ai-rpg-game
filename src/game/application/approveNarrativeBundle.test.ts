@@ -188,7 +188,7 @@ function validProposal(): NarrativeBundleProposal {
             emotion: "guarded",
             answeredBeatIds: [],
             usedFactIds: [],
-            usedInteractionActionIds: [],
+            usedEventIds: [],
           },
           objectiveLink: { questId: String(questId), objectiveIndex: 0, mode: "hint" },
           choices: [
@@ -216,7 +216,7 @@ function currentSceneProposal(): NarrativeBundleProposal {
         emotion: "guarded",
         answeredBeatIds: [],
         usedFactIds: [],
-        usedInteractionActionIds: [],
+        usedEventIds: [],
       },
       objectiveLink: { questId: String(questId), objectiveIndex: 0, mode: "hint" },
       choices: [
@@ -304,7 +304,7 @@ function actBoundaryFixture(overrides: WorldStateFixtureOverrides = {}) {
       stepKey: "move:loc_dyn_1",
       scene: {
         segments: [{ beatId: "arrival", text: "你来到枯柳驿。" }],
-        npcLine: { npcId: "npc_dyn_1", text: "来者何人？", emotion: "guarded", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [] },
+        npcLine: { npcId: "npc_dyn_1", text: "来者何人？", emotion: "guarded", answeredBeatIds: [], usedFactIds: [], usedEventIds: [] },
         objectiveLink: null,
         choices: [
           { candidateId: "move:loc_dyn_1_choice_1", label: "表明身份" },
@@ -373,7 +373,7 @@ describe("approveNarrativeBundle", () => {
           npcId: String(npcDyn1),
           text: "老乞丐不该在这里说话。",
           usedFactIds: [],
-          usedInteractionActionIds: [],
+          usedEventIds: [],
         }],
       },
     } satisfies NarrativeBundleProposal;
@@ -388,7 +388,7 @@ describe("approveNarrativeBundle", () => {
       npcId: String(npcDyn1),
       text: "同一个人在场景里只能说一段闲聊。",
       usedFactIds: [],
-      usedInteractionActionIds: [],
+      usedEventIds: [],
     };
     const proposal = {
       ...validProposal(),
@@ -433,7 +433,7 @@ describe("approveNarrativeBundle", () => {
             ...interactionProposal.continuationScenes[0]!.scene,
             npcLine: {
               ...interactionProposal.continuationScenes[0]!.scene.npcLine!,
-              usedInteractionActionIds: ["npc_other:trade"],
+              usedEventIds: ["npc_other:trade"],
             },
           },
         }],
@@ -660,7 +660,7 @@ describe("approveNarrativeBundle", () => {
             emotion: "guarded",
             answeredBeatIds: ["player_utterance"],
             usedFactIds: [],
-            usedInteractionActionIds: [],
+            usedEventIds: [],
           },
         },
       },

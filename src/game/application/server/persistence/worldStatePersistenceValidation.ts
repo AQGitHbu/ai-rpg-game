@@ -1,4 +1,4 @@
-import { entitiesOfKind, parseEntityStore, projectEntityStore, validateEntityCompatibilityProjection, validateEntityReferences } from "@/game/domain/entity";
+import { entitiesOfKind, parseEntityStore, projectEntityStore, validateEntityCompatibilityProjection, validateEntityReferences, validateEntityStoreProvenance } from "@/game/domain/entity";
 import type { EntityCompatibilityProjection, EntityStore } from "@/game/domain/entity";
 import { parseCommittedEventLedger, type CommittedNarrativeEvent } from "@/game/domain/events";
 import type { GenerationMetadata } from "@/game/domain/worldEntity";
@@ -235,6 +235,10 @@ export function validatePersistableWorldState(value: unknown): PersistableWorldS
   const parsedLedger = parseCommittedEventLedger(value.eventLedger);
   if (!parsedLedger.ok) {
     return { ok: false, code: "invalid_world_envelope" };
+  }
+  const provenanceIssue = validateEntityStoreProvenance(parsedStore.store, parsedLedger.value)[0];
+  if (provenanceIssue !== undefined) {
+    return { ok: false, code: "invalid_entity_store", issueCode: provenanceIssue.code, entityId: provenanceIssue.entityId };
   }
   const referenceIssue = validateEntityReferences(parsedStore.store)[0];
   if (referenceIssue !== undefined) return { ok: false, code: "invalid_entity_reference", issueCode: referenceIssue.code, entityId: referenceIssue.entityId };

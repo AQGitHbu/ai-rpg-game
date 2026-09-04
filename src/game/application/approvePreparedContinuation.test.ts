@@ -32,7 +32,7 @@ function descriptor(): Parameters<typeof approvePreparedContinuation>[0]["descri
         allowedFactIds: [],
         withheldFactIds: [],
         allowedFactCards: [],
-        allowedInteractionActionIds: [],
+        allowedEventIds: [],
         recentInteractions: [],
         identityAnchors: {
           selfConcept: "破庙守夜人",
@@ -73,7 +73,7 @@ function proposal(step: PreparedStepDescriptor["stepId"] = "prepared_1") {
       emotion: "guarded" as const,
       answeredBeatIds: [],
       usedFactIds: [],
-      usedInteractionActionIds: [],
+      usedEventIds: [],
     },
     objectiveLink: { questId: "quest_2", objectiveIndex: 0, mode: "hint" as const },
     choices: [
@@ -137,7 +137,7 @@ describe("approvePreparedContinuation", () => {
     };
     const otherNpcInteraction = {
       ...proposal(),
-      npcLine: { ...proposal().npcLine!, usedInteractionActionIds: ["npc_other:trade"] },
+      npcLine: { ...proposal().npcLine!, usedEventIds: ["npc_other:trade"] },
     };
 
     expect(approvePreparedContinuation({
@@ -151,7 +151,7 @@ describe("approvePreparedContinuation", () => {
       proposals: [otherNpcInteraction],
       descriptors: [descriptor()],
       activeStepIds: ["prepared_1"],
-    })).toEqual({ ok: false, code: "invalid_interaction_reference" });
+    })).toEqual({ ok: false, code: "invalid_event_reference" });
   });
 
   it("rejects a provider candidate that is not present in the server descriptor", () => {
@@ -192,7 +192,7 @@ describe("approvePreparedContinuation", () => {
 
     const duplicatedInteractions = {
       ...proposal(),
-      npcLine: { ...proposal().npcLine!, usedInteractionActionIds: ["npc_beggar:trade", "npc_beggar:trade"] },
+      npcLine: { ...proposal().npcLine!, usedEventIds: ["npc_beggar:trade", "npc_beggar:trade"] },
     };
     expect(approvePreparedContinuation({
       originJobId: asNarrativeJobId("job_dialogue_2"),

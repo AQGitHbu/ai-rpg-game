@@ -363,6 +363,7 @@ function validateBundleNpcSpeech(
     store: worldState.entityStore,
     speakerNpcId: line.npcId as never,
     sceneVisibleFactIds: visibleFactIds,
+    eventLedger: worldState.eventLedger,
     targetContext: { targetId: PLAYER_ENTITY_ID },
   });
   if (authority === null) return { code: "bundle_invalid_scene", detail: "missing_speaker" };
@@ -370,6 +371,8 @@ function validateBundleNpcSpeech(
     authority,
     usedFactIds: line.usedFactIds,
     usedEventIds: line.usedEventIds,
+    eventLedger: worldState.eventLedger,
+    speakerNpcId: line.npcId as never,
   });
   if (result.ok) return null;
   return { code: "bundle_invalid_scene", detail: result.code };

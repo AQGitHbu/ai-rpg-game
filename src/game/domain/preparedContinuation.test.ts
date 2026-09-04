@@ -45,7 +45,7 @@ describe("PreparedContinuationState", () => {
             text: "后生，脚步放轻些。这里昨夜来过不该来的人。",
             emotion: "guarded",
             usedFactIds: [],
-            usedInteractionActionIds: [],
+            usedEventIds: [],
           },
           objectiveLink: {
             questId: asQuestId("quest_2"),

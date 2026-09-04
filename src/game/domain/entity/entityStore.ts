@@ -15,6 +15,9 @@ import {
   type NpcComponentValidationIssue,
 } from "./npcComponents";
 import { PLAYER_ENTITY_ID } from "../worldEntity";
+import { isWellFormedEventId } from "../events";
+import type { CommittedNarrativeEvent, EventId } from "../events";
+import type { NpcEntityRecord } from "./entityRecord";
 
 // ---------------------------------------------------------------------------
 // EntityStore：唯一世界事实来源。零 IO、可 JSON 序列化、无可空万能字段。
@@ -39,7 +42,8 @@ export type EntityStoreValidationCode =
   | "component_lifecycle_mismatch"
   | "invalid_player_id"
   | "missing_player"
-  | "multiple_players";
+  | "multiple_players"
+  | "invalid_event_provenance";
 
 export type EntityStoreValidationIssue = Readonly<{
   code: EntityStoreValidationCode;
@@ -558,6 +562,85 @@ function validateRecord(record: unknown): readonly EntityStoreValidationIssue[] 
   }
   if (kind === "enemy" && enemyDrift(record.enemy, core.lifecycle)) {
     issues.push(issue("component_lifecycle_mismatch", entityId));
+  }
+  return issues;
+}
+
+/**
+ * Validate action-era NPC references against the committed ledger.  Shape
+ * validators intentionally stay context-free; this second pass is the
+ * cross-document invariant used by persistence and authoritative projections.
+ */
+export function validateEntityStoreProvenance(
+  store: EntityStore,
+  ledger: readonly CommittedNarrativeEvent[],
+): readonly EntityStoreValidationIssue[] {
+  const eventById = new Map<string, CommittedNarrativeEvent>();
+  for (const event of ledger) {
+    if (eventById.has(String(event.eventId))) continue;
+    eventById.set(String(event.eventId), event);
+  }
+  const issues: EntityStoreValidationIssue[] = [];
+  const push = (entityId: string, path: string): void => {
+    issues.push(issue("invalid_event_provenance", entityId, path));
+  };
+  const validateReference = (
+    ownerNpcId: string,
+    targetId: string | undefined,
+    eventId: EventId,
+    path: string,
+  ): void => {
+    if (!isWellFormedEventId(String(eventId))) {
+      push(ownerNpcId, path);
+      return;
+    }
+    const event = eventById.get(String(eventId));
+    if (event === undefined) {
+      push(ownerNpcId, path);
+      return;
+    }
+    const participants = new Set([
+      ...event.actorIds.map(String),
+      ...event.targetIds.map(String),
+    ]);
+    if (!participants.has(ownerNpcId) || (targetId !== undefined && !participants.has(targetId))) {
+      push(ownerNpcId, path);
+      return;
+    }
+    const payload = event.payload as unknown as { readonly npcId?: unknown };
+    if (payload.npcId !== undefined && String(payload.npcId) !== ownerNpcId) {
+      push(ownerNpcId, path);
+    }
+  };
+
+  for (const record of store.records) {
+    if (record.core.kind !== "npc") continue;
+    const npc = record as NpcEntityRecord;
+    const ownerNpcId = String(record.core.id);
+    for (const [index, entry] of npc.knowledge.entries.entries()) {
+      if (entry.source.kind === "action") {
+        validateReference(ownerNpcId, undefined, entry.source.eventId, `knowledge.entries[${index}].source.eventId`);
+      }
+    }
+    for (const [edgeIndex, edge] of npc.relationships.outgoing.entries()) {
+      const targetId = String(edge.targetId);
+      const seenEvidenceEvents = new Set<string>();
+      for (const [evidenceIndex, evidence] of edge.evidence.entries()) {
+        for (const [eventIndex, eventId] of evidence.supportingEventIds.entries()) {
+          const path = `relationships.outgoing[${edgeIndex}].evidence[${evidenceIndex}].supportingEventIds[${eventIndex}]`;
+          if (seenEvidenceEvents.has(String(eventId))) push(ownerNpcId, path);
+          else seenEvidenceEvents.add(String(eventId));
+          validateReference(ownerNpcId, targetId, eventId, path);
+        }
+      }
+    }
+    const seenInteractionEvents = new Set<string>();
+    for (const [index, interaction] of npc.history.interactions.entries()) {
+      const path = `history.interactions[${index}].eventId`;
+      if (seenInteractionEvents.has(String(interaction.eventId))) push(ownerNpcId, path);
+      else seenInteractionEvents.add(String(interaction.eventId));
+      validateReference(ownerNpcId, undefined, interaction.eventId, path);
+    }
   }
   return issues;
 }

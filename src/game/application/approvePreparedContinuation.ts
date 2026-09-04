@@ -36,6 +36,7 @@ export type PreparedContinuationRejection =
   | "invalid_entity_reference"
   | "invalid_fact_reference"
   | "invalid_interaction_reference"
+  | "invalid_event_reference"
   | "duplicate_npc_reference"
   | "invalid_choice_count"
   | "invalid_choice_candidate";
@@ -75,7 +76,7 @@ function rebuildNpcLine(
     return { code: "invalid_entity_reference" };
   }
   if (!Array.isArray(line.usedFactIds)) return { code: "invalid_fact_reference" };
-  if (!Array.isArray(line.usedInteractionActionIds)) return { code: "invalid_interaction_reference" };
+  if (!Array.isArray(line.usedEventIds)) return { code: "invalid_interaction_reference" };
   const arrivalSpeechAuthority = descriptor.arrivalNpc?.speechAuthority;
   if (arrivalSpeechAuthority !== undefined
     && String(arrivalSpeechAuthority.speakerNpcId) !== String(line.npcId)) {
@@ -88,6 +89,7 @@ function rebuildNpcLine(
     ? buildNpcSpeechAuthority({
       store: worldState.entityStore,
       speakerNpcId: line.npcId as never,
+      eventLedger: worldState.eventLedger,
       sceneVisibleFactIds: entitiesOfKind(worldState.entityStore, "fact")
         .filter((fact) => fact.fact.discovered)
         .map((fact) => fact.core.id),
@@ -102,7 +104,11 @@ function rebuildNpcLine(
   const referenceCheck = validateNpcSpeechReferences({
     authority: speechAuthority,
     usedFactIds: line.usedFactIds,
-    usedInteractionActionIds: line.usedInteractionActionIds,
+    usedEventIds: line.usedEventIds,
+    ...(worldState === undefined ? {} : {
+      eventLedger: worldState.eventLedger,
+      speakerNpcId: line.npcId as never,
+    }),
   });
   if (!referenceCheck.ok) {
     return { code: referenceCheck.code };
@@ -112,7 +118,7 @@ function rebuildNpcLine(
     text: line.text.trim(),
     emotion: line.emotion,
     usedFactIds: line.usedFactIds.map(asFactId),
-    usedInteractionActionIds: [...line.usedInteractionActionIds],
+    usedEventIds: [...line.usedEventIds],
     answeredBeatIds: [...line.answeredBeatIds],
   };
 }

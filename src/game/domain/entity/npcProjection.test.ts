@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { asEventId } from "@/game/domain/events";
 import { PLAYER_ENTITY_ID, asFactId, asLocationId, asNpcId, asPlayerEntityId } from "../worldEntity";
 import type { FactId, LocationId, NpcId } from "../worldEntity";
 import type { NpcEntry, NpcInteraction } from "../worldEntries";
@@ -50,6 +51,7 @@ function anchors(): NpcIdentityAnchors {
 
 function interaction(actionId: string, turnNumber = 1, learnedFactIds: readonly FactId[] = []): NpcInteraction {
   return {
+    eventId: asEventId(`evt:interact:${actionId}:${turnNumber}`),
     turnNumber,
     actionId,
     locationId: LOC,
@@ -83,6 +85,7 @@ function edge(overrides: Partial<DirectedRelationshipEdge> & { targetId: string 
       signal: "supported",
       severity: "normal",
       summaryKey: "supported",
+      supportingEventIds: [asEventId("evt:projection:1")],
     }],
     origin: { kind: "action", actionId: "act_1", turnNumber: 1 },
     lastChangedAtTurn: 1,
@@ -348,11 +351,11 @@ describe("npc projection：previous store 的分层组件逐字保留", () => {
         entries: [
           {
             factId: asFactId("fact_0"), certainty: "known", disclosure: "public",
-            source: { kind: "action", mode: "player_told", actionId: "act_0", learnedAtTurn: 0 },
+            source: { kind: "action", mode: "player_told", actionId: "act_0", learnedAtTurn: 0 , eventId: asEventId("evt:test:knowledge") },
           },
           {
             factId: asFactId("fact_1"), certainty: "suspected", disclosure: "secret",
-            source: { kind: "action", mode: "npc_revealed", actionId: "act_1", learnedAtTurn: 1, sourceNpcId: OTHER_NPC },
+            source: { kind: "action", mode: "npc_revealed", actionId: "act_1", learnedAtTurn: 1, sourceNpcId: OTHER_NPC , eventId: asEventId("evt:test:knowledge") },
           },
         ],
       },
@@ -370,7 +373,7 @@ describe("npc projection：previous store 的分层组件逐字保留", () => {
         entries: [
           {
             factId: asFactId("fact_0"), certainty: "known", disclosure: "secret",
-            source: { kind: "action", mode: "player_told", actionId: "act_secret", learnedAtTurn: 4 },
+            source: { kind: "action", mode: "player_told", actionId: "act_secret", learnedAtTurn: 4 , eventId: asEventId("evt:test:knowledge") },
           },
           {
             factId: asFactId("fact_1"), certainty: "suspected", disclosure: "conditional",
@@ -390,7 +393,7 @@ describe("npc projection：previous store 的分层组件逐字保留", () => {
     expect(layers.knowledge.entries).toEqual([
       {
         factId: asFactId("fact_0"), certainty: "known", disclosure: "secret",
-        source: { kind: "action", mode: "player_told", actionId: "act_secret", learnedAtTurn: 4 },
+        source: { kind: "action", mode: "player_told", actionId: "act_secret", learnedAtTurn: 4 , eventId: asEventId("evt:test:knowledge") },
       },
       {
         factId: asFactId("fact_1"), certainty: "suspected", disclosure: "secret",

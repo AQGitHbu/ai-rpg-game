@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import type { CommittedNarrativeEvent } from "@/game/domain/events";
+import { asEventId } from "@/game/domain/events";
 import { resolve } from "node:path";
 import { describe, it, expect } from "vitest";
 import { createWorldStateFixture, emptyProjection } from "@/game/domain/testing/worldStateFixture.testutil";
@@ -493,6 +494,8 @@ function source(actionId: string = ACT_1, turnNumber = 3): RelationshipMutationS
   return { kind: "action", actionId, turnNumber };
 }
 
+const SUPPORTING_EVENT_ID = asEventId("evt:test:supporting");
+
 function signalMutation(input: Readonly<{
   fromNpcId?: NpcId;
   targetId?: RelationshipTargetId;
@@ -506,6 +509,7 @@ function signalMutation(input: Readonly<{
     targetId: input.targetId ?? NPC_2,
     signal: (input.signal ?? "supported") as RelationshipSignal,
     source: input.source ?? source(),
+    supportingEventId: SUPPORTING_EVENT_ID,
   };
 }
 
@@ -536,6 +540,7 @@ describe("applyEntityMutations — apply_relationship_signal", () => {
     expect(edge.evidence).toEqual([{
       evidenceId: `ev:${ACT_1}:npc_1:npc_2:supported`, actionId: ACT_1, turnNumber: 3,
       signal: "supported", severity: "normal", summaryKey: "relationship.signal.supported",
+      supportingEventIds: [SUPPORTING_EVENT_ID],
     }]);
     expect(edge.commitments).toEqual([]);
   });
@@ -546,9 +551,9 @@ describe("applyEntityMutations — apply_relationship_signal", () => {
     // 所以这条锁的是 EntityMutation 的形状（RelationshipSignalPayloadKeysLock 那一族编译锁），
     // 不是测试夹具自己写的字面量。
     // @ts-expect-error affinity 不是 apply_relationship_signal 的载荷键
-    const signalWithNumber: EntityMutation = { kind: "apply_relationship_signal", fromNpcId: NPC_1, targetId: NPC_2, signal: "supported", source: source(), affinity: 50 };
+    const signalWithNumber: EntityMutation = { kind: "apply_relationship_signal", fromNpcId: NPC_1, targetId: NPC_2, signal: "supported", source: source(), supportingEventId: SUPPORTING_EVENT_ID, affinity: 50 };
     // @ts-expect-error affinity 不是 apply_relationship_commitment 的载荷键
-    const commitmentWithNumber: EntityMutation = { kind: "apply_relationship_commitment", fromNpcId: NPC_1, targetId: NPC_2, operation: { kind: "open_debt", openKey: "task_help", direction: "source_owes_target", description: "d" }, source: source(), affinity: 50 };
+    const commitmentWithNumber: EntityMutation = { kind: "apply_relationship_commitment", fromNpcId: NPC_1, targetId: NPC_2, operation: { kind: "open_debt", openKey: "task_help", direction: "source_owes_target", description: "d" }, source: source(), supportingEventId: SUPPORTING_EVENT_ID, affinity: 50 };
     // 运行时那一半同样是生产事实：类型没拦住的数值也不会被读进规则层。
     const next = okApply(world(), [signalWithNumber]);
     expect(edgeOf(next, NPC_1, NPC_2).dimensions).toEqual({ affinity: 3, trust: 2, fear: 0, hostility: 0 });
@@ -698,6 +703,7 @@ describe("applyEntityMutations — apply_relationship_signal", () => {
       kind: "apply_relationship_commitment", fromNpcId: NPC_1, targetId: PLAYER_ENTITY_ID,
       operation: { kind: "open_debt", openKey: "k", direction: "source_owes_target", description: "d" },
       source: initial,
+      supportingEventId: SUPPORTING_EVENT_ID,
     }], { code: "invalid_relationship_source", entityId: NPC_1 });
   });
 
@@ -726,13 +732,14 @@ describe("applyEntityMutations — apply_relationship_commitment", () => {
     kind: "apply_relationship_commitment", fromNpcId: NPC_1, targetId: NPC_2,
     operation: { kind: "open_debt", openKey: "task_help", direction: "source_owes_target", description: "relationship.commitment.debt.help_received" },
     source: source(ACT_1, 4),
+    supportingEventId: SUPPORTING_EVENT_ID,
   };
 
   function withEdge(ws: WorldState = world()): WorldState {
     return okApply(ws, [signalMutation({ signal: "supported" })]);
   }
 
-  const baseCommitment = { kind: "apply_relationship_commitment", fromNpcId: NPC_1, targetId: NPC_2 } as const;
+  const baseCommitment = { kind: "apply_relationship_commitment", fromNpcId: NPC_1, targetId: NPC_2, supportingEventId: SUPPORTING_EVENT_ID } as const;
   const openPromise: EntityMutation = {
     ...baseCommitment,
     operation: { kind: "open_promise", openKey: "escort", promisor: "source", description: "relationship.commitment.promise.escort" },
@@ -783,12 +790,14 @@ describe("applyEntityMutations — apply_relationship_commitment", () => {
     const released = okApply(promised, [{
       kind: "apply_relationship_commitment", fromNpcId: NPC_1, targetId: NPC_2,
       operation: { kind: "release", commitmentId: String(promiseId) }, source: source("act_2", 6),
+      supportingEventId: SUPPORTING_EVENT_ID,
     }]);
     expect(edgeOf(released, NPC_1, NPC_2).commitments.map((entry) => entry.status)).toEqual(["released"]);
     const debt = okApply(withEdge(), [openDebt]);
     const rejected = applyEntityMutations(debt, [{
       kind: "apply_relationship_commitment", fromNpcId: NPC_1, targetId: NPC_2,
       operation: { kind: "release", commitmentId: "cmt:action:act_1:open_debt:task_help" }, source: source("act_2", 6),
+      supportingEventId: SUPPORTING_EVENT_ID,
     }]);
     expect(rejected).toEqual({ ok: false, code: "illegal_relationship_commitment_transition", entityId: NPC_1 });
     expect(edgeOf(debt, NPC_1, NPC_2).commitments.map((entry) => entry.status)).toEqual(["open"]);
@@ -847,6 +856,7 @@ describe("applyEntityMutations — apply_relationship_commitment", () => {
     const result = applyEntityMutations(ws, [{
       kind: "apply_relationship_commitment", fromNpcId: NPC_1, targetId: NPC_2,
       operation: { kind: "fulfill", commitmentId: "cmt:action:act_missing:open_promise:x" }, source: source("act_9", 9),
+      supportingEventId: SUPPORTING_EVENT_ID,
     }]);
     expect(result).toEqual({ ok: false, code: "unknown_relationship_commitment", entityId: NPC_1 });
     expect(ws.entityStore.records).toBe(records);
@@ -866,6 +876,7 @@ describe("applyEntityMutations — apply_relationship_commitment", () => {
     const result = applyEntityMutations(ws, [{
       kind: "apply_relationship_commitment", fromNpcId: NPC_1, targetId: NPC_2,
       operation: forged, source: source(),
+      supportingEventId: SUPPORTING_EVENT_ID,
     }]);
     expect(result).toEqual({ ok: false, code: "invalid_commitment_operation", entityId: NPC_1 });
     expect(ws.entityStore.records).toBe(records);
@@ -873,7 +884,7 @@ describe("applyEntityMutations — apply_relationship_commitment", () => {
 
   it("承诺 mutation 复用同一套边界校验：self-edge、错误目标类型与非法来源各自稳定", () => {
     const ws = world();
-    const base = { kind: "apply_relationship_commitment", operation: { kind: "open_promise", openKey: "k", promisor: "source", description: "d" } } as const;
+    const base = { kind: "apply_relationship_commitment", operation: { kind: "open_promise", openKey: "k", promisor: "source", description: "d" }, supportingEventId: SUPPORTING_EVENT_ID } as const;
     expect(applyEntityMutations(ws, [{ ...base, fromNpcId: NPC_1, targetId: NPC_1, source: source() }]))
       .toEqual({ ok: false, code: "relationship_self_edge", entityId: NPC_1 });
     expect(applyEntityMutations(ws, [{ ...base, fromNpcId: NPC_1, targetId: asNpcId(String(ITEM_A)), source: source() }]))
@@ -922,7 +933,7 @@ function factEntityRecord(id: FactId, lifecycle: EntityLifecycle = "active"): En
 function knowledgeSource(overrides: Partial<Readonly<{
   mode: FactChangeSource; actionId: string; turnNumber: number; sourceNpcId: NpcId;
 }>> = {}): KnowledgeMutationSource {
-  return { kind: "action", mode: "scene_witness", actionId: ACT_1, turnNumber: 3, ...overrides };
+  return { kind: "action", mode: "scene_witness", actionId: ACT_1, turnNumber: 3, eventId: asEventId("evt:test:knowledge"), ...overrides };
 }
 
 function recordKnowledge(input: Readonly<{
@@ -998,7 +1009,7 @@ describe("applyEntityMutations — record_npc_knowledge", () => {
     // @ts-expect-error entries 不是 record_npc_knowledge 的载荷键：Step 3 禁止整块替换 knowledge
     const blockReplacement: EntityMutation = { kind: "record_npc_knowledge", npcId: NPC_1, factId: FACT_1, certainty: "known", disclosure: "public", source: knowledgeSource(), entries: [] };
     // @ts-expect-error memory 不是 set_npc_knowledge_disclosure 的载荷键：兼容读模型没有写入口
-    const parallelMemory: EntityMutation = { kind: "set_npc_knowledge_disclosure", npcId: NPC_1, factId: FACT_1, disclosure: "secret", actionId: ACT_1, turnNumber: 3, memory: { knownFactIds: [FACT_1] } };
+    const parallelMemory: EntityMutation = { kind: "set_npc_knowledge_disclosure", npcId: NPC_1, factId: FACT_1, disclosure: "secret", actionId: ACT_1, turnNumber: 3, eventId: asEventId("evt:test:knowledge"), memory: { knownFactIds: [FACT_1] } };
     // 运行时那一半同样是生产事实：类型没拦住的多余键读不进规则层。
     const next = okApply(world(), [blockReplacement, parallelMemory]);
     const knowledge = knowledgeOf(next);
@@ -1006,7 +1017,7 @@ describe("applyEntityMutations — record_npc_knowledge", () => {
     expect(knowledge.entries).toHaveLength(1);
     expect(knowledge.entries[0]).toEqual({
       factId: FACT_1, certainty: "known", disclosure: "secret",
-      source: { kind: "action", mode: "scene_witness", actionId: ACT_1, learnedAtTurn: 3 },
+      source: { kind: "action", mode: "scene_witness", actionId: ACT_1, learnedAtTurn: 3, eventId: asEventId("evt:test:knowledge") },
     });
   });
 
@@ -1073,7 +1084,7 @@ describe("applyEntityMutations — record_npc_knowledge", () => {
       source: knowledgeSource({ mode: "npc_revealed", sourceNpcId: NPC_2 }),
     })]);
     expect(knowledgeOf(next).entries[0]?.source).toEqual({
-      kind: "action", mode: "npc_revealed", actionId: ACT_1, learnedAtTurn: 3, sourceNpcId: NPC_2,
+      kind: "action", mode: "npc_revealed", actionId: ACT_1, learnedAtTurn: 3, sourceNpcId: NPC_2, eventId: asEventId("evt:test:knowledge"),
     });
     // 说话人自己不会因此获得这条知识（sourceNpcId 不等于 audience）。
     expect(knowledgeOf(next, NPC_2).entries).toHaveLength(0);
@@ -1308,6 +1319,7 @@ function interaction(input: Readonly<{
   return {
     kind: "record_npc_interaction",
     npcId: input.npcId ?? NPC_1,
+    eventId: asEventId("evt:test:interaction"),
     turnNumber: input.turnNumber ?? 3,
     actionId: input.actionId ?? ACT_1,
     locationId: input.locationId ?? LOC_1,
@@ -1438,13 +1450,13 @@ describe("applyEntityMutations — record_npc_interaction", () => {
     // 负编译探针（同 3B/4B 惯例）：多余键写成字面量即 typecheck 失败，
     // 锁的是 EntityMutation 的载荷形状（RecordInteractionPayloadKeysLock），不是夹具自己。
     // @ts-expect-error relationshipDelta 不是 record_npc_interaction 的载荷键：数值归关系引擎所有
-    const withDelta: EntityMutation = { kind: "record_npc_interaction", npcId: NPC_1, turnNumber: 3, actionId: "act_forged_delta", locationId: LOC_1, dialogueAct: "support", topicSummary: "谈论任务", outcome: "positive", learnedFactIds: [], relationshipDelta: 50 };
+    const withDelta: EntityMutation = { kind: "record_npc_interaction", npcId: NPC_1, eventId: asEventId("evt:forged:3"), turnNumber: 3, actionId: "act_forged_delta", locationId: LOC_1, dialogueAct: "support", topicSummary: "谈论任务", outcome: "positive", learnedFactIds: [], relationshipDelta: 50 };
     // @ts-expect-error summary 不是载荷键：prose 里嵌着同一个数字，接受它等于接受第二份数值事实
-    const withSummary: EntityMutation = { kind: "record_npc_interaction", npcId: NPC_1, turnNumber: 4, actionId: "act_forged_summary", locationId: LOC_1, dialogueAct: "support", topicSummary: "谈论任务", outcome: "positive", learnedFactIds: [], summary: "伪造" };
+    const withSummary: EntityMutation = { kind: "record_npc_interaction", npcId: NPC_1, eventId: asEventId("evt:forged:4"), turnNumber: 4, actionId: "act_forged_summary", locationId: LOC_1, dialogueAct: "support", topicSummary: "谈论任务", outcome: "positive", learnedFactIds: [], summary: "伪造" };
     // @ts-expect-error interactions 不是载荷键：替换整块历史就是第二条写入通道
-    const wholeBlock: EntityMutation = { kind: "record_npc_interaction", npcId: NPC_1, turnNumber: 5, actionId: "act_forged_block", locationId: LOC_1, dialogueAct: "support", topicSummary: "谈论任务", outcome: "positive", learnedFactIds: [], interactions: [] };
+    const wholeBlock: EntityMutation = { kind: "record_npc_interaction", npcId: NPC_1, eventId: asEventId("evt:forged:5"), turnNumber: 5, actionId: "act_forged_block", locationId: LOC_1, dialogueAct: "support", topicSummary: "谈论任务", outcome: "positive", learnedFactIds: [], interactions: [] };
     // @ts-expect-error emotion 不是载荷键：一支 kind 只写一个组件字段
-    const crossField: EntityMutation = { kind: "record_npc_interaction", npcId: NPC_1, turnNumber: 6, actionId: "act_forged_emotion", locationId: LOC_1, dialogueAct: "support", topicSummary: "谈论任务", outcome: "positive", learnedFactIds: [], emotion: "angry" };
+    const crossField: EntityMutation = { kind: "record_npc_interaction", npcId: NPC_1, eventId: asEventId("evt:forged:6"), turnNumber: 6, actionId: "act_forged_emotion", locationId: LOC_1, dialogueAct: "support", topicSummary: "谈论任务", outcome: "positive", learnedFactIds: [], emotion: "angry" };
     // 运行时那一半同样是生产事实：类型没拦住的键既进不了条目、也改不动别的组件。
     // 四条各用不同 actionId，否则重复 actionId 的闸门会在第二支就把整批拒掉。
     // before 必须取自同一个 ws：这里比的是引用身份，两次 world() 永远是两个对象。
@@ -1460,7 +1472,7 @@ describe("applyEntityMutations — record_npc_interaction", () => {
     expect([...new Set(entries.map((entry) => entry.relationshipDelta))]).toEqual([0]);
     expect([...new Set(entries.map((entry) => entry.summary))]).toEqual(["首次见面，support，气氛融洽，关系+0"]);
     expect(Object.keys(lastInteraction(next)).sort()).toEqual([
-      "actionId", "dialogueAct", "learnedFactIds", "locationId", "outcome",
+      "actionId", "dialogueAct", "eventId", "learnedFactIds", "locationId", "outcome",
       "relationshipDelta", "summary", "topicSummary", "turnNumber",
     ]);
   });

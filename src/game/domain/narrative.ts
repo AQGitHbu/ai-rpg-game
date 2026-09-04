@@ -63,7 +63,7 @@ export type NarrativeNpcLineState = {
   readonly emotion: NarrativeEmotion;
   readonly usedFactIds: readonly FactId[];
   /** Authority-checked interaction history references used by this line. */
-  readonly usedInteractionActionIds: readonly string[];
+  readonly usedEventIds: readonly string[];
   /** Task 5：该台词应答的强制节拍 ID 列表（player_utterance 节拍必须命中）。 */
   readonly answeredBeatIds?: readonly string[];
 };
@@ -78,7 +78,7 @@ export type NpcDialogueInScene = {
   /** Authority-checked fact references used by this dialogue. */
   readonly usedFactIds: readonly FactId[];
   /** Authority-checked interaction references used by this dialogue. */
-  readonly usedInteractionActionIds: readonly string[];
+  readonly usedEventIds: readonly string[];
   /** 台词来源；旧存档缺失时由 read model 按兼容规则推断。 */
   readonly speechSource?: "generated" | "fixture";
   /**
@@ -224,14 +224,14 @@ function isNarrativeEvent(value: unknown): value is NarrativeEventState {
 
 function isNarrativeNpcLine(value: unknown): value is NarrativeNpcLineState {
   return isRecord(value)
-    && hasOnlyKeys(value, ["npcId", "text", "emotion", "usedFactIds", "usedInteractionActionIds", "answeredBeatIds"])
+    && hasOnlyKeys(value, ["npcId", "text", "emotion", "usedFactIds", "usedEventIds", "answeredBeatIds"])
     && isNonEmptyString(value.npcId)
     && isNonEmptyString(value.text)
     && (NARRATIVE_EMOTIONS as readonly unknown[]).includes(value.emotion)
     && isStringArray(value.usedFactIds)
-    && isStringArray(value.usedInteractionActionIds)
+    && isStringArray(value.usedEventIds)
     && areUniqueNpcSpeechReferenceIds(value.usedFactIds)
-    && areUniqueNpcSpeechReferenceIds(value.usedInteractionActionIds)
+    && areUniqueNpcSpeechReferenceIds(value.usedEventIds)
     && (value.answeredBeatIds === undefined || isStringArray(value.answeredBeatIds));
 }
 
@@ -247,16 +247,16 @@ function isNpcDialogue(value: unknown): value is NpcDialogueInScene {
   return isRecord(value)
     && hasOnlyKeys(value, [
       "npcId", "npcName", "npcRole", "speechPages", "speechSource", "speechPurpose", "smallTalk",
-      "usedFactIds", "usedInteractionActionIds",
+      "usedFactIds", "usedEventIds",
     ])
     && isNonEmptyString(value.npcId)
     && typeof value.npcName === "string"
     && typeof value.npcRole === "string"
     && isStringArray(value.speechPages)
     && isStringArray(value.usedFactIds)
-    && isStringArray(value.usedInteractionActionIds)
+    && isStringArray(value.usedEventIds)
     && areUniqueNpcSpeechReferenceIds(value.usedFactIds)
-    && areUniqueNpcSpeechReferenceIds(value.usedInteractionActionIds)
+    && areUniqueNpcSpeechReferenceIds(value.usedEventIds)
     && (value.speechSource === undefined
       || value.speechSource === "generated"
       || value.speechSource === "fixture")
@@ -492,7 +492,7 @@ export function buildNpcDialoguePages(
       npcRole: npc.role,
       speechPages: paginateSpeechText(text, NPC_SCENE_PAGE_CHAR_BUDGET),
       usedFactIds: [],
-      usedInteractionActionIds: [],
+      usedEventIds: [],
       speechSource: isFocus ? focusSpeechSource : hasGeneratedLine ? "generated" : "fixture",
       speechPurpose: isFocus ? "focus" : "ambient",
       ...(smallTalk ? { smallTalk } : {}),

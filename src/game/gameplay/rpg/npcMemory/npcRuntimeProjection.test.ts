@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { PLAYER_ENTITY_ID, asFactId, asItemId, asLocationId, asNpcId } from "@/game/domain/worldEntity";
 import type { FactId, NpcId } from "@/game/domain/worldEntity";
+import { asEventId } from "@/game/domain/events";
 import type { NpcEntry, NpcInteraction, NpcMemory } from "@/game/domain/worldEntries";
 import {
   compareRelationshipTargetIds,
@@ -102,6 +103,7 @@ function goal(goalId: string, status: NpcGoal["status"], description: string): N
 
 function interaction(actionId: string, turnNumber: number): NpcInteraction {
   return {
+    eventId: asEventId(`evt:interact:${actionId}:${turnNumber}`),
     turnNumber,
     actionId,
     locationId: LOC,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { asFactId, asLocationId, asNpcId, asQuestId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
-import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
+import {asNarrativeJobId, asTurnId, asEventId} from "@/game/domain/events";
 import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { SceneGenerationContext } from "@/game/application/sceneGenerationContext";
 import type { NpcSpeechAuthority } from "@/game/application/npcSpeechAuthority";
@@ -15,9 +15,8 @@ const ARRIVAL_AUTHORITY: NpcSpeechAuthority = {
   allowedFactIds: [asFactId("fact_shared")],
   withheldFactIds: [asFactId("fact_other_secret")],
   allowedFactCards: [{ factId: asFactId("fact_shared"), text: "抵达 NPC 可说的公开线索" }],
-  allowedInteractionActionIds: ["arrival_interaction_1"],
-  recentInteractions: [{
-    actionId: "arrival_interaction_1",
+  allowedEventIds: [asEventId("arrival_interaction_1")],
+  recentInteractions: [{ eventId: asEventId("evt:test:arrival_interaction_1"), actionId: "arrival_interaction_1",
     dialogueAct: "support",
     topicSummary: "抵达后的交接",
     outcome: "positive",
@@ -109,7 +108,7 @@ function makeSceneContext(): SceneGenerationContext {
       triggeredEvents: [],
       rejectedEffects: [],
     },
-    domainEventRange: { fromLedgerIndex: 18, toLedgerIndexExclusive: 19 },
+    domainEventIds: [asEventId("turn-1:event-1")],
     focusNpcId: asNpcId("npc_focus"),
     requestedAt: "2026-08-23T08:00:00.000Z",
     objectiveTransition: {
@@ -306,7 +305,7 @@ function makeSceneContext(): SceneGenerationContext {
           { factId: asFactId("fact_focus_1"), text: "韩镖头认得失踪当夜留下的镖旗断口。" },
           { factId: asFactId("fact_shared"), text: "当前场景可见线索：后门锁孔残留松脂。" },
         ],
-        allowedInteractionActionIds: ["interaction_1", "interaction_2", "interaction_3", "interaction_4", "interaction_5"],
+        allowedEventIds: [asEventId("interaction_1"), asEventId("interaction_2"), asEventId("interaction_3"), asEventId("interaction_4"), asEventId("interaction_5")],
         recentInteractions: [],
         identityAnchors: {
           selfConcept: "守旧的镖头",
@@ -335,36 +334,31 @@ function makeSceneContext(): SceneGenerationContext {
         { factId: asFactId("fact_shared"), text: "当前场景可见线索：后门锁孔残留松脂。" },
       ],
       recentInteractions: [
-        {
-          actionId: "interaction_1",
+        { eventId: asEventId("evt:test:interaction_1"), actionId: "interaction_1",
           dialogueAct: "support",
           topicSummary: "先确认北巷脚印",
           outcome: "positive",
           summary: "你同意先核对北巷脚印，韩镖头放低了戒心。",
         },
-        {
-          actionId: "interaction_2",
+        { eventId: asEventId("evt:test:interaction_2"), actionId: "interaction_2",
           dialogueAct: "challenge",
           topicSummary: "逼问镖旗断口",
           outcome: "mixed",
           summary: "你质疑他隐瞒了镖旗断口的来历，气氛骤然绷紧。",
         },
-        {
-          actionId: "interaction_3",
+        { eventId: asEventId("evt:test:interaction_3"), actionId: "interaction_3",
           dialogueAct: "ask",
           topicSummary: "追问内应身份",
           outcome: "neutral",
           summary: "你多次追问内应身份，但韩镖头只肯透露半句。",
         },
-        {
-          actionId: "interaction_4",
+        { eventId: asEventId("evt:test:interaction_4"), actionId: "interaction_4",
           dialogueAct: "support",
           topicSummary: "核对松脂来源",
           outcome: "positive",
           summary: "你提议先验松脂来源，双方暂时达成一致。",
         },
-        {
-          actionId: "interaction_5",
+        { eventId: asEventId("evt:test:interaction_5"), actionId: "interaction_5",
           dialogueAct: "challenge",
           topicSummary: "质疑押镖名单",
           outcome: "negative",
@@ -551,16 +545,14 @@ describe("sceneNarrativeContext", () => {
         ...base.focusNpcContext,
         speechAuthority: {
           ...authority,
-          recentInteractions: [{
-            actionId: "authority_only_interaction",
+          recentInteractions: [{ eventId: asEventId("evt:test:authority_only_interaction"), actionId: "authority_only_interaction",
             dialogueAct: "ask",
             topicSummary: "authority 允许的摘要",
             outcome: "positive",
             summary: "authority 允许的历史摘要",
           }],
         },
-        recentInteractions: [{
-          actionId: "legacy_private_interaction",
+        recentInteractions: [{ eventId: asEventId("evt:test:legacy_private_interaction"), actionId: "legacy_private_interaction",
           dialogueAct: "ask",
           topicSummary: "LEGACY_PRIVATE_TOPIC",
           outcome: "positive",

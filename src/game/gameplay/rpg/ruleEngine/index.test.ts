@@ -8,6 +8,7 @@ import {
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { asLocationId, asNpcId, asGenerationId, asEnemyId, asQuestId, asFactId, type GenerationMetadata, type QuestId, type EndingId, type FactId } from "@/game/domain/worldEntity";
 import { asTurnId } from "@/game/domain/events";
+import type { NpcEntityRecord } from "@/game/domain/entity";
 import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
 import {
   createWorldStateFixtureWith,
@@ -43,7 +44,7 @@ function makeWorld(overrides: WorldStateFixtureOverrides = {}): WorldState {
 describe("ruleEngine facade", () => {
   const ws = makeWorld();
   const ss = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 2, npcs: 0, quests: 0, events: 0 } });
-  const deps = { now: () => "2026-01-01" };
+  const deps = { now: () => "2026-01-01", turnId: asTurnId("test:turn") };
 
   it("returns ok for valid move action", () => {
     const result = ruleEngine(ws, ss, { type: "move", locationId: asLocationId("loc_2") }, "act_1", deps);
@@ -245,7 +246,7 @@ describe("ruleEngine facade", () => {
 describe("ruleEngine status passthrough", () => {
   const ws = makeWorld();
   const ss = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 2, npcs: 0, quests: 0, events: 0 } });
-  const deps = { now: () => "2026-01-01" };
+  const deps = { now: () => "2026-01-01", turnId: asTurnId("test:turn") };
 
   it("passes partial_success from resolveByType to ResolvedEvent", () => {
     const hostileNpc: NpcEntry = {
@@ -284,7 +285,7 @@ describe("ruleEngine status passthrough", () => {
 describe("resolveTurn facade", () => {
   const ws = makeWorld();
   const ss = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 2, npcs: 0, quests: 0, events: 0 } });
-  const deps = { now: () => "2026-01-01" };
+  const deps = { now: () => "2026-01-01", turnId: asTurnId("test:turn") };
   const baseRevision = 7;
   const turnId = asTurnId("turn_9");
 
@@ -340,8 +341,12 @@ describe("resolveTurn facade", () => {
     const r = result.resolution;
     expect(r.primaryResult.status).toBe("partial_success");
     expect(r.primaryResult.eventKind).toBe("dialogue");
-    expect(r.domainEvents.map((e) => e.kind)).toEqual(["npc_met"]);
+    expect(r.domainEvents.map((e) => e.kind)).toEqual(["npc_interaction_recorded", "npc_met"]);
     expect(r.nextWorldState.eventLedger).toEqual([...wsWithHostile.eventLedger, ...r.domainEvents]);
+    const npc = r.nextWorldState.entityStore.records.find((record) => record.core.id === hostileNpc.id);
+    expect(npc?.core.kind).toBe("npc");
+    if (npc === undefined || npc.core.kind !== "npc") return;
+    expect((npc as NpcEntityRecord).history.interactions[0]?.eventId).toBe(r.domainEvents[0]?.eventId);
   });
 
   it("a non-dialogue action can finish the final quest without prematurely resolving an ending", () => {
@@ -520,7 +525,7 @@ describe("candidate reaction events integrate after player action (Task 20)", ()
     locationId: asLocationId("loc_1"), tags: [],
   };
   const ws = makeWorld({ enemies: [enemy] });
-  const deps = { now: () => "2026-01-01" };
+  const deps = { now: () => "2026-01-01", turnId: asTurnId("test:turn") };
   const baseRevision = 7;
   const turnId = asTurnId("turn_9");
 
@@ -595,7 +600,7 @@ describe("candidate reaction events integrate after player action (Task 20)", ()
 
 describe("resolveTurn — 自动揭示无 approach 的必经事实 (Task 3)", () => {
   const ss = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 2, npcs: 0, quests: 0, events: 0 } });
-  const deps = { now: () => "2026-01-01" };
+  const deps = { now: () => "2026-01-01", turnId: asTurnId("test:turn") };
   const FACT_1_ID = asFactId("fact_1");
   const FACT_2_ID = asFactId("fact_2");
   const BOSS_NPC: NpcEntry = {

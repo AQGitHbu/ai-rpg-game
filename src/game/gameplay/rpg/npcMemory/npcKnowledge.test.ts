@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { asEventId } from "@/game/domain/events";
 import {
   FACT_CHANGE_SOURCES,
   NPC_KNOWLEDGE_DISCLOSURES,
@@ -49,7 +50,7 @@ const REFERENCES: NpcKnowledgeReferences = {
   npcIds: new Set<string>([String(NPC_A), String(NPC_B)]),
 };
 
-const EVIDENCE = { actionId: "act_7", turnNumber: 3 };
+const EVIDENCE = { actionId: "act_7", turnNumber: 3, eventId: asEventId("evt:test:knowledge") };
 
 function legal(knowledge: NpcKnowledgeComponent): void {
   expect(validateNpcKnowledge(knowledge)).toEqual([]);
@@ -106,7 +107,7 @@ describe("createNpcKnowledgeSource", () => {
     const result = createNpcKnowledgeSource({ kind: "action", ...EVIDENCE, mode: "player_told" });
     expect(result).toEqual({
       ok: true,
-      source: { kind: "action", mode: "player_told", actionId: "act_7", learnedAtTurn: 3 },
+      source: { kind: "action", mode: "player_told", actionId: "act_7", learnedAtTurn: 3 , eventId: asEventId("evt:test:knowledge") },
     });
   });
 
@@ -115,7 +116,7 @@ describe("createNpcKnowledgeSource", () => {
       kind: "action", ...EVIDENCE, mode: "npc_revealed", sourceNpcId: NPC_B,
     })).toEqual({
       ok: true,
-      source: { kind: "action", mode: "npc_revealed", actionId: "act_7", learnedAtTurn: 3, sourceNpcId: NPC_B },
+      source: { kind: "action", mode: "npc_revealed", actionId: "act_7", learnedAtTurn: 3, sourceNpcId: NPC_B , eventId: asEventId("evt:test:knowledge") },
     });
     expect(createNpcKnowledgeSource({
       kind: "action", ...EVIDENCE, mode: "player_told", sourceNpcId: NPC_B,
@@ -329,7 +330,7 @@ describe("writeNpcKnowledge", () => {
     if (firstSet.ok && firstSet.changed) {
       // 显式披露规则只动披露：certainty 与首次来源逐字保留。
       expect(firstSet.entry.certainty).toBe("known");
-      expect(firstSet.entry.source).toEqual({ kind: "action", mode: "scene_witness", actionId: "act_7", learnedAtTurn: 3 });
+      expect(firstSet.entry.source).toEqual({ kind: "action", mode: "scene_witness", actionId: "act_7", learnedAtTurn: 3 , eventId: asEventId("evt:test:knowledge") });
       expect(setNpcKnowledgeDisclosure({ ...base, knowledge: firstSet.knowledge, factId: FACT_1 }))
         .toMatchObject({ ok: true, changed: false, reason: "already_disclosure" });
     }
@@ -386,8 +387,8 @@ describe("knowledgeWritesFromFactChange", () => {
         certainty: "known",
         disclosure: "public",
         source: source === "npc_revealed"
-          ? { kind: "action", mode: source, actionId: "act_7", turnNumber: 3, sourceNpcId: NPC_B }
-          : { kind: "action", mode: source, actionId: "act_7", turnNumber: 3 },
+          ? { kind: "action", mode: source, actionId: "act_7", turnNumber: 3, sourceNpcId: NPC_B , eventId: asEventId("evt:test:knowledge") }
+          : { kind: "action", mode: source, actionId: "act_7", turnNumber: 3 , eventId: asEventId("evt:test:knowledge") },
       });
     }
   });
@@ -561,6 +562,7 @@ describe("references and compatibility", () => {
     // npc_revealed 的透露者只挂在原型链上：等于没有提供透露者，而不是拿去查存在性。
     const inheritedSpeaker = Object.assign(Object.create({ sourceNpcId: NPC_B }), {
       kind: "action", mode: "npc_revealed", actionId: "act_7", turnNumber: 3,
+      eventId: asEventId("evt:test:knowledge"),
     });
     expect(write({ source: inheritedSpeaker as never }))
       .toMatchObject({ ok: false, code: "invalid_source_npc" });
@@ -568,6 +570,7 @@ describe("references and compatibility", () => {
     // 反过来：无说话人的 mode 上继承来的 sourceNpcId 也必须完全不可见（不误判未知 NPC）。
     const ghostOnProto = Object.assign(Object.create({ sourceNpcId: asNpcId("npc_ghost") }), {
       kind: "action", mode: "scene_witness", actionId: "act_7", turnNumber: 3,
+      eventId: asEventId("evt:test:knowledge"),
     });
     const allowed = write({ source: ghostOnProto as never });
     expect(allowed.ok).toBe(true);

@@ -14,7 +14,7 @@ import { createWorldStateFixtureWith, emptyProjection, type WorldStateFixtureOve
 import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { asLocationId, asGenerationId, asFactId, type GenerationMetadata } from "@/game/domain/worldEntity";
-import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
+import { asEventId, asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
@@ -341,7 +341,7 @@ describe("sqliteGameRepository", () => {
         actionId: "retry-action", status: "success", eventKind: "observe",
         facts: [], stateChanges: [], costs: [], rewards: [], triggeredEvents: [], rejectedEffects: [],
       },
-      domainEventRange: { fromLedgerIndex: 0, toLedgerIndexExclusive: 1 },
+      domainEventIds: [asEventId("turn-1:event-1")],
       requestedAt: "2026-01-01",
       objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
       mandatoryBeats: [],

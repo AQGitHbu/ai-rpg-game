@@ -32,6 +32,7 @@ import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { MandatoryNarrativeBeat, ObjectiveTransition } from "@/game/domain/narrativeBeat";
 import { asItemId, asQuestId } from "@/game/domain/worldEntity";
+import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import type { GameRecord } from "./server/persistence/gameRepository";
 import { projectGameSessionView } from "./gameSessionView";
 
@@ -573,6 +574,21 @@ describe("buildSceneGenerationContext", () => {
       npcs: [
         { ...boss, memory: { ...boss.memory, interactionHistory: [bossHistory] } },
         npcB,
+      ],
+      eventLedger: [
+        ...world.eventLedger,
+        makeCommittedEvent({
+          type: "npc_interaction_recorded",
+          npcId: asNpcId("npc_1"),
+          dialogueAct: bossHistory.dialogueAct,
+        }, {
+          eventId: bossHistory.eventId,
+          turnNumber: bossHistory.turnNumber,
+          actorIds: [PLAYER_ENTITY_ID],
+          targetIds: [asNpcId("npc_1")],
+          locationId: bossHistory.locationId,
+          actionId: bossHistory.actionId,
+        }),
       ],
       worldFacts: [
         ...world.worldFacts,

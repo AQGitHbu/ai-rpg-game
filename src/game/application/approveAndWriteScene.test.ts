@@ -23,7 +23,7 @@ const FIXTURE_NPC_SPEECH_AUTHORITY: NpcSpeechAuthority = {
   allowedFactIds: [asFactId("fact_a")],
   withheldFactIds: [],
   allowedFactCards: [{ factId: asFactId("fact_a"), text: "已知" }],
-  allowedEventIds: [asEventId("inter_1")],
+  allowedEventIds: [asEventId("turn-1:interaction-1")],
   recentInteractions: [],
   identityAnchors: {
     selfConcept: "谨慎的掌柜",
@@ -180,7 +180,7 @@ function makeContext(overrides: {
       knownFactCards: [{ factId: asFactId("fact_a"), text: "已知" }],
       hiddenFactCards: [], sceneVisibleFactIds: [asFactId("fact_vis")],
       speechAuthority: FIXTURE_NPC_SPEECH_AUTHORITY,
-      recentInteractionSummaries: [], recentInteractionActionIds: ["inter_1"],
+      recentInteractionSummaries: [], recentInteractionActionIds: ["turn-1:interaction-1"],
       relationship: { affinity: 0 }, emotion: "neutral",
       goals: [], forbiddenKnowledgeIds: [],
     }],
@@ -659,7 +659,7 @@ describe("approveScenePerformance (Task 6)", () => {
     const result = approveScenePerformance({
       context: makeContext(),
       proposal: makeProposal({
-        npcLine: { npcId: "npc_1", text: "上次你问我的事……", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedEventIds: ["inter_1"] },
+        npcLine: { npcId: "npc_1", text: "上次你问我的事……", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedEventIds: ["turn-1:interaction-1"] },
       }),
       basedOnRevision: 8,
       existingCandidateEventPool: [],

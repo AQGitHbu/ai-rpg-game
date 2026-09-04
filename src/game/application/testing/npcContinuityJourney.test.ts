@@ -24,7 +24,7 @@ import type { ItemEntry, WorldState } from "@/game/domain/worldState";
 import type { GameRecord } from "@/game/application/server/persistence/gameRepository";
 import { isAllowedRelationshipStageTransition } from "@/game/gameplay/rpg/npcMemory";
 import { performBattleRound } from "@/game/application/performBattleRound";
-import { asNarrativeJobId } from "@/game/domain/events";
+import { asNarrativeJobId, asEventId, asTurnId } from "@/game/domain/events";
 import { createPreparedContinuationState, type PreparedContinuationState } from "@/game/domain/preparedContinuation";
 import type { FactChange } from "@/game/domain/resolvedEvent";
 
@@ -173,6 +173,7 @@ describe("NPC continuity long-form journey", () => {
       targetId: PLAYER_ENTITY_ID,
       signal: "supported",
       source: { kind: "action", actionId: "act_task9_support", turnNumber: 1 },
+      supportingEventId: asEventId("evt:test:supporting"),
     };
     const afterSupportRecord = await commitNpcMutations(journey, [supportMutation]);
     const afterSupport = playerEdge(npcById(afterSupportRecord.worldState, "npc_0"));
@@ -193,6 +194,7 @@ describe("NPC continuity long-form journey", () => {
       targetId: PLAYER_ENTITY_ID,
       signal: "threatened",
       source: { kind: "action", actionId: "act_task9_threat", turnNumber: 2 },
+      supportingEventId: asEventId("evt:test:supporting"),
     };
     const afterThreatRecord = await commitNpcMutations(journey, [threatMutation]);
     const afterThreat = playerEdge(npcById(afterThreatRecord.worldState, "npc_0"));
@@ -211,10 +213,12 @@ describe("NPC continuity long-form journey", () => {
         targetId: PLAYER_ENTITY_ID,
         signal: "gave_item",
         source: { kind: "action", actionId: replayableActionId, turnNumber: 3 },
+        supportingEventId: asEventId("evt:test:supporting"),
       },
       {
         kind: "record_npc_interaction",
         npcId: openingNpc.core.id,
+        eventId: asEventId("evt:test:interaction"),
         turnNumber: 3,
         actionId: replayableActionId,
         locationId: afterThreatRecord.worldState.currentLocationId,
@@ -456,6 +460,7 @@ describe("NPC continuity long-form journey", () => {
           now: journeyNow,
           actionId: "act_task9_return_gift",
           turnNumber: record.storyState.turnNumber + 1,
+          turnId: asTurnId("test:turn:gift"),
         };
         const returned = resolveByType(giftWorld, { type: "give_item", itemId: returnGift.id, npcId: dynamic.core.id }, giftDeps);
         expect(returned.ok).toBe(true);
@@ -536,6 +541,7 @@ describe("NPC continuity long-form journey", () => {
             actionId: "act_task9_private_fact",
             turnNumber: record.storyState.turnNumber + 1,
             disclosure: "secret" as const,
+            eventId: asEventId("evt:test:private"),
           };
           const openingKnowledgeBeforeAudience = npcById(record.worldState, "npc_0").knowledge;
           const afterPrivate = await commitNpcFactChangeForTest(journey, privateChange, privateRequest);
@@ -548,6 +554,7 @@ describe("NPC continuity long-form journey", () => {
               kind: "action",
               mode: "player_told",
               actionId: privateRequest.actionId,
+              eventId: privateRequest.eventId,
               learnedAtTurn: privateRequest.turnNumber,
             },
           });
@@ -563,6 +570,7 @@ describe("NPC continuity long-form journey", () => {
             actionId: "act_task9_public_fact",
             turnNumber: afterPrivate.storyState.turnNumber + 1,
             speakerNpcId: asNpcId("npc_0"),
+            eventId: asEventId("evt:test:public"),
           };
           const afterKnowledge = await commitNpcFactChangeForTest(journey, publicChange, publicRequest);
           const afterDynamic = npcById(afterKnowledge.worldState, dynamicNpcId);
@@ -574,6 +582,7 @@ describe("NPC continuity long-form journey", () => {
               kind: "action",
               mode: "npc_revealed",
               actionId: publicRequest.actionId,
+              eventId: publicRequest.eventId,
               learnedAtTurn: publicRequest.turnNumber,
               sourceNpcId: asNpcId("npc_0"),
             },
@@ -605,7 +614,7 @@ describe("NPC continuity long-form journey", () => {
           expect(validateNpcSpeechReferences({
             authority: dynamicAuthority,
             usedFactIds: [String(privateFact.factId)],
-            usedInteractionActionIds: [],
+            usedEventIds: [] as readonly string[],
           })).toEqual({ ok: false, code: "invalid_fact_reference" });
           expect(dynamicAuthority.allowedFactIds).toContain(publicFact.factId);
           expect(dynamicAuthority.allowedFactCards.some((card) => card.factId === publicFact.factId)).toBe(true);
@@ -634,6 +643,7 @@ describe("NPC continuity long-form journey", () => {
               targetId: PLAYER_ENTITY_ID,
               signal: "fought_together",
               source: { kind: "action", actionId: fought[0]!.actionId, turnNumber: fought[0]!.turnNumber },
+              supportingEventId: asEventId("evt:test:supporting"),
             };
             const replay = applyEntityMutations(afterBattle.worldState, [victoryReplay]);
             expect(replay.ok).toBe(true);

@@ -13,6 +13,7 @@ import type { RelationshipValue } from "./relationship";
 import type { NarrativeEmotion } from "./narrative";
 import type { DialogueAct, StructuredDialogueTopic } from "./action";
 import type { TownRuntimeState } from "./townState";
+import type { EventId } from "./events";
 
 export type PlayerState = {
   readonly name: string;
@@ -48,6 +49,8 @@ export type NpcMemory = {
 export type NpcInteraction = {
   readonly turnNumber: number;
   readonly actionId: string;
+  /** Task 4：该交互对应的事件 ID，成为台词引用的权威证据。 */
+  readonly eventId: EventId;
   readonly locationId: LocationId;
   readonly dialogueAct: DialogueAct | "freeform";
   /** Task 5：本轮的结构化主题引用（规则裁决同源）；无主题时为 general 或省略。 */

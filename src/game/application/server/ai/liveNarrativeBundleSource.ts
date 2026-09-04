@@ -98,7 +98,7 @@ function buildOpeningPrompt(context: Extract<NarrativeBundleSourceContext, { rea
   },
   "currentScene": {
     "segments": [{ "beatId": "opening", "text": "..." }],
-    "npcLine": { "npcId": "npc_0", "text": "...", "emotion": "guarded", "answeredBeatIds": [], "usedFactIds": [], "usedInteractionActionIds": [] },
+    "npcLine": { "npcId": "npc_0", "text": "...", "emotion": "guarded", "answeredBeatIds": [], "usedFactIds": [], "usedEventIds": [] },
     "objectiveLink": null,
     "choices": [{ "candidateId": "support", "label": "..." }, { "candidateId": "challenge", "label": "..." }]
   },
@@ -275,7 +275,7 @@ function normalizeDecisionBundleShape(
         emotion: "neutral",
         answeredBeatIds: [],
         usedFactIds: [],
-        usedInteractionActionIds: [],
+        usedEventIds: [],
       }
     : source);
   };

@@ -96,7 +96,7 @@ function buildPreparedContinuations(context: SceneGenerationContext): readonly P
           emotion: "guarded" as const,
           answeredBeatIds: [],
           usedFactIds: [],
-          usedInteractionActionIds: [],
+          usedEventIds: [],
         },
     objectiveLink: {
       questId: String(descriptor.authority.questId),
@@ -304,7 +304,7 @@ function buildNpcLineState(context: SceneGenerationContext): ScenePerformancePro
     text: normalizeNpcSpeech(text, npc.name),
     emotion,
     usedFactIds: [],
-    usedInteractionActionIds: [],
+    usedEventIds: [],
     answeredBeatIds: answeredUtteranceBeatIds(context),
   };
 }

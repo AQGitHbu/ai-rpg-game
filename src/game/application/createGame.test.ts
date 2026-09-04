@@ -133,7 +133,7 @@ describe("createGame", () => {
               ...result.proposal.currentScene,
               npcLine: {
                 ...result.proposal.currentScene.npcLine!,
-                usedInteractionActionIds: ["npc_other:trade"],
+                usedEventIds: ["npc_other:trade"],
               },
             },
           },
