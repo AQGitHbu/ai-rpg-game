@@ -6,7 +6,7 @@
 
 **Architecture:** 纯数据查表模块 `contentAssets.ts`（函数重载在编译期锁定 kind↔variant 配对，运行时白名单守卫使非法输入一律返回 null，不抛错、不拼接路径）；DOM 降级组件 `ContentAssetImage`（查表 null 或 `onError` 时渲染 `fallback`）；两个接入点只换 URL 来源，渲染方式（next/image / SVG `<image>`）保持不变。
 
-**Tech Stack:** Next.js 15 + React 19（DOM 渲染）、TypeScript、vitest + @testing-library/react（jsdom，`src/test-setup.ts` 已接入 jest-dom）、next/image。
+**Tech Stack:** Next.js 16 + React 19（DOM 渲染）、TypeScript、vitest + @testing-library/react（jsdom，`src/test-setup.ts` 已接入 jest-dom）、next/image。
 
 **Spec:** `docs/superpowers/specs/2026-09-07-content-asset-registry-design.md`
 
