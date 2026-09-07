@@ -45,7 +45,17 @@ type ContentAssetKind = "genre_cover" | "town_building";
 ```
 
 - 纯数据查表，无副作用、无状态。
-- 类型只从 `@/game/application` 导入（与 `adventureVisuals` 同模式，合规）。
+- **variant 类型经派生而非导入**：`GameTypeId` 与 `TownBuildingType` 均非 `@/game/application` 的导出符号，按仓库现行模式从 facade 已导出类型派生（`NewGameInput["gameType"]`、`TownRenderSnapshot["buildings"][number]["buildingType"]`，同 `adventureVisuals` / `TownMapSvg` 现行写法）；不得 import `@/game/domain`，也不得为导入而修改 facade（受 §1.2「不触碰 `src/game/**`」约束）。
+- **查表函数签名（重载保证 kind↔variant 配对，守卫保证非法返回 null）**：
+
+```ts
+export function contentAssetUrl(kind: "genre_cover", variant: GameTypeId): string | null;
+export function contentAssetUrl(kind: "town_building", variant: TownBuildingType): string | null;
+// 实现签名收宽（kind: unknown, variant: unknown），白名单 + typeof 守卫，非法一律 null
+// （同 resolveAdventureVisualVariant 的「宽入参 + 白名单守卫」模式）
+```
+
+调用端 null 流转：next/image 场景条件渲染（见 §5）；SVG 场景 `href={url ?? undefined}` 或跳过渲染；`ContentAssetImage` 渲染 `fallback`。
 - kind 白名单可扩展但不预建空映射项：未来按生图文档 §3 图片位总表逐个增加（如 `npc_portrait`、`scene_background`、`item_icon`）。
 - `AssetStatus` 契约不引入（见 1.2）；未来运行时生图接入时在 registry 外层包状态机，查表接口不变。
 
@@ -61,7 +71,7 @@ type ContentAssetKind = "genre_cover" | "town_building";
 
 | 接入点 | 形态 | 降级 |
 |---|---|---|
-| 新游戏题材卡封面（`NewGameSetupForm`） | `GAME_TYPE_BACKGROUNDS` 硬编码映射迁入 registry（`genre_cover`），渲染保持现有 next/image（`fill`/`sizes`/`priority`）不变——等价重构，保留布局约束与图片优化 | registry 查不到时回退题材主题色背景（卡片底色即兜底） |
+| 新游戏题材卡封面（`NewGameSetupForm`） | `GAME_TYPE_BACKGROUNDS` 硬编码映射迁入 registry（`genre_cover`），渲染保持现有 next/image（`fill`/`sizes`/`priority`）不变——等价重构，保留布局约束与图片优化 | registry 返回 null 时**条件渲染跳过 `<Image>`**（next/image 的 `src` 不接受 null/空串，空串会产出非法 loader 请求），露出 `.game-type-card--visual` 自身背景（全局表面色） |
 | 小镇建筑图（`TownMapSvg` 的 `BUILDING_ART`） | 直接调 registry 查表取 URL，塞进 SVG `<image href>` | `<image>` 失败不渲染，底层 `TILE_FILL` 色块天然兜底 |
 
 两个接入点均为等价重构，URL 值不变，现有测试断言不受影响。**迁移约束：不得触碰 `TownMapSvg` 的 `isUnexploredPlaceholder` 门控与未探索灰块渲染**——「未探索建筑不加载真实图片」是反泄漏约束，`TownLayerScreen.test` 已锁定该行为。
@@ -72,7 +82,7 @@ type ContentAssetKind = "genre_cover" | "town_building";
 |---|---|---|
 | 内容位 DOM 加载失败 | `onError` → `fallback` ReactNode | 多级入口，由调用方决定 fallback 层级 |
 | 内容位 SVG 加载失败 | `<image>` 不渲染，底色 rect 兜底 | 两级 |
-| 内容位 next/image 加载失败 | next/image 自身 `onError` 未启用时表现同裸 `<img>`（破图/隐藏由 CSS 控制）；registry 查不到时业务侧回退主题色背景 | 两级 |
+| 内容位 next/image 加载失败 | next/image 自身 `onError` 未启用时表现同裸 `<img>`（破图/隐藏由 CSS 控制）；registry 查不到时条件渲染跳过，露出卡片表面色背景（见 §5） | 两级 |
 | 图片整体不可用 | 验收门禁：移除全部图片文件后全流程仍可玩（生图文档 §11 静态版） | — |
 
 「对话/动画播放中不热切图片」原则（生图文档 §2.6）：静态资产无热切场景——内容图随场景切换加载，本设计记录为事实而非运行时机制。
@@ -87,19 +97,19 @@ type ContentAssetKind = "genre_cover" | "town_building";
 
 ### 7.2 门禁
 
-- `npm run test:components`、`npm run test:fast`（typecheck/lint/boundaries）。
+- `npm run test:components`、`npm run test:fast`（typecheck/boundaries 等，不含 lint）+ `npm run lint`。
 - `src/game/**` 零触碰；`dependencyBoundaries.test.ts` 无需新增规则（components 层内部新增，无新跨层 import）。
 
 ### 7.3 人工验收
 
 - dev server：新游戏题材卡（封面图正常显示）、小镇地图（建筑图/未探索灰块行为不变）。
-- 降级验收：移除 `public/assets/genres|town/` 后题材卡回退主题色背景、小镇回退色块，全流程可玩。
+- 降级验收：移除 `public/assets/genres|town/` 后题材卡回退卡片表面色背景、小镇回退色块，全流程可玩。
 
 ## 8. 决策记录
 
 | 决策 | 选择 | 理由 |
 |---|---|---|
-| 装饰性 UI 边框（九宫格） | v1 不做，机制不预建 | AI 预生成 UI 的形态是整图+图标（生图文档 §3 总表 20+ 行无一需要九宫格拉伸，「UI 装饰」属 P4 最低优先级）；AI 生图难以产出合格九宫格素材（中心透明需后处理、等宽切片无法保证、纹理拉伸变形）；UI 骨架保持 CSS 轻量样式叠加 AI 整图背景是既定视觉方向。未来若做手工重装饰边框，CSS `border-image` 是原生九宫格能力，届时按需设计，不预建 |
+| 装饰性 UI 边框（九宫格） | v1 不做，机制不预建 | AI 预生成 UI 的形态是整图+图标（生图文档 §3 总表 20+ 行无一需要九宫格拉伸，「UI 装饰」未被列入 P0–P3 优先级、事实上的最低档）；AI 生图难以产出合格九宫格素材（中心透明需后处理、等宽切片无法保证、纹理拉伸变形）；UI 骨架保持 CSS 轻量样式叠加 AI 整图背景是既定视觉方向。未来若做手工重装饰边框，CSS `border-image` 是原生九宫格能力，届时按需设计，不预建 |
 | 内容位实现 | React 组件 + registry 查表 | 多级降级链需要 JS；纯 CSS 无法表达；查表与渲染形态解耦使同一 registry 服务 DOM/SVG/next/image 三种场景 |
 | registry 管辖范围 | 仅内容位（整图/图标），不含 UI chrome | 与 AI 预生成资产的实际形态对齐；chrome 保持现有 CSS 几何样式 |
 | v1 资产口径 | 只迁移既有映射，不新增资产 | 机制先行；新资产按生图文档管线（预制→P0-P4 优先级）另行落位 |
