@@ -52,6 +52,11 @@ describe("buildOpeningNarrativePrompt", () => {
       .toBeLessThan(prompt.indexOf("最新：上次为码头商人交接清单"));
     expect(prompt).not.toContain("第三新：神龛留言");
     expect(prompt).toContain("玩家输入优先于新颖性要求");
+    const finalAnchor = prompt.indexOf("# 生成前的本次输入锚点");
+    expect(finalAnchor).toBeGreaterThan(prompt.indexOf("# 仅示范字段形状的 JSON 轮廓"));
+    expect(prompt.slice(finalAnchor)).toContain("林舟来港口追查一份署有自己名字、却从未签过的维修记录。");
+    expect(prompt.slice(finalAnchor)).toContain("原因、人物关系与玩家约束");
+    expect(prompt.slice(finalAnchor)).toContain("novelty 只能影响补充背景");
   });
 
   it("fully declares the strict situation, creation, visibility, response, and scene contracts", () => {
