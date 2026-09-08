@@ -20,6 +20,12 @@ describe("NPC direct speech", () => {
     expect(normalizeNpcSpeech("“你问得正是时候。”", "邵叔")).toBe("你问得正是时候。");
     expect(normalizeNpcSpeech("韩征点了点头：「有什么事直接找我。」", "韩征")).toBe("有什么事直接找我。");
     expect(normalizeNpcSpeech("关于商队失踪的事：我还不能确定。", "邵叔")).toBe("关于商队失踪的事：我还不能确定。");
+    expect(normalizeNpcSpeech("沈郎中问得在理，你既问到这里，我便把话摊开：药是救人的，规矩也是救人的。", "顾掌柜"))
+      .toBe("沈郎中问得在理，你既问到这里，我便把话摊开：药是救人的，规矩也是救人的。");
+    expect(normalizeNpcSpeech("我能确认的只有眼前记录；至于是谁改的：我现在不知道。", "陆技师"))
+      .toBe("我能确认的只有眼前记录；至于是谁改的：我现在不知道。");
+    expect(normalizeNpcSpeech("你既问到这里，我就把我知道的都说清楚：药是救人的，规矩也是救人的。", "顾掌柜"))
+      .toBe("你既问到这里，我就把我知道的都说清楚：药是救人的，规矩也是救人的。");
     expect(normalizeNpcSpeech("邵叔看了你一眼，继续巡视。", "邵叔")).toBe("");
   });
 

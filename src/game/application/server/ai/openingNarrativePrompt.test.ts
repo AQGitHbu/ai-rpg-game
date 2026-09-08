@@ -73,6 +73,10 @@ describe("buildOpeningNarrativePrompt", () => {
     expect(prompt).toContain("candidateId");
     expect(prompt).toContain("不得在序幕或 NPC 台词中宣称玩家已接受其中一项");
     expect(prompt).toContain("结局 theme 仅表达开放价值方向");
+    expect(prompt).toContain("明确写出的已发生关键因果");
+    expect(prompt).toContain("publicFacts 和 history");
+    expect(prompt).toContain("不能借选项补写新的既成事实");
+    expect(prompt).toContain("label 只能是对焦点 NPC 说出的回应");
     expect(prompt).toContain("offer 不代表物品已经转移");
     expect(prompt).toContain("trust");
     expect(prompt).toContain("doubt");

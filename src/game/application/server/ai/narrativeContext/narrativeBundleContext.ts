@@ -355,7 +355,7 @@ export function buildDecisionNarrativeContextBlocks(
       id: "bundle:director-guidance", slot: "director_guidance", title: "导演与风格",
       authority: "plan", retention: "mandatory", priority: 825,
       source: { kind: "style_policy", refs: [] },
-      content: `${style.narrationInstruction} ${style.intensityInstruction}\ncurrentScene 必须直接承接上一场景与玩家本轮行动，不得回到更早情节、重复上一场景开场或把玩家写回已经离开的旧地点。`,
+      content: `${style.narrationInstruction} ${style.intensityInstruction}\ncurrentScene 必须直接承接上一场景与玩家本轮行动，不得回到更早情节、重复上一场景开场或把玩家写回已经离开的旧地点。若玩家本轮是在询问，NPC 必须先直接回答或明确承认自己不知道、无权确认，再继续回应；不能用格言、反问或重复问题代替答复。任何台词、旁白与选项都不能补写状态中没有的既成事实、先前承诺、已完成动作、持有物或具体病情/记录。`,
     }),
     block({
       id: "bundle:player-action", slot: "player_action", title: "玩家本轮行动",
@@ -367,7 +367,7 @@ export function buildDecisionNarrativeContextBlocks(
       id: "bundle:legal-graph", slot: "legal_actions", title: "唯一合法续接图",
       authority: "rule", retention: "mandatory", priority: 925,
       source: { kind: "narrative_bundle_descriptors", refs: [String(job.jobId)] },
-      content: `符号引用白名单：@current.location、@current.focus_npc、@new.location、@new.npc、@new.item、@new.enemy、@new.fact、@new.quest、@ending.trust、@ending.doubt。\ncontinuationScenes 必须与第 8 条投影的步骤完全一致，数量、stepKey、顺序都不得改动，不得投影之外自行规划未来步骤。\n这是服务端重建的唯一合法图，必须逐字使用 stepKey 与 candidateId，不得自创、遗漏、重复或继续规划未来：\n- terminal: ${JSON.stringify(projection.expectedTerminal)}\n- currentScene choices: ${projection.expectedChoices}\n- continuationScenes:\n${projection.expectedSteps}`,
+      content: `符号引用白名单：@current.location、@current.focus_npc、@new.location、@new.npc、@new.item、@new.enemy、@new.fact、@new.quest、@ending.trust、@ending.doubt。\ncontinuationScenes 必须与第 8 条投影的步骤完全一致，数量、stepKey、顺序都不得改动，不得投影之外自行规划未来步骤。选项 label 必须忠于其服务端 Action：talk 只能写玩家对 NPC 说出的对话意图，不得写成转身、推门、调出设备、接通通信、拿取物品、移动或其他物理动作；也不得在 label 中假定尚未发生的事实、承诺或结果。\n这是服务端重建的唯一合法图，必须逐字使用 stepKey 与 candidateId，不得自创、遗漏、重复或继续规划未来：\n- terminal: ${JSON.stringify(projection.expectedTerminal)}\n- currentScene choices: ${projection.expectedChoices}\n- continuationScenes:\n${projection.expectedSteps}`,
     }),
     block({
       id: "bundle:world-evolution", slot: "director_guidance", title: "世界演化要求",

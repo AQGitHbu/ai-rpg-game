@@ -209,6 +209,9 @@ describe("opening quality create → ack → choice → decision context", () =>
     expect(actualDecisionPrompt).toContain("[relevant_events] 开局背景与本次回应");
     expect(actualDecisionPrompt).toContain("主角过去曾与船厂技师共同维修引擎");
     expect(actualDecisionPrompt).toContain("我现在不能答应停机");
+    expect(actualDecisionPrompt).toContain("先直接回答或明确承认自己不知道");
+    expect(actualDecisionPrompt).toContain("不能补写状态中没有的既成事实");
+    expect(actualDecisionPrompt).toContain("选项 label 必须忠于其服务端 Action");
     expect(actualDecisionPrompt).not.toContain("技师私自隐去了上次维修失误");
     expect(capturedMessages.map((messages) => messages.map((message) => message.content).join("\n").match(/eventId=.*thread_shutdown/g)?.length)).toEqual([1, 1, 1, 1]);
     expect(branches[1]!.record().worldState.eventLedger.filter((event) => event.kind === "opening_history_established")).toHaveLength(3);

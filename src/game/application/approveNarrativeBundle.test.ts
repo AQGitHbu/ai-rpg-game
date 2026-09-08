@@ -477,6 +477,25 @@ describe("approveNarrativeBundle", () => {
     expect(result.approved.currentScene.npcLine?.text).toBe("账本、血手。");
   });
 
+  it("preserves a direct answer containing an ordinary colon through approval", () => {
+    const proposal = currentSceneProposal();
+    const answer = "你既问到这里，我就把我知道的都说清楚：药是救人的，规矩也是救人的。";
+    const result = approveNarrativeBundle(baseInput({
+      proposal: {
+        ...proposal,
+        currentScene: {
+          ...proposal.currentScene,
+          npcLine: { ...proposal.currentScene.npcLine!, text: answer },
+        },
+      },
+      worldState: directTalkWorld(),
+    }));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.approved.currentScene.npcLine?.text).toBe(answer);
+  });
+
   it("reclassifies a continuation's pure NPC stage direction as generated narration", () => {
     const proposal = validProposal();
     const result = approveNarrativeBundle(baseInput({

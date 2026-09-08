@@ -31,7 +31,7 @@ function isNarrativeSpeakerPrefix(prefix: string, npcName?: string): boolean {
     const escapedName = escapeRegExp(npcName.trim());
     if (new RegExp(`^${escapedName}(?:（[^）]*）)?`).test(compact)) return true;
   }
-  return /(?:说道|答道|说|道|问道|回道|补充道|解释道|低声|轻声|冷冷|如实|坦诚|谨慎|犹豫|看着|看了|望着|注视|压低声音)/u.test(compact);
+  return /(?:说道|答道|问道|回道|补充道|解释道|说|道|低声|轻声|冷冷|如实|坦诚|谨慎|犹豫|看着|看了|望着|注视|压低声音)$/u.test(compact);
 }
 
 function isActionOnlyNarration(value: string, npcName?: string): boolean {
