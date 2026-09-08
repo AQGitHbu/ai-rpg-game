@@ -33,3 +33,9 @@ export {
   type GameRepository,
   type GetCurrentGameResult,
 } from "./server/persistence/gameRepository";
+
+// RPG 图片展示纯 DTO：只经 facade 进入 UI，不携带任何 server 或规则依赖。
+export type {
+  ContentAssetKind, ContentAssetImageView, ContentAssetState,
+  ContentAssetBindingView, GameVisualAssetsView,
+} from "./contentAssetView";

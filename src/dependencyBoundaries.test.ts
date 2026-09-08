@@ -580,6 +580,13 @@ describe("core layer stays free of product semantics", () => {
       expect(specifiers, relative).toEqual([]);
     }
   });
+
+  it("content asset DTO is pure and enters the browser only as a facade type", () => {
+    const dto = readFileSync(resolve(sourceRoot, "game/application/contentAssetView.ts"), "utf8");
+    expect(extractSpecifiers(dto)).toEqual([]);
+    const facade = readFileSync(resolve(sourceRoot, "game/application/index.ts"), "utf8");
+    expect(facade).toMatch(/export\s+type\s*\{[^}]*ContentAssetImageView[^}]*\}\s*from\s*["']\.\/contentAssetView["']/s);
+  });
 });
 
 describe("canonical client surfaces stay behind the application facade", () => {

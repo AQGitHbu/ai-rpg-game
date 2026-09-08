@@ -12,6 +12,7 @@ import { resolveItemPresentation, type ItemIconKey } from "@/game/domain/itemPre
 import { relationshipTierOf, type RelationshipTier } from "@/game/domain/relationship";
 import type { StoryState } from "@/game/domain/storyState";
 import { isTravelTarget, type WorldState } from "@/game/domain/worldState";
+import type { GameVisualAssetsView } from "./contentAssetView";
 import type { AiFailureKind } from "@/game/domain/narrativeGenerationFailure";
 import {
   buildChoiceMap,
@@ -162,6 +163,8 @@ export type GameSessionView = {
   readonly prologueShown: boolean;
   /** 开局生成并审批通过的序幕文本；空串 = 生成失败，UI 回退玩家 storyOpening。 */
   readonly prologueText: string;
+  /** 可选展示资产：本期仅承载静态 prefab；server 生成图在后续任务接入。 */
+  readonly visualAssets?: GameVisualAssetsView;
   readonly ending: {
     readonly name: string;
     readonly description: string;
