@@ -87,7 +87,7 @@ Add `thinkingRoles: resolveAiThinkingRoles(env)` next to temperature/timeout, wi
 
 - [x] **Step 5: Document the opt-in variable**
 
-Add `AI_THINKING_ROLES=` to `.env.example` and describe default-off behavior and A/B interpretation in `docs/agent/AI内容质量评估.md`.
+Add `AI_THINKING_ROLES=` to `.env.example` and describe default-off behavior and A/B interpretation in `docs/archive/AI内容质量评估.md`.
 
 - [x] **Step 6: Run focused tests and typecheck**
 
@@ -96,7 +96,7 @@ Run the focused Vitest command from Task 1 and `npm run typecheck`; expected res
 ### Task 3: Run the controlled A/B and update the quality record
 
 **Files:**
-- Modify: `docs/agent/AI内容质量评估.md`
+- Modify: `docs/archive/AI内容质量评估.md`
 - Modify: this plan's execution log
 - Test artifacts: `artifacts/story-eval/`
 

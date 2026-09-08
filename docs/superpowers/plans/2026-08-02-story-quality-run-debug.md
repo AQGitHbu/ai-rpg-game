@@ -24,7 +24,7 @@ Game quality is the intersection of:
 2. **Story experience:** the generated story has structure and escalation (S1–S2), planted-and-paid-off information (S3), bounded surprise (S4), functional entities (S5), motivated conflict and ending (S6–S7), meaningful choice consequences and agency (S8–S9), plus scene-level NPC consistency (C1), continuity (C2), choice quality (C3), and prose quality (C4).
 3. **Evidence trustworthiness:** every scored run has required calls, manifest, answer key, previous-scene context, NPC profile/relationship/memory evidence, safe event IDs, and paired-branch evidence where S8/S9 are interpreted above the cap of 3.
 
-Report these dimensions separately; do not collapse them into one unsupported score. The v2 scale and objective metric definitions in `docs/策划文档/AI内容质量评估标准.md` are authoritative.
+Report these dimensions separately; do not collapse them into one unsupported score. The v2 scale and objective metric definitions in `docs/archive/AI内容质量评估标准.md` are authoritative.
 
 ## Execution Gates
 

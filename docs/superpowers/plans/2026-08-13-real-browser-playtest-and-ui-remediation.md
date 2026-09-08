@@ -25,7 +25,7 @@
 
 **Files:**
 - Create: `docs/真机测试/2026-08-13-中篇完整流程记录.md`
-- Read/verify: `docs/agent/当前开发阶段.md`, `docs/agent/地图与地点冒险.md`, `docs/agent/探索与任务推进.md`, `docs/agent/物品与任务奖励.md`, `docs/agent/战斗与结局.md`, `docs/agent/NPC对话驱动叙事场景触发.md`, `docs/agent/闲聊功能实现说明.md`
+- Read/verify: `docs/agent/当前开发阶段.md`, `docs/agent/地图与地点冒险.md`, `docs/agent/探索与任务推进.md`, `docs/agent/物品与任务奖励.md`, `docs/agent/战斗与结局.md`, `docs/agent/NPC对话驱动叙事场景触发.md`, `docs/archive/闲聊功能实现说明.md`
 - Test: `npm run check:standards`, `npm run typecheck`, `npm run lint`
 
 **Interfaces:**

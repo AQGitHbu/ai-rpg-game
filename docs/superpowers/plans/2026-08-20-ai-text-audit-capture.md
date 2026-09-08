@@ -370,8 +370,8 @@ git commit -m "feat: add AI text audit query tools"
 - Create: `docs/agent/AI文本审计.md`
 - Modify: `docs/游戏开发规范.md`
 - Modify: `docs/agent/日志与追踪.md`
-- Modify: `docs/策划文档/AI内容质量评估标准.md`
-- Modify: `docs/agent/AI内容质量评估.md`
+- Modify: `docs/archive/AI内容质量评估标准.md`
+- Modify: `docs/archive/AI内容质量评估.md`
 - Modify: `docs/Agent文档索引.md`
 
 - [ ] **Step 1: Update the RPG logging principle**
@@ -380,7 +380,7 @@ git commit -m "feat: add AI text audit query tools"
 
 - [ ] **Step 2: Mark the old quality standard and historical implementation as retired**
 
-在 `docs/策划文档/AI内容质量评估标准.md` 与 `docs/agent/AI内容质量评估.md` 顶部增加 `retired` 声明，明确它们基于旧的 director/writer/NPC 运行链，不能用于当前 canonical runtime 的质量结论。保留正文作为历史决策记录，不删除历史资料。
+在 `docs/archive/AI内容质量评估标准.md` 与 `docs/archive/AI内容质量评估.md` 顶部增加 `retired` 声明，明确它们基于旧的 director/writer/NPC 运行链，不能用于当前 canonical runtime 的质量结论。保留正文作为历史决策记录，不删除历史资料。
 
 - [ ] **Step 3: Add current audit facts and index routing**
 
@@ -395,7 +395,7 @@ Expected: PASS，且 `Select-String -Path docs/agent/AI文本审计.md -Pattern 
 - [ ] **Step 5: Commit**
 
 ```powershell
-git add docs/游戏开发规范.md docs/agent/日志与追踪.md docs/策划文档/AI内容质量评估标准.md docs/agent/AI内容质量评估.md docs/agent/AI文本审计.md docs/Agent文档索引.md
+git add docs/游戏开发规范.md docs/agent/日志与追踪.md docs/archive/AI内容质量评估标准.md docs/archive/AI内容质量评估.md docs/agent/AI文本审计.md docs/Agent文档索引.md
 git commit -m "docs: retire legacy story quality standard and define text audit"
 ```
 

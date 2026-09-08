@@ -21,20 +21,20 @@
 - 生产 AI 失败仍显式 failed/manual retry；不以规则生成的剧情、fixture 或默认台词冒充 AI 成功。保留上一次已批准计划不等于生成一份 fallback 剧情。
 - 权威顺序保持 `rule → state → event → plan → memory → lore`；计划不能改变 Action 成败、任务目标、关系数值、知识披露、敌人属性或结局选择。
 - 只修改 `ai-rpg-game`；不改 `.foundation` 或 sibling 仓库，不创建通用图框架/共享 package。若实际触发共享基础设施边界，停止相应扩展并按 AGENTS 路由处理。
-- 实施前读根 AGENTS、游戏设计/开发规范、Agent 索引、当前开发阶段及本文列出的相关 agent 文档。参考文档不是实现依据。
-- Plan5 实施使用 `codex/hierarchical-living-outline-story-threads` / `.worktrees/hierarchical-living-outline-story-threads`；本次 Plan4 修复在 main，不能因此将 Plan5 也直接在 main 实施。
+- 实施前读根 AGENTS、开发规范、Agent 索引、阶段入口和本文全局约束；当前 Task 涉及哪些系统，再读对应 agent 文档与 Spec 章节。生产事实由当前系统文档和代码核实。
+- Plan5 实施使用 `codex/hierarchical-living-outline-story-threads` / `.worktrees/hierarchical-living-outline-story-threads`；实现任务在目标 worktree 中执行。
 - StoryState 在 Task 5 从 v8 升 v9；WorldState 保持 v5、EntityStore 保持 v2、record version 保持 1。旧 Story v1–v8 明确 `UNSUPPORTED_RECORD`，未知未来版本 `VERSION_MISMATCH`；不静默重建旧存档，不自动清档。
 - 不修改 `StoryContract.targetActs: 3 | 5`、现有短/中篇预算、世界具象化的目标链策略或战斗数值。计划里的 `phase` 与游戏里的 `currentAct` 不是同一个概念。
 
 ---
 
-## 0. 状态与最新代码基线
+## 0. 状态与代码接入基线
 
 > 状态：待执行
 
-本文只规划 Plan5，不包含本轮已完成的 Plan4 修复任务。
+本文规划层级大纲与剧情线程；任务勾选表示实施与验收进度。
 
-代码基线为 2026-09-04 main `8558792`：`80a0b4c` 之后 Plan4 复核修复已在 `67b56e6` 提交，Plan5 初稿在 `8558792` 提交。当前本文包含后续未提交修订，不能声称工作区干净；执行前重新检查分支、worktree、工作区与实际 main 文件。`phase:start` 的前提是修订已确认提交且目标 worktree 尚未创建，不能按旧 Plan 中已删除的文件创建兼容入口。
+执行前核对 main、目标分支与 worktree，确认工作区干净。下表提供接入定位；具体实现以当前源码与系统文档为准。
 
 | 已核实事实 | Plan5 必须如何接入 |
 |---|---|
@@ -45,7 +45,7 @@
 | **没有任何 journey 测试跑生产 bundle 路径。** `generatePendingNarrativeBundle` 的 import 方只有三处：生产装配 `compositionRoot.ts:22`（在 `:255` 作为 coordinator 执行体）、它自己的 `generatePendingNarrativeBundle.test.ts`、以及只做源码文本断言的 `providerTriggerBoundary.test.ts:21`。所有 journey 走的是 legacy 场景链：`foundationJourney.testutil.ts:208-220` 的 `advanceScene` 调 `generatePendingScene` + `createDeterministicSceneSource()`（`deterministicSceneSource.ts:63`，返回的是 `SceneSource`，与 `NarrativeBundleSource` 是两套协议），配合 `installPreparedContinuationForTest`（`npcContinuityJourney.testutil.ts:184`）安装 `PreparedContinuationState`。`createFixtureOpeningSource()`（`createGame.ts:639`）虽然是 `NarrativeBundleSource`，但 `:643` 对 `context.kind !== "opening"` 直接返回 `AI_CALL_FAILED`，所以它**只覆盖 opening，不覆盖 decision** | Task 5/8 拿 `npcContinuityJourney` 证明的结局可达性是 **legacy 链**的可达性（这也是 Task 5 必须同时改 `generatePendingScene.ts` 的原因）；它不能证明 `outlineUpdate` 修订协议在生产链上跑通。Task 10 的新 journey 是**第一个**驱动生产 bundle decision 路径的端到端测试，别把它当成对既有覆盖的补充 |
 | `materializeWorldDelta` 返回 `ApprovedWorldDelta`（`mintedLocationIds/mintedNpcIds/mintedItemIds/mintedEnemyIds/mintedFactIds/mintedQuestIds/mintedEndingIds` + `previewWorldState` + `previewStoryState` + `eventDrafts`）；它可能提前物化下一幕 Quest，但只有 `stagedQuest.stage === ss.currentAct` 时才把 `reveal` 置为 `{questId, visibleObjectiveIndex: 0}` | “实体已创建”不等于“角色已经见到”，更不等于未来 Arc 已执行 |
 | Event payload 为封闭 union；NPC 来源使用 Event ID；memory 从 ledger 重建 | Thread/Milestone 只能引用合法 Event，不用 actionId、正文或数组下标代替证据 |
-| 本轮修复了 payload 完整校验、重试回合号比较、前因/物品召回与本轮/历史隔离；bundle 消费现在记录 presented Event | 新增 payload 必须同步 `eventPayloadValidation.ts`；本 Plan 不需要新增世界 Event 类型 |
+| Event 校验覆盖 payload、回合号和因果顺序；检索隔离当前回合与历史，bundle 消费记录 presented Event | 新增 payload 必须同步 `eventPayloadValidation.ts`；本 Plan 不需要新增世界 Event 类型 |
 | `compositionRoot.ts` 只构造一个 AI 源 `createNarrativeBundleSourceFactory → liveNarrativeBundleSource`；`liveScenePerformanceSource`/`createLiveWorldEvolutionSource` 只被 `sourceFactory.test.ts` 构造，`generatePendingScene` 只被测试与 testutil 导入，`sceneNarrativeContext`/`worldNarrativeContext`/`sceneGenerationContext` 都不在 bundle 生产路径上（bundle prompt 全部来自 `narrativeBundleContext.ts`） | Task 7 只改生产 bundle 投影，不为已离开生产路径的 legacy scene/world 编译器加 outline 卡 |
 | `mediumActJourney.test.ts` 当前只证明中篇初始化/首次决策，不是完整五幕通关；唯一打到结局的现有旅程是 `npcContinuityJourney.test.ts`（中篇、`successfulRounds >= 18`、act 5、`ending` 非 null） | Task 10 新建生产 bundle 完整旅程；不拿文件名当完成证明，也不给短篇凭空设定未经验证的回合下限 |
 
@@ -1079,7 +1079,7 @@ expect(replay.record.storyState).toEqual(support.record.storyState);
 
 ### Task 11: 文档、完整门禁与人工叙事质量验收
 
-**Files:** Create `docs/agent/层级大纲与剧情线程.md`（**该文件当前不存在**，按 `docs/agent/template.md` 的固定骨架写：`系统定位 / 当前规则摘要 / 当前实现现状 / 主要文件 / 主要测试 / 修改注意事项 / 最近维护`，不要自创章节名）；Modify `docs/agent/剧情连续性与结构化记忆.md`、`运行时AI导演与场景表演.md`、`世界动态具象化.md`、`战斗与结局.md`、`当前开发阶段.md`、`current-phase.json`（以上六个 Modify 目标均已核实存在）；Modify `docs/Agent文档索引.md`、`docs/游戏开发规范.md`、`docs/策划文档/AI生成RPG_MVP.md`。
+**Files:** Create `docs/agent/层级大纲与剧情线程.md`（**该文件当前不存在**，按 `docs/agent/template.md` 编写职责、当前契约、必要流程、代码与验证入口和条件关联阅读；原位替换事实，不追加日期维护记录）；Modify `docs/agent/剧情连续性与结构化记忆.md`、`运行时AI导演与场景表演.md`、`世界动态具象化.md`、`战斗与结局.md`、`当前开发阶段.md`、`current-phase.json`（以上六个 Modify 目标均已核实存在）；Modify `docs/Agent文档索引.md`（登记新增系统）、`docs/策划文档/AI生成RPG_MVP.md`（玩家规则）；跨系统开发约束变化时才更新开发规范。阶段状态只修改 JSON，阶段 Markdown 只负责导航。
 
 - [ ] **Step 1 — 更新已实现事实。** 写清 v9、规则执行游标与叙事 phase 区别、批准计划/事件/progress 三种来源、nullable revision 协议、单次 bundle CAS、slot visibility、可选线程不挡结局、战败完整恢复。不得把本 Plan 的结构功能标记描述为 Plan6 已实现的高潮/战斗导演算法。
 

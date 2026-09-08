@@ -1,76 +1,46 @@
 # MVP 核心闭环
 
-## 系统定位
+## 职责
 
-玩家选择题材和短篇/中篇长度创建一局游戏；系统只生成一个可完成的开局切片（故事契约 + 世界前提 + 玩家 + 序幕 + 1 地点/1 NPC/1 主线 + 预算），后续实体由允许的 provider job 按需具象化。玩家通过服务器批准的固定选择或焦点 NPC 自定义输入持续推进，规则结果进入结构化状态；正式 NPC scene 同时准备下一处正式 NPC 决策前的 continuation，线性动作只消费 prepared 或 rule scene，直到抵达结局。
+本页只给出各系统的整体运行图和文档路由，不重复模块细节。生产链负责开局、规则回合、叙事包审批、持久化和 read model；offline fixture 只用于无 AI 试玩与自动回归。
 
-## 当前闭环
+## 当前契约
+
+- 开局只生成可完成的切片：故事契约、世界前提、玩家、序幕、一个起始地点、一个 NPC、一条活动主线和起始事实；后续实体按需具象化。
+- 玩家固定选择和焦点 NPC 自定义输入都经 `/api/game/actions` 进入 `performTurn`；服务端规则拥有 Action、任务、关系、知识、物品、战斗、事件和结局。
+- 生产 provider 触发点只有 `initialization`、`narrative_choice`、`npc_free_text`；叙事 provider、审批和失败重试边界见 [运行时 AI 导演与场景表演](./运行时AI导演与场景表演.md)。
+- `PreparedContinuationState` 仅为 offline fixture 的续接状态；生产续接唯一使用 `narrativeBundle`。
+- 地图、城镇、建筑是空间 read model；物品、战斗和规则移动消费 bundle 步骤或规则 scene，不在动作路径额外调用 provider。
+- 生产失败保留 `provider_failed` 和同一 job，用户显式重试；失败状态不会被改写为成功场景。
+- 当前正式支持短篇和中篇；持久化为 SQLite 的游戏记录与 current-game 指针，使用单一 revision CAS。
+
+## 必要流程
 
 ```text
-题材 + 时长 + seed
-  → createGame
-  → opening-generation proposal → validate/compile（只铸造 loc_0 / npc_0 / quest_0 + 开场事实）
-  → WorldState + StoryState（StoryContract + StoryEvolutionState）
+创建参数
+  → createGame / initialization bundle
+  → WorldState + StoryState + EntityStore
   → GameSessionView
-  → fixed_choice | free_text
-  → performTurn → TurnResolution → 单次规则 CAS（派生 ObjectiveTransition + 强制节拍 ≤8）
-  → PendingNarrativeJob（仅 opening / npc_fixed_choice / npc_free_text）
-  → generatePendingScene
-       └（可选）world-evolution：EvolutionNeed → proposal → 审批 → 铸 ID → 预览状态
-       → scene-performance proposal（分段旁白 / objectiveLink / 焦点 NPC 台词 / 合法选项 / prepared continuation）
-       → approveAndWriteScene
-  → 单次 scene CAS（原子写回已批准世界演化 + ready scene + choice registry + prepared continuation）
-  → 下一次 GameSessionView
-  → … → battle / ending
+  → fixed_choice 或 focus NPC free_text
+  → /api/game/actions → performTurn → 一次规则 CAS
+  → 允许的 provider trigger / 规则场景
+  → GameSessionView
+  → 地图 / 城镇 / 建筑 / 物品 / 战斗消费已批准内容
+  → endingDecision / resolveEnding
 ```
 
-## 已实现能力
+## 主要源码和验证
 
-- 七种预设题材；产品 UI 只开放短篇和中篇。
-- **开局切片**：恰一个起始地点、一个开场 NPC、一条活动主线与开场目标所需事实；不生成未来实体名。
-- **运行时世界演化**：幕推进（`needs_next_act`）、节奏（`pacing`）、终局（`needs_ending_pair`）触发；AI 提案 → 规则审批 → 服务端铸 ID → 具象化到预算边界。
-- 焦点 NPC 两个固定对白选择和一个自定义输入；两者走同一 `/api/game/actions` 与 `performTurn`。
-- **场景表演**：每个 provider-ready 场景一次调用，分段旁白逐段对应强制节拍，`objectiveLink` 与 HUD 当前目标一致，焦点 NPC 收到隔离记忆与关系政策；线性 prepared/rule 场景不追加 provider 调用。
-- 探索、调查、移动、拾取、NPC 关系/记忆、候选事件、确定性战斗与结局。
-- AI/fixture 只生成 proposal；规则审批、Action、任务、知识、关系、战斗、预算和结局独占正式状态。
-- SQLite `game_records + current_game`、单一 revision CAS、刷新恢复、开发环境安全清档。
-- live AI 不可用时保存稳定 failure 并等待同一 job 手动重试；完整离线旅程只由显式 fixture source 驱动，不代表生产 AI 失败时切换为 deterministic 成功。
+- API：`src/app/api/game/` 下的 game、current、actions、narrative/ensure、prologue/ack、dev/current routes
+- application：`src/game/application/createGame.ts`、`src/game/application/performTurn.ts`、`src/game/application/gameSessionView.ts`
+- domain：`src/game/domain/worldState.ts`、`src/game/domain/storyState.ts`、`src/game/domain/entity/entityStore.ts`、`src/game/domain/narrativeBundle.ts`、`src/game/domain/pendingNarrativeJob.ts`
+- gameplay：`src/game/gameplay/rpg/openingGeneration/index.ts`、`src/game/gameplay/rpg/worldEvolution/index.ts`、`src/game/gameplay/rpg/ruleEngine/index.ts`、`src/game/gameplay/rpg/narrativeBundle/index.ts`、`src/game/gameplay/rpg/town/index.ts`
+- server：`src/game/application/server/compositionRoot.ts`、`src/game/application/server/persistence/gameRepository.ts`、`src/game/application/server/persistence/sqliteGameRepository.ts`
+- 端到端规则验证：`src/game/application/testing/foundationJourney.test.ts`、`src/game/application/testing/dynamicMaterializationJourney.test.ts`、`src/game/application/testing/narrativeGroundingJourney.test.ts`、`src/game/application/testing/storyDivergenceJourney.test.ts`、`src/game/application/testing/npcContinuityJourney.test.ts`
 
-## 每局不同与可完成性
+## 按条件关联文档
 
-- 不同 seed 进入 live/fallback 的生成上下文；候选生成抽象结构标签并提取开局指纹，服务端与近期同题材历史做相似度校验，过于雷同就重试；API 自由决定地点、NPC、建筑和任务名称，服务端不做实体名覆盖。
-- 同 seed 下不同玩家选择会改变 NPC affinity/emotion/history、候选事件、路线状态和结局方向（trust/doubt 由规则要求按关键 NPC 亲和度裁决）。
-- 开局小、随游玩增长：首次对话后下一次写回会具象化新 NPC 与地点/物品，下一场景必须提及已批准名称。
-- 完整旅程门禁覆盖 15+ 成功回合、多次 reload、固定选择、自定义输入、旅行、地图→城镇→建筑场景、物品、探索、战斗和结局。
-- 每条选择分支可以确定性 replay；分化有结构化证据而非仅文案差异。
-
-## 唯一生产边界
-
-- API：`/api/game`、`/api/game/current`、`/api/game/actions`、`/api/game/narrative/ensure`、`/api/game/prologue/ack`、`/api/game/dev/current`。
-- Application：`createGame`、`performTurn`、`generatePendingScene`、`evolveWorld`、`projectGameSessionView`。
-- Server：`compositionRoot`、`GameRepository`、`createSqliteGameRepository`。
-- UI：`CurrentGameScreen`、`AdventureGameShell`、`TownLayerScreen`、`gameActionRequest`。
-- 不存在版本化 route、兼容 facade、并行旧链或 typecheck quarantine；不存在 `town ensure` 生产路由（城镇层为确定性 application/gameplay 工作）。
-
-## 主要文件
-
-- `src/game/domain/worldState.ts` / `storyState.ts` / `action.ts` / `pendingNarrativeJob.ts` / `storyContract.ts` / `worldDelta.ts` / `narrativeBeat.ts` / `townState.ts`。
-- `src/game/gameplay/rpg/openingGeneration/` / `worldEvolution/` / `narrativeContext/` / `town/` / `ruleEngine/` / `dialogue/`。
-- `src/game/application/createGame.ts` / `performTurn.ts` / `evolveWorld.ts` / `generatePendingScene.ts` / `sceneGenerationContext.ts` / `focusNpcContext.ts` / `gameSessionView.ts` / `townView.ts`。
-- `src/game/application/server/compositionRoot.ts`。
-- `src/game/application/server/persistence/gameRepository.ts` / `sqliteGameRepository.ts`。
-- `src/components/CurrentGameScreen.tsx` / `AdventureGameShell.tsx` / `TownLayerScreen.tsx`。
-
-## 主要验收
-
-- 分层：`test:game-domain`、`test:game-gameplay`、`test:game-application`、`test:components`、`test:app`。
-- 架构：`test:boundaries`、`typecheck`、`lint`、`build`。
-- 完整旅程：`test:foundation-journey`、`journey:foundation`。
-- 动态具象化与叙事落点：`dynamicMaterializationJourney.test.ts`、`narrativeGroundingJourney.test.ts`、`storyDivergenceJourney.test.ts`。
-- 全量：`npm test`。
-
-## 容量与兼容边界
-
-- 开发期破坏性重建：旧路由、旧存储和旧本地存档不迁移；升级后清档重开。
-- 当前单 record JSON 持久化只正式支持短篇/中篇。
-- 长篇/开放式必须先完成 segmented ledger Spec/Plan，不能宣传无限时长或无限记忆。
+- 行动和 CAS 见 [行动裁决](./行动裁决.md)。
+- 任务与事实见 [探索与任务推进](./探索与任务推进.md)；地图与城镇见 [地图与地点冒险](./地图与地点冒险.md) 和 [小镇程序化生成](./小镇程序化生成.md)。
+- NPC 叙事包见 [NPC 对话驱动叙事场景触发](./NPC对话驱动叙事场景触发.md)。
+- 物品、战斗和终局分别见 [物品与任务奖励](./物品与任务奖励.md)、[战斗与结局](./战斗与结局.md)。

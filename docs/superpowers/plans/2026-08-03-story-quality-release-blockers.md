@@ -13,7 +13,7 @@
 - Work only in `.worktrees/ai-story-quality-eval`; do not modify the protected foundation repository or junction.
 - Preserve the real-AI env gates and artifact redaction rules.
 - Every code change gets a focused test before the corresponding real-AI rerun.
-- Update `docs/agent/AI内容质量评估.md` and the index when implementation facts or release results change.
+- Update `docs/archive/AI内容质量评估.md` and the index when implementation facts or release results change.
 
 ## Task 1: Lock the observed regressions with deterministic tests
 
@@ -54,7 +54,7 @@
 
 ## Task 5: Focused real-AI regression, release matrix, and documentation
 
-**Files:** `docs/agent/AI内容质量评估.md`, `docs/Agent文档索引.md` (only if routing facts change)
+**Files:** `docs/archive/AI内容质量评估.md`, `docs/Agent文档索引.md` (only if routing facts change)
 
 1. Rerun the xianxia pair serially/with provider-supported bounded concurrency, including analysis and judge at the explicit 120-second timeout; inspect all failures and score nullability.
 2. If the focused run is complete enough, launch all seven topics in parallel with the same environment and collect manifests, metrics, scores, and gate output. A worker crash is recorded as an incomplete run and retried once serially.

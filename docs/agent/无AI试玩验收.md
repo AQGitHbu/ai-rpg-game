@@ -1,41 +1,38 @@
 # 无 AI 试玩验收
 
-## 范围
+## 职责
 
-本工作包只为已经完成的确定性规则闭环补齐试玩表达与开发环境重开局能力。它不是原始 MVP Spec 的新增 Phase，也不接入 AI、自由输入或共享 package。
+本流程验证由测试注入的 offline fixture source 驱动的规则闭环，供自动回归使用。当前正式 UI 没有 fixture 选择入口；它证明规则、read model、SQLite CAS、地图/城镇/场景、战斗和结局能够连续运行，不代表生产 AI 失败时会自动切换为 fixture。
 
-## 已有闭环
+## 当前契约
 
-当前显式 offline fixture 已支持：创建确定性 fixture 世界、观察/交谈/调查、地点移动、物品取得、任务解锁、确定性 boss 战，以及成功/失败两个可恢复结局。所有状态仍由 application facade → gameplay 规则 → SQLite CAS 保存。本文件不描述生产 AI 不可用时的用户体验；生产链会显示稳定 AI 失败并等待手动重试。
+- 测试 fixture 可创建确定性开局，覆盖观察、交谈、事实推进、移动、拾取、任务、战斗以及战斗失败恢复和成功结局；这些能力通过注入 source 与 repository 测试驱动，不是正式 UI 菜单。
+- fixture 仍经 application facade、gameplay ruleEngine、GameSessionView 和 SQLite repository；UI 不读取 domain state、seed 或持久化层。
+- 生产 narrative source 与 offline fixture source 是两条显式配置路径。生产 provider 失败会保留 `provider_failed` 和同一 job，不能用 deterministic 文案伪装成功。
+- 试玩不要求清理用户存档；测试使用独立 fixture 与临时 SQLite repository，避免触碰正式开发存档。
 
-## 本次实现约束
+## 必要流程
 
-- 玩家可见属性、冒险记录和行动反馈只能来自 `GameSessionView` 的安全投影；组件不能读取 domain state、blueprint、seed 或持久化层。
-- 冒险文本是对已有 event ledger 的确定性模板化表达，不增加 AI 生成或改变规则裁决。
-- 开发环境清档只处理当前 RPG 槽位。客户端只在开发构建显示；服务端必须再次检查 `NODE_ENV === "development"`。不删除 DB 文件、schema、其它表、worktree、`.foundation` 或 sibling 仓库。
-- UI/API 仍只能从 `@/game/application` 导入游戏业务；SQLite 只留在 `application/server/persistence`。
-
-## 手工试玩路线
-
-1. 在 RPG 主工作区运行 `npm run dev`，浏览器打开本地地址；若已有旧局，在开发工具中确认“清除本地试玩存档”。
-2. 填写角色名字、身份、世界观背景、故事开端，任选预设类型与叙事风格，确认开局。
-3. 确认开场可见：世界与地点、基础 HP/攻击/防御、在场 NPC、初始物品、任务和开场叙事。
-4. 依次按行动/任务面板完成交谈、调查、移动、拾取与后续移动；每一步确认冒险记录增加模板叙事，刷新页面后地点、物品、任务与记录仍在。
-5. 到 boss 地点开始战斗，持续攻击到成功结局；刷新后结局仍在，且普通行动按钮不再出现。
-6. 清档后重新开局，按同一路线在 boss 战选择撤退，确认失败结局和刷新恢复。
-
-## 自动验收
-
-```powershell
-npm run lint
-npm test
-npm run test:fast
-npm run build
-npm run phase:status
+```text
+测试注入 fixture source / SQLite repository
+  → 创建确定性 GameState
+  → GameSessionView
+  → 交谈 / 探索 / 移动 / 拾取
+  → 规则战斗与失败恢复
+  → victory
+  → reload 验证状态仍可恢复
 ```
 
-完整 UI 测试需要 foundation 本地依赖可用：在 `../ai-game-foundation` 运行一次 `npm ci`（只安装其 lockfile 锁定的忽略依赖，不修改 package/source）。这是 `file:` 本地包在 Vitest 真实路径解析 React peer dependency 的运行时前置条件。
+## 主要源码和验证
 
-## 最近维护
+- `src/game/application/createGame.ts` 中的 offline 创建分支
+- `src/game/application/deterministicSceneSource.ts`、`src/game/application/deterministicEvolutionSource.ts`
+- `src/game/application/testing/foundationJourney.test.ts`、`src/game/application/testing/foundationJourney.testutil.ts`
+- `scripts/foundationJourney.mjs`
 
-- 2026-08-04：开发环境「使用已有数据开始」扩展为 7 题材下拉；按 caseId 复用 data/story-eval/cases/v2.json 输入 + 派生 seed 创建 offline 存档（显式 deterministic fixture + `runtimeNarrativeMode:"offline"`，零 AI）。新增 `src/game/application/server/offlineBaselines.ts`（题材→caseId 白名单 + seed 派生）与 7 题材零 AI 规则通关回归 `src/game/application/testing/offlineGenreJourney.test.ts`。
+可执行的 offline 回归命令是 `npm run test:foundation-journey` 和 `npm run journey:foundation`；完整门禁可运行 `npm test`、`npm run lint`、`npm run typecheck`、`npm run test:fast`、`npm run build`。真实 AI 验收不属于本文件的 offline 证明。
+
+## 按条件关联文档
+
+- 整体生产/离线边界见 [MVP 核心闭环](./MVP核心闭环.md)。
+- 地图、战斗和物品的规则范围见 [地图与地点冒险](./地图与地点冒险.md)、[战斗与结局](./战斗与结局.md)、[物品与任务奖励](./物品与任务奖励.md)。

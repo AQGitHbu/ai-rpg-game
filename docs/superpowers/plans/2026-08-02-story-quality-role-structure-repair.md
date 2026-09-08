@@ -263,7 +263,7 @@ Expected: writer/NPC approval remains least-privilege and the actor is no longer
 - Modify: `src/game/application/testing/storyEvalJourney.test.ts`
 - Modify: `scripts/storyEvalAnalyze.mjs`
 - Modify: `scripts/storyEvalAnalyze.node-test.mjs`
-- Modify: `docs/agent/AI内容质量评估.md`
+- Modify: `docs/archive/AI内容质量评估.md`
 
 **Interfaces:**
 - Consumes: safe `activeMainObjective` snapshots and each scene’s selected action/new rule events.
@@ -322,7 +322,7 @@ node --test scripts/storyEvalAnalyze.node-test.mjs
 
 **Files:**
 - Modify: `docs/superpowers/plans/2026-08-02-story-quality-run-debug.md`
-- Modify: `docs/agent/AI内容质量评估.md`
+- Modify: `docs/archive/AI内容质量评估.md`
 
 - [ ] **Step 1: Run all offline gates.**
 

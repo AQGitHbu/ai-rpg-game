@@ -94,7 +94,7 @@
 ### Task 3: Verify the game-quality signal offline and update the record
 
 **Files:**
-- Modify: `docs/agent/AI内容质量评估.md`
+- Modify: `docs/archive/AI内容质量评估.md`
 - Modify: `docs/agent/物品与任务奖励.md` if the template version changes.
 - Modify: this plan’s execution log.
 

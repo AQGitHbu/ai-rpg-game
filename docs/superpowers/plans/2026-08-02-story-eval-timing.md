@@ -159,7 +159,7 @@ Expected: PASS, including C1/C2 evidence acceptance and timeout behavior.
 ### Task 4: Short real run and bottleneck report
 
 **Files:**
-- Modify: `docs/agent/AI内容质量评估.md` only if measured behavior or command defaults change materially.
+- Modify: `docs/archive/AI内容质量评估.md` only if measured behavior or command defaults change materially.
 - Create: ignored artifact directory under `artifacts/story-eval/` through the evaluation command.
 
 **Interfaces:**
@@ -203,7 +203,7 @@ State whether remaining time is provider latency, retries/timeouts, branch gener
 - Modify: `scripts/storyEvalJourney.mjs`
 - Modify: `scripts/storyEvalJourney.node-test.mjs`
 - Modify: `src/game/application/testing/storyEvalJourney.test.ts`
-- Modify: `docs/agent/AI内容质量评估.md`
+- Modify: `docs/archive/AI内容质量评估.md`
 - Test: `scripts/storyEvalJourney.node-test.mjs`, `src/game/application/testing/storyEvalJourney.test.ts`
 
 **Interfaces:**

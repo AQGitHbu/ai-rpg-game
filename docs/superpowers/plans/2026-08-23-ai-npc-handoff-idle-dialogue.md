@@ -183,7 +183,7 @@ Expected: 新来源规则和旧存档兼容测试全部通过。
 **Files:**
 - Modify: `docs/agent/NPC对话驱动叙事场景触发.md`
 - Modify: `docs/agent/地图与地点冒险.md`
-- Modify: `docs/agent/闲聊功能实现说明.md`
+- Modify: `docs/archive/闲聊功能实现说明.md`
 - Modify: `docs/策划文档/AI生成RPG_MVP.md`
 - Modify: `docs/Agent文档索引.md` only if the implementation fact summary needs a new entry.
 

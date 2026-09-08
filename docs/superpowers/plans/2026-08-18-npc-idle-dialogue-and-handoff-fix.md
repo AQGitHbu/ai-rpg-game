@@ -580,7 +580,7 @@ git commit -m "test: align journeys and components with idle npc dialogue contra
 
 **Files:**
 - Modify: `docs/agent/NPC对话驱动叙事场景触发.md`
-- Modify: `docs/agent/闲聊功能实现说明.md`
+- Modify: `docs/archive/闲聊功能实现说明.md`
 - Modify: `docs/agent/地图与地点冒险.md`
 - Modify: `docs/agent/剧情连续性与结构化记忆.md`
 - Modify: `docs/策划文档/AI生成RPG_MVP.md`
@@ -593,7 +593,7 @@ git commit -m "test: align journeys and components with idle npc dialogue contra
 - “修改注意事项”（现 L93）“不能为‘短问候’‘闲聊’增加零写入快捷路径；成功输入就是正式玩家回合”改写为：闲聊是只读展示、零写入、不创建回合；“成功输入就是正式玩家回合”仅约束可提交输入。
 - 现第 98 行“非焦点 NPC 只显示真实的 `ask` 交谈入口”改为“非焦点 NPC 只显示零回合闲聊（`choices: []`），`ask` 入口仅由当前权威 talk 目标投影”。
 
-- [ ] **Step 2: 更新 `docs/agent/闲聊功能实现说明.md`、`docs/agent/剧情连续性与结构化记忆.md`、`docs/agent/地图与地点冒险.md`、`docs/策划文档/AI生成RPG_MVP.md`**
+- [ ] **Step 2: 更新 `docs/archive/闲聊功能实现说明.md`、`docs/agent/剧情连续性与结构化记忆.md`、`docs/agent/地图与地点冒险.md`、`docs/策划文档/AI生成RPG_MVP.md`**
 
 - `闲聊功能实现说明.md`：记录新契约——闲聊预生成于 read model（`composeIdleNpcLine`，参与过剧情且有权威目标 → 提醒变体；否则中性变体；variantIndex = 回合数 + 幕次 + 交互条数），零 API、零回合。
 - `剧情连续性与结构化记忆.md` 现第 29 行“读模型仍投影一次‘与其交谈’入口；提交后 NPC 才成为焦点……”替换为零回合闲聊描述。

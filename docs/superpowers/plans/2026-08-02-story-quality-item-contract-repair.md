@@ -111,7 +111,7 @@ Expected: all focused tests pass and TypeScript exits 0.
 ### Task 3: Run offline gates and a bounded real smoke verification
 
 **Files:**
-- Modify: `docs/agent/AI内容质量评估.md`
+- Modify: `docs/archive/AI内容质量评估.md`
 - Modify: this plan's run log
 - Test artifacts: `artifacts/story-eval/`
 
@@ -142,7 +142,7 @@ Expected: `REAL_AI_JOURNEY_OK`; both strategy artifacts contain `manifest.json` 
 
 - [x] **Step 3: Record the result**
 
-Update `docs/agent/AI内容质量评估.md` with the observed item-contract result and artifact paths. Do not claim formal story quality improvement from a three-scene smoke alone.
+Update `docs/archive/AI内容质量评估.md` with the observed item-contract result and artifact paths. Do not claim formal story quality improvement from a three-scene smoke alone.
 
 ## Execution Log (2026-08-02)
 

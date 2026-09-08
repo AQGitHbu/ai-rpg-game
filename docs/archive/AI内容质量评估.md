@@ -3,7 +3,7 @@
 > **RETIRED（2026-08-20）**：本文档基于旧的 director/writer/NPC 三角色运行链与三采集点评估体系，不能用于当前 canonical runtime 的质量结论。当前质量审核应基于 AI 文本审计日志（`docs/agent/AI文本审计.md`）。保留正文作为历史决策记录，不删除历史资料。
 >
 > 对应 spec：docs/superpowers/specs/2026-07-31-ai-story-quality-evaluation-design.md
-> 量表事实源：docs/策划文档/AI内容质量评估标准.md（v2，已退役）
+> 量表事实源：docs/archive/AI内容质量评估标准.md（v2，已退役）
 
 ## 采集通道（三采集点，各取其唯一可见的数据）
 
@@ -71,7 +71,7 @@ Task 13 接线状态：record 模式已按 v2 case/strategy 确定性展开，ch
 2. **补齐（其余 5 个 case）**：完成 12 条主旅程 → 按 `caseId × strategy` 配对报告均值/中位数/
    最差值/空值率与模型配置，并汇总客观指标为**基线 v2**
    （`artifacts/story-eval/baseline-v2/report.md`，工作产物）；持久基线回填
-   `docs/策划文档/AI内容质量评估标准.md` 的分数表、客观指标摘要和校准结果。报告只说明该评测集
+   `docs/archive/AI内容质量评估标准.md` 的分数表、客观指标摘要和校准结果。报告只说明该评测集
    与模型配置下的质量，不作无依据的全局结论。基线是描述性快照，不是及格线。
 
 ## 环境变量（全部可选）

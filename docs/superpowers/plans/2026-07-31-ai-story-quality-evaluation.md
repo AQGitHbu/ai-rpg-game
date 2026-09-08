@@ -2914,7 +2914,7 @@ Expected: FAIL（模块不存在）
 // storyEvalAnalyze：零 AI 成本的客观指标分析（spec §8.1）。
 // 纯离线：输入任意 run 目录（calls.jsonl / story.jsonl / manifest.json），
 // 输出 metrics.json。可对历史 run 重复执行，是每轮调优后的免费第一道体检。
-// 指标定义见 docs/策划文档/AI内容质量评估标准.md §3（与本文件保持一致）。
+// 指标定义见 docs/archive/AI内容质量评估标准.md §3（与本文件保持一致）。
 // ---------------------------------------------------------------------------
 
 import { resolve } from "node:path";
@@ -3096,7 +3096,7 @@ git commit -m "feat(ai-story-eval): add offline objective metrics analyzer"
 - Create: `scripts/storyEvalJudge.node-test.mjs`
 
 **Interfaces:**
-- Consumes: run 目录（`story.jsonl` + `manifest.json`，**不喂 calls.jsonl**——评审只看玩家视角）、量表文档 `docs/策划文档/AI内容质量评估标准.md`（唯一事实源，脚本只读不内嵌）
+- Consumes: run 目录（`story.jsonl` + `manifest.json`，**不喂 calls.jsonl**——评审只看玩家视角）、量表文档 `docs/archive/AI内容质量评估标准.md`（唯一事实源，脚本只读不内嵌）
 - Produces:
   - `buildEarlyPredictionPrompt({ world, npcs }, story)`——非剧透 manifest + 前 25% 场景（向上取整）
   - `buildStoryLevelPrompt({ scaleText, version, manifest, story })`——完整 manifest + 全部场景 + S1–S3/S5–S9（S4 由确定性匹配器计算，不经 judge 自报）
@@ -3269,7 +3269,7 @@ Expected: FAIL（模块不存在）
 //   ① 早期预测测试（S4，独立先行，输入隔离：只喂前 25% 场景 + 非剧透 manifest）；
 //   ② 故事级评审（S1–S3、S5–S9，完整 manifest 与全部场景，逐维证据；S4 由确定性匹配器计算）；
 //   ③ 场景级评审（C1 全量、C2–C4 每幕抽 2）。
-// 量表文本唯一事实源：docs/策划文档/AI内容质量评估标准.md（脚本只读，不内嵌）。
+// 量表文本唯一事实源：docs/archive/AI内容质量评估标准.md（脚本只读，不内嵌）。
 // 输出强制 JSON，本地解析 + 一次重试；仍失败记 null，不编分。
 // 门禁：RUN_REAL_AI_STORY_EVAL_JUDGE=1 才调用；模型默认 AI_MODEL，
 // 评审严格复用 AI_MODEL；复用 AI_API_BASE_URL/AI_API_KEY。
@@ -3651,8 +3651,8 @@ git commit -m "feat(ai-story-eval): add three-phase LLM judge script"
 > Task 13 的 v2 证据包、实体漏斗、选择漏斗和完整性约束优先于本任务下方的历史模板；执行 Task 12 时最终文档必须逐字对齐当前 Spec，不得把下方缺少证据包字段的旧模板直接落盘。
 
 **Files:**
-- Create: `docs/策划文档/AI内容质量评估标准.md`
-- Create: `docs/agent/AI内容质量评估.md`
+- Create: `docs/archive/AI内容质量评估标准.md`
+- Create: `docs/archive/AI内容质量评估.md`
 - Modify: `docs/Agent文档索引.md`
 - Modify: `.env.example`
 
@@ -3662,7 +3662,7 @@ git commit -m "feat(ai-story-eval): add three-phase LLM judge script"
 
 - [ ] **Step 1: 创建量表文档**
 
-创建 `docs/策划文档/AI内容质量评估标准.md`（内容 = spec §5 逐字转录，加版本头）：
+创建 `docs/archive/AI内容质量评估标准.md`（内容 = spec §5 逐字转录，加版本头）：
 
 ```markdown
 # AI 内容质量评估标准（v2）
@@ -3722,13 +3722,13 @@ S4 评分规则（确定性公式，不由 judge 自报）：早期预测与故�
 
 - [ ] **Step 2: 创建 agent 文档**
 
-创建 `docs/agent/AI内容质量评估.md`：
+创建 `docs/archive/AI内容质量评估.md`：
 
 ```markdown
 # AI 内容质量评估（实现事实）
 
 > 对应 spec：docs/superpowers/specs/2026-07-31-ai-story-quality-evaluation-design.md
-> 量表事实源：docs/策划文档/AI内容质量评估标准.md（v2）
+> 量表事实源：docs/archive/AI内容质量评估标准.md（v2）
 
 ## 采集通道（三采集点，各取其唯一可见的数据）
 
@@ -3769,7 +3769,7 @@ sink（缺省目录 `artifacts/story-eval/run-<ISO 时间戳>-<pid>`，`STORY_EV
 
 先选 1 个固定 case 跑两种策略与成对分支，完成 completeness、analyze、judge 及人工校准 → 校准通过后完成其余 5 个 case 的两种策略（共 12 条主旅程）→
 汇总为基线 v2（`artifacts/story-eval/baseline-v2/report.md`，工作产物）；持久基线回填
-`docs/策划文档/AI内容质量评估标准.md` 的分数表、客观指标摘要和校准结果。基线是描述性快照，不是及格线。
+`docs/archive/AI内容质量评估标准.md` 的分数表、客观指标摘要和校准结果。基线是描述性快照，不是及格线。
 
 ## 环境变量（全部可选）
 
@@ -3813,7 +3813,7 @@ STORY_EVAL_MAX_SCENES（默认 60）、RUN_REAL_AI_STORY_EVAL_JUDGE；评审严�
 
 - [ ] **Step 4: 验证**
 
-Run: `node -e "const fs=require('node:fs');const text=fs.readFileSync('docs/策划文档/AI内容质量评估标准.md','utf8');if(!/^>\s*版本[:：]\s*(\S+)/m.test(text)){throw new Error('version header missing')}"`
+Run: `node -e "const fs=require('node:fs');const text=fs.readFileSync('docs/archive/AI内容质量评估标准.md','utf8');if(!/^>\s*版本[:：]\s*(\S+)/m.test(text)){throw new Error('version header missing')}"`
 Expected: 无输出（版本头匹配 judge 脚本正则）
 
 Run: `npm run typecheck` 与 `npm test` —— Expected: 全绿
@@ -3825,7 +3825,7 @@ Run: `npm run journey:story-eval` 与 `npm run journey:phase10` —— Expected:
 - [ ] **Step 5: 提交**
 
 ```bash
-git add docs/策划文档/AI内容质量评估标准.md docs/agent/AI内容质量评估.md docs/Agent文档索引.md .env.example
+git add docs/archive/AI内容质量评估标准.md docs/archive/AI内容质量评估.md docs/Agent文档索引.md .env.example
 git commit -m "docs(ai-story-eval): add scale document, agent doc, index and env example"
 ```
 
@@ -3880,8 +3880,8 @@ git commit -m "chore(ai-story-eval): finalize plan artifacts"   # 仅当存在�
 - Modify: `scripts/storyEvalAnalyze.node-test.mjs`
 - Modify: `scripts/storyEvalJudge.mjs`
 - Modify: `scripts/storyEvalJudge.node-test.mjs`
-- Modify: `docs/策划文档/AI内容质量评估标准.md`（Task 12 已创建 v2；本任务补充 C1/C2 证据包要求与漏斗定义）
-- Modify: `docs/agent/AI内容质量评估.md`
+- Modify: `docs/archive/AI内容质量评估标准.md`（Task 12 已创建 v2；本任务补充 C1/C2 证据包要求与漏斗定义）
+- Modify: `docs/archive/AI内容质量评估.md`
 
 **Interfaces:**
 
@@ -4044,6 +4044,6 @@ Expected: PASS。
 - [ ] **Step 9: 提交**
 
 ```bash
-git add data/story-eval/cases/v2.json src/game/application/testing/storyEvalCases.ts src/game/application/testing/storyEvalCases.test.ts src/game/application/testing/storyEvalArtifacts.ts src/game/application/testing/storyEvalArtifacts.test.ts src/game/application/testing/storyEvalStrategy.ts src/game/application/testing/storyEvalJourney.test.ts scripts/storyEvalJourney.mjs scripts/storyEvalAnalyze.mjs scripts/storyEvalAnalyze.node-test.mjs scripts/storyEvalJudge.mjs scripts/storyEvalJudge.node-test.mjs docs/策划文档/AI内容质量评估标准.md docs/agent/AI内容质量评估.md
+git add data/story-eval/cases/v2.json src/game/application/testing/storyEvalCases.ts src/game/application/testing/storyEvalCases.test.ts src/game/application/testing/storyEvalArtifacts.ts src/game/application/testing/storyEvalArtifacts.test.ts src/game/application/testing/storyEvalStrategy.ts src/game/application/testing/storyEvalJourney.test.ts scripts/storyEvalJourney.mjs scripts/storyEvalAnalyze.mjs scripts/storyEvalAnalyze.node-test.mjs scripts/storyEvalJudge.mjs scripts/storyEvalJudge.node-test.mjs docs/archive/AI内容质量评估标准.md docs/archive/AI内容质量评估.md
 git commit -m "feat(ai-story-eval): make v2 evaluation evidence-complete"
 ```

@@ -65,7 +65,7 @@
 - Modify: `package.json`
 - Create: `scripts/storyEvalVerify.mjs`
 - Test: `scripts/storyEvalVerify.node-test.mjs`
-- Modify: `docs/agent/AI内容质量评估.md`
+- Modify: `docs/archive/AI内容质量评估.md`
 
 **Interfaces:**
 - Adds exported `buildRunFingerprint`, `findReusableArtifact`, and `resolveLayeredVerificationProfile` helpers.
@@ -84,7 +84,7 @@
 - Modify: `scripts/storyEvalJudge.mjs`
 - Modify: `scripts/storyEvalJudge.node-test.mjs`
 - Modify: `scripts/storyEvalQualityGate.mjs` only if it needs to recognize merged fragment metadata.
-- Modify: `docs/agent/AI内容质量评估.md`
+- Modify: `docs/archive/AI内容质量评估.md`
 
 **Interfaces:**
 - Adds `STORY_EVAL_JUDGE_RESUME=1`, `STORY_EVAL_JUDGE_ONLY=S1-S5,S6-S9,C1,C2,C3,C4`, and `judge/` fragment files.
@@ -99,7 +99,7 @@
 ### Task 5: Offline acceptance and documentation
 
 **Files:**
-- Modify: `docs/agent/AI内容质量评估.md`
+- Modify: `docs/archive/AI内容质量评估.md`
 - Modify: `docs/Agent文档索引.md` only if the new checkpoint/verification document is added to the index.
 
 - [ ] **Step 1: Run the complete offline acceptance set**: checkpoint tests, journey tests, runner node tests, judge node tests, quality-gate tests, `npm run typecheck`, targeted eslint, and `npm run test:boundaries`.

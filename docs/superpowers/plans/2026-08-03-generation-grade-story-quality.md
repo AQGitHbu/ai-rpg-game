@@ -170,7 +170,7 @@ Commit: `git commit -am "fix(story-eval): pair strategies on one blueprint"`
 - Modify: `src/game/application/testing/storyEvalJourney.test.ts`
 - Modify: `scripts/storyEvalAnalyze.mjs`
 - Modify: `scripts/storyEvalAnalyze.node-test.mjs`
-- Modify: `docs/agent/AI内容质量评估.md`
+- Modify: `docs/archive/AI内容质量评估.md`
 
 **Interfaces:**
 - Produces: `projectStoryEvalContinuation(blueprint, state): StoryEvalContinuation | null`.
@@ -326,7 +326,7 @@ Run: `npm run test:game-application`
 
 Expected: all pass; the former `explore exhausted` state is classified as a recoverable single-action transition.
 
-Commit: `git add src/game/application/testing scripts/storyEvalAnalyze.mjs scripts/storyEvalAnalyze.node-test.mjs docs/agent/AI内容质量评估.md && git commit -m "fix(story-eval): recover playable narrative gaps"`
+Commit: `git add src/game/application/testing scripts/storyEvalAnalyze.mjs scripts/storyEvalAnalyze.node-test.mjs docs/archive/AI内容质量评估.md && git commit -m "fix(story-eval): recover playable narrative gaps"`
 
 ---
 
@@ -341,7 +341,7 @@ Commit: `git add src/game/application/testing scripts/storyEvalAnalyze.mjs scrip
 - Test: `src/game/gameplay/rpg/scenario/createFallbackBlueprint.test.ts`
 - Modify: `scripts/storyEvalAnalyze.mjs`
 - Modify: `scripts/storyEvalAnalyze.node-test.mjs`
-- Update: `docs/策划文档/AI内容质量评估标准.md`
+- Update: `docs/archive/AI内容质量评估标准.md`
 
 **Interfaces:**
 - Adds issue codes `UNANCHORED_GENERATED_FACT` and `MAINLINE_GENERATED_FACT_MISSING`.
@@ -468,7 +468,7 @@ Run: `npm run typecheck`
 
 Expected: all pass; all three phase1 fixtures remain valid and no generated fact is unreachable.
 
-Commit: `git add src/game/gameplay/rpg/scenario src/game/application/server/ai/scenarioPrompt* scripts/storyEvalAnalyze.mjs scripts/storyEvalAnalyze.node-test.mjs docs/策划文档/AI内容质量评估标准.md data/fixtures/phase1 && git commit -m "fix(scenario): require usable generated facts"`
+Commit: `git add src/game/gameplay/rpg/scenario src/game/application/server/ai/scenarioPrompt* scripts/storyEvalAnalyze.mjs scripts/storyEvalAnalyze.node-test.mjs docs/archive/AI内容质量评估标准.md data/fixtures/phase1 && git commit -m "fix(scenario): require usable generated facts"`
 
 ---
 
@@ -479,8 +479,8 @@ Commit: `git add src/game/gameplay/rpg/scenario src/game/application/server/ai/s
 - Modify: `src/game/gameplay/rpg/scenario/validateScenarioBlueprint.test.ts`
 - Modify: `scripts/storyEvalAnalyze.mjs`
 - Modify: `scripts/storyEvalAnalyze.node-test.mjs`
-- Modify: `docs/策划文档/AI内容质量评估标准.md`
-- Modify: `docs/agent/AI内容质量评估.md`
+- Modify: `docs/archive/AI内容质量评估标准.md`
+- Modify: `docs/archive/AI内容质量评估.md`
 
 **Interfaces:**
 - Adds `REPEATED_MAIN_QUEST_DESCRIPTION_FRAGMENT` for repeated meaningful clauses of eight or more code points.
@@ -606,8 +606,8 @@ Commit: `git add scripts/storyEvalAnalyze* src/game/gameplay/rpg/scenario/valida
 - Modify: `package.json`
 - Modify: `data/story-eval/cases/v2.json`
 - Modify: `src/game/application/testing/storyEvalCases.test.ts`
-- Modify: `docs/agent/AI内容质量评估.md`
-- Modify: `docs/策划文档/AI内容质量评估标准.md`
+- Modify: `docs/archive/AI内容质量评估.md`
+- Modify: `docs/archive/AI内容质量评估标准.md`
 
 **Interfaces:**
 - Produces `evaluateGenerationGrade(runDirs): { ok, failures, warnings, summary }`.
@@ -849,7 +849,7 @@ Then run:
 npm run gate:story-eval -- <six-paired-run-directories>
 ```
 
-Expected: exit 0 and no hard-gate failures. If any hard gate fails, record its stable code and artifact path in `docs/agent/AI内容质量评估.md`; do not average it away with prose scores.
+Expected: exit 0 and no hard-gate failures. If any hard gate fails, record its stable code and artifact path in `docs/archive/AI内容质量评估.md`; do not average it away with prose scores.
 
 - [ ] **Step 7: Run the release matrix and commit**
 

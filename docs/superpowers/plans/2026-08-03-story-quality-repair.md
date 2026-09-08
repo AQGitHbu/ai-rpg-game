@@ -76,9 +76,9 @@
 **Files:**
 - Modify: `src/game/application/server/ai/runtimeNarrativeRecording.ts` (rebuildable handoff fields and rekeyed golden replay fingerprints).
 - Modify: `data/fixtures/phase10-journey/v1/calls.jsonl`, `data/fixtures/phase11-journey/v1/calls.jsonl`.
-- Inspect: generated `artifacts/story-eval/**` and `docs/策划文档/AI内容质量评估标准.md`.
+- Inspect: generated `artifacts/story-eval/**` and `docs/archive/AI内容质量评估标准.md`.
 
 - [x] **Step 1: Run focused tests from Tasks 1–3.** — context/scenario/analyzer/artifact focused suites pass.
 - [x] **Step 2: Run the relevant application/gameplay test subsets and `npm run typecheck`.** — application 64 files/504 tests, gameplay 37 files/570 tests, typecheck and boundaries pass.
-- [x] **Step 3: Run one bounded real-AI journey if the configured provider is available; otherwise report the deterministic evidence and runner limitation.** — `case=wuxia-a`, regression profile, both `explore` and `objective` completed with `REAL_AI_JOURNEY_OK`; objective converged in 13 scenes, explore exhausted at 11 scenes. Artifacts and remaining gaps are recorded in `docs/agent/AI内容质量评估.md`.
+- [x] **Step 3: Run one bounded real-AI journey if the configured provider is available; otherwise report the deterministic evidence and runner limitation.** — `case=wuxia-a`, regression profile, both `explore` and `objective` completed with `REAL_AI_JOURNEY_OK`; objective converged in 13 scenes, explore exhausted at 11 scenes. Artifacts and remaining gaps are recorded in `docs/archive/AI内容质量评估.md`.
 - [x] **Step 4: Summarize remaining quality gaps by rule completion, consequence durability, fact coverage, branch convergence, and pacing.**
