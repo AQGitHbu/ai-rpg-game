@@ -24,7 +24,7 @@ function ContentAssetImageEntry(props: ContentAssetImageProps) {
     resolveContentAssetCandidates(props.query, props.binding),
   );
   // 当无图可显示（已耗尽）或未加载完成时展示静态 fallback；加载成功后隐藏。
-  const showFallback = image === null || !loaded;
+  const showFallback = !loaded;
   return (
     <span className={`content-asset-frame ${props.className ?? ""}`}
       data-content-asset={props.query.kind}
