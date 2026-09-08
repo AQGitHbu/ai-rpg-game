@@ -69,7 +69,7 @@ export type OpeningSituationProposal = Readonly<{
 
 历史因果只能引用同批更早 history key；所有 key 在各自命名空间唯一。玩家提供明确既有经历时要求保留其含义；没有既有经历可生成与开端相符的世界背景，不能替玩家补写尚未作出的承诺、立场或完成行动。是否忠于自然语言设定由内容评审验证，机械解析不能证明。
 
-事实已知/秘密沿用 knownFactKeys/privateFactKeys；thread 的 questionFactKey 及每个 response 的目标必须是玩家可见问题。秘密 supporting facts 可入存档，但不能在首屏、选项、历史记忆卡或 handoff 正文中泄露。known/private 交集必须拒绝，不能依赖 discovered 标志误放行秘密。
+历史 factKeys 可引用已存在的私密或未向焦点 NPC 披露的事实；保存引用不改变 discovered 或任何人物的知识权限。公开历史视图只渲染当前权限允许的事实，关系依据仍须公开。事实已知/秘密沿用 knownFactKeys/privateFactKeys；thread 的 questionFactKey 及每个 response 的目标必须是玩家可见问题。秘密 supporting facts 可入存档，但不能在首屏、选项、历史记忆卡或 handoff 正文中泄露。known/private 交集必须拒绝，不能依赖 discovered 标志误放行秘密。
 
 `currentScene.choices[].candidateId` 必须与 responses.key 一一对应。两项解析后的 `semanticSummaryOf(action)` 必须不同；同一 dialogueAct 可以针对不同事实/线程。不能只靠 key 或 label 不同通过去重。选项只能表达 NPC 对话意图；offer 不等于转移物品，deceive 不等于欺骗成功，refuse 不等于自动离开。
 
