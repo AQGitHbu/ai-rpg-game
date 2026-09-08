@@ -1,10 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ComponentProps } from "react";
+import { createElement, type ComponentProps } from "react";
+import type { ImageProps } from "next/image";
 import { NpcDialogueOverlay, reduceDialogueUiState } from "./NpcDialogueOverlay";
 import type { DialogueUiState } from "./NpcDialogueOverlay";
-import type { NpcDialogueView } from "@/game/application";
+import type { ContentAssetBindingView, NpcDialogueView } from "@/game/application";
+
+// 仅隔离 Next 的图片解码/优化层，真实消费 ContentAssetImage 与 registry 解析。
+vi.mock("next/image", () => ({ default: ({ src, alt, onError, onLoad, style, sizes }: ImageProps) =>
+  createElement("img", { src: typeof src === "string" ? src : "", alt, onError, onLoad, style, sizes }),
+}));
 
 function makeDialogue(overrides?: Partial<NpcDialogueView>): NpcDialogueView {
   return {
@@ -506,6 +512,59 @@ describe("NpcDialogueOverlay 选项面板", () => {
     await user.click(screen.getByRole("button", { name: "知道了" }));
     expect(props.onClose).toHaveBeenCalledTimes(1);
     expect(props.onSubmit).not.toHaveBeenCalled();
+  });
+});
+
+// 异步立绘只能在下一个展示期落地：同一展示期内 generating → ready 不换图，
+// 因此玩家正在写的自由输入、焦点与选项面板都不被打断。
+describe("NpcDialogueOverlay 立绘异步到达", () => {
+  it("keeps typing and choices when a portrait completes, and uses it on re-entry", () => {
+    const pending: ContentAssetBindingView = {
+      kind: "npc_portrait", gameType: "wuxia", variant: "neutral",
+      bindingKey: "opaque-npc-a", requestKey: "r1", status: "generating",
+    };
+    const ready: ContentAssetBindingView = { ...pending, status: "ready",
+      image: { assetId: "npc-a", version: "1", src: "/assets/generated/npc-a-v1.webp", width: 768, height: 1024, source: "generated" },
+    };
+    const testDialogue = makeDialogue({ speechPages: ["还在交谈。"] });
+    const { container, rerender, unmount, props } = renderOverlay({ dialogue: testDialogue, assetScope: "scope-a", portrait: pending });
+    const input = screen.getByRole("textbox");
+    fireEvent.change(input, { target: { value: "还没写完的回应" } });
+    input.focus();
+    rerender(<NpcDialogueOverlay {...props} portrait={ready} />);
+    expect(input).toHaveValue("还没写完的回应");
+    expect(input).toHaveFocus();
+    expect(container.querySelector("img")).toBeNull();
+    expect(screen.getAllByTestId("npc-dialogue-choice")).toHaveLength(2);
+    expect(props.onSubmit).not.toHaveBeenCalled();
+    unmount();
+    const reopened = renderOverlay({ dialogue: testDialogue, assetScope: "scope-a", portrait: ready });
+    const image = reopened.container.querySelector("img")!;
+    expect(image).toHaveAttribute("src", ready.image.src);
+    fireEvent.load(image);
+    const frame = reopened.container.querySelector('[data-content-asset="npc_portrait"]')!;
+    expect(frame).toHaveAttribute("data-load-state", "loaded");
+    expect(frame.querySelector(".content-asset-fallback")).toHaveStyle({ visibility: "hidden" });
+    fireEvent.error(image);
+    expect(reopened.container.querySelector("img")).toBeNull();
+    expect(frame.querySelector(".content-asset-fallback")).toHaveStyle({ visibility: "visible" });
+    expect(screen.getByRole("textbox")).toBeEnabled();
+  });
+
+  it("does not reuse another NPC portrait in the same genre or accept an unscoped binding", () => {
+    const portrait: ContentAssetBindingView = {
+      kind: "npc_portrait", gameType: "wuxia", variant: "neutral", bindingKey: "opaque-a", requestKey: "r1", status: "ready",
+      image: { assetId: "a", version: "1", src: "/assets/generated/a.webp", width: 768, height: 1024, source: "generated" },
+    };
+    const { container, props, rerender } = renderOverlay({ assetScope: "scope-a", portrait });
+    expect(container.querySelector("img")).toHaveAttribute("src", "/assets/generated/a.webp");
+    const next: ContentAssetBindingView = { ...portrait, bindingKey: "opaque-b",
+      image: { ...portrait.image, assetId: "b", src: "/assets/generated/b.webp" },
+    };
+    rerender(<NpcDialogueOverlay {...props} dialogue={makeDialogue({ npcId: "npc_2", name: "另一人" })} portrait={next} />);
+    expect(container.querySelector("img")).toHaveAttribute("src", "/assets/generated/b.webp");
+    rerender(<NpcDialogueOverlay {...props} assetScope={undefined} portrait={portrait} />);
+    expect(container.querySelector("img")).toBeNull();
   });
 });
 

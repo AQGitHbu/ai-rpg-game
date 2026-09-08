@@ -5,6 +5,11 @@ import { type GameSessionView, type NewGameInput } from "@/game/application";
 import type { PlayerInteraction } from "./gameActionRequest";
 import { AdventureVisual } from "./adventureVisuals";
 import { normalizeDisplayText, removeCoveredClauses } from "./displayText";
+import { ContentAssetImage } from "./ContentAssetImage";
+import {
+  assetPresentationKey, normalizeAssetGameType, ownAssetBinding, usableVisualAssets,
+  type ContentAssetQuery,
+} from "./contentAssets";
 import {
   NpcDialogueOverlay,
   reduceDialogueUiState,
@@ -207,6 +212,15 @@ export function LocationSceneScreen({
     ? null
     : activeDialogues.find((dialogue) => dialogue.npcId === initialFocusNpcId)?.name ?? null;
   const hasBuildingSceneContext = initialFocusNpcId !== null && initialFocusNpcId !== undefined;
+  // 背景只用当前所在建筑/地点自己的绑定；既有 AdventureVisual 题材兜底不变，
+  // 新资产查询只使用规范化题材。
+  const visuals = usableVisualAssets(view.visualAssets);
+  const backdropQuery: ContentAssetQuery = {
+    kind: "location_backdrop", gameType: normalizeAssetGameType(view.gameType), variant: "default",
+  };
+  const backdropBinding = hasBuildingSceneContext
+    ? ownAssetBinding(visuals?.buildingBackdrops, sceneBuildingId)
+    : visuals?.locationBackdrop;
   const buildingItems = hasBuildingSceneContext && view.currentLocation.scale === "town"
     ? view.obtainableItems.filter((item) => item.buildingId === sceneBuildingId)
     : view.obtainableItems;
@@ -519,7 +533,16 @@ export function LocationSceneScreen({
     <section className="location-viewport location-viewport--fullscreen" aria-label={`地点场景：${sceneLocationName ?? view.currentLocation.name}`}>
       {/* 全屏场景背景 */}
       <div className="location-backdrop location-backdrop--fullscreen" aria-hidden="true">
-        <AdventureVisual gameType={gameType} kind="location_backdrop" label="" decorative />
+        <ContentAssetImage
+          query={backdropQuery}
+          binding={backdropBinding}
+          presentationKey={assetPresentationKey(visuals?.scopeKey, backdropQuery,
+            sceneBuildingId ?? "current-location", backdropBinding?.bindingKey)}
+          fallback={<AdventureVisual gameType={gameType} kind="location_backdrop" label="" decorative />}
+          decorative
+          sizes="100vw"
+          fit="cover"
+        />
       </div>
 
       {/* 右上角返回地图/小镇 */}
@@ -643,6 +666,8 @@ export function LocationSceneScreen({
           pendingChoiceToken={dialogueUi.pendingChoiceToken}
           resetInputNonce={dialogueInputResetNonce}
           relationshipTier={displayedRelationshipTier}
+          portrait={ownAssetBinding(visuals?.npcPortraits, displayedDialogue.npcId)}
+          assetScope={visuals?.scopeKey}
           onSubmit={submitDialogueInteraction}
           onAcknowledge={resetDialogue}
           phase={dialoguePhase}

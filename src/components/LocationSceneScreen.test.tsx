@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { GameSessionView, NpcDialogueView } from "@/game/application";
+import type { ContentAssetBindingView, GameSessionView, NpcDialogueView } from "@/game/application";
 import { LocationSceneScreen } from "./LocationSceneScreen";
 
 /** 回归夹具：历史 view 仍可能带 investigate presentation，但地点页不再渲染它。 */
@@ -128,6 +128,32 @@ describe("LocationSceneScreen：调查和底部行动栏已移除", () => {
     render(<LocationSceneScreen view={view} busy={false} onSubmit={vi.fn()} onReturnMap={vi.fn()} />);
 
     expect(screen.queryByRole("button", { name: "继续追查下一幕线索" })).not.toBeInTheDocument();
+  });
+});
+
+// 进入建筑后只能用该建筑自己的背景绑定；图片失败不影响任何可操作入口。
+describe("LocationSceneScreen：场景背景归属与操作可用性", () => {
+  it("uses only the entered building background and stays usable when it fails", () => {
+    const binding = (key: string): ContentAssetBindingView => ({
+      kind: "location_backdrop", gameType: "wuxia", variant: "default", bindingKey: key,
+      requestKey: "r1", status: "ready",
+      image: { assetId: key, version: "1", src: `/assets/generated/${key}.webp`, width: 1920, height: 1080, source: "generated" },
+    });
+    const view: GameSessionView = { ...viewWithInvestigationApproaches(), visualAssets: {
+      scopeKey: "scope-a", locationBackdrop: binding("outdoor"), buildingBackdrops: { b1: binding("interior") },
+    } };
+    const props = { view, busy: false, onSubmit: vi.fn(), onReturnMap: vi.fn(), initialFocusNpcId: "npc_1", sceneBuildingId: "b1" };
+    const { container, rerender } = render(<LocationSceneScreen {...props} />);
+    const frame = container.querySelector('[data-content-asset="location_backdrop"]')!;
+    const backgroundUrl = new URL(frame.querySelector("img")!.getAttribute("src")!, "http://localhost");
+    expect(backgroundUrl.pathname).toBe("/assets/generated/interior.webp");
+    expect(container.innerHTML).not.toContain("/assets/generated/outdoor.webp");
+    fireEvent.error(frame.querySelector("img")!);
+    expect(frame.querySelector("img")).toBeNull();
+    expect(screen.getByRole("button", { name: "返回地图" })).toBeEnabled();
+    expect(props.onSubmit).not.toHaveBeenCalled();
+    rerender(<LocationSceneScreen {...props} sceneBuildingId="b2" />);
+    expect(container.querySelector('[data-content-asset="location_backdrop"] img')).toBeNull();
   });
 });
 

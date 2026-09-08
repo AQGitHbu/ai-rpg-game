@@ -3214,14 +3214,10 @@ body:has(.adventure-game-shell) {
   pointer-events: none;
 }
 
-/* spec §2.1：立绘占位约 55% 屏高（旧稿的 19vw 只有约 24% 屏高）。
-   窄屏以 100vw 兜底并保留 226px 下限，宽度始终取高度的 3/4 维持竖版比例。 */
+/* 首字占位的描边/配色/字号；尺寸由公共图片框 .npc-dialogue-overlay-figure-frame 给出。 */
 .npc-dialogue-overlay-avatar {
-  --npc-dialogue-overlay-figure-height: clamp(226px, min(55dvh, 100vw), 613px);
   position: relative;
   z-index: 1;
-  height: var(--npc-dialogue-overlay-figure-height);
-  width: calc(var(--npc-dialogue-overlay-figure-height) * 0.75);
   display: grid;
   place-items: center;
   border: 2px solid var(--game-accent);
@@ -3448,3 +3444,13 @@ body:has(.adventure-game-shell) {
 .content-asset-fallback { display: block; position: absolute; inset: 0; }
 .content-asset-fallback > svg { width: 100%; height: 100%; }
 .content-asset-frame > img { display: block; }
+
+/* spec §2.1：立绘约 55% 屏高，宽度取高度的 3/4 维持竖版比例。尺寸归公共图片框，
+   首字占位只负责撑满该框（图片框不套用 figure-art 的 0.28 透明度）。 */
+.npc-dialogue-overlay-figure-frame {
+  --npc-dialogue-overlay-figure-height: clamp(226px, min(55dvh, 100vw), 613px);
+  height: var(--npc-dialogue-overlay-figure-height);
+  width: calc(var(--npc-dialogue-overlay-figure-height) * 0.75);
+  overflow: visible;
+}
+.npc-dialogue-overlay-avatar { height: 100%; width: 100%; }

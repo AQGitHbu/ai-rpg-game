@@ -1,10 +1,14 @@
 "use client";
 
 import { useState, useEffect, useRef, type FormEvent, type KeyboardEvent, type MouseEvent } from "react";
-import type { NpcDialogueView, NewGameInput, PlayerChoiceView, RelationshipTier } from "@/game/application";
+import type {
+  ContentAssetBindingView, NpcDialogueView, NewGameInput, PlayerChoiceView, RelationshipTier,
+} from "@/game/application";
 import type { PlayerInteraction } from "./gameActionRequest";
 import { normalizeDisplayText } from "./displayText";
 import { AdventureVisual } from "./adventureVisuals";
+import { ContentAssetImage } from "./ContentAssetImage";
+import { assetPresentationKey, normalizeAssetGameType, type ContentAssetQuery } from "./contentAssets";
 
 // 以下类型与 reducer 自 LocationSceneScreen.tsx:31-74 原样迁移（Task 5 删除其重复原件）。
 export type Dialogue = NpcDialogueView;
@@ -102,6 +106,10 @@ export type NpcDialogueOverlayProps = {
   readonly onSubmit: (interaction: PlayerInteraction, playerResponse: string) => void;
   readonly onAcknowledge?: () => void;
   readonly onClose: () => void;
+  /** 该 NPC 自己的立绘绑定；缺省时保留旧 SVG/首字占位。 */
+  readonly portrait?: ContentAssetBindingView;
+  /** 图片展示期作用域；缺失作用域的孤立绑定不被消费。 */
+  readonly assetScope?: string;
 };
 
 export function NpcDialogueOverlay({
@@ -117,7 +125,13 @@ export function NpcDialogueOverlay({
   onSubmit,
   onAcknowledge,
   onClose,
+  portrait,
+  assetScope,
 }: NpcDialogueOverlayProps) {
+  const portraitQuery: ContentAssetQuery = {
+    kind: "npc_portrait", gameType: normalizeAssetGameType(gameType), variant: "neutral",
+  };
+  const scopedPortrait = typeof assetScope === "string" && assetScope.trim() !== "" ? portrait : undefined;
   const [text, setText] = useState("");
   const previousResetInputNonce = useRef(resetInputNonce);
   const boxRef = useRef<HTMLElement | null>(null);
@@ -251,11 +265,23 @@ export function NpcDialogueOverlay({
       ) : null}
 
       <div className="npc-dialogue-overlay-figure" aria-hidden="true">
-        {/* 延续 AdventureVisual 程序化风格：题材变体图作底，名字首字头像叠加其上 */}
-        <div className="npc-dialogue-overlay-figure-art">
-          <AdventureVisual gameType={gameType} kind="npc" label="" decorative />
-        </div>
-        <div className="npc-dialogue-overlay-avatar">{dialogue.name.charAt(0)}</div>
+        {/* 真立绘由公共 renderer 承载；旧 AdventureVisual 题材图与名字首字整体退居 fallback，
+            加载成功后一并隐藏，不让首字盖在真图上。 */}
+        <ContentAssetImage
+          className="npc-dialogue-overlay-figure-frame"
+          query={portraitQuery}
+          binding={scopedPortrait}
+          presentationKey={assetPresentationKey(assetScope, portraitQuery, dialogue.npcId)}
+          decorative
+          fit="contain"
+          sizes="(max-width: 700px) 75vw, 460px"
+          fallback={<>
+            <span className="npc-dialogue-overlay-figure-art">
+              <AdventureVisual gameType={gameType} kind="npc" label="" decorative />
+            </span>
+            <span className="npc-dialogue-overlay-avatar">{dialogue.name.charAt(0)}</span>
+          </>}
+        />
       </div>
 
       {phase === "waiting" ? (
