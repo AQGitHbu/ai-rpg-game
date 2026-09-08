@@ -1,4 +1,4 @@
-import type { Action } from "@/game/domain/action";
+import { dialogueTopicKey, type Action } from "@/game/domain/action";
 import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
 import type { NarrativeSceneState } from "@/game/domain/narrative";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
@@ -42,6 +42,26 @@ function block(input: NarrativeContextBlock): NarrativeContextBlock {
 
 function list(values: readonly string[]): string {
   return values.length === 0 ? "（无）" : values.join("、");
+}
+
+function candidateActionProjection(action: Action): string {
+  switch (action.type) {
+    case "talk": return JSON.stringify({ type: action.type, npcId: String(action.npcId), dialogueAct: action.dialogueAct, topic: dialogueTopicKey(action.topic) });
+    case "move": return JSON.stringify({ type: action.type, locationId: String(action.locationId) });
+    case "investigate": return JSON.stringify({ type: action.type, factId: String(action.factId), approachId: action.approachId ?? null });
+    case "give_item": return JSON.stringify({ type: action.type, itemId: String(action.itemId), npcId: String(action.npcId) });
+    case "take_item": return JSON.stringify({ type: action.type, itemId: String(action.itemId) });
+    case "attack": return JSON.stringify({ type: action.type, enemyId: String(action.enemyId) });
+    case "battle_action": return JSON.stringify({ type: action.type, action: action.action });
+    case "explore":
+    case "ack_prologue":
+    case "freeform":
+      return JSON.stringify({ type: action.type });
+  }
+}
+
+function candidateProjection(candidate: { readonly candidateId: string; readonly action: Action }): string {
+  return `${candidate.candidateId} => ${candidateActionProjection(candidate.action)}`;
 }
 
 function occupiedNamesSection(context: EntityContextProjection): string {
@@ -166,13 +186,13 @@ function expectedBundleProjection(worldState: WorldState, storyState: StoryState
     : null;
   const expectedChoices = nextActProjection !== null || descriptorGraph.currentChoiceCandidates.length === 0
     ? "当前场景不允许 choices；终点步骤的 choices 必须使用下方对应候选。"
-    : descriptorGraph.currentChoiceCandidates.map((candidate) => candidate.candidateId).join("、");
+    : descriptorGraph.currentChoiceCandidates.map(candidateProjection).join("；");
   const expectedSteps = nextActProjection !== null
-    ? `- move:${nextActProjection.locationId}；choices: move:${nextActProjection.locationId}_choice_1、move:${nextActProjection.locationId}_choice_2；到达 NPC: ${nextActProjection.npcId}；这是终点步骤，scene.npcLine 必须是该 NPC 的直接开场对白，不能为 null。`
+    ? `- move:${nextActProjection.locationId}；choices: move:${nextActProjection.locationId}_choice_1 => ${candidateActionProjection({ type: "talk", npcId: nextActProjection.npcId as never, dialogueAct: "support" })}；move:${nextActProjection.locationId}_choice_2 => ${candidateActionProjection({ type: "talk", npcId: nextActProjection.npcId as never, dialogueAct: "challenge" })}；到达 NPC: ${nextActProjection.npcId}；这是终点步骤，scene.npcLine 必须是该 NPC 的直接开场对白，不能为 null。`
     : descriptorGraph.steps.length === 0
       ? "无 continuation step。"
       : descriptorGraph.steps.map((step) => {
-          const choices = step.choiceCandidates.map((candidate) => candidate.candidateId).join("、") || "无";
+          const choices = step.choiceCandidates.map(candidateProjection).join("；") || "无";
           const terminalArrivalRequirement = descriptorGraph.terminal.kind === "next_decision"
             && descriptorGraph.terminal.target.kind === "continuation_step"
             && descriptorGraph.terminal.target.stepKey === step.stepKey
@@ -268,7 +288,7 @@ export function buildDecisionNarrativeContextBlocks(
   const actionSummary = job.utterance !== undefined
     ? `玩家自定义输入：${job.utterance}`
     : job.selectedDialogue?.label !== undefined
-      ? `玩家选择了选项：“${job.selectedDialogue.label}”`
+      ? `玩家选择了选项：“${job.selectedDialogue.label}”\n本次所选结构化意图：dialogueAct=${job.selectedDialogue.dialogueAct}；topic=${dialogueTopicKey(job.selectedDialogue.topic)}。若是 ask，已批准事实只代表当前已知材料，不代表其中已经含有问题的精确答案；NPC 可回答已知部分，并明确哪些部分仍待核对。`
       : `玩家行动：${job.actionSummary.kind}`;
   const evolutionRequirement = storyState.evolution.status === "needs_next_act"
     ? `本回合已进入第 ${storyState.currentAct} 幕：worldDelta 绝不能为 null，必须提供 newLocation、newNpc、newItem、newEnemy、nextMainQuest；其余字段可为 null。`

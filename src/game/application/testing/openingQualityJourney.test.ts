@@ -212,6 +212,10 @@ describe("opening quality create → ack → choice → decision context", () =>
     expect(actualDecisionPrompt).toContain("先直接回答或明确承认自己不知道");
     expect(actualDecisionPrompt).toContain("不能补写状态中没有的既成事实");
     expect(actualDecisionPrompt).toContain("选项 label 必须忠于其服务端 Action");
+    expect(actualDecisionPrompt).toContain('current_scene_choice_1 => {"type":"talk"');
+    expect(actualDecisionPrompt).toContain('"dialogueAct":"support"');
+    expect(actualDecisionPrompt).toContain('"topic":"general"');
+    expect(actualDecisionPrompt).toContain("本次所选结构化意图：dialogueAct=refuse；topic=thread:thread_init_shutdown");
     expect(actualDecisionPrompt).not.toContain("技师私自隐去了上次维修失误");
     expect(capturedMessages.map((messages) => messages.map((message) => message.content).join("\n").match(/eventId=.*thread_shutdown/g)?.length)).toEqual([1, 1, 1, 1]);
     expect(branches[1]!.record().worldState.eventLedger.filter((event) => event.kind === "opening_history_established")).toHaveLength(3);

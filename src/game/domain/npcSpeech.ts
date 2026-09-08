@@ -31,7 +31,10 @@ function isNarrativeSpeakerPrefix(prefix: string, npcName?: string): boolean {
     const escapedName = escapeRegExp(npcName.trim());
     if (new RegExp(`^${escapedName}(?:（[^）]*）)?`).test(compact)) return true;
   }
-  return /(?:说道|答道|问道|回道|补充道|解释道|说|道|低声|轻声|冷冷|如实|坦诚|谨慎|犹豫|看着|看了|望着|注视|压低声音)$/u.test(compact);
+  // Without an exact npcName, only strip an unmistakable short third-person
+  // speaker wrapper. Bare “说/道/坦诚” also occur naturally in first-person
+  // answers before a colon; preserving uncertain text is safer than deleting it.
+  return /^(?![我你])[^，。！？!?：:]{1,20}(?:说道|答道|问道|回道|补充道|解释道)$/u.test(compact);
 }
 
 function isActionOnlyNarration(value: string, npcName?: string): boolean {

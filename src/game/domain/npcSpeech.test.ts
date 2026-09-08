@@ -26,6 +26,12 @@ describe("NPC direct speech", () => {
       .toBe("我能确认的只有眼前记录；至于是谁改的：我现在不知道。");
     expect(normalizeNpcSpeech("你既问到这里，我就把我知道的都说清楚：药是救人的，规矩也是救人的。", "顾掌柜"))
       .toBe("你既问到这里，我就把我知道的都说清楚：药是救人的，规矩也是救人的。");
+    expect(normalizeNpcSpeech("我不知道：这笔数目还没核清。"))
+      .toBe("我不知道：这笔数目还没核清。");
+    expect(normalizeNpcSpeech("听我说：这笔数目还没核清。", "顾掌柜"))
+      .toBe("听我说：这笔数目还没核清。");
+    expect(normalizeNpcSpeech("我得坦诚：这笔数目还没核清。", "顾掌柜"))
+      .toBe("我得坦诚：这笔数目还没核清。");
     expect(normalizeNpcSpeech("邵叔看了你一眼，继续巡视。", "邵叔")).toBe("");
   });
 

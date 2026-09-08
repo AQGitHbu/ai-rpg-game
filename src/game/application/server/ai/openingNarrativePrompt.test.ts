@@ -77,6 +77,8 @@ describe("buildOpeningNarrativePrompt", () => {
     expect(prompt).toContain("publicFacts 和 history");
     expect(prompt).toContain("不能借选项补写新的既成事实");
     expect(prompt).toContain("label 只能是对焦点 NPC 说出的回应");
+    expect(prompt).toContain("数量、单位、时间与资源增减");
+    expect(prompt).toContain("允许生成必要的新细节");
     expect(prompt).toContain("offer 不代表物品已经转移");
     expect(prompt).toContain("trust");
     expect(prompt).toContain("doubt");
