@@ -8,6 +8,10 @@ import type { GameRecord, GameRepository } from "../server/persistence/gameRepos
 import { asGameId } from "../server/persistence/gameRepository";
 import { buildOpeningHandoffContext, compileDecisionNarrativeContext } from "../server/ai/narrativeContext";
 import type { OpeningGenerationCandidate } from "@/game/domain/openingGenerationCandidate";
+import { generatePendingNarrativeBundle } from "../generatePendingNarrativeBundle";
+import { createNarrativeBundleSource } from "../server/ai/liveNarrativeBundleSource";
+import type { RpgAiClient } from "../server/ai/rpgAiClient";
+import type { AiMessage } from "@ai-game/ai-transport";
 
 function repository(initial: GameRecord | null = null): { repo: GameRepository; record: () => GameRecord } {
   let current = initial === null ? null : structuredClone(initial);
@@ -185,5 +189,28 @@ describe("opening quality create → ack → choice → decision context", () =>
       worldState: { ...second.worldState, eventLedger: second.worldState.eventLedger.filter((event) => event.kind !== "game_initialized") },
       job: secondJob,
     })).toBeNull();
+
+    const capturedMessages: AiMessage[][] = [];
+    const aiClient: RpgAiClient = {
+      async complete(_role, messages) {
+        capturedMessages.push([...messages]);
+        return { ok: false, code: "invalid_response", retryable: false, latencyMs: 1 };
+      },
+      policy: () => ({ thinking: "off", timeoutMs: 1_000, maxTokens: 5_000, jsonMode: "prompt_only", maxAttempts: 1 }),
+    };
+    const sourceResult = await generatePendingNarrativeBundle({
+      repository: branches[1]!.repo,
+      source: createNarrativeBundleSource({ aiClient }),
+      now: () => "2026-09-09T00:02:00.000Z",
+    });
+    expect(sourceResult.ok).toBe(false);
+    expect(capturedMessages).toHaveLength(4);
+    const actualDecisionPrompt = capturedMessages[0]!.map((message) => message.content).join("\n");
+    expect(actualDecisionPrompt).toContain("[relevant_events] 开局背景与本次回应");
+    expect(actualDecisionPrompt).toContain("主角过去曾与船厂技师共同维修引擎");
+    expect(actualDecisionPrompt).toContain("我现在不能答应停机");
+    expect(actualDecisionPrompt).not.toContain("技师私自隐去了上次维修失误");
+    expect(capturedMessages.map((messages) => messages.map((message) => message.content).join("\n").match(/eventId=.*thread_shutdown/g)?.length)).toEqual([1, 1, 1, 1]);
+    expect(branches[1]!.record().worldState.eventLedger.filter((event) => event.kind === "opening_history_established")).toHaveLength(3);
   });
 });
