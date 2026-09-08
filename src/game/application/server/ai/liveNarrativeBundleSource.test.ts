@@ -1031,8 +1031,8 @@ describe("createNarrativeBundleSource", () => {
           },
           objectiveLink: null,
           choices: [
-            { candidateId: "support", label: "我愿意帮忙。" },
-            { candidateId: "challenge", label: "先说清楚缘由。" },
+            { candidateId: "ask_lead", label: "把线索告诉我。" },
+            { candidateId: "challenge_lead", label: "先说清楚缘由。" },
           ],
         },
         continuationScenes: [],
@@ -1065,6 +1065,7 @@ describe("createNarrativeBundleSource", () => {
     expect(prompt).toContain("backgroundSummary");
     expect(prompt).toContain('"targetActs": 3');
     expect(prompt).toContain('"scale": "town"');
+    expect(prompt).toContain("opening.opening.situation.responses");
   });
 
   it("requires opening NPC anchors and typed goal proposals without normalizer defaults", async () => {

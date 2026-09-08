@@ -65,7 +65,7 @@ function buildOpeningPrompt(context: Extract<NarrativeBundleSourceContext, { rea
 # 输出要求
 返回一个 JSON 对象，顶层必须只有 opening、currentScene、continuationScenes、terminal。
 - opening 必须是下方字段名完全一致的 OpeningGenerationCandidate；不得使用 world.name、fact.id、player.background、storyContract.goal、opening.task 等替代字段。任何未列出的字段均不会被读取。
-- currentScene 是第一处正式决策：npcLine.npcId 必须为 "npc_0"，npcLine.usedFactIds 只能引用 opening.world.publicFacts 的顺序 ID（fact_0、fact_1……）；含恰好两个 choices，candidateId 必须恰为 "support" 与 "challenge"。
+- currentScene 是第一处正式决策：npcLine.npcId 必须为 "npc_0"，npcLine.usedFactIds 只能引用 opening.world.publicFacts 的顺序 ID（fact_0、fact_1……）；含恰好两个 choices，candidateId 必须与 opening.opening.situation.responses 的两个 key 一一对应。
 - continuationScenes 必须为 []。
 - terminal 必须为 {"kind":"next_decision","target":{"kind":"current_scene"}}。
 - 所有玩家可见文本必须为中文。
@@ -77,6 +77,7 @@ function buildOpeningPrompt(context: Extract<NarrativeBundleSourceContext, { rea
 - opening.location 必须有 name、description、buildingName 和固定 scale:"town"。
 - opening.npc 必须有 name、role、description、knownFactKeys、privateFactKeys、anchors、goals；两个 factKeys 数组只能引用 world.publicFacts 的 key。anchors 必须包含 selfConcept、values、speechStyle、capabilityBoundaries、taboos 五个字段；goals 必须是至少一条的 typed creation proposals，每项只能包含 horizon、description、priority、reason。goalId/status 由服务端生成，禁止输出。
 - opening.quest 必须有 name、description 和固定 objective:{"kind":"talk_to_opening_npc"}。
+- opening.situation 必须给出 history、threads、npcConnection 和恰好两个 responses；response 只提交 key、八种 dialogueAct 之一以及 fact/thread 局部 key topic，不能提交 Action 或服务端 ID。
 
 # JSON 轮廓
 \`\`\`json
@@ -93,14 +94,15 @@ function buildOpeningPrompt(context: Extract<NarrativeBundleSourceContext, { rea
         "anchors": { "selfConcept": "...", "values": ["..."], "speechStyle": "...", "capabilityBoundaries": ["..."], "taboos": [] },
         "goals": [{ "horizon": "short", "description": "...", "priority": 3, "reason": "..." }]
       },
-      "quest": { "name": "...", "description": "...", "objective": { "kind": "talk_to_opening_npc" } }
+      "quest": { "name": "...", "description": "...", "objective": { "kind": "talk_to_opening_npc" } },
+      "situation": { "history": [], "threads": [{ "key": "current_question", "questionFactKey": "fact_0", "supportingFactKeys": [], "participantRefs": ["player", "opening_npc"], "causeHistoryKeys": [] }], "npcConnection": { "familiarity": "stranger", "stance": "neutral", "basisHistoryKeys": [] }, "responses": [{ "key": "ask_question", "dialogueAct": "ask", "topic": { "kind": "fact", "key": "fact_0" } }, { "key": "refuse_question", "dialogueAct": "refuse", "topic": { "kind": "thread", "key": "current_question" } }] }
     }
   },
   "currentScene": {
     "segments": [{ "beatId": "opening", "text": "..." }],
     "npcLine": { "npcId": "npc_0", "text": "...", "emotion": "guarded", "answeredBeatIds": [], "usedFactIds": [], "usedEventIds": [] },
     "objectiveLink": null,
-    "choices": [{ "candidateId": "support", "label": "..." }, { "candidateId": "challenge", "label": "..." }]
+    "choices": [{ "candidateId": "ask_question", "label": "..." }, { "candidateId": "refuse_question", "label": "..." }]
   },
   "continuationScenes": [],
   "terminal": { "kind": "next_decision", "target": { "kind": "current_scene" } }

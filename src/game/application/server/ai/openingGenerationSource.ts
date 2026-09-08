@@ -69,7 +69,7 @@ export function hasOnlyKnownOpeningCandidateKeys(value: unknown): boolean {
   }
 
   const opening = value.opening;
-  if (!isRecord(opening) || !hasOnlyKeys(opening, ["location", "npc", "quest", "firstScene", "variationProfile"])) return false;
+  if (!isRecord(opening) || !hasOnlyKeys(opening, ["location", "npc", "quest", "situation", "firstScene", "variationProfile"])) return false;
 
   const location = opening.location;
   if (isRecord(location) && !hasOnlyKeys(location, ["name", "description", "buildingName", "scale"])) return false;
@@ -85,6 +85,21 @@ export function hasOnlyKnownOpeningCandidateKeys(value: unknown): boolean {
   if (isRecord(quest)) {
     if (!hasOnlyKeys(quest, ["name", "description", "objective"])) return false;
     if (isRecord(quest.objective) && !hasOnlyKeys(quest.objective, ["kind"])) return false;
+  }
+
+  const situation = opening.situation;
+  if (isRecord(situation)) {
+    if (!hasOnlyKeys(situation, ["history", "threads", "npcConnection", "responses"])) return false;
+    if (!hasOnlyKeysInArray(situation.history, ["key", "factKeys", "participantRefs", "causeHistoryKeys"])) return false;
+    if (!hasOnlyKeysInArray(situation.threads, ["key", "questionFactKey", "supportingFactKeys", "participantRefs", "causeHistoryKeys"])) return false;
+    if (isRecord(situation.npcConnection) && !hasOnlyKeys(situation.npcConnection, ["familiarity", "stance", "basisHistoryKeys"])) return false;
+    if (!hasOnlyKeysInArray(situation.responses, ["key", "dialogueAct", "topic"])) return false;
+    if (Array.isArray(situation.responses)) {
+      for (const response of situation.responses) {
+        const topic = isRecord(response) ? response.topic : undefined;
+        if (isRecord(topic) && !hasOnlyKeys(topic, ["kind", "key"])) return false;
+      }
+    }
   }
 
   const firstScene = opening.firstScene;
@@ -213,6 +228,7 @@ export function repairOpeningGenerationCandidate(
           description: fixString(quest.description),
         };
       })(),
+      situation: opening.situation,
       ...(opening.variationProfile === undefined ? {} : { variationProfile: opening.variationProfile }),
     },
   };

@@ -11,3 +11,4 @@ export {
   type CompileOpeningGenerationCandidateInput,
   type CompileOpeningGenerationCandidateResult,
 } from "./compileOpeningGenerationCandidate";
+export { resolveOpeningResponses, type ResolvedOpeningResponse } from "./openingSituationRules";

@@ -11,6 +11,7 @@ import { parseOpeningGenerationCandidate } from "@/game/domain/openingGeneration
 import {
   OPENING_NPC_ID,
   compileOpeningGenerationCandidate,
+  resolveOpeningResponses,
   validateOpeningGenerationCandidate,
 } from "@/game/gameplay/rpg/openingGeneration";
 import {
@@ -156,6 +157,7 @@ const MAX_OPENING_GENERATION_ATTEMPTS = 3;
 
 function compileOpeningNarrative(
   proposal: OpeningNarrativeBundleProposal,
+  candidate: OpeningGenerationCandidate,
   jobId: ReturnType<typeof asNarrativeJobId>,
   mode: "ai" | "offline",
 ): NarrativeRuntimeState | null {
@@ -169,13 +171,12 @@ function compileOpeningNarrative(
   const npcLine = scene.npcLine;
   if (npcLine === null || npcLine.npcId !== String(OPENING_NPC_ID)) return null;
 
+  const responses = resolveOpeningResponses(candidate);
+  if (responses === null) return null;
+  const responseById = new Map(responses.map((response) => [response.candidateId, response.action]));
   const choiceIds = scene.choices.map((choice) => choice.candidateId);
-  if (
-    choiceIds.length !== 2
-    || new Set(choiceIds).size !== 2
-    || !choiceIds.includes("support")
-    || !choiceIds.includes("challenge")
-  ) return null;
+  if (choiceIds.length !== 2 || new Set(choiceIds).size !== 2
+    || choiceIds.some((candidateId) => !responseById.has(candidateId))) return null;
 
   if (!Array.isArray(npcLine.usedFactIds) || !Array.isArray(npcLine.usedEventIds)) return null;
 
@@ -186,12 +187,7 @@ function compileOpeningNarrative(
       sceneId,
       basedOnRevision: 0,
       label: choice.label,
-      action: {
-        type: "talk",
-        npcId: OPENING_NPC_ID,
-        dialogueAct: choice.candidateId === "support" ? "support" : "challenge",
-        utterance: "",
-      },
+      action: responseById.get(choice.candidateId)!,
     });
     if (!approved.ok) return null;
     choiceRegistry.push(approved.choice);
@@ -367,6 +363,7 @@ export async function createGame(
       // novelty decision. The preview is the state that will be persisted.
       const narrative = compileOpeningNarrative(
         generatedProposal,
+        candidate,
         jobId,
         deps.aiEnabled === false ? "offline" : "ai",
       );
@@ -612,6 +609,15 @@ export function createFixtureOpeningCandidateSource(): OpeningGenerationSource {
             description: "从关键线人口中确认追索方向。",
             objective: { kind: "talk_to_opening_npc" },
           },
+          situation: {
+            history: [],
+            threads: [{ key: "lead", questionFactKey: "fact_inn", supportingFactKeys: ["fact_pact"], participantRefs: ["player", "opening_npc"], causeHistoryKeys: [] }],
+            npcConnection: { familiarity: "stranger", stance: "neutral", basisHistoryKeys: [] },
+            responses: [
+              { key: "ask_lead", dialogueAct: "ask", topic: { kind: "fact", key: "fact_inn" } },
+              { key: "challenge_lead", dialogueAct: "challenge", topic: { kind: "thread", key: "lead" } },
+            ],
+          },
           variationProfile,
           firstScene: {
             narration: `${variant.venue}内光线昏暗，${variant.npc}见你走进来，放下手中的活计。`,
@@ -621,8 +627,8 @@ export function createFixtureOpeningCandidateSource(): OpeningGenerationSource {
               usedFactKeys: ["fact_inn"],
             },
             choices: [
-              { candidateId: "support", label: "我来帮你查清这件事。" },
-              { candidateId: "challenge", label: "你先说清楚你自己跟这事有什么关系。" },
+              { candidateId: "ask_lead", label: "把你知道的线索先告诉我。" },
+              { candidateId: "challenge_lead", label: "你先说清楚你自己跟这事有什么关系。" },
             ],
           },
         },

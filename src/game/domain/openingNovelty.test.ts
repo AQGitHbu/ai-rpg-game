@@ -45,6 +45,11 @@ function candidate(input: {
         goals: [{ horizon: "short", description: "查明真相", priority: 4, reason: "线索不能消失" }],
       },
       quest: { name: "核对开场线索", description: "先把现场线索核对清楚。", objective: { kind: "talk_to_opening_npc" } },
+      situation: {
+        history: [], threads: [{ key: "lead", questionFactKey: "fact_lead", supportingFactKeys: [], participantRefs: ["player", "opening_npc"], causeHistoryKeys: [] }],
+        npcConnection: { familiarity: "stranger", stance: "neutral", basisHistoryKeys: [] },
+        responses: [{ key: "ask_lead", dialogueAct: "ask", topic: { kind: "fact", key: "fact_lead" } }, { key: "challenge_lead", dialogueAct: "challenge", topic: { kind: "thread", key: "lead" } }],
+      },
       ...(input.profile === undefined ? {} : { variationProfile: input.profile }),
     },
   };
