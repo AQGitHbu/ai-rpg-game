@@ -57,6 +57,8 @@ describe("buildOpeningNarrativePrompt", () => {
     expect(prompt.slice(finalAnchor)).toContain("林舟来港口追查一份署有自己名字、却从未签过的维修记录。");
     expect(prompt.slice(finalAnchor)).toContain("原因、人物关系与玩家约束");
     expect(prompt.slice(finalAnchor)).toContain("novelty 只能影响补充背景");
+    expect(prompt.slice(finalAnchor)).toContain("未经事实支持的物理效果");
+    expect(prompt.slice(finalAnchor)).toContain("删去该推论，只呈现已给出的资源冲突与实际取舍");
   });
 
   it("fully declares the strict situation, creation, visibility, response, and scene contracts", () => {
