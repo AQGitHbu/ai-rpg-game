@@ -3434,3 +3434,17 @@ body:has(.adventure-game-shell) {
   margin-top: 10px;
   color: var(--game-success);
 }
+
+.content-asset-frame {
+  display: block;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.content-asset-fallback { display: block; position: absolute; inset: 0; }
+.content-asset-fallback > svg { width: 100%; height: 100%; }
+.content-asset-frame > img { display: block; }
