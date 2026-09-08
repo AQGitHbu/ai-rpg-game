@@ -163,7 +163,7 @@ export type GameSessionView = {
   readonly prologueShown: boolean;
   /** 开局生成并审批通过的序幕文本；空串 = 生成失败，UI 回退玩家 storyOpening。 */
   readonly prologueText: string;
-  /** 可选展示资产：本期仅承载静态 prefab；server 生成图在后续任务接入。 */
+  /** 可选图片展示接口；当前生产投影不填充，生图 API 尚未接入。 */
   readonly visualAssets?: GameVisualAssetsView;
   readonly ending: {
     readonly name: string;

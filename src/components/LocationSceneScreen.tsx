@@ -218,7 +218,7 @@ export function LocationSceneScreen({
   const backdropQuery: ContentAssetQuery = {
     kind: "location_backdrop", gameType: normalizeAssetGameType(view.gameType), variant: "default",
   };
-  const backdropBinding = hasBuildingSceneContext
+  const backdropBinding = sceneBuildingId != null || hasBuildingSceneContext
     ? ownAssetBinding(visuals?.buildingBackdrops, sceneBuildingId)
     : visuals?.locationBackdrop;
   const buildingItems = hasBuildingSceneContext && view.currentLocation.scale === "town"

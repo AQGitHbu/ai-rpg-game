@@ -133,7 +133,7 @@ describe("LocationSceneScreen：调查和底部行动栏已移除", () => {
 
 // 进入建筑后只能用该建筑自己的背景绑定；图片失败不影响任何可操作入口。
 describe("LocationSceneScreen：场景背景归属与操作可用性", () => {
-  it("uses only the entered building background and stays usable when it fails", () => {
+  it.each(["npc_1", undefined, null])("uses the building background with NPC focus %s and stays usable when it fails", (initialFocusNpcId) => {
     const binding = (key: string): ContentAssetBindingView => ({
       kind: "location_backdrop", gameType: "wuxia", variant: "default", bindingKey: key,
       requestKey: "r1", status: "ready",
@@ -142,7 +142,7 @@ describe("LocationSceneScreen：场景背景归属与操作可用性", () => {
     const view: GameSessionView = { ...viewWithInvestigationApproaches(), visualAssets: {
       scopeKey: "scope-a", locationBackdrop: binding("outdoor"), buildingBackdrops: { b1: binding("interior") },
     } };
-    const props = { view, busy: false, onSubmit: vi.fn(), onReturnMap: vi.fn(), initialFocusNpcId: "npc_1", sceneBuildingId: "b1" };
+    const props = { view, busy: false, onSubmit: vi.fn(), onReturnMap: vi.fn(), initialFocusNpcId, sceneBuildingId: "b1" };
     const { container, rerender } = render(<LocationSceneScreen {...props} />);
     const frame = container.querySelector('[data-content-asset="location_backdrop"]')!;
     const backgroundUrl = new URL(frame.querySelector("img")!.getAttribute("src")!, "http://localhost");
