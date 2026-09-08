@@ -17,10 +17,12 @@ import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import { buildNarrativeBundleDescriptors } from "@/game/gameplay/rpg/narrativeBundle";
+import { resolveOpeningResponses } from "@/game/gameplay/rpg/openingGeneration";
 import type { OpeningNarrativeBundleProposal } from "../../narrativeBundleSource";
 import { compileDecisionNarrativeContext } from "./narrativeContext";
 import { parseWorldDeltaProposal } from "./liveWorldEvolutionSource";
 import { hasOnlyKnownOpeningCandidateKeys } from "./openingGenerationSource";
+import { buildOpeningNarrativePrompt } from "./openingNarrativePrompt";
 
 // ---------------------------------------------------------------------------
 // Task 5：统一叙事生成包 live source。
@@ -46,68 +48,6 @@ function failBundle(
     ...(repairReason === undefined ? {} : { repairReason }),
     ...(repairDetail === undefined ? {} : { repairDetail }),
   };
-}
-
-function buildOpeningPrompt(context: Extract<NarrativeBundleSourceContext, { readonly kind: "opening" }>): string {
-  const { input } = context;
-  const setup = input.setup;
-  const targetActs = input.gameLength === "medium" ? 5 : 3;
-  return `你是 RPG 的叙事 AI。一次调用必须生成开局世界切片与第一处正式剧情二选一，不能要求后续生成调用。
-
-# 开局输入
-- 题材：${input.gameType}
-- 长度：${input.gameLength}
-- 玩家名：${setup?.characterName ?? "由你生成"}
-- 玩家身份：${setup?.characterIdentity ?? "由你生成"}
-- 世界前提：${setup?.worldPremise ?? "由你生成"}
-- 故事开端：${setup?.storyOpening ?? "由你生成"}
-
-# 输出要求
-返回一个 JSON 对象，顶层必须只有 opening、currentScene、continuationScenes、terminal。
-- opening 必须是下方字段名完全一致的 OpeningGenerationCandidate；不得使用 world.name、fact.id、player.background、storyContract.goal、opening.task 等替代字段。任何未列出的字段均不会被读取。
-- currentScene 是第一处正式决策：npcLine.npcId 必须为 "npc_0"，npcLine.usedFactIds 只能引用 opening.world.publicFacts 的顺序 ID（fact_0、fact_1……）；含恰好两个 choices，candidateId 必须与 opening.opening.situation.responses 的两个 key 一一对应。
-- continuationScenes 必须为 []。
-- terminal 必须为 {"kind":"next_decision","target":{"kind":"current_scene"}}。
-- 所有玩家可见文本必须为中文。
-
-# opening 的严格结构
-- world.summary、world.tone 是字符串，world.themes 是字符串数组；world.publicFacts 每项必须是 {"key":"fact_xxx","text":"..."}。
-- player 必须是 {"name":"...","identity":"...","backgroundSummary":"...","baseStats":{"hp":100,"attack":10,"defense":5}}。姓名与身份必须保留开局输入。
-- storyContract 必须是 {"version":1,"targetActs":${targetActs},"centralConflict":"...","endingDirections":[{"key":"trust","theme":"..."},{"key":"doubt","theme":"..."}]}。
-- opening.location 必须有 name、description、buildingName 和固定 scale:"town"。
-- opening.npc 必须有 name、role、description、knownFactKeys、privateFactKeys、anchors、goals；两个 factKeys 数组只能引用 world.publicFacts 的 key。anchors 必须包含 selfConcept、values、speechStyle、capabilityBoundaries、taboos 五个字段；goals 必须是至少一条的 typed creation proposals，每项只能包含 horizon、description、priority、reason。goalId/status 由服务端生成，禁止输出。
-- opening.quest 必须有 name、description 和固定 objective:{"kind":"talk_to_opening_npc"}。
-- opening.situation 必须给出 history、threads、npcConnection 和恰好两个 responses；response 只提交 key、八种 dialogueAct 之一以及 fact/thread 局部 key topic，不能提交 Action 或服务端 ID。
-
-# JSON 轮廓
-\`\`\`json
-{
-  "opening": {
-    "world": { "summary": "...", "tone": "...", "themes": ["..."], "publicFacts": [{ "key": "fact_0", "text": "..." }] },
-    "player": { "name": "${setup?.characterName ?? "..."}", "identity": "${setup?.characterIdentity ?? "..."}", "backgroundSummary": "...", "baseStats": { "hp": 100, "attack": 10, "defense": 5 } },
-    "prologue": "...",
-    "storyContract": { "version": 1, "targetActs": ${targetActs}, "centralConflict": "...", "endingDirections": [{ "key": "trust", "theme": "..." }, { "key": "doubt", "theme": "..." }] },
-    "opening": {
-      "location": { "name": "...", "description": "...", "buildingName": "...", "scale": "town" },
-      "npc": {
-        "name": "...", "role": "...", "description": "...", "knownFactKeys": ["fact_0"], "privateFactKeys": [],
-        "anchors": { "selfConcept": "...", "values": ["..."], "speechStyle": "...", "capabilityBoundaries": ["..."], "taboos": [] },
-        "goals": [{ "horizon": "short", "description": "...", "priority": 3, "reason": "..." }]
-      },
-      "quest": { "name": "...", "description": "...", "objective": { "kind": "talk_to_opening_npc" } },
-      "situation": { "history": [], "threads": [{ "key": "current_question", "questionFactKey": "fact_0", "supportingFactKeys": [], "participantRefs": ["player", "opening_npc"], "causeHistoryKeys": [] }], "npcConnection": { "familiarity": "stranger", "stance": "neutral", "basisHistoryKeys": [] }, "responses": [{ "key": "ask_question", "dialogueAct": "ask", "topic": { "kind": "fact", "key": "fact_0" } }, { "key": "refuse_question", "dialogueAct": "refuse", "topic": { "kind": "thread", "key": "current_question" } }] }
-    }
-  },
-  "currentScene": {
-    "segments": [{ "beatId": "opening", "text": "..." }],
-    "npcLine": { "npcId": "npc_0", "text": "...", "emotion": "guarded", "answeredBeatIds": [], "usedFactIds": [], "usedEventIds": [] },
-    "objectiveLink": null,
-    "choices": [{ "candidateId": "ask_question", "label": "..." }, { "candidateId": "refuse_question", "label": "..." }]
-  },
-  "continuationScenes": [],
-  "terminal": { "kind": "next_decision", "target": { "kind": "current_scene" } }
-}
-\`\`\``;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -408,6 +348,14 @@ function parseOpeningBundleProposal(value: unknown, targetActs: 3 | 5): ParseOpe
     || narrative.proposal.terminal.target.kind !== "current_scene"
     || narrative.proposal.continuationScenes.length !== 0
   ) return { ok: false, reason: "invalid_terminal" };
+  const responses = resolveOpeningResponses(opening.value);
+  if (responses === null) return { ok: false, reason: "invalid_response_reference" };
+  const declaredKeys = new Set(responses.map((response) => response.candidateId));
+  const choiceKeys = narrative.proposal.currentScene.choices.map((choice) => choice.candidateId);
+  if (choiceKeys.length !== 2 || new Set(choiceKeys).size !== 2
+    || choiceKeys.some((key) => !declaredKeys.has(key))) {
+    return { ok: false, reason: "response_choice_mismatch" };
+  }
   return {
     ok: true,
     proposal: {
@@ -440,7 +388,7 @@ export function createNarrativeBundleSource(
               ...(context.contentRepair === undefined ? {} : { contentRepair: context.contentRepair }),
             })
           : undefined;
-        const prompt = decisionCompilation?.prompt ?? buildOpeningPrompt(
+        const prompt = decisionCompilation?.prompt ?? buildOpeningNarrativePrompt(
           context as Extract<NarrativeBundleSourceContext, { readonly kind: "opening" }>,
         );
 

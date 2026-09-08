@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createFixtureOpeningSource, createGame } from "../createGame";
+import { createFixtureOpeningCandidateSource, createFixtureOpeningSource, createGame } from "../createGame";
+import type { NarrativeBundleSourceContext } from "../narrativeBundleSource";
 import type { GameRecord, GameRepository } from "../server/persistence/gameRepository";
 import { asGameId } from "../server/persistence/gameRepository";
 import { createOpeningNoveltyRecord } from "@/game/domain/openingNovelty";
@@ -94,5 +95,52 @@ describe("opening novelty journey", () => {
     expect(second.worldState.generation.openingAttempt ?? 0).toBeGreaterThanOrEqual(0);
     expect(second.worldState).not.toEqual(first.worldState);
     expect(second.worldState.npcs[0]?.name).not.toBe(first.worldState.npcs[0]?.name);
+  });
+
+  it("novelty retry keeps the complete setup and includes the rejected candidate summary", async () => {
+    const seed = "retry-preserves-opening-context";
+    const setup = {
+      characterName: "林舟", characterIdentity: "领航员", characterProfile: "曾在船厂修理引擎。",
+      personalityTags: ["冷静", "多疑"], worldPremise: "殖民卫星依靠老旧轨道港维持补给。",
+      storyOpening: "林舟发现一份署有自己名字的陌生维修清单。",
+      narrativeStyle: "cinematic" as const, contentIntensity: "dark" as const,
+    };
+    const existing = await createFixtureOpeningCandidateSource().generate({
+      gameType: "science_fiction", gameLength: "short", seed, setup,
+      novelty: { recent: [], attempt: 0 }, attempt: 0,
+    });
+    const historyRecord = createOpeningNoveltyRecord({
+      candidate: existing, gameType: "science_fiction", createdAt: "2026-09-08T00:00:00.000Z",
+    });
+    const { repo } = createRepo([historyRecord]);
+    const fixture = createFixtureOpeningSource();
+    const calls: Extract<NarrativeBundleSourceContext, { kind: "opening" }>[] = [];
+
+    const result = await createGame(
+      { gameId: asGameId("retry-context"), gameType: "science_fiction", gameLength: "short", seed, setup },
+      {
+        repository: repo,
+        now: () => "2026-09-09T00:00:00.000Z",
+        source: {
+          async generate(context) {
+            if (context.kind === "opening") calls.push(context);
+            if (context.kind === "opening" && calls.length === 1) {
+              return fixture.generate({
+                ...context,
+                input: { ...context.input, novelty: { recent: [], attempt: 0 }, attempt: 0 },
+              });
+            }
+            return fixture.generate(context);
+          },
+        },
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(calls).toHaveLength(2);
+    expect(calls.map((call) => call.input.setup)).toEqual([setup, setup]);
+    expect(calls[1]!.input.novelty?.attempt).toBe(1);
+    expect(calls[1]!.input.novelty?.recent).toHaveLength(2);
+    expect(calls[1]!.input.novelty?.recent.at(-1)?.summary).toBe(historyRecord.summary);
   });
 });
