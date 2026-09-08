@@ -5,7 +5,7 @@ import { asLocationId, asNpcId, asQuestId, asFactId, PLAYER_ENTITY_ID } from "@/
 import type { WorldState } from "@/game/domain/worldState";
 import { createWorldStateFromProjection } from "@/game/domain/worldState";
 import { commitInitializationEvent } from "@/game/domain/eventLedger";
-import type { NarrativeEventDraft } from "@/game/domain/events";
+import { canonicalOpeningThreadEnvelopeFactIds, type NarrativeEventDraft } from "@/game/domain/events";
 import type {
   LocationEntry, NpcEntry, QuestEntry, WorldFactEntry,
 } from "@/game/domain/worldEntries";
@@ -248,7 +248,7 @@ export function compileOpeningGenerationCandidate(
       targetIds: [],
       locationId,
       causeKeys: thread.causeHistoryKeys.map((key) => ({ kind: "same_batch" as const, eventKey: `history_${key}` })),
-      factIds: [questionFactId, ...supportingFactIds],
+      factIds: canonicalOpeningThreadEnvelopeFactIds({ questionFactId, supportingFactIds }),
       questIds: [],
       outcome: "neutral",
       salience: 80,

@@ -21,6 +21,7 @@ import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
 // ---------------------------------------------------------------------------
 
 export type NarrativeBundleRepairReason =
+  | "context_budget_exceeded"
   | "invalid_json"
   | "invalid_schema"
   | "invalid_reference"

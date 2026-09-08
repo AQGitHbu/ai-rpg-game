@@ -106,6 +106,13 @@ export type OpeningThreadEstablishedPayload = Readonly<{
   readonly supportingFactIds: readonly FactId[];
 }>;
 
+/** Canonical envelope refs preserve first occurrence while payload keeps question/support roles. */
+export function canonicalOpeningThreadEnvelopeFactIds(
+  payload: Pick<OpeningThreadEstablishedPayload, "questionFactId" | "supportingFactIds">,
+): readonly FactId[] {
+  return [...new Set([payload.questionFactId, ...payload.supportingFactIds])];
+}
+
 export type LocationObservedPayload = Readonly<{
   readonly type: "location_observed";
   readonly locationId: LocationId;
@@ -477,7 +484,7 @@ export function parseCommittedEventLedger(value: unknown): ParseCommittedEventLe
       return { ok: false, code: "INVALID_LEDGER" };
     }
     if (payload.type === "opening_thread_established") {
-      const payloadFactIds = [payload.questionFactId, ...payload.supportingFactIds];
+      const payloadFactIds = canonicalOpeningThreadEnvelopeFactIds(payload);
       if (payloadFactIds.length !== envelopeFactIds.length
         || payloadFactIds.some((factId, index) => factId !== envelopeFactIds[index])) {
         return { ok: false, code: "INVALID_LEDGER" };

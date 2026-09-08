@@ -4,7 +4,7 @@ import type {
   EventId,
   TurnId,
 } from "./events";
-import { eventIdFor, asEpisodeId, asTurnId, episodeIdForTurn, parseCommittedEventLedger } from "./events";
+import { canonicalOpeningThreadEnvelopeFactIds, eventIdFor, asEpisodeId, asTurnId, episodeIdForTurn, parseCommittedEventLedger } from "./events";
 import type {
   LocationId,
   GenerationMetadata,
@@ -200,7 +200,7 @@ export function commitEventDrafts(input: {
       return { ok: false, code: "INVALID_REFS" };
     }
     if (draft.payload.type === "opening_thread_established") {
-      const payloadFactIds = [draft.payload.questionFactId, ...draft.payload.supportingFactIds];
+      const payloadFactIds = canonicalOpeningThreadEnvelopeFactIds(draft.payload);
       if (payloadFactIds.length !== draft.factIds.length
         || payloadFactIds.some((factId, index) => factId !== draft.factIds[index])) {
         return { ok: false, code: "INVALID_REFS" };

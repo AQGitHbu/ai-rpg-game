@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { buildChoiceMap } from "../buildChoiceMap";
 import { commitState } from "../stateCommit";
 import { createFixtureOpeningCandidateSource, createGame } from "../createGame";
@@ -42,13 +42,13 @@ function repository(initial: GameRecord | null = null): { repo: GameRepository; 
   return { repo, record: () => { if (current === null) throw new Error("missing record"); return current; } };
 }
 
-function openingSource(): NarrativeBundleSource {
+function openingSource(transform: (candidate: OpeningGenerationCandidate) => OpeningGenerationCandidate = (candidate) => candidate): NarrativeBundleSource {
   const candidateSource = createFixtureOpeningCandidateSource();
   return {
     async generate(context) {
       if (context.kind !== "opening") return { ok: false, failure: { kind: "AI_CALL_FAILED", phase: "scene" } };
       const base = await candidateSource.generate(context.input);
-      const opening: OpeningGenerationCandidate = {
+      const opening = transform({
         ...base,
         world: {
           ...base.world,
@@ -92,7 +92,7 @@ function openingSource(): NarrativeBundleSource {
             ],
           },
         },
-      };
+      });
       return {
         ok: true, kind: "opening",
         proposal: {
@@ -111,6 +111,100 @@ function openingSource(): NarrativeBundleSource {
 }
 
 describe("opening quality create → ack → choice → decision context", () => {
+  it("accepts question/support overlap through createGame without classifying it as a source failure", async () => {
+    const created = repository();
+    const result = await createGame(
+      { gameId: asGameId("opening-overlap-create"), gameType: "science_fiction", gameLength: "short", seed: "overlap" },
+      {
+        repository: created.repo,
+        source: openingSource((candidate) => ({
+          ...candidate,
+          opening: {
+            ...candidate.opening,
+            situation: {
+              ...candidate.opening.situation,
+              threads: candidate.opening.situation.threads.map((thread, index) => index === 0
+                ? { ...thread, supportingFactKeys: [thread.questionFactKey, ...thread.supportingFactKeys] }
+                : thread),
+            },
+          },
+        })),
+        now: () => "2026-09-09T00:00:00.000Z",
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    const thread = created.record().worldState.eventLedger.find((event) => event.kind === "opening_thread_established")!;
+    expect(thread.factIds).toEqual(["fact_1", "fact_0", "fact_2"]);
+  });
+
+  it("rejects a real oversized first-turn opening context before calling the production provider", async () => {
+    const created = repository();
+    const repeated = "公开背景。".repeat(100);
+    const result = await createGame(
+      { gameId: asGameId("opening-overflow"), gameType: "science_fiction", gameLength: "short", seed: "overflow" },
+      {
+        repository: created.repo,
+        source: openingSource((candidate) => ({
+          ...candidate,
+          world: {
+            ...candidate.world,
+            publicFacts: candidate.world.publicFacts.map((fact, index) => ({ ...fact, text: `${index}:${repeated}` })),
+          },
+          opening: {
+            ...candidate.opening,
+            npc: { ...candidate.opening.npc, privateFactKeys: [], knownFactKeys: candidate.world.publicFacts.map((fact) => fact.key) },
+            situation: {
+              ...candidate.opening.situation,
+              history: candidate.world.publicFacts.map((_, index) => ({
+                key: `history_${index}`,
+                factKeys: candidate.world.publicFacts.map((fact) => fact.key),
+                participantRefs: ["player", "opening_npc"] as const,
+                causeHistoryKeys: index === 0 ? [] : [`history_${index - 1}`],
+              })),
+              threads: candidate.opening.situation.threads.map((thread) => ({
+                ...thread,
+                supportingFactKeys: candidate.world.publicFacts.map((fact) => fact.key),
+                causeHistoryKeys: ["history_3"],
+              })),
+              npcConnection: { familiarity: "known", stance: "neutral", basisHistoryKeys: ["history_0"] },
+            },
+          },
+        })),
+        now: () => "2026-09-09T00:00:00.000Z",
+      },
+    );
+    expect(result.ok).toBe(true);
+    const before = created.record();
+    const token = before.storyState.narrative.status === "ready" ? before.storyState.narrative.currentScene.choices[1]!.choiceToken : "";
+    const turn = await performTurn({
+      gameId: before.gameId,
+      actionId: "overflow-choice",
+      expectedRevision: before.revision,
+      interaction: { kind: "fixed_choice", choiceToken: token },
+      choiceMap: buildChoiceMap(before.worldState, before.storyState, before.revision),
+    }, { repository: created.repo, now: () => "2026-09-09T00:01:00.000Z" });
+    expect(turn.ok).toBe(true);
+    const pending = created.record();
+    if (pending.storyState.narrative.status !== "provider_pending") throw new Error("missing first-turn job");
+    const compilation = compileDecisionNarrativeContext({ worldState: pending.worldState, storyState: pending.storyState, job: pending.storyState.narrative.job });
+    expect(compilation.manifest.overflowEstimatedTokens).toBeGreaterThan(0);
+
+    const complete = vi.fn();
+    const aiClient: RpgAiClient = {
+      complete,
+      policy: () => ({ thinking: "off", timeoutMs: 1_000, maxTokens: 5_000, jsonMode: "prompt_only", maxAttempts: 1 }),
+    };
+    const sourceResult = await createNarrativeBundleSource({ aiClient }).generate({
+      kind: "decision",
+      worldState: pending.worldState,
+      storyState: pending.storyState,
+      job: pending.storyState.narrative.job,
+    });
+
+    expect(sourceResult).toMatchObject({ ok: false, repairReason: "context_budget_exceeded" });
+    expect(complete).not.toHaveBeenCalled();
+  });
   it("carries each real approved choice and the selected thread's public causal chain", async () => {
     const created = repository();
     const result = await createGame(

@@ -33,7 +33,7 @@
 
 Prompt 只接收编译后的公开事实、当前位置、焦点 NPC 的有限结构化交互、强制节拍、实体索引、持有状态、上一场景和有界 memory cards。完整 `GameRecord`、event ledger、其他 NPC 历史、secret fact 正文、玩家长期原文和隐藏 registry 不进入 prompt。审计中的 `narrativeContext` 只是 block 元数据与预算，不是 prompt 正文副本。
 
-第一次固定选择生成续接时，`selectedDialogue` 保留 act、topic 和 label。决策上下文通过所选公开 fact 或初始化 thread 找回因果事件，并加入一次性的“开局背景与本次回应”必选块；正文只含公开历史、公开问题和焦点 NPC 当前允许的目标与关系。该块仍受 8,000 estimated tokens 总上限约束，不能静默裁掉；首次调用以后不再强制注入，后续只走普通记忆召回。
+第一次固定选择生成续接时，`selectedDialogue` 保留 act、topic 和 label。决策上下文通过所选公开 fact 或初始化 thread 找回因果事件，并加入一次性的“开局背景与本次回应”必选块；正文只含公开历史、公开问题和焦点 NPC 当前允许的目标与关系。该块仍受 8,000 estimated tokens 总上限约束，不能静默裁掉；若保留全部 mandatory block 后仍超限，生产 source 在 provider 调用前返回 `context_budget_exceeded` typed failure，由现有内容重试和显式玩家重试路径处理。首次调用以后不再强制注入，后续只走普通记忆召回。
 
 每个逻辑 pending job 最多执行四次完整的 source 生成加审批尝试；后续完整尝试携带稳定拒绝原因。每次完整尝试内部仍可由 `RpgAiClient` 执行 transport retry；顶层 `ai_call.attempt` 是 transport 序号，`context.retry.attempt` 是重试机制内序号，两者不能混用。空响应不重复发送同一请求。
 

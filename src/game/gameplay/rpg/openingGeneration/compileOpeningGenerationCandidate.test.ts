@@ -91,6 +91,28 @@ describe("compileOpeningGenerationCandidate", () => {
     expect(compiled.storyState.memory).toEqual(rebuildEpisodicMemory(compiled.worldState.eventLedger));
   });
 
+  it("canonicalizes a thread envelope when its question is also supporting evidence", () => {
+    const candidate = makeOpeningQualityCandidate();
+    const compiled = compile({
+      ...candidate,
+      opening: {
+        ...candidate.opening,
+        situation: {
+          ...candidate.opening.situation,
+          threads: candidate.opening.situation.threads.map((thread, index) => index === 0
+            ? { ...thread, supportingFactKeys: [thread.questionFactKey, ...thread.supportingFactKeys] }
+            : thread),
+        },
+      },
+    });
+    const thread = compiled.worldState.eventLedger.find((event) => event.kind === "opening_thread_established")!;
+
+    expect(thread.factIds).toEqual([asFactId("fact_1"), asFactId("fact_2"), asFactId("fact_3")]);
+    if (thread.payload.type !== "opening_thread_established") throw new Error("missing opening thread payload");
+    expect(thread.payload.questionFactId).toBe(asFactId("fact_1"));
+    expect(thread.payload.supportingFactIds).toEqual([asFactId("fact_1"), asFactId("fact_2"), asFactId("fact_3")]);
+  });
+
   it("初始化事件提交后，Story memory 由同一 ledger 重建", () => {
     const result = compile(validCandidate());
     expect(result.worldState.eventLedger).toHaveLength(2);
