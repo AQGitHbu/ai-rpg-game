@@ -5,6 +5,7 @@ import { InlineButton } from "@ai-game/ui";
 import type { GameSessionView } from "@/game/application";
 import type { AiFailureKind } from "@/game/application";
 import { postAction, type ActionOutcome, type PlayerInteraction } from "./gameActionRequest";
+import { normalizeAssetGameType } from "./contentAssets";
 import { AdventureHud, type DetailsPanel } from "./AdventureHud";
 import { AdventureOverlay } from "./AdventureOverlay";
 import { AdventureDetailsPanel } from "./AdventureDetailsPanel";
@@ -225,6 +226,8 @@ export function AdventureGameShell({
           busy={controlsBusy}
           onEnterBuilding={enterNpcBuilding}
           onReturnMap={() => setScreen("map")}
+          gameType={normalizeAssetGameType(view.gameType)}
+          visualAssets={view.visualAssets}
         />
       ) : (
         <LocationSceneScreen

@@ -2,6 +2,12 @@
 
 import type { KeyboardEvent, MouseEvent } from "react";
 import { tileIndex, type TileType, type TownRenderSnapshot } from "@/game/application";
+import type { GameVisualAssetsView } from "@/game/application";
+import { ContentAssetSvgImage } from "../ContentAssetSvgImage";
+import {
+  assetPresentationKey, ownAssetBinding, usableVisualAssets,
+  type ContentAssetQuery,
+} from "../contentAssets";
 
 // ---------------------------------------------------------------------------
 // Town 层 SVG 逻辑地图（Task 7 恢复）：渲染完全由 snapshot 确定性驱动
@@ -13,19 +19,6 @@ import { tileIndex, type TileType, type TownRenderSnapshot } from "@/game/applic
 
 /** 每个网格瓦片的边长（SVG 用户单位）。 */
 const TILE_SIZE = 12;
-
-type TownBuildingType = TownRenderSnapshot["buildings"][number]["buildingType"];
-
-const BUILDING_ART: Record<TownBuildingType, string> = {
-  tavern: "/assets/town/tavern.webp",
-  blacksmith: "/assets/town/blacksmith.webp",
-  house: "/assets/town/house.webp",
-  shop: "/assets/town/shop.webp",
-  workshop: "/assets/town/workshop.webp",
-  warehouse: "/assets/town/warehouse.webp",
-  well: "/assets/town/well.webp",
-  gatehouse: "/assets/town/gatehouse.webp",
-};
 
 /** TileType → 填充色。 */
 const TILE_FILL: Record<TileType, string> = {
@@ -54,6 +47,8 @@ type TownMapSvgProps = {
    * 提供时 storyRequired 且不在集合中的建筑渲染为「未探索」占位灰块。
    */
   readonly interactiveBuildingIds?: ReadonlySet<string>;
+  readonly gameType: ContentAssetQuery["gameType"];
+  readonly visualAssets?: GameVisualAssetsView;
 };
 
 export function TownMapSvg({
@@ -63,8 +58,11 @@ export function TownMapSvg({
   showPlotBorders = false,
   showRoadNodes = false,
   interactiveBuildingIds,
+  gameType,
+  visualAssets,
 }: TownMapSvgProps) {
   const { grid } = snapshot;
+  const visuals = usableVisualAssets(visualAssets);
   const viewWidth = grid.width * TILE_SIZE;
   const viewHeight = grid.height * TILE_SIZE;
 
@@ -157,18 +155,18 @@ export function TownMapSvg({
       <g data-building-art aria-hidden="true" pointerEvents="none">
         {snapshot.buildings.map((building) => {
           if (isUnexploredPlaceholder(building)) return null;
-          return (
-            <image
-              key={`art-${building.buildingId}`}
-              data-building-type={building.buildingType}
-              href={BUILDING_ART[building.buildingType]}
-              x={building.footprint.x * TILE_SIZE}
-              y={building.footprint.y * TILE_SIZE}
-              width={building.footprint.width * TILE_SIZE}
-              height={building.footprint.height * TILE_SIZE}
-              preserveAspectRatio="xMidYMid slice"
-            />
-          );
+          const query: ContentAssetQuery = { kind: "town_building", gameType, variant: building.buildingType };
+          const binding = ownAssetBinding(visuals?.townBuildings, building.buildingId);
+          return <ContentAssetSvgImage
+            key={building.buildingId}
+            query={query}
+            binding={binding}
+            presentationKey={assetPresentationKey(visuals?.scopeKey, query, building.buildingId, binding?.bindingKey)}
+            x={building.footprint.x * TILE_SIZE}
+            y={building.footprint.y * TILE_SIZE}
+            width={building.footprint.width * TILE_SIZE}
+            height={building.footprint.height * TILE_SIZE}
+          />;
         })}
       </g>
 

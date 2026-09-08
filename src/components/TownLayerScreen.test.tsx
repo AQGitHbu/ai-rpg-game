@@ -1,7 +1,7 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { TownView } from "@/game/application";
+import type { ContentAssetBindingView, TownView } from "@/game/application";
 import { TownLayerScreen } from "./TownLayerScreen";
 import { buildTownView } from "@/game/application/townView";
 import { createTownRuntime, bindNpcToTownSlot } from "@/game/gameplay/rpg/town";
@@ -48,6 +48,7 @@ function townFixture(): TownView {
 function renderTown(overrides?: { busy?: boolean }): void {
   render(<TownLayerScreen
     town={townFixture()}
+    gameType="wuxia"
     busy={overrides?.busy ?? false}
     onEnterBuilding={vi.fn()}
     onReturnMap={vi.fn()}
@@ -68,6 +69,7 @@ describe("TownLayerScreen", () => {
   it("renders the preset art for known buildings without exposing hidden story building types", () => {
     const { container } = render(<TownLayerScreen
       town={townFixture()}
+      gameType="wuxia"
       busy={false}
       onEnterBuilding={vi.fn()}
       onReturnMap={vi.fn()}
@@ -87,6 +89,7 @@ describe("TownLayerScreen", () => {
     const user = userEvent.setup();
     render(<TownLayerScreen
       town={town}
+      gameType="wuxia"
       busy={false}
       onEnterBuilding={onEnterBuilding}
       onReturnMap={vi.fn()}
@@ -107,6 +110,7 @@ describe("TownLayerScreen", () => {
     const user = userEvent.setup();
     render(<TownLayerScreen
       town={focusedTown}
+      gameType="wuxia"
       busy={false}
       onEnterBuilding={vi.fn()}
       onReturnMap={vi.fn()}
@@ -124,6 +128,7 @@ describe("TownLayerScreen", () => {
   it("does not expose unbound story buildings or generic buildings as fake controls", () => {
     const { container } = render(<TownLayerScreen
       town={townFixture()}
+      gameType="wuxia"
       busy={false}
       onEnterBuilding={vi.fn()}
       onReturnMap={vi.fn()}
@@ -135,5 +140,45 @@ describe("TownLayerScreen", () => {
     expect(screen.getAllByRole("button").filter((button) =>
       button.getAttribute("aria-label") === interactive.displayName,
     )).toHaveLength(1);
+  });
+
+  it("does not use historic Chinese roofs in a science-fiction town", () => {
+    const { container } = render(<TownLayerScreen town={townFixture()} gameType="science_fiction"
+      busy={false} onEnterBuilding={vi.fn()} onReturnMap={vi.fn()} />);
+    expect(container.querySelector("image")).toBeNull();
+    expect(container.querySelector(".town-demo-tile")).toBeInTheDocument();
+  });
+
+  it("never renders a supplied image for an unexplored story building", () => {
+    const town = townFixture();
+    const visible = new Set(town.interactiveBuildings.map((entry) => entry.buildingId));
+    const hidden = town.snapshot.buildings.find((entry) => entry.storyRequired && !visible.has(entry.buildingId))!;
+    expect(hidden).toBeDefined();
+    const secret: ContentAssetBindingView = {
+      bindingKey: "opaque-hidden", requestKey: "r1", kind: "town_building", gameType: "wuxia",
+      variant: hidden.buildingType, status: "ready",
+      image: { assetId: "hidden-roof", version: "1", src: "/assets/generated/hidden-roof.webp", width: 512, height: 512, source: "generated" },
+    };
+    const { container } = render(<TownLayerScreen town={town} gameType="wuxia" busy={false}
+      visualAssets={{ scopeKey: "scope-a", townBuildings: { [hidden.buildingId]: secret } }}
+      onEnterBuilding={vi.fn()} onReturnMap={vi.fn()} />);
+    expect(container.innerHTML).not.toContain(secret.image.src);
+    expect(container.querySelectorAll("[data-building-art] image")).toHaveLength(
+      town.snapshot.buildings.filter((entry) => !entry.storyRequired || visible.has(entry.buildingId)).length,
+    );
+    expect(container.querySelector(".town-demo-building--unexplored")).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("keeps keyboard entry usable after all roof images fail", async () => {
+    const town = townFixture();
+    const onEnterBuilding = vi.fn();
+    const { container } = render(<TownLayerScreen town={town} gameType="wuxia" busy={false}
+      onEnterBuilding={onEnterBuilding} onReturnMap={vi.fn()} />);
+    for (const image of container.querySelectorAll("image")) fireEvent.error(image);
+    expect(container.querySelector("image")).toBeNull();
+    const entry = town.interactiveBuildings[0]!;
+    fireEvent.keyDown(screen.getByRole("button", { name: entry.displayName }), { key: "Enter" });
+    await userEvent.click(screen.getByRole("button", { name: `进入${entry.displayName}` }));
+    expect(onEnterBuilding).toHaveBeenCalledWith(entry.npcId);
   });
 });

@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { InlineButton } from "@ai-game/ui";
-import type { TownView } from "@/game/application";
+import type { GameVisualAssetsView, TownView } from "@/game/application";
+import type { ContentAssetQuery } from "./contentAssets";
 import { TownMapSvg } from "./town/TownMapSvg";
 
 // ---------------------------------------------------------------------------
@@ -16,9 +17,11 @@ type TownLayerScreenProps = {
   readonly busy: boolean;
   readonly onEnterBuilding: (npcId: string, arrivalChoiceToken?: string) => void;
   readonly onReturnMap: () => void;
+  readonly gameType: ContentAssetQuery["gameType"];
+  readonly visualAssets?: GameVisualAssetsView;
 };
 
-export function TownLayerScreen({ town, busy, onEnterBuilding, onReturnMap }: TownLayerScreenProps) {
+export function TownLayerScreen({ town, busy, onEnterBuilding, onReturnMap, gameType, visualAssets }: TownLayerScreenProps) {
   const [selectedBuildingId, setSelectedBuildingId] = useState<string | null>(null);
   const interactiveBuildingIds = new Set(town.interactiveBuildings.map((entry) => entry.buildingId));
   const selectedInteractive =
@@ -41,6 +44,8 @@ export function TownLayerScreen({ town, busy, onEnterBuilding, onReturnMap }: To
           selectedBuildingId={selectedBuildingId}
           onSelectBuilding={setSelectedBuildingId}
           interactiveBuildingIds={interactiveBuildingIds}
+          gameType={gameType}
+          visualAssets={visualAssets}
         />
 
         <aside className="town-layer-side">
