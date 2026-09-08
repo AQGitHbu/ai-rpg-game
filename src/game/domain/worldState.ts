@@ -41,8 +41,8 @@ export type EndingState = { readonly endingId: EndingId; readonly outcome: "succ
 
 // ── World State ──
 
-/** 世界存档 schema 版本唯一来源：v5 起 eventLedger 保存 CommittedNarrativeEvent envelope，v4 及更早一律按不支持处理。 */
-export const WORLD_STATE_SCHEMA_VERSION = 5 as const;
+/** 世界存档 schema 版本唯一来源：v6 正式持久化开局背景事件；v5 及更早一律按不支持处理。 */
+export const WORLD_STATE_SCHEMA_VERSION = 6 as const;
 
 export type WorldStateSchemaVersionErrorCode =
   | "UNSUPPORTED_RECORD"
@@ -54,7 +54,7 @@ export type WorldStateSchemaVersionClassification =
 
 /**
  * 只分类存档 schema，不执行迁移。DB revision 与回合号由各自契约维护。
- * v1–v4 均按旧 record 分类，不提供迁移或兼容读取。
+ * v1–v5 均按旧 record 分类，不提供迁移或兼容读取。
  */
 export function classifyWorldStateSchemaVersion(
   version: unknown,
@@ -62,7 +62,7 @@ export function classifyWorldStateSchemaVersion(
   if (version === WORLD_STATE_SCHEMA_VERSION) {
     return { ok: true, version: WORLD_STATE_SCHEMA_VERSION };
   }
-  if (version === 1 || version === 2 || version === 3 || version === 4) {
+  if (version === 1 || version === 2 || version === 3 || version === 4 || version === 5) {
     return { ok: false, code: "UNSUPPORTED_RECORD" };
   }
   return { ok: false, code: "UNSUPPORTED_WORLD_STATE_VERSION" };

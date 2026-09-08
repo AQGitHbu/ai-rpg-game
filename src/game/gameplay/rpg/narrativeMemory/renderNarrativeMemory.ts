@@ -41,6 +41,39 @@ function entityName(entityStore: EntityStore, id: string): string | undefined {
   return getEntity(entityStore, id)?.core.name;
 }
 
+function publicFactText(
+  entityStore: EntityStore,
+  factId: string,
+  safeFactIds: ReadonlySet<string>,
+): string | undefined {
+  if (!safeFactIds.has(factId)) return undefined;
+  const record = getEntity(entityStore, factId);
+  return record !== undefined && isEntityKind(record, "fact") ? record.fact.text : undefined;
+}
+
+function openingFactText(
+  event: CommittedNarrativeEvent,
+  entityStore: EntityStore,
+  safeFactIds: ReadonlySet<string>,
+): string {
+  if (event.payload.type === "opening_history_established") {
+    const facts = event.payload.factIds
+      .map(String)
+      .map((factId) => publicFactText(entityStore, factId, safeFactIds))
+      .filter((text): text is string => text !== undefined);
+    return `; openingContext=开局时已成立; publicFacts=[${facts.join("；") || "无"}]`;
+  }
+  if (event.payload.type === "opening_thread_established") {
+    const question = publicFactText(entityStore, String(event.payload.questionFactId), safeFactIds);
+    const supportingFacts = event.payload.supportingFactIds
+      .map(String)
+      .map((factId) => publicFactText(entityStore, factId, safeFactIds))
+      .filter((text): text is string => text !== undefined);
+    return `; openingContext=开局时已成立; threadId=${event.payload.threadId}; publicQuestion=${question ?? "无"}; publicSupportingFacts=[${supportingFacts.join("；") || "无"}]`;
+  }
+  return "";
+}
+
 function isEntityKind<K extends EntityKind>(
   record: EntityRecord,
   kind: K,
@@ -86,7 +119,7 @@ function eventCard(
   const itemRef = event.payload.type === "item_obtained" || event.payload.type === "item_given"
     ? `; itemId=${event.payload.itemId}`
     : "";
-  return `eventId=${event.eventId}; sequence=${event.sequence}; turn=${event.turnNumber}; kind=${event.kind}; actors=[${entityLabels(entityStore, event.actorIds as readonly EntityId[]).join(", ") || "无"}]; targets=[${entityLabels(entityStore, event.targetIds as readonly EntityId[]).join(", ") || "无"}]; thenLocation=${locationName(entityStore, event.locationId === null ? null : String(event.locationId))}; publicFactIds=[${facts.join(", ") || "无"}]; outcome=${event.outcome}; causeEventIds=[${event.causeEventIds.map(String).join(", ") || "无"}]; currentState=[${states.join(" | ") || "无"}]${itemRef}`;
+  return `eventId=${event.eventId}; sequence=${event.sequence}; turn=${event.turnNumber}; kind=${event.kind}; actors=[${entityLabels(entityStore, event.actorIds as readonly EntityId[]).join(", ") || "无"}]; targets=[${entityLabels(entityStore, event.targetIds as readonly EntityId[]).join(", ") || "无"}]; thenLocation=${locationName(entityStore, event.locationId === null ? null : String(event.locationId))}; publicFactIds=[${facts.join(", ") || "无"}]; outcome=${event.outcome}; causeEventIds=[${event.causeEventIds.map(String).join(", ") || "无"}]; currentState=[${states.join(" | ") || "无"}]${itemRef}${openingFactText(event, entityStore, safeFactIds)}`;
 }
 
 function episodeCard(

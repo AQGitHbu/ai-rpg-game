@@ -82,7 +82,7 @@ function sameJson(left: unknown, right: unknown): boolean {
 }
 
 /** SQLite boundary parser for v8 StoryState. Memory is accepted only when it
- * is byte-for-byte equivalent to the read model rebuilt from the v5 ledger. */
+ * is byte-for-byte equivalent to the read model rebuilt from the supplied v6 world ledger. */
 export function parsePersistableStoryState(
   value: unknown,
   ledger: readonly CommittedNarrativeEvent[],

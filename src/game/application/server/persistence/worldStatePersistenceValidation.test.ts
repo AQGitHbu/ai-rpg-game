@@ -6,6 +6,9 @@ import { WORLD_STATE_SCHEMA_VERSION } from "@/game/domain/worldState";
 import { asEnemyId, asGenerationId, asItemId, asLocationId, asNpcId } from "@/game/domain/worldEntity";
 import { projectEntityStore, type NpcEntityRecord } from "@/game/domain/entity";
 import { validatePersistableWorldState } from "./worldStatePersistenceValidation";
+import { compileOpeningGenerationCandidate } from "@/game/gameplay/rpg/openingGeneration";
+import { makeOpeningQualityCandidate } from "@/game/domain/openingSituation.testutil";
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 
 const state = () => createWorldStateFixtureWith({
   generation: { generationId: asGenerationId("g"), seed: "s", templateVersion: "v", inputDigest: "", gameType: "wuxia" },
@@ -33,6 +36,21 @@ describe("validatePersistableWorldState", () => {
     const result = validatePersistableWorldState(valid);
     expect(result).toMatchObject({ ok: true });
     if (result.ok) expect(result.value.locations).toEqual(valid.locations);
+  });
+
+  it("rejects an opening background event whose fact reference no longer exists", () => {
+    const compiled = compileOpeningGenerationCandidate({
+      candidate: makeOpeningQualityCandidate(),
+      generation: { generationId: asGenerationId("opening"), seed: "s", templateVersion: "v", inputDigest: "", gameType: "science_fiction" },
+      gameLength: "short",
+      initialNarrative: createFixtureNarrativeRuntimeState(),
+    });
+    const ledger = compiled.worldState.eventLedger.map((event) => event.kind === "opening_history_established"
+      ? { ...event, factIds: ["fact_missing"], payload: { ...event.payload, factIds: ["fact_missing"] } }
+      : event);
+    expect(validatePersistableWorldState({ ...compiled.worldState, eventLedger: ledger })).toMatchObject({
+      ok: false, code: "invalid_event_ledger", issueCode: "unknown_event_entity_ref",
+    });
   });
 
   it("版本闸门与 WORLD_STATE_SCHEMA_VERSION 同源：非当前世代（高低两侧）一律 wrong_world_version", () => {

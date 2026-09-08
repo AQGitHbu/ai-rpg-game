@@ -62,9 +62,9 @@ describe("WorldState", () => {
     };
   }
 
-  it("createInitialWorldState 编译 v4 世界与 store v2，兼容数组只是投影结果", () => {
+  it("createInitialWorldState 编译 schema 6 世界与 store v2，兼容数组只是投影结果", () => {
     const ws = createInitialWorldState(baseInput);
-    expect(ws.version).toBe(5);
+    expect(ws.version).toBe(6);
     expect(ws.entityStore.version).toBe(2);
     expect(ws.player.name).toBe("测试侠客");
     expect(ws.currentLocationId).toBe(asLocationId("loc_1"));
