@@ -16,16 +16,17 @@ export function resolveOpeningResponses(
   const factIdByKey = new Map(candidate.world.publicFacts.map((fact, index) => [fact.key, asFactId(`fact_${index}`)]));
   if (factIdByKey.size !== candidate.world.publicFacts.length) return null;
   const historyKeys = new Set<string>();
+  const historyByKey = new Map<string, (typeof situation.history)[number]>();
   for (const history of situation.history) {
     if (history.factKeys.some((key) => !factIdByKey.has(key))) return null;
     if (history.causeHistoryKeys.some((key) => !historyKeys.has(key))) return null;
     historyKeys.add(history.key);
+    historyByKey.set(history.key, history);
   }
   const known = new Set(candidate.opening.npc.knownFactKeys);
   const privateFacts = new Set(candidate.opening.npc.privateFactKeys);
   if ([...known].some((key) => privateFacts.has(key))) return null;
   if ([...known, ...privateFacts].some((key) => !factIdByKey.has(key))) return null;
-  if (situation.history.some((history) => history.factKeys.some((key) => !known.has(key)))) return null;
 
   const threadByKey = new Map<string, string>();
   for (const thread of situation.threads) {
@@ -39,7 +40,10 @@ export function resolveOpeningResponses(
   if (connection.basisHistoryKeys.some((key) => !historyKeys.has(key))) return null;
   if (connection.familiarity === "stranger") {
     if (connection.stance !== "neutral" || connection.basisHistoryKeys.length !== 0) return null;
-  } else if (connection.basisHistoryKeys.length === 0) return null;
+  } else if (!connection.basisHistoryKeys.some((key) => {
+    const history = historyByKey.get(key);
+    return history !== undefined && history.factKeys.every((factKey) => known.has(factKey));
+  })) return null;
 
   const resolved = situation.responses.map((response): ResolvedOpeningResponse | null => {
     let topic: TalkAction["topic"];

@@ -64,3 +64,19 @@ Created:
 - `src/game/gameplay/rpg/openingGeneration/openingSituationRules.test.ts`
 
 Modified the Task 1 candidate/parser, validator/facade, create-game compiler/fixture, source key guards/prompt outline, and their explicit test fixtures.
+
+## Review fix round 1
+
+The review identified that the resolver incorrectly required every history fact to appear in the focus NPC's `knownFactKeys`. History only requires an existing fact reference; visibility is applied where history is projected. The blanket condition was removed. For `familiarity: "known"`, the resolver now separately requires at least one selected basis history whose fact keys are all public/known to the focus NPC. Stranger connections remain neutral with no basis.
+
+RED command:
+
+`npx vitest run src/game/gameplay/rpg/openingGeneration/openingSituationRules.test.ts`
+
+Observed result: exit 1; 1 of 5 tests failed because a valid non-basis private history still resolved to `null`. The private-only relationship-basis rejection passed under the old blanket rule; after removing that rule it protects the newly separated basis check.
+
+GREEN command:
+
+`npx vitest run src/game/domain/openingSituation.test.ts src/game/gameplay/rpg/openingGeneration/openingSituationRules.test.ts src/game/application/createGame.test.ts && npm run typecheck && git diff --check`
+
+Observed result: exit 0; 3 test files passed, 30 tests passed; typecheck and diff check passed.
