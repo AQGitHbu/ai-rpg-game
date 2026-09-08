@@ -53,6 +53,21 @@ describe("validatePersistableWorldState", () => {
     });
   });
 
+  it("rejects an opening background fact reference rewritten to an existing NPC", () => {
+    const compiled = compileOpeningGenerationCandidate({
+      candidate: makeOpeningQualityCandidate(),
+      generation: { generationId: asGenerationId("opening-kind"), seed: "s", templateVersion: "v", inputDigest: "", gameType: "science_fiction" },
+      gameLength: "short",
+      initialNarrative: createFixtureNarrativeRuntimeState(),
+    });
+    const ledger = compiled.worldState.eventLedger.map((event) => event.kind === "opening_history_established"
+      ? { ...event, factIds: ["npc_0"], payload: { ...event.payload, factIds: ["npc_0"] } }
+      : event);
+    expect(validatePersistableWorldState({ ...compiled.worldState, eventLedger: ledger })).toMatchObject({
+      ok: false, code: "invalid_event_ledger", issueCode: "wrong_event_entity_kind",
+    });
+  });
+
   it("版本闸门与 WORLD_STATE_SCHEMA_VERSION 同源：非当前世代（高低两侧）一律 wrong_world_version", () => {
     // 闸门若重新写死字面量，版本再上台阶时旧/新世代会被静默放行或伪装成
     // invalid_entity_store/ENTITY_STATE_INVALID（老存档误分类为内容损坏）。

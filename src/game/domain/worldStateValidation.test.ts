@@ -249,4 +249,21 @@ describe("WorldState event ledger 完整性校验", () => {
       "unknown_event_entity_ref",
     ]);
   });
+
+  it("拒绝 envelope 中存在但 kind 与 fact、location、quest 槽位不符的实体", () => {
+    const store = fixture({}).entityStore;
+    const wrongFact = makeCommittedEvent({ type: "fact_discovered", factId: FACT_0 }, {
+      sequence: 0, factIds: [NPC_0 as never],
+    });
+    const wrongLocation = makeCommittedEvent({ type: "player_intent_expressed", intentCode: "unmapped_freeform" }, {
+      sequence: 0, locationId: FACT_0 as never,
+    });
+    const wrongQuest = makeCommittedEvent({ type: "player_intent_expressed", intentCode: "unmapped_freeform" }, {
+      sequence: 0, questIds: [LOC_0 as never],
+    });
+
+    expect(validateWorldStateEventLedger([wrongFact], store).map((issue) => issue.code)).toEqual(["wrong_event_entity_kind"]);
+    expect(validateWorldStateEventLedger([wrongLocation], store).map((issue) => issue.code)).toEqual(["wrong_event_entity_kind"]);
+    expect(validateWorldStateEventLedger([wrongQuest], store).map((issue) => issue.code)).toEqual(["wrong_event_entity_kind"]);
+  });
 });
