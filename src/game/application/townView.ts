@@ -16,7 +16,7 @@ export type InteractiveBuildingEntry = {
   /** 只有当前主线目标人物所在的入口才显示“当前剧情”。 */
   readonly isCurrentFocus: boolean;
   /**
-   * 当前事实目标需要在进入建筑时完成一次规则型探索时，由服务端下发的
+   * 当前事实目标有匹配的已批准建筑到达步骤时，由服务端下发的
    * opaque choice token。普通建筑不带此字段，避免把建筑导航伪装成回合。
    */
   readonly arrivalChoiceToken?: string;

@@ -77,7 +77,7 @@ export function materializeWorldDelta(input: MaterializeWorldDeltaInput): Approv
           }),
     });
   }
-  if (approved.itemLocationId && approved.newItems[0]) {
+  if (approved.itemLocationId && approved.newItems[0] && approved.itemGiftNpcId === undefined) {
     const cur = patch.get(approved.itemLocationId) ?? {};
     patch.set(approved.itemLocationId, {
       ...cur,
@@ -195,6 +195,9 @@ export function materializeWorldDelta(input: MaterializeWorldDeltaInput): Approv
   }
   for (const locationId of locationsReleasedImmediately) {
     mutations.push({ kind: "set_location_unlocked", locationId, unlocked: true });
+  }
+  if (approved.itemGiftNpcId !== undefined && approved.newItems[0] !== undefined) {
+    mutations.push({ kind: "transfer_item", itemId: approved.newItems[0].id, owner: { kind: "npc", npcId: approved.itemGiftNpcId } });
   }
   const applied = applyEntityMutations(ws, mutations);
   if (!applied.ok) throw new EntityMutationInvariantError(applied);

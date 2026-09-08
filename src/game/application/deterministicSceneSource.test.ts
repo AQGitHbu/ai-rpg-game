@@ -150,7 +150,7 @@ function makeContext(job: PendingNarrativeJob, focus?: FocusNpcContext): SceneGe
     },
     legalActionCandidates: [
       { kind: "move", label: `前往${loc2.name}`, targetId: loc2.id },
-      { kind: "explore", label: "查看四周" },
+      { kind: "talk", label: "与老板交谈", targetId: npc1.id },
     ],
     legalEventTargets: {
       locationIds: [loc1.id, loc2.id], factIds: [], itemIds: [], enemyIds: [],
@@ -849,7 +849,7 @@ describe("deterministicSceneSource", () => {
     const context: SceneGenerationContext = {
       ...makeContext(makeJob({ transition })),
       legalActionCandidates: [
-        { kind: "explore", label: "查看四周" },
+        { kind: "talk", label: "与老板交谈", targetId: npc1.id },
         { kind: "move", label: "前往街道", targetId: "loc_2" },
       ],
       objectiveTarget: { questId: "quest_0", objectiveIndex: 0, entityId: "loc_2", entityName: "街道" },

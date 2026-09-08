@@ -948,3 +948,20 @@ describe("act objective shape variants", () => {
     }
   });
 });
+
+describe("NPC 赠予契约审批", () => {
+  it.each(["full_chain", "investigation_focus", "confrontation_focus", "errand_focus"] as const)("%s 保留赠予者对话及随后的赠物目标", shape => {
+    const proposal = { ...nextActProposal(), newItem: { name: "托付信物", description: "一块玉佩", locationRef: "new_location" as const, acquisition: "npc_gift" as const } };
+    const objectives = deriveActObjectives(proposal, { locationId: asLocationId("new_location"), npcId: asNpcId("giver"), itemId: "gift" as never, factId: "new_fact" as never, enemyId: asEnemyId("guard"), questId: asQuestId("new_quest"), endingIds: [] }, shape)!;
+    const index = objectives.findIndex(objective => objective.kind === "obtain_item");
+    expect(objectives[index]).toMatchObject({ giftFromNpcId: "giver" });
+    expect(objectives[index - 1]).toEqual({ kind: "talk_to_npc", npcId: "giver" });
+  });
+  it.each(["missing_npc", "remote_npc", "invalid_acquisition"])("拒绝没有合法赠予链的 %s 提案", reason => {
+    const base = nextActProposal();
+    const proposal = { ...base, newItem: { name: "托付信物", description: "一块玉佩", locationRef: "new_location", acquisition: reason === "invalid_acquisition" ? "automatic" : "npc_gift" },
+      newNpc: reason === "missing_npc" ? null : reason === "remote_npc" ? { ...base.newNpc!, locationRef: { kind: "current" } } : base.newNpc } as unknown as WorldDeltaProposal;
+    const result = approveWorldDelta({ proposal, need: { kind: "next_act", act: 2 }, ws: makeWorld(), ss: makeStory({ currentAct: 2 }) });
+    expect(result).toMatchObject({ ok: false, code: "unreachable_objective" });
+  });
+});

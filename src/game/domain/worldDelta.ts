@@ -84,7 +84,7 @@ export type WorldDeltaProposal = {
     readonly goals: readonly NpcGoalProposal[];
     readonly relationshipSeeds: readonly NpcRelationshipSeedProposal[];
   };
-  readonly newItem: null | { readonly name: string; readonly description: string; readonly locationRef: "current" | "new_location" };
+  readonly newItem: null | { readonly name: string; readonly description: string; readonly locationRef: "current" | "new_location"; readonly acquisition?: "scene" | "npc_gift" };
   readonly newEnemy: null | { readonly name: string; readonly tier: "normal" | "boss"; readonly locationRef: "current" | "new_location" };
   readonly newFact: null | {
     readonly text: string;

@@ -65,6 +65,7 @@ export async function generatePendingNarrativeBundle(
   }
 
   const job = narrative.job;
+  const lastPresentedScene = narrative.lastPresentedScene;
   const worldState = record.worldState;
   const storyState = record.storyState;
 
@@ -150,7 +151,7 @@ export async function generatePendingNarrativeBundle(
     },
   });
 
-  if (!bounded.ok) {
+  async function failPendingJob(): Promise<GeneratePendingNarrativeBundleResult> {
     // Record provider_failed with same jobId
     const failedNarrative: NarrativeRuntimeState = {
       status: "provider_failed",
@@ -161,7 +162,7 @@ export async function generatePendingNarrativeBundle(
         phase: "scene",
         failedAt: deps.now(),
       },
-      lastPresentedScene: narrative.lastPresentedScene,
+      lastPresentedScene,
       ...(narrative.dialogueSession === undefined ? {} : { dialogueSession: narrative.dialogueSession }),
     };
 
@@ -170,12 +171,18 @@ export async function generatePendingNarrativeBundle(
       narrative: failedNarrative,
     };
 
-    await deps.repository.applyState({
+    const savedFailure = await deps.repository.applyState({
       gameId: record.gameId,
       expectedRevision: record.revision,
       nextWorldState: worldState,
       nextStoryState: failedStoryState,
     });
+    if (!savedFailure.ok) {
+      return {
+        ok: false,
+        code: savedFailure.code === "STALE_GAME_REVISION" ? "STALE_GAME_REVISION" : "INFRASTRUCTURE_FAILURE",
+      };
+    }
 
     return {
       ok: false,
@@ -183,6 +190,8 @@ export async function generatePendingNarrativeBundle(
       failureKind: "AI_RESPONSE_INVALID",
     };
   }
+
+  if (!bounded.ok) return failPendingJob();
 
   const approved = bounded.value;
 
@@ -209,9 +218,7 @@ export async function generatePendingNarrativeBundle(
     },
     entityStore: approved.nextWorldState.entityStore,
   });
-  if (!eventCommit.ok) {
-    return { ok: false, code: "AI_RESPONSE_INVALID", failureKind: "AI_RESPONSE_INVALID" };
-  }
+  if (!eventCommit.ok) return failPendingJob();
   const nextWorldState = { ...approved.nextWorldState, eventLedger: eventCommit.ledger };
 
   // The next story state includes the new world state from the bundle,

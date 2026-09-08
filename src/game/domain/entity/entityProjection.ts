@@ -842,6 +842,9 @@ export function validateEntityReferences(store: EntityStore): readonly EntityRef
 
   for (const record of entitiesOfKind(store, "quest")) {
     for (const objective of record.quest.objectives) {
+      if (objective.kind === "obtain_item" && objective.giftFromNpcId !== undefined && !known.npcs.has(objective.giftFromNpcId)) {
+        issues.push({ code: "unknown_quest_objective_ref", entityId: record.core.id, referencedId: objective.giftFromNpcId });
+      }
       const reference = objectiveReference(objective, known);
       if (!reference.resolved) {
         issues.push({

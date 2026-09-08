@@ -58,6 +58,7 @@ export type TalkAction = {
 export type Action =
   | TalkAction
   | { readonly type: "move"; readonly locationId: LocationId }
+  /** 内部规则与具体建筑到达保留；不投影泛化探索按钮。 */
   | { readonly type: "explore" }
   | {
     /** 只发现当前可调查且未发现的事实；approachId 只能来自服务端已审批调查方式的 choice token 派生，客户端不得自造。 */

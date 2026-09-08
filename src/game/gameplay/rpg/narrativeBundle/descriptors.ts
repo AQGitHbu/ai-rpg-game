@@ -12,6 +12,7 @@ import {
   type QuestObjective,
   type WorldState,
 } from "@/game/domain/worldState";
+import { locationScaleOf } from "@/game/domain/worldEntity";
 import type {
   FactId,
   LocationId,
@@ -292,6 +293,30 @@ export function buildNarrativeBundleDescriptors(
       return [];
     }
 
+    // A town container does not establish arrival at a particular building.
+    // Keep one approved arrival boundary before its fact chain, including
+    // after world travel or battle; scene items remain explicit pickups.
+    if (objective.kind === "discover_fact") {
+      const location = worldState.locations.find(entry => entry.id === (worldState.worldFacts.find(fact => fact.factId === objective.factId)?.locationId ?? worldState.currentLocationId));
+      const localNpcAhead = location !== undefined && activeQuest.objectives.slice(objectiveIndex + 1).some((entry, index, rest) =>
+        entry.kind === "talk_to_npc" && findNpc(worldState, entry.npcId)?.locationId === location.id
+        && rest.slice(0, index).every(prior => prior.kind === "discover_fact" || prior.kind === "obtain_item"));
+      if (location !== undefined && locationScaleOf(location) === "town" && location.town !== undefined && localNpcAhead
+        && !descriptors.some(step => step.trigger.kind === "explore" && step.trigger.locationId === location.id)) {
+        const trigger: NarrativeBundleTrigger = { kind: "explore", locationId: location.id };
+        const stepKey = narrativeBundleTriggerKey(trigger);
+        descriptors.push({ stepKey, objectiveKey: objectiveKey(activeQuest.id, objectiveIndex),
+          consumptionGroupKey: groupKeyFor(activeQuest.id, objectiveIndex, "building_arrival", branchKey), trigger,
+          absorbedObjectiveIndexes: [],
+          authority: { questId: activeQuest.id, objectiveIndex, allowedEntityIds: entityIdsForObjective(objective), visibleFactIds: [] },
+          choiceCandidates: [], nextStepKeys: [],
+        });
+        const nextStepKeys = buildObjective(objectiveIndex, branchKey, absorbedIndexes, activeQuest);
+        setSuccessors(stepKey, nextStepKeys);
+        return [stepKey];
+      }
+    }
+
     // discover_fact: fold into the last created step (zero-action)
     if (objective.kind === "discover_fact") {
       const lastDesc = descriptors[descriptors.length - 1];
@@ -312,7 +337,10 @@ export function buildNarrativeBundleDescriptors(
         locationId: objective.locationId,
       };
       const stepKey = narrativeBundleTriggerKey(trigger);
-      const arrivalNpc = arrivalNpcFor(
+      const arrivalLocation = worldState.locations.find(entry => entry.id === objective.locationId);
+      const arrivalNpc = arrivalLocation !== undefined && locationScaleOf(arrivalLocation) === "town"
+        && activeQuest.objectives[objectiveIndex + 1]?.kind === "discover_fact"
+        ? undefined : arrivalNpcFor(
         worldState,
         activeQuest.objectives,
         objectiveIndex + 1,
@@ -463,7 +491,7 @@ export function buildNarrativeBundleDescriptors(
   // Determine terminal
   const lastStep = descriptors[descriptors.length - 1];
   let terminal: NarrativeBundleTerminal;
-  const currentChoiceCandidates = currentSceneChoicesFor(
+  const currentChoiceCandidates = descriptors.length > 0 ? [] : currentSceneChoicesFor(
     worldState,
     quest.objectives,
     transition.after.objectiveIndex,

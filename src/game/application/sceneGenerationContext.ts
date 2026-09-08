@@ -1,5 +1,4 @@
 import type { PendingNarrativeJob, ProviderGenerationKind } from "@/game/domain/pendingNarrativeJob";
-import { hasExplorableContent } from "./buildChoiceMap";
 import type { PacingNeed } from "@/game/domain/storyState";
 import type { StoryContract } from "@/game/domain/storyContract";
 import type {
@@ -851,9 +850,6 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
             label: `前往${l.name}`,
             targetId: l.id,
           })),
-          ...(hasExplorableContent(ws, ss)
-            ? [{ kind: "explore" as const, label: "查看四周" }]
-            : []),
           ...ws.enemies
             .filter((enemy) => enemy.locationId === ws.currentLocationId)
             .filter((enemy) => !ws.defeatedEnemyIds.includes(enemy.id))

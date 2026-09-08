@@ -113,7 +113,7 @@ export type WorldFactEntry = {
 export type QuestObjective =
   | { readonly kind: "visit_location"; readonly locationId: LocationId }
   | { readonly kind: "talk_to_npc"; readonly npcId: NpcId }
-  | { readonly kind: "obtain_item"; readonly itemId: ItemId }
+  | { readonly kind: "obtain_item"; readonly itemId: ItemId; /** 规则批准的 NPC 对话赠予；缺省为场景拾取。 */ readonly giftFromNpcId?: NpcId }
   | { readonly kind: "discover_fact"; readonly factId: FactId }
   | { readonly kind: "defeat_enemy"; readonly enemyId: EnemyId };
 

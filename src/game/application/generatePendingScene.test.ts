@@ -26,7 +26,7 @@ const IMPORTANT_JOB_ID = "job_persist";
 
 const loc: LocationEntry = {
   id: asLocationId("loc_1"), name: "客栈", description: "t", kind: "main",
-  connectedLocationIds: [], npcIds: [asNpcId("npc_1")], availableItemIds: [], tags: [],
+  connectedLocationIds: [asLocationId("loc_street")], npcIds: [asNpcId("npc_1")], availableItemIds: [], tags: [],
 };
 const npc: NpcEntry = {
   id: asNpcId("npc_1"), name: "老板", role: "路人", description: "t",
@@ -34,7 +34,7 @@ const npc: NpcEntry = {
   memory: { npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
 };
 
-// 通用生成夹具保留一个真实可探索钩子，使 talk + explore 都是规则合法候选。
+// 线索是场景内容；通用夹具通过真实 NPC 与目的地提供合法候选。
 const counterFact: WorldFactEntry = {
   factId: asFactId("fact_1"),
   text: "柜台下藏着一张旧纸条。",
@@ -49,9 +49,9 @@ const GENERATION: GenerationMetadata = {
 
 const BASE_PROJECTION: EntityCompatibilityProjection = {
   player: { name: "p", identity: "i", stats: { hp: 100, attack: 10, defense: 5 } },
-  locations: [loc],
+  locations: [loc, { ...loc, id: asLocationId("loc_street"), name: "街道", connectedLocationIds: [loc.id], npcIds: [] }],
   currentLocationId: loc.id,
-  unlockedLocationIds: [loc.id],
+  unlockedLocationIds: [loc.id, asLocationId("loc_street")],
   visitedLocationIds: [loc.id],
   npcs: [npc],
   items: [],
@@ -315,7 +315,8 @@ describe("generatePendingScene", () => {
         job: makeJob({ summary: { kind: "explore" }, eventKind: "observe" }),
       }),
       worldState: makeWorldState({
-        locations: [{ ...loc, npcIds: [npc.id, otherNpc.id] }],
+        locations: [{ ...loc, connectedLocationIds: [], npcIds: [npc.id, otherNpc.id] }],
+        unlockedLocationIds: [loc.id],
         npcs: [npc, otherNpc],
         worldFacts: [counterFact, secretFact],
       }),
@@ -395,7 +396,7 @@ describe("generatePendingScene", () => {
     });
   });
 
-  it("materializes reachable content before scene generation when fewer than two choices exist", async () => {
+  it("rejects legacy recovery that supplies only an observation hook instead of two real choices", async () => {
     const isolatedLocation: LocationEntry = {
       ...loc,
       npcIds: [],
@@ -433,11 +434,10 @@ describe("generatePendingScene", () => {
       now: () => "2026-01-02",
     });
 
-    expect(result).toBe("saved");
-    expect(spy.contexts()[0]!.legalActionCandidates.length).toBeGreaterThanOrEqual(2);
-    const writeBack = vi.mocked(repo.applySceneWriteBack).mock.calls[0]![0];
-    expect(writeBack.nextWorldState.npcs.length + writeBack.nextWorldState.locations.length).toBeGreaterThan(1);
-    expect(writeBack.nextWorldState.items).toHaveLength(1);
+    expect(result).toBe("failed");
+    expect(spy.contexts().length).toBeGreaterThan(0);
+    expect(spy.contexts().every(context => context.legalActionCandidates.every(candidate => candidate.kind !== "explore"))).toBe(true);
+    expect(repo.applySceneWriteBack).not.toHaveBeenCalled();
   });
 
   it("move job: uses the injected source when no generated queue entry exists", async () => {

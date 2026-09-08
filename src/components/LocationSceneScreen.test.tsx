@@ -53,7 +53,7 @@ describe("LocationSceneScreen：调查和底部行动栏已移除", () => {
     expect(screen.queryByRole("navigation", { name: "行动栏" })).not.toBeInTheDocument();
   });
 
-  it("renders the sole AI boundary-preparation action so a completed act cannot dead-end", () => {
+  it("does not revive a generic explore button from its label", () => {
     const onSubmit = vi.fn();
     const view: GameSessionView = {
       ...viewWithInvestigationApproaches(),
@@ -75,9 +75,8 @@ describe("LocationSceneScreen：调查和底部行动栏已移除", () => {
 
     render(<LocationSceneScreen view={view} busy={false} onSubmit={onSubmit} onReturnMap={vi.fn()} />);
 
-    const button = screen.getByRole("button", { name: "继续追查下一幕线索" });
-    fireEvent.click(button);
-    expect(onSubmit).toHaveBeenCalledWith({ kind: "fixed_choice", choiceToken: "c_boundary" });
+    expect(screen.queryByRole("button", { name: "继续追查下一幕线索" })).not.toBeInTheDocument();
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   it("renders the rule-owned battle start action without exposing general action clutter", () => {

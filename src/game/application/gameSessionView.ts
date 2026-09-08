@@ -16,8 +16,6 @@ import type { GameVisualAssetsView } from "./contentAssetView";
 import type { AiFailureKind } from "@/game/domain/narrativeGenerationFailure";
 import {
   buildChoiceMap,
-  hasExplorableContent,
-  needsWorldBoundaryPreparation,
   townBuildingInvestigationTargetNpcId,
 } from "./buildChoiceMap";
 import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
@@ -367,7 +365,7 @@ type BridgeObjective = {
 /**
  * 幕内动态任务链空窗：上一任务刚被结算、AI 尚未在后续叙事束中铸造后继
  * 任务时，会出现短暂的“无 active 任务”状态。此时向读模型投影一个权威桥
- * 接目标（在场 NPC → 未到访地点 → 可探索内容），保证指引不断档；后继任务
+ * 接目标（在场 NPC → 未到访地点），保证指引不断档；后继任务
  * 一旦铸造，currentObjectiveOf 重新取得权威地位，桥接自动让位。
  */
 function deriveBridgeObjective(
@@ -392,16 +390,6 @@ function deriveBridgeObjective(
     return {
       label: `前往${destination.name}`,
       choiceToken: choice({ type: "move", locationId: destination.id }, revision, "前往目标地点", "travel").choiceToken,
-      npcId: null,
-    };
-  }
-  if (needsWorldBoundaryPreparation(storyState) || hasExplorableContent(worldState, storyState)) {
-    const label = needsWorldBoundaryPreparation(storyState)
-      ? "继续追查下一幕线索"
-      : `探索${worldState.locations.find((entry) => entry.id === worldState.currentLocationId)?.name ?? "此地"}`;
-    return {
-      label,
-      choiceToken: choice({ type: "explore" }, revision, "探索当前地点", "explore").choiceToken,
       npcId: null,
     };
   }
@@ -457,7 +445,7 @@ export function projectGameSessionView(
   const townBuildingNpcId = townBuildingInvestigationTargetNpcId(worldState, storyState);
   const townBuildingArrivalToken = townBuildingNpcId === null
     ? null
-    : choice({ type: "explore" }, revision, "探索目标建筑", "explore").choiceToken;
+    : choice({ type: "explore" }, revision, "进入目标建筑", "explore").choiceToken;
   const projectedTownView = townView === null || townBuildingArrivalToken === null
     ? townView
     : {
@@ -483,22 +471,6 @@ export function projectGameSessionView(
 
   const locationActions: PlayerChoiceView[] = [];
   if (activeBattle === null) {
-    // 探索：仅当前地点有可探索内容（未发现线索/未处理物品或敌人/未满足目标/候选事件）
-    // 时显示，避免无剧情钩子地点的空转选项（方案 1）。
-    // 结局立场已可提交时，不能再投影普通探索：旧线索或残余世界内容
-    // 在结局束中没有对应的可消费步骤，继续显示会产生零写入死按钮。
-    if (
-      (!endingDecisionReady
-        && (hasExplorableContent(worldState, storyState) || needsWorldBoundaryPreparation(storyState)))
-      || (endingDecisionReady && endingStances.length === 0)
-    ) {
-      const label = endingDecisionReady
-        ? "面对最终抉择"
-        : needsWorldBoundaryPreparation(storyState)
-        ? "继续追查下一幕线索"
-        : `探索${currentLocation?.name ?? "此地"}`;
-      locationActions.push(choice({ type: "explore" }, revision, label, "explore"));
-    }
     // 正式交谈入口只属于当前权威 talk 目标；其余在场 NPC 一律零回合闲聊展示，
     // 不再提供可提交的 ask 行动。
     if (
@@ -864,8 +836,7 @@ export function projectGameSessionView(
         // 结局立场只有两条已批准的 talk 行动：结局束没有任何步骤可供自由输入
         // 消费，开放输入框只会换来一次零写入失败。
         && !(endingStanceNpcId !== null && String(npc.id) === endingStanceNpcId && dialogueChoices.length === 2),
-      giveChoices: formalDialogueReady
-        ? worldState.inventory
+      giveChoices: worldState.inventory
           .filter((itemId) => activeGiveStepKeys.has(
             narrativeBundleTriggerKey({ kind: "give_item", itemId, npcId: npc.id }),
           ))
@@ -881,8 +852,7 @@ export function projectGameSessionView(
                 "item",
               ),
             };
-          })
-        : [],
+          }),
     };
   });
 

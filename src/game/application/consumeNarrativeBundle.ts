@@ -74,6 +74,7 @@ function materializeScene(step: NarrativeBundleStepState, actionId: string, revi
       narration: step.scene.segments.map((segment) => segment.text).join("\n"),
       usedFactIds: step.scene.npcLine?.usedFactIds ?? [],
       npcLine: step.scene.npcLine,
+      ...(step.scene.npcDialogues === undefined ? {} : { npcDialogues: step.scene.npcDialogues }),
       choices: choiceRegistry.map(({ choiceToken, label }) => ({ choiceToken, label })),
       source: step.scene.source,
       // A travel/item/battle trigger has just been consumed.  If its prepared
@@ -125,6 +126,9 @@ export function consumeNarrativeBundle(input: {
   if (matches.length === 0) return { ok: false, code: "NARRATIVE_CONTINUATION_MISSING" };
   if (matches.length !== 1) return { ok: false, code: "NARRATIVE_CONTINUATION_INVALID" };
   const selected = matches[0];
+  if (selected.nextStepIds.some(id => !bundle.steps.some(step => step.stepId === id))) {
+    return { ok: false, code: "NARRATIVE_CONTINUATION_MISSING" };
+  }
   const materialized = materializeScene(selected, input.actionId, input.postCommitRevision);
   if (materialized === null) return { ok: false, code: "NARRATIVE_CONTINUATION_INVALID" };
   const remainder = bundle.steps.filter((step) => step.consumptionGroupKey !== selected.consumptionGroupKey);

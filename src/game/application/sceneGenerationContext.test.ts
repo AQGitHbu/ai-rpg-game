@@ -35,6 +35,7 @@ import { asItemId, asQuestId } from "@/game/domain/worldEntity";
 import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import type { GameRecord } from "./server/persistence/gameRepository";
 import { projectGameSessionView } from "./gameSessionView";
+import { buildSelectableSceneCandidates } from "./sceneChoiceCandidates";
 
 const loc1: LocationEntry = {
   id: asLocationId("loc_1"), name: "客栈", description: "一间简朴的客栈", kind: "main",
@@ -176,6 +177,27 @@ function makeQuestWorld(met = true, overrides: WorldStateFixtureOverrides = {}):
 function acceptContext(_context: SceneGenerationContext): void {}
 
 describe("buildSceneGenerationContext", () => {
+  it("does not offer generic exploration even when an undiscovered fact is present", () => {
+    const world = makeWorld({
+      worldFacts: [{ factId: asFactId("fact_visible_trace"), text: "门口留有脚印。", source: "generated", discovered: false, locationId: loc1.id }],
+    });
+    const context = buildSceneGenerationContext(makeRecord(true, undefined, world));
+    expect(context.legalActionCandidates.some((candidate) => candidate.kind === "explore")).toBe(false);
+    expect(context.legalActionCandidates.some((candidate) => candidate.kind === "move")).toBe(true);
+  });
+
+  it("ignores an old generic exploration candidate while retaining a destination choice", () => {
+    const context = buildSceneGenerationContext(makeRecord());
+    const candidates = buildSelectableSceneCandidates({
+      ...context,
+      legalActionCandidates: [
+        { kind: "explore", label: "查看四周" },
+        { kind: "move", label: "前往街道", targetId: loc2.id },
+      ],
+    });
+    expect(candidates.map((candidate) => candidate.action)).toEqual([{ type: "move", locationId: loc2.id }]);
+  });
+
   it("copies the pending job and derives current location, present NPCs and story hints", () => {
     const record = makeRecord();
     const context = buildSceneGenerationContext(record);

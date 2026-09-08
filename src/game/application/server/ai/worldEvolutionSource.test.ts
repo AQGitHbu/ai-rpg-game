@@ -59,6 +59,36 @@ const NPC_CREATION = {
 const pacingNeed: EvolutionNeed = { kind: "pacing", pacingNeed: "complicate" };
 
 describe("parseWorldDeltaProposal", () => {
+  it.each(["scene", "npc_gift"])("preserves structured item acquisition %s", (acquisition) => {
+    const parsed = parseWorldDeltaProposal({
+      beatSummary: "一件证物等待交接",
+      newItem: { name: "铜令牌", description: "刻着印记的令牌。", locationRef: "current", acquisition },
+    });
+    expect(parsed?.proposal.newItem).toEqual({ name: "铜令牌", description: "刻着印记的令牌。", locationRef: "current", acquisition });
+  });
+
+  it.each(["automatic", "take_item", null, { kind: "npc_gift" }])("rejects unknown item acquisition %j", (acquisition) => {
+    expect(parseWorldDeltaProposal({
+      beatSummary: "非法获取方式",
+      newItem: { name: "铜令牌", description: "刻着印记的令牌。", locationRef: "current", acquisition },
+    })).toBeNull();
+  });
+
+  it("keeps older scene items without acquisition and never infers a gift from prose", () => {
+    const parsed = parseWorldDeltaProposal({
+      beatSummary: "老人说送给你一枚令牌",
+      newItem: { name: "铜令牌", description: "老人说送给你的令牌。", locationRef: "current" },
+    });
+    expect(parsed?.proposal.newItem).toEqual({ name: "铜令牌", description: "老人说送给你的令牌。", locationRef: "current" });
+  });
+
+  it.each(["giftFromNpcId", "owner"])("rejects provider-authored possession authority %s", (field) => {
+    expect(parseWorldDeltaProposal({
+      beatSummary: "未经批准的物品转移",
+      newItem: { name: "铜令牌", description: "一枚令牌。", locationRef: "current", acquisition: "npc_gift", [field]: "npc_1" },
+    })).toBeNull();
+  });
+
   it("parses a valid npc repair proposal", () => {
     const parsed = parseWorldDeltaProposal({
       beatSummary: "补给一名在场人物",

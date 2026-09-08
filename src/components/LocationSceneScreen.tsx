@@ -300,21 +300,10 @@ export function LocationSceneScreen({
     || currentObjectiveAction?.presentation === "dialogue"
     ? currentObjectiveAction.label
     : null;
-  // 幕边界没有普通任务目标：服务端会下发唯一的 explore token，用它触发下一幕
-  // 或终幕结局对的 AI 编排。地点页通常隐藏通用行动栏，但不能因此把唯一可执行
-  // 的边界动作藏掉，否则玩家会停在“暂无线索”的死局。
-  const boundaryPreparationAction = view.currentLocation.actions.find((action) =>
-    action.presentation === "explore"
-      && (action.label === "继续追查下一幕线索" || action.label === "面对最终抉择"),
-  );
-  const hasFormalDialogueBoundary = (view.narrative.npcDialogues ?? []).some((dialogue) =>
-    dialogue.choices.length === 2 && dialogue.freeInputEnabled,
-  );
   // 敌人没有 NPC 卡片或物品热点可承载入口；必须在场景内显式投影唯一的
   // 规则开战动作。进入战斗后每一回合仍由 BattleScene 的规则按钮控制，
   // 此处不触发 AI。
   const sceneActionRail = [
-    ...(boundaryPreparationAction === undefined || hasFormalDialogueBoundary ? [] : [boundaryPreparationAction]),
     ...view.currentLocation.actions.filter((action) =>
       action.presentation === "battle"
       && action.choiceToken === view.story.currentObjectiveChoiceToken,

@@ -225,11 +225,31 @@ describe("generatePendingNarrativeBundle", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe("AI_RESPONSE_INVALID");
     // Should have written provider_failed state
-    expect(getApplyCount()).toBeGreaterThan(0);
+    expect(getApplyCount()).toBe(1);
     const record = getRecord();
     if (record) {
-      expect(record.storyState.narrative.status).toBe("provider_failed");
+      expect(record.storyState.narrative).toMatchObject({ status: "provider_failed", job });
+      expect(record.worldState).toEqual(worldState);
     }
+  });
+
+  it("reports CAS conflict instead of claiming that the retryable failure was saved", async () => {
+    const worldState = createMinimalWorldState();
+    const storyState = createMinimalStoryState({
+      status: "provider_pending", mode: "ai", job: createPendingJob(), lastPresentedScene: null,
+    });
+    const { repo, getRecord } = createInMemoryRepo({
+      gameId: "g1" as never, worldState, storyState, revision: 0, createdAt: "2026-01-01",
+    });
+    const applyState = vi.fn<GameRepository["applyState"]>().mockResolvedValue({ ok: false, code: "STALE_GAME_REVISION" });
+    const result = await generatePendingNarrativeBundle({
+      repository: { ...repo, applyState },
+      source: { generate: vi.fn().mockResolvedValue({ ok: false, failure: { kind: "AI_RESPONSE_INVALID", phase: "scene", failedAt: "2026-01-01" } }) },
+      now: () => "2026-01-01",
+    });
+    expect(result).toEqual({ ok: false, code: "STALE_GAME_REVISION" });
+    expect(applyState).toHaveBeenCalledTimes(1);
+    expect(getRecord()?.storyState).toEqual(storyState);
   });
 
   it("calls source.generate exactly once per attempt", async () => {

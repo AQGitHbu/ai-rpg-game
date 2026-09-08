@@ -1,3 +1,4 @@
+import { asNarrativeJobId } from "@/game/domain/events";
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, it, expect } from "vitest";
 import { projectGameSessionView } from "./gameSessionView";
@@ -902,7 +903,7 @@ describe("projectGameSessionView", () => {
         ],
       },
     };
-    // 本地点有未发现线索事实 → explore 场景选项具备可探索性，可以投影。
+    // 本地点有未发现线索事实，也不再投影泛化探索选项。
     const wsWithTrace = buildWorld({
       worldFacts: [
         { factId: asFactId("fact_trace"), text: "柜台下的旧账簿", source: "generated" as const, discovered: false, locationId: asLocationId("loc_1") },
@@ -910,7 +911,7 @@ describe("projectGameSessionView", () => {
     });
     const view = projectGameSessionView(wsWithTrace, ssScene, 0, "test-ending-session");
     // 世界行动选项出现在 narrative.choices（白名单形状）
-    expect(view.narrative.choices?.map((c) => c.choiceToken).sort()).toEqual(["w1", "w2"]);
+    expect(view.narrative.choices?.map((c) => c.choiceToken).sort()).toEqual(["w2"]);
     for (const c of view.narrative.choices ?? []) {
       expect(Object.keys(c).sort()).toEqual(["choiceToken", "label", "presentation"]);
     }
@@ -1328,9 +1329,9 @@ describe("projectGameSessionView", () => {
     expect(travel?.choiceToken).toMatch(/^c_[0-9a-f]{16}$/);
     expect(travel?.choiceToken).not.toContain("loc_2");
 
-    // 未发现事实无已审批调查方式 → 不投影 investigate 按钮，只保留观察探索。
+    // 未发现事实无已审批调查方式 → 不投影 investigate 按钮，不提供泛化探索。
     expect(view.currentLocation.actions.map((choice) => choice.presentation)).toEqual([
-      "explore", "battle",
+      "battle",
     ]);
     expect(view.obtainableItems).toEqual([
       expect.objectContaining({ name: "铜钥匙", choice: expect.objectContaining({ presentation: "item" }) }),
@@ -1373,7 +1374,7 @@ describe("projectGameSessionView", () => {
     }
   });
 
-  it("幕边界待编排时投影继续追查入口，避免无目标界面卡死", () => {
+  it("幕边界不投影没有已批准续接的探索伪入口", () => {
     const boundaryStory = {
       ...ss,
       evolution: { ...ss.evolution, status: "needs_next_act" as const },
@@ -1381,12 +1382,7 @@ describe("projectGameSessionView", () => {
     const view = projectGameSessionView(ws, boundaryStory, 0, "test-ending-session");
 
     expect(view.story.currentObjectiveLabel).toBeNull();
-    expect(view.currentLocation.actions).toEqual([
-      expect.objectContaining({
-        label: "继续追查下一幕线索",
-        presentation: "explore",
-      }),
-    ]);
+    expect(view.currentLocation.actions).toEqual([]);
   });
 
   it("终幕结局对已准备好时投影服务端铸造的两种结局立场，不再留下死路探索按钮", () => {
@@ -1448,7 +1444,7 @@ describe("projectGameSessionView", () => {
     expect(stanceDialogue?.freeInputEnabled).toBe(false);
   });
 
-  it("结局对已具象化但无人在场时，仍保留探索兜底入口", () => {
+  it("结局对已具象化但无人在场时，保留旅行且不铸造探索兜底", () => {
     const aloneWorld: WorldState = buildWorld({
       // npc_1 已离开客栈：loc_1 名册必须同步清空，投影器再把它挂到自己所在的 loc_2 名册。
       locations: BASE_PROJECTION.locations.map((location) => location.id === asLocationId("loc_1")
@@ -1472,10 +1468,10 @@ describe("projectGameSessionView", () => {
     const view = projectGameSessionView(aloneWorld, aloneStory, 0, "test-ending-session");
 
     expect(view.narrative.choices).toEqual([]);
-    expect(view.currentLocation.actions).toEqual([
-      expect.objectContaining({ label: "面对最终抉择", presentation: "explore" }),
-    ]);
-    expect(buildChoiceMap(aloneWorld, aloneStory, 0).has(view.currentLocation.actions[0]!.choiceToken)).toBe(true);
+    expect(view.currentLocation.actions).toEqual([]);
+    const travel = view.worldMap.locations.find(location => location.name === "街道")?.travelChoice;
+    expect(travel).not.toBeNull();
+    expect(buildChoiceMap(aloneWorld, aloneStory, 0).has(travel!.choiceToken)).toBe(true);
   });
 
   it("projects active battle controls as attack and guard tokens and no non-battle location actions", () => {
@@ -2207,7 +2203,7 @@ describe("projectGameSessionView town read model", () => {
     expect(interactive[0]?.npcName).toBe("老板");
   });
 
-  it("当前事实目标由城镇建筑承载时，下发进入即探索的 opaque token", () => {
+  it("当前事实目标由城镇建筑承载时，只有已批准抵达步骤才下发 opaque token", () => {
     const questId = asQuestId("quest_town_investigation");
     const factId = asFactId("fact_town_hidden_compartment");
     const townWs: WorldState = buildTownWorld({
@@ -2249,13 +2245,31 @@ describe("projectGameSessionView town read model", () => {
       reveal: { questId, visibleObjectiveIndex: 0 },
     };
 
-    const view = projectGameSessionView(townWs, townSs, 4, "test-ending-session");
-    const explore = view.currentLocation.actions.find((entry) => entry.presentation === "explore");
-    const targetBuilding = view.currentLocation.town?.interactiveBuildings.find((entry) => entry.npcId === "npc_1");
-
-    expect(explore).toBeDefined();
-    expect(targetBuilding?.arrivalChoiceToken).toBe(explore?.choiceToken);
-    expect(buildChoiceMap(townWs, townSs, 4).get(explore!.choiceToken)).toEqual({ type: "explore" });
+    const withoutBundle = projectGameSessionView(townWs, townSs, 4, "test-ending-session");
+    expect(withoutBundle.currentLocation.town?.interactiveBuildings.every(entry => entry.arrivalChoiceToken === undefined)).toBe(true);
+    if (townSs.narrative.status !== "ready") throw new Error("expected ready fixture");
+    const readyWithArrival: StoryState = { ...townSs, narrative: { ...townSs.narrative,
+      mode: "ai",
+      narrativeBundle: {
+        contractVersion: 1, originJobId: asNarrativeJobId("job-building"),
+        activeStepIds: ["arrival"], terminal: { kind: "next_decision", target: { kind: "continuation_step", stepId: "arrival" } },
+        steps: [{
+          stepId: "arrival", objectiveKey: `${questId}:0`, consumptionGroupKey: "building-arrival",
+          trigger: { kind: "explore", locationId: asLocationId("loc_1") }, nextStepIds: [],
+          scene: { segments: [{ beatId: "arrival", text: "你进入义庄，看见暗格。" }],
+            event: { kind: "dialogue", focusNpcId: asNpcId("npc_1") }, npcLine: null,
+            objectiveLink: null, source: "generated", choiceSeeds: [
+              { label: "追问密信", action: { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "support" } },
+              { label: "质疑来历", action: { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "challenge" } },
+            ] },
+        }],
+      },
+    } };
+    const view = projectGameSessionView(townWs, readyWithArrival, 4, "test-ending-session");
+    const targetBuilding = view.currentLocation.town?.interactiveBuildings.find(entry => entry.npcId === "npc_1");
+    expect(view.currentLocation.actions.some(entry => entry.presentation === "explore")).toBe(false);
+    expect(targetBuilding?.arrivalChoiceToken).toMatch(/^c_[0-9a-f]{16}$/);
+    expect(buildChoiceMap(townWs, readyWithArrival, 4).get(targetBuilding!.arrivalChoiceToken!)).toEqual({ type: "explore" });
     expect(view.currentLocation.npcs).toEqual([]);
   });
 

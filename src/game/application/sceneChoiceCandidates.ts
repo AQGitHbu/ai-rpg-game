@@ -100,31 +100,12 @@ export function buildSelectableSceneCandidates(
       label: dialogueLabels.support,
       action: { type: "talk", npcId: npc.id, dialogueAct: "support", topic: dialogueTopicFor(context, false) },
     };
-    if (event.kind === "dialogue" || focusedObjectiveNpc !== undefined) {
-      return [
-        dialogueCandidate,
-        {
-          candidateId: "candidate_2",
-          label: dialogueLabels.challenge,
-          action: { type: "talk", npcId: npc.id, dialogueAct: "challenge", topic: dialogueTopicFor(context, true) },
-        },
-      ];
-    }
-    const nonDialogueCandidate = context.legalActionCandidates
-      .map((candidate) => ({ candidate, action: actionFromLegalCandidate(candidate) }))
-      .filter((entry): entry is { candidate: SceneGenerationContext["legalActionCandidates"][number]; action: Action } =>
-        entry.action !== null && entry.action.type !== "talk")
-      .map(({ candidate, action }): SceneChoiceCandidate => ({
-        candidateId: "candidate_2",
-        label: nonDialogueChoiceLabel(action, candidate.label),
-        action,
-      }))[0];
     return [
       dialogueCandidate,
-      nonDialogueCandidate ?? {
+      {
         candidateId: "candidate_2",
-        label: nonDialogueChoiceLabel({ type: "explore" }),
-        action: { type: "explore" },
+        label: dialogueLabels.challenge,
+        action: { type: "talk", npcId: npc.id, dialogueAct: "challenge", topic: dialogueTopicFor(context, true) },
       },
     ];
   }
@@ -297,7 +278,9 @@ function actionFromLegalCandidate(
   candidate: SceneGenerationContext["legalActionCandidates"][number],
 ): Action | null {
   switch (candidate.kind) {
-    case "explore": return { type: "explore" };
+    // Historical contexts may contain this candidate; generic observation is
+    // scene presentation, never a formal player choice.
+    case "explore": return null;
     case "move": return candidate.targetId === undefined ? null : { type: "move", locationId: asLocationId(candidate.targetId) };
     case "talk": return candidate.targetId === undefined ? null : { type: "talk", npcId: asNpcId(candidate.targetId), dialogueAct: "ask" };
     case "attack": return candidate.targetId === undefined ? null : { type: "attack", enemyId: asEnemyId(candidate.targetId) };

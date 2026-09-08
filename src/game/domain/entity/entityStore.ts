@@ -409,7 +409,9 @@ function isObjectiveValue(value: unknown): boolean {
   const kind = value.kind;
   if (!matchesEnum(kind, OBJECTIVE_KINDS)) return false;
   const idField = OBJECTIVE_ID_FIELDS[kind];
-  return component(value, ["kind", idField]) && isString(value[idField]);
+  return component(value, ["kind", idField], kind === "obtain_item" ? ["kind", idField, "giftFromNpcId"] : ["kind", idField])
+    && isString(value[idField])
+    && (kind !== "obtain_item" || value.giftFromNpcId === undefined || (isString(value.giftFromNpcId) && value.giftFromNpcId.trim().length > 0));
 }
 
 function isOutcomeValue(value: unknown): boolean {

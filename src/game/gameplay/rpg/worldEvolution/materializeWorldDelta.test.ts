@@ -420,3 +420,20 @@ describe("materializeWorldDelta", () => {
     expect(delta.previewWorldState.eventLedger).toEqual(ws.eventLedger);
   });
 });
+
+describe("NPC 赠物初始归属", () => {
+  it.each([undefined, "scene", "npc_gift"] as const)("按 acquisition=%s 物化唯一归属，NPC 礼物没有场景热点", acquisition => {
+    const ws = makeWorld();
+    const ss = makeStory({ currentAct: 2 });
+    const proposal: WorldDeltaProposal = { ...nextActProposal(), newItem: { name: "封缄密信", description: "交由信使保管的信", locationRef: "new_location", ...(acquisition === undefined ? {} : { acquisition }) } };
+    const approved = approve({ proposal, need: { kind: "next_act", act: 2 }, ws, ss });
+    const materialized = materializeWorldDelta({ approved, need: { kind: "next_act", act: 2 }, ws, ss, now: () => "2026-01-01" });
+    const item = entitiesOfKind(materialized.previewWorldState.entityStore, "item")[0]!;
+    if (acquisition === "npc_gift") {
+      expect(item.possession.owner).toEqual({ kind: "npc", npcId: approved.newNpcs[0]!.id });
+      expect(materialized.previewWorldState.locations.every(location => !location.availableItemIds.includes(item.core.id))).toBe(true);
+      expect(approved.newQuests[0]!.objectives).toContainEqual({ kind: "obtain_item", itemId: item.core.id, giftFromNpcId: approved.newNpcs[0]!.id });
+    } else expect(item.possession.owner).toEqual({ kind: "location", locationId: approved.itemLocationId });
+    expect(materialized.previewWorldState.inventory).toEqual([]);
+  });
+});

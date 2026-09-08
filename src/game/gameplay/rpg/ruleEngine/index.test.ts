@@ -640,7 +640,7 @@ describe("resolveTurn — 自动揭示无 approach 的必经事实 (Task 3)", ()
     expect(r.nextWorldState.eventLedger).toEqual([...autoWs.eventLedger, ...r.domainEvents]);
   });
 
-  it("同一回合最多自动揭示一个事实目标", () => {
+  it("同一回合连续确认当前地点事实目标并完成任务", () => {
     const autoWs = makeWorld({
       worldFacts: [
         { factId: FACT_1_ID, text: "车轮印", source: "generated", discovered: false, locationId: asLocationId("loc_1") },
@@ -652,9 +652,10 @@ describe("resolveTurn — 自动揭示无 approach 的必经事实 (Task 3)", ()
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("explore should succeed");
     const r = result.resolution;
-    expect(r.domainEvents.filter((e) => e.kind === "fact_discovered")).toHaveLength(1);
-    expect(r.nextWorldState.quests[0]?.status).toBe("active");
-    expect(r.nextWorldState.worldFacts[1]?.discovered).toBe(false);
+    expect(r.domainEvents.filter((e) => e.kind === "fact_discovered")).toHaveLength(2);
+    expect(r.nextWorldState.quests[0]?.status).toBe("completed");
+    expect(r.nextWorldState.worldFacts[1]?.discovered).toBe(true);
+    expect(r.nextStoryState.turnNumber).toBe(ss.turnNumber + 1);
   });
 
   it("有已审批 approach 的事实也自动揭示，不再留待玩家调查", () => {
@@ -717,9 +718,7 @@ describe("resolveTurn — 自动揭示无 approach 的必经事实 (Task 3)", ()
     expect(result.resolution.nextWorldState.currentLocationId).toBe(asLocationId("loc_2"));
     expect(result.resolution.nextWorldState.worldFacts[0]?.discovered).toBe(true);
     expect(result.resolution.domainEvents.map((event) => event.kind)).toContain("fact_discovered");
-    expect(result.resolution.nextStoryState.reveal).toEqual({
-      questId: asQuestId("quest_move_fact"), visibleObjectiveIndex: 1,
-    });
+    expect(result.resolution.nextStoryState.reveal).toBeNull();
   });
 
   it("当前目标不是 discover_fact 时不自动揭示", () => {
@@ -749,5 +748,74 @@ describe("resolveTurn — 自动揭示无 approach 的必经事实 (Task 3)", ()
     if (!result.ok) throw new Error("explore should succeed");
     expect(result.resolution.domainEvents.some((e) => e.kind === "fact_discovered")).toBe(false);
     expect(result.resolution.nextWorldState.worldFacts[0]?.discovered).toBe(false);
+  });
+});
+
+import { asItemId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
+import { applyEntityMutations } from "@/game/gameplay/rpg/entityWorld";
+import { entitiesOfKind, parseEntityStore, validateEntityReferences } from "@/game/domain/entity";
+import { buildOutcomeBeats } from "@/game/gameplay/rpg/narrativeContext";
+
+describe("NPC 对话赠予与场景拾取分离", () => {
+  const npcId = asNpcId("gift_npc");
+  const itemId = asItemId("gift_letter");
+  function giftFixture(marked = true) {
+    const world = makeWorld({
+      npcs: [{ id: npcId, name: "信使", role: "证人", description: "保管密信", locationId: LOC_1.id, isCompanion: false, tags: [], met: true,
+        memory: { npcId, knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] } }],
+      items: [{ id: itemId, name: "密信", description: "信使保管的信", kind: "quest", tags: [] }],
+      locations: [{ ...LOC_1, npcIds: [npcId], availableItemIds: [itemId] }, LOC_2],
+      quests: [{ id: asQuestId("gift_quest"), name: "托付", description: "对话取得密信后出发", kind: "main", stage: 1, status: "active", tags: [], onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
+        objectives: [{ kind: "talk_to_npc", npcId }, { kind: "obtain_item", itemId, ...(marked ? { giftFromNpcId: npcId } : {}) }, { kind: "visit_location", locationId: LOC_2.id }] }],
+    });
+    const changed = applyEntityMutations(world, [{ kind: "transfer_item", itemId, owner: { kind: "npc", npcId } }]);
+    if (!changed.ok) throw new Error("fixture ownership failed");
+    const initial = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 2, npcs: 1, quests: 1, events: 0 } });
+    const story = { ...initial, reveal: { questId: asQuestId("gift_quest"), visibleObjectiveIndex: 0 }, narrative: { ...initial.narrative, dialogueSession: { npcId, turnCount: 1, requiredTurns: 2, completed: false } } };
+    return { world: changed.worldState, story };
+  }
+  const resolve = (fixture: ReturnType<typeof giftFixture>, actionId = "gift-completion") => resolveTurn(fixture.world, fixture.story, { type: "talk", npcId, dialogueAct: "support" }, actionId, 3, asTurnId(actionId), "fixed_choice", { now: () => "2026-01-01", turnId: asTurnId(actionId) });
+
+  it("完成赠予者对白后，同一规则回合取得标记物品、推进目标并保留赠予证据", () => {
+    const before = giftFixture();
+    const result = resolve(before);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.feedback);
+    const after = result.resolution;
+    expect(after.nextWorldState.inventory).toEqual([itemId]);
+    expect(before.world.inventory).toEqual([]);
+    expect(after.nextStoryState.turnNumber).toBe(before.story.turnNumber + 1);
+    expect(after.nextStoryState.reveal?.visibleObjectiveIndex).toBe(2);
+    const obtained = after.domainEvents.find(event => event.kind === "item_obtained")!;
+    expect(obtained.actorIds).toEqual([npcId]);
+    expect(obtained.targetIds).toEqual([PLAYER_ENTITY_ID]);
+    expect(obtained.causeEventIds).toContain(after.domainEvents.find(event => event.kind === "npc_dialogue_completed")!.eventId);
+    expect(after.primaryResult.stateChanges).toContainEqual(expect.objectContaining({ path: "inventory", description: "信使将密信交给你。" }));
+    expect(buildOutcomeBeats({ resolvedEvent: after.primaryResult, beforeWorldState: before.world, beforeStoryState: before.story, afterWorldState: after.nextWorldState, afterStoryState: after.nextStoryState })).toContainEqual(expect.objectContaining({ kind: "item_obtained", subjectIds: [itemId, npcId] }));
+    expect(entitiesOfKind(after.nextWorldState.entityStore, "item")[0]!.possession.owner.kind).toBe("player");
+    expect(resolve({ world: after.nextWorldState, story: after.nextStoryState as typeof before.story })).toMatchObject({ ok: false });
+  });
+  it("未完成对白不赠予；没有明确赠予标记不能取得 NPC 保管物品", () => {
+    const first = giftFixture();
+    first.story.narrative.dialogueSession.turnCount = 0;
+    const pending = resolve(first);
+    expect(pending.ok && pending.resolution.nextWorldState.inventory).toEqual([]);
+    const unmarked = resolve(giftFixture(false));
+    expect(unmarked.ok && unmarked.resolution.nextWorldState.inventory).toEqual([]);
+  });
+  it("NPC 赠予标记持久化可往返，并拒绝不存在的赠予者", () => {
+    const fixture = giftFixture();
+    expect(parseEntityStore(JSON.parse(JSON.stringify(fixture.world.entityStore))).ok).toBe(true);
+    const corrupted = structuredClone(fixture.world.entityStore);
+    const quest = entitiesOfKind(corrupted, "quest")[0]!;
+    (quest.quest.objectives[1] as { giftFromNpcId: string }).giftFromNpcId = "absent_npc";
+    expect(validateEntityReferences(corrupted)).toContainEqual(expect.objectContaining({ code: "unknown_quest_objective_ref", referencedId: "absent_npc" }));
+  });
+  it("赠予标记与归属冲突拒绝整个对白结算，不把场景物品自动拾取", () => {
+    const fixture = giftFixture();
+    const changed = applyEntityMutations(fixture.world, [{ kind: "transfer_item", itemId, owner: { kind: "location", locationId: LOC_1.id } }]);
+    if (!changed.ok) throw new Error("fixture mutation failed");
+    expect(resolve({ ...fixture, world: changed.worldState })).toMatchObject({ ok: false, code: "INVALID_RESOLUTION" });
+    expect(changed.worldState.inventory).toEqual([]);
   });
 });

@@ -2,16 +2,11 @@ import type { Action } from "@/game/domain/action";
 import { isTravelTarget, type WorldState } from "@/game/domain/worldState";
 import { locationScaleOf } from "@/game/domain/worldEntity";
 import type { StoryState } from "@/game/domain/storyState";
-import type { EventCandidate } from "@/game/domain/candidateEvent";
-import { isExpiredCandidate } from "@/game/domain/candidateEvent";
 import type { ActionChoiceMap } from "./actionConverter";
 import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
 import { SKILL_ENERGY_COST } from "@/game/domain/combat";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
-import {
-  endingDecisionStances,
-  isEndingDecisionDue,
-} from "@/game/gameplay/rpg/narrativeBundle";
+import { endingDecisionStances } from "@/game/gameplay/rpg/narrativeBundle";
 import { isObjectiveEntityReleased, isTakeItemPrepared } from "@/game/gameplay/rpg/worldEvolution";
 
 // ---------------------------------------------------------------------------
@@ -142,24 +137,9 @@ export function buildChoiceMap(
       }
     }
 
-    // 探索：仅当前地点有可探索内容（未发现线索/未拾取物品或敌人/未满足目标/候选事件）
-    // 时才作为合法世界行动（方案 1：无剧情钩子不显示探索）。
-    // 结局立场由服务端铸造：结局包的 terminal 是 "ending"，契约禁止 provider
-    // 提交 currentScene choices，因此两个终幕 talk 是唯一能推进故事的形式决策。
-    // 结局束内没有任何可消费步骤，探索回合必然零写入失败，只能作为无人在场
-    // 时的兜底投影保留。
-    const endingStances = endingDecisionStances(worldState, storyState);
-    for (const stance of endingStances) {
-      addRuntimeAction(stance.action);
-    }
-    const endingDecisionDue = isEndingDecisionDue(worldState, storyState);
-    // 已有可提交的终幕立场时，普通探索即使仍侦测到旧线索/残留内容也
-    // 没有可消费的叙事步骤；不能把它作为死路 token 下发。
-    if (
-      (!endingDecisionDue
-        && (hasExplorableContent(worldState, storyState) || needsWorldBoundaryPreparation(storyState)))
-      || (endingDecisionDue && endingStances.length === 0)
-    ) {
+    for (const stance of endingDecisionStances(worldState, storyState)) addRuntimeAction(stance.action);
+    // Internal explore exists only as an approved, concrete building arrival.
+    if (townBuildingInvestigationTargetNpcId(worldState, storyState) !== null) {
       addRuntimeAction({ type: "explore" });
     }
   }
@@ -216,9 +196,9 @@ function isCurrentlyLegalRegistryAction(
     case "attack":
     case "battle_action":
       return worldActionMap.has(deriveRuntimeChoiceToken(action, currentRevision));
-    // 探索：只有当前地点有可探索内容时，AI 提案的探索选项才合法并投影。
+    // 泛化探索不再是场景选项；具体建筑到达只由上面的运行时入口铸造。
     case "explore":
-      return hasExplorableContent(worldState, storyState) || needsWorldBoundaryPreparation(storyState);
+      return false;
     case "investigate":
       // 历史记录仍可由规则层结算，但当前客户端不再获得调查 token。
       return false;
@@ -226,90 +206,6 @@ function isCurrentlyLegalRegistryAction(
     case "freeform":
       return false;
   }
-}
-
-// ---------------------------------------------------------------------------
-// 可探索性判定（方案 1 修订）：探索选项只在存在"探索能推进"的剧情钩子时
-// 对玩家可见/可执行。
-// 钩子 = 当前地点仍有未发现的线索事实、可拾取物品、未击败敌人、未满足的
-// 地点相关目标，或候选事件池中涉及当前地点的有效（未过期）候选事件。
-// 注意：探索不会代替拾取或攻击（它们仍走独立入口），但场景中存在未处理实体
-// 时允许先观察现场；没有任何实体或线索的地点仍不显示探索，避免空转按钮。
-// ---------------------------------------------------------------------------
-export function hasExplorableContent(ws: WorldState, ss: StoryState): boolean {
-  const currentId = ws.currentLocationId;
-
-  // town_building 不会产生独立的 move 回合，进入建筑本身是纯 UI 导航。
-  // 若当前事实目标的下一步是该建筑内的 NPC，给建筑入口一个 explore 边界，
-  // 让进入义庄/茶馆等场景仍能触发规则自动揭示；调查方式字段不能让这条链
-  // 再次退化成已经下线的 investigate 按钮。
-  if (townBuildingInvestigationTargetNpcId(ws, ss) !== null) return true;
-
-  // 物品与敌人都是场景中可被观察、靠近和处理的实体；有它们时“探索”不是
-  // 空转，而是允许玩家先观察现场，再决定拾取或开战。
-  const currentLocation = ws.locations.find((location) => location.id === currentId);
-  if (currentLocation !== undefined) {
-    const hasAvailableItem = currentLocation.availableItemIds.some((itemId) =>
-      !ws.inventory.includes(itemId)
-      && isObjectiveEntityReleased(ws, ss, (objective) =>
-        objective.kind === "obtain_item" && String(objective.itemId) === String(itemId)),
-    );
-    const hasUndefeatedEnemy = ws.enemies.some((enemy) =>
-      enemy.locationId === currentId
-      && !ws.defeatedEnemyIds.includes(enemy.id)
-      && isObjectiveEntityReleased(ws, ss, (objective) =>
-        objective.kind === "defeat_enemy" && String(objective.enemyId) === String(enemy.id)),
-    );
-    if (hasAvailableItem || hasUndefeatedEnemy) return true;
-  }
-
-  // 对话场景始终提供一个非对白的“暂不回应，先观察”分支。它仍是
-  // 正式 explore 回合，不是零写入闲聊旁路；固定选项因此明确覆盖
-  // “玩家口吻对白 / 玩家动作”两种输入类型。
-  if (ss.narrative.status === "ready"
-    && ss.narrative.currentScene.event?.kind === "dialogue") return true;
-
-  // 1) 本地点仍有未发现的线索事实（含 NPC 私密事实：探索可引动揭示，不泄漏正文）。
-  //    investigationApproaches 是旧存档/旧规则的兼容字段，不再生成当前客户端的
-  //    调查按钮；无旧分支的事实仍可由既有 explore 兼容路径或规则自动揭示推进。
-  if (ws.worldFacts.some((f) =>
-    f.locationId === currentId
-    && !f.discovered
-    && (f.investigationApproaches ?? []).length < 2
-    && isObjectiveEntityReleased(ws, ss, (objective) =>
-      objective.kind === "discover_fact" && String(objective.factId) === String(f.factId)),
-  )) return true;
-
-  // 2) 未满足的、指向本地点或其线索事实的任务目标（active 任务）。
-  const hasUnmetLocationObjective = ws.quests.some((q) =>
-    q.status === "active" &&
-    q.objectives.some((o) => {
-      if (o.kind === "visit_location") {
-        return o.locationId === currentId
-          && !ws.visitedLocationIds.includes(o.locationId)
-          && isObjectiveEntityReleased(ws, ss, (candidate) =>
-            candidate.kind === "visit_location" && String(candidate.locationId) === String(o.locationId));
-      }
-      if (o.kind === "discover_fact") {
-        const fact = ws.worldFacts.find((f) => f.factId === o.factId);
-        return fact !== undefined
-          && fact.locationId === currentId
-          && !fact.discovered
-          // 带旧调查方式的事实不再投影当前客户端入口，避免生成死按钮。
-          && (fact.investigationApproaches ?? []).length < 2
-          && isObjectiveEntityReleased(ws, ss, (candidate) =>
-            candidate.kind === "discover_fact" && String(candidate.factId) === String(o.factId));
-      }
-      return false;
-    }),
-  );
-  if (hasUnmetLocationObjective) return true;
-
-  // 3) 候选事件池中涉及当前地点的有效候选（探索是激活这些事件的手段之一）。
-  return ss.candidateEventPool.some((candidate) =>
-    !isExpiredCandidate(candidate, ss.turnNumber) &&
-    candidateTouchesLocation(ws, candidate, currentId),
-  );
 }
 
 /**
@@ -326,43 +222,26 @@ export function townBuildingInvestigationTargetNpcId(
     return null;
   }
 
+  const narrative = ss.narrative;
+  if (narrative.status !== "ready" || ws.battle.status === "active") return null;
+  const bundle = narrative.narrativeBundle;
+  if (bundle === undefined || bundle.activeStepIds.length !== 1) return null;
+  const step = bundle.steps.find(entry => entry.stepId === bundle.activeStepIds[0]);
+  if (step?.trigger.kind !== "explore" || step.trigger.locationId !== ws.currentLocationId) return null;
   const objectiveRef = currentObjectiveOf(ws, ss);
   if (objectiveRef === null) return null;
-  const quest = ws.quests.find((entry) => String(entry.id) === String(objectiveRef.questId));
+  const quest = ws.quests.find(entry => entry.id === objectiveRef.questId);
   const objective = quest?.objectives[objectiveRef.objectiveIndex];
-  if (objective?.kind !== "discover_fact") return null;
-
-  const fact = ws.worldFacts.find((entry) => String(entry.factId) === String(objective.factId));
-  if (fact === undefined || fact.discovered || (fact.locationId !== undefined && String(fact.locationId) !== String(currentLocation.id))) {
-    return null;
-  }
-
-  const nextObjective = quest?.objectives[objectiveRef.objectiveIndex + 1];
-  if (nextObjective?.kind !== "talk_to_npc") return null;
-  const npc = ws.npcs.find((entry) => String(entry.id) === String(nextObjective.npcId));
-  if (npc === undefined || String(npc.locationId) !== String(currentLocation.id)) return null;
-  return String(npc.id);
-}
-
-/** 当前幕已结算但下一幕/结局尚未装配时，允许玩家提交一次边界编排行动。 */
-export function needsWorldBoundaryPreparation(ss: StoryState): boolean {
-  return ss.evolution.status === "needs_next_act" || ss.evolution.status === "needs_ending_pair";
-}
-
-function candidateTouchesLocation(
-  ws: WorldState,
-  candidate: EventCandidate,
-  locationId: WorldState["currentLocationId"],
-): boolean {
-  // 防御：持久化数据可能含残缺候选（读模型投影对任意 record 稳健）。
-  if (candidate.involvedEntityIds !== undefined && candidate.involvedEntityIds.includes(String(locationId))) return true;
-  if (!Array.isArray(candidate.proposedEffects)) return false;
-  return candidate.proposedEffects.some((effect) => {
-    if ("locationId" in effect && effect.locationId === locationId) return true;
-    if ("npcId" in effect) {
-      const npc = ws.npcs.find((n) => n.id === effect.npcId);
-      return npc !== undefined && npc.locationId === locationId;
+  if (quest === undefined || objective?.kind !== "discover_fact") return null;
+  if (step.objectiveKey !== `${String(quest.id)}:${objectiveRef.objectiveIndex}`) return null;
+  const fact = ws.worldFacts.find(entry => entry.factId === objective.factId);
+  if (fact === undefined || fact.discovered || (fact.locationId !== undefined && fact.locationId !== ws.currentLocationId)) return null;
+  for (const next of quest.objectives.slice(objectiveRef.objectiveIndex + 1)) {
+    if (next.kind === "talk_to_npc") {
+      const npc = ws.npcs.find(entry => entry.id === next.npcId && entry.locationId === ws.currentLocationId);
+      return npc === undefined ? null : String(npc.id);
     }
-    return false;
-  });
+    if (next.kind !== "discover_fact" && next.kind !== "obtain_item") return null;
+  }
+  return null;
 }

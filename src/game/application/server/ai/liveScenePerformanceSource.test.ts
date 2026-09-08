@@ -126,10 +126,10 @@ function makeContext(overrides: {
     },
     legalActionCandidates: overrides.legalActionCandidates ?? [
       { kind: "talk", label: "与老板交谈", targetId: "npc_1" },
-      { kind: "explore", label: "查看四周" },
+      { kind: "move", label: "前往街道", targetId: "loc_2" },
     ],
     legalEventTargets: {
-      locationIds: [asLocationId("loc_1")],
+      locationIds: [asLocationId("loc_1"), asLocationId("loc_2")],
       factIds: [asFactId("fact_a")],
       itemIds: [],
       enemyIds: [],
@@ -536,7 +536,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
       objectiveLink: null,
       choices: [
         { candidateId: "candidate_1", label: "继续核对" },
-        { candidateId: "candidate_2", label: "查看四周" },
+        { candidateId: "candidate_2", label: "前往街道" },
       ],
     }, context, buildSelectableSceneCandidates(context));
     expect(parsed).toEqual({ ok: false, reason: "segment_unknown_beat" });
@@ -562,7 +562,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
       job,
       objectiveTarget: { questId: "quest_0", objectiveIndex: 1, entityId: "item_seal", entityName: "盟誓印谱" },
       legalActionCandidates: [
-        { kind: "explore", label: "查看四周" },
+        { kind: "talk", label: "与老板交谈", targetId: "npc_1" },
         { kind: "move", label: "前往街道", targetId: "loc_2" },
       ],
     });
@@ -578,7 +578,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
       npcLine: null,
       objectiveLink: { questId: "quest_0", objectiveIndex: 1, mode: "handoff" },
       choices: [
-        { candidateId: "candidate_1", label: "查看四周" },
+        { candidateId: "candidate_1", label: "与老板交谈" },
         { candidateId: "candidate_2", label: "前往街道" },
       ],
     });
@@ -813,7 +813,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
         npcLine: null,
         objectiveLink: null,
         choices: [
-          { candidateId: "candidate_1", label: "查看四周" },
+          { candidateId: "candidate_1", label: "与老板交谈" },
           { candidateId: "candidate_2", label: "与老板交谈" },
         ],
       },

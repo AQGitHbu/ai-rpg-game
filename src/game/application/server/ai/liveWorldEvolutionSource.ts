@@ -208,11 +208,14 @@ export function parseWorldDeltaProposal(
   if (rec.newItem !== null && rec.newItem !== undefined) {
     if (typeof rec.newItem !== "object" || Array.isArray(rec.newItem)) return null;
     const it = rec.newItem as Record<string, unknown>;
-    if (!hasNoUnknownKeys(it, ["name", "description", "locationRef"])) return null;
+    if (!hasNoUnknownKeys(it, ["name", "description", "locationRef", "acquisition"])) return null;
     if (!validName(it.name) || !validText(it.description)) return null;
     const locationRef = parseMountedRef(it.locationRef);
     if (locationRef === null) return null;
-    newItem = { name: it.name.trim(), description: it.description.trim(), locationRef };
+    if (it.acquisition !== undefined && it.acquisition !== "scene" && it.acquisition !== "npc_gift") return null;
+    newItem = { name: it.name.trim(), description: it.description.trim(), locationRef,
+      ...(it.acquisition === undefined ? {} : { acquisition: it.acquisition }),
+    };
   }
 
   let newEnemy: WorldDeltaProposal["newEnemy"] = null;

@@ -1,6 +1,6 @@
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, expect, it } from "vitest";
-import { buildChoiceMap, hasExplorableContent } from "./buildChoiceMap";
+import { buildChoiceMap } from "./buildChoiceMap";
 import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
 import type { WorldState, LocationEntry, NpcEntry, EnemyEntry, ItemEntry } from "@/game/domain/worldState";
 import type { GenerationMetadata } from "@/game/domain/worldEntity";
@@ -95,8 +95,8 @@ function approvedFor(choice: {
 }
 
 describe("buildChoiceMap", () => {
-  it("世界行动候选只以 opaque token 构建：talk/move/attack/take/explore", () => {
-    // 本地点有未发现线索事实 → explore 为合法世界行动（有剧情钩子）。
+  it("世界行动候选只以 opaque token 构建：talk/move/attack/take", () => {
+    // 即使有未发现线索，也不铸造泛化探索 token。
     const hookedWorld = buildWorldState({
       worldFacts: [{ factId: asFactId("fact_trace"), text: "残月密函的线索", source: "generated", discovered: false, locationId: asLocationId("loc_1") }],
     });
@@ -106,7 +106,6 @@ describe("buildChoiceMap", () => {
       moveStreet,
       attackWolf,
       takeKey,
-      { type: "explore" } as const,
     ]) {
       const token = deriveRuntimeChoiceToken(action, 0);
       expect(token).toMatch(/^c_[0-9a-f]{16}$/);
@@ -139,8 +138,11 @@ describe("buildChoiceMap", () => {
     expect(map.get(deriveRuntimeChoiceToken({ type: "move", locationId: loc3.id }, 0))).toEqual({ type: "move", locationId: loc3.id });
   });
 
-  it("有物品或敌人的地点允许先探索再处理实体", () => {
-    expect(hasExplorableContent(buildWorldState(), buildStoryState({}))).toBe(true);
+  it("有物品或敌人的地点直接提供物品和战斗，不增加探索步骤", () => {
+    const map = buildChoiceMap(buildWorldState(), buildStoryState({}), 0);
+    expect(map.has(deriveRuntimeChoiceToken({ type: "explore" }, 0))).toBe(false);
+    expect(map.has(deriveRuntimeChoiceToken(takeKey, 0))).toBe(true);
+    expect(map.has(deriveRuntimeChoiceToken(attackWolf, 0))).toBe(true);
   });
 
   it("战斗激活时只允许 battle_action", () => {
@@ -271,82 +273,8 @@ describe("buildChoiceMap", () => {
   });
 });
 
-describe("hasExplorableContent（方案 1：有剧情钩子才允许探索）", () => {
-  // 干净地点：无物品、无敌人、无事实、无任务、无候选事件。
-  function bareWorld(overrides: WorldStateFixtureOverrides = {}): WorldState {
-    return buildWorldState({
-      locations: [{ ...loc1, availableItemIds: [] }, loc2],
-      enemies: [],
-      ...overrides,
-    });
-  }
-
-  it("无任何钩子的地点不可探索", () => {
-    expect(hasExplorableContent(bareWorld(), buildStoryState({}))).toBe(false);
-    const map = buildChoiceMap(bareWorld(), buildStoryState({}), 0);
-    expect(map.has(deriveRuntimeChoiceToken({ type: "explore" }, 0))).toBe(false);
-  });
-
-  it("本地点仅有未拾取物品（无线索/目标/候选事件）→ 可先探索再拾取", () => {
-    const itemOnlyWorld = bareWorld({ locations: [loc1, loc2] });
-    expect(hasExplorableContent(itemOnlyWorld, buildStoryState({}))).toBe(true);
-  });
-
-  it("本地点有未发现的线索事实 → 可探索；事实已发现 → 不可探索", () => {
-    const fact = { factId: asFactId("fact_trace"), text: "残月密函的线索", source: "generated" as const, discovered: false, locationId: asLocationId("loc_1") };
-    expect(hasExplorableContent(bareWorld({ worldFacts: [fact] }), buildStoryState({}))).toBe(true);
-    expect(hasExplorableContent(bareWorld({ worldFacts: [{ ...fact, discovered: true }] }), buildStoryState({}))).toBe(false);
-  });
-
-  it("active 任务有指向本地点的未满足 visit_location 目标 → 可探索", () => {
-    const quest = {
-      id: asQuestId("q_1"), name: "探查客栈", description: "d", kind: "main" as const,
-      status: "active" as const,
-      objectives: [{ kind: "visit_location" as const, locationId: asLocationId("loc_1") }],
-      onSuccess: { kind: "closed" as const }, onFailure: { kind: "closed" as const }, tags: [],
-    };
-    expect(hasExplorableContent(bareWorld({ quests: [quest], visitedLocationIds: [] }), buildStoryState({}))).toBe(true);
-    // 已访问后不再因该目标可探索
-    expect(hasExplorableContent(bareWorld({ quests: [quest], visitedLocationIds: [loc1.id] }), buildStoryState({}))).toBe(false);
-  });
-
-  it("候选事件涉及当前地点（未过期）→ 可探索", () => {
-    const candidate = {
-      id: "cand_1", kind: "enemy_appears" as const,
-      involvedEntityIds: [asEnemyId("enemy_wolf"), asLocationId("loc_1")],
-      prerequisiteFactIds: [],
-      proposedEffects: [{ kind: "enemy_appears" as const, enemyId: asEnemyId("enemy_wolf"), locationId: asLocationId("loc_1") }],
-      intendedPacing: "escalate" as const, reason: "探子回报", proposedAtTurn: 1, expiresAtTurn: 5,
-    };
-    const story = { ...buildStoryState({}), candidateEventPool: [candidate] };
-    expect(hasExplorableContent(bareWorld(), story)).toBe(true);
-  });
-
-  it("候选事件只涉及其他地点 → 当前地点不可探索", () => {
-    const candidate = {
-      id: "cand_2", kind: "enemy_appears" as const,
-      involvedEntityIds: [asEnemyId("enemy_wolf"), asLocationId("loc_2")],
-      prerequisiteFactIds: [],
-      proposedEffects: [{ kind: "enemy_appears" as const, enemyId: asEnemyId("enemy_wolf"), locationId: asLocationId("loc_2") }],
-      intendedPacing: "escalate" as const, reason: "别处动静", proposedAtTurn: 1, expiresAtTurn: 5,
-    };
-    const story = { ...buildStoryState({}), candidateEventPool: [candidate] };
-    expect(hasExplorableContent(bareWorld(), story)).toBe(false);
-  });
-
-  it("过期候选事件不再构成可探索钩子", () => {
-    const candidate = {
-      id: "cand_3", kind: "enemy_appears" as const,
-      involvedEntityIds: [asEnemyId("enemy_wolf"), asLocationId("loc_1")],
-      prerequisiteFactIds: [],
-      proposedEffects: [{ kind: "enemy_appears" as const, enemyId: asEnemyId("enemy_wolf"), locationId: asLocationId("loc_1") }],
-      intendedPacing: "escalate" as const, reason: "早先探报", proposedAtTurn: 1, expiresAtTurn: 3,
-    };
-    const story = { ...buildStoryState({}), candidateEventPool: [candidate], turnNumber: 4 };
-    expect(hasExplorableContent(bareWorld(), story)).toBe(false);
-  });
-
-  it("有钩子时 AI 提案的探索场景选项经 registry 映射（无钩子时不映射）", () => {
+describe("泛化探索不再是玩家选择", () => {
+  it("旧 AI 提案的探索选项不因现场有线索而恢复执行", () => {
     const exploreChoice = approvedFor({
       sceneId: "scene-current", basedOnRevision: 3,
       label: "探索客栈", action: { type: "explore" },
@@ -358,13 +286,13 @@ describe("hasExplorableContent（方案 1：有剧情钩子才允许探索）", 
         { choiceToken: "t_old", label: "旧选项" },
       ],
     });
-    // 有未发现线索事实钩子的世界：探索选项可解析
+    // 旧场景中保留的探索候选不能再被提交。
     const hooked = buildChoiceMap(buildWorldState({
       worldFacts: [{ factId: asFactId("fact_trace"), text: "残月密函的线索", source: "generated", discovered: false, locationId: asLocationId("loc_1") }],
     }), storyWithChoice, 3);
-    expect(hooked.get(exploreChoice.choiceToken)).toEqual({ type: "explore" });
+    expect(hooked.has(exploreChoice.choiceToken)).toBe(false);
     // 干净地点：探索选项不映射
-    const bare = buildChoiceMap(bareWorld(), storyWithChoice, 3);
+    const bare = buildChoiceMap(buildWorldState(), storyWithChoice, 3);
     expect(bare.has(exploreChoice.choiceToken)).toBe(false);
   });
 });
@@ -524,7 +452,7 @@ describe("buildChoiceMap 终幕结局立场", () => {
     expect(map.has(deriveRuntimeChoiceToken({ type: "explore" }, 7))).toBe(false);
   });
 
-  it("结局 NPC 不在场时保留探索兜底", () => {
+  it("结局 NPC 不在场时不提供无法消费的探索兜底", () => {
     const ws = endingWorldState({
       endings: endingPair,
       npcs: [{ ...smith, locationId: asLocationId("loc_2") }],
@@ -534,7 +462,7 @@ describe("buildChoiceMap 终幕结局立场", () => {
     expect(map.has(deriveRuntimeChoiceToken(
       { type: "talk", npcId: asNpcId("npc_smith"), dialogueAct: "support" }, 7,
     ))).toBe(false);
-    expect(map.has(deriveRuntimeChoiceToken({ type: "explore" }, 7))).toBe(true);
+    expect(map.has(deriveRuntimeChoiceToken({ type: "explore" }, 7))).toBe(false);
   });
 
   it("结局对尚未具象化时既不铸造立场也不开放结局探索", () => {

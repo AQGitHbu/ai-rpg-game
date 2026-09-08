@@ -470,6 +470,9 @@ describe("createNarrativeBundleSource", () => {
     expect(systemPrompt).toContain("current_scene");
     expect(systemPrompt).toContain("continuation_step");
     expect(systemPrompt).toContain("禁止鬼魂");
+    expect(systemPrompt).toContain("只能是 scene 或 npc_gift");
+    expect(systemPrompt).toContain("该 NPC 的约定对话完成后由规则交给玩家");
+    expect(systemPrompt).toContain("不能提交 giver ID、giftFromNpcId");
   });
 
   it("includes typed NPC creation anchors, goals, and directed relationship seeds in the bundle contract", async () => {
@@ -741,7 +744,7 @@ describe("createNarrativeBundleSource", () => {
     expect(systemPrompt).toContain("终点步骤（terminal.target.stepKey 指向的那一步）必须给出该步骤列出的全部 candidateId 选项");
   });
 
-  it("normalizes a flattened next-act continuation without changing its text", async () => {
+  it.each(["scene", "npc_gift"])("preserves %s acquisition while normalizing a next-act continuation", async (acquisition) => {
     const nextLocationOrdinal = makeStoryState().evolution.nextLocationOrdinal;
     const complete = vi.fn().mockResolvedValue({
       ok: true,
@@ -755,7 +758,7 @@ describe("createNarrativeBundleSource", () => {
             goals: [{ horizon: "short", description: "守住秘密", priority: 3, reason: "旧案仍不能落入旁人之手" }],
             relationshipSeeds: [],
           },
-          newItem: { name: "半块令牌", description: "断裂的令牌。", locationRef: "new_location" },
+          newItem: { name: "半块令牌", description: "断裂的令牌。", locationRef: "new_location", acquisition },
           newEnemy: { name: "蒙面劫匪", tier: "normal", locationRef: "new_location" },
           newFact: null,
           nextMainQuest: { name: "枯柳驿线索", description: "前往荒废驿站。", objectiveText: "调查枯柳驿" },
@@ -810,6 +813,7 @@ describe("createNarrativeBundleSource", () => {
     });
     expect(result.proposal.worldDelta).toMatchObject({
       newLocation: { connectFromLocationId: "loc_0" },
+      newItem: { acquisition },
     });
   });
 

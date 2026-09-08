@@ -69,7 +69,11 @@ function collectRawBeats({ beforeW, afterW, beforeS, afterS }: CollectInput): Ma
   for (const itemId of afterW.inventory) {
     if (beforeW.inventory.includes(itemId)) continue;
     const item = findItem(afterW, itemId);
-    push("item_obtained", [String(itemId)], `获得物品「${item?.name ?? "未知物品"}」`);
+    const obtained = afterW.eventLedger.find(event => event.payload.type === "item_obtained" && event.payload.itemId === itemId
+      && !beforeW.eventLedger.some(previous => previous.eventId === event.eventId));
+    const giver = afterW.npcs.find(npc => obtained?.actorIds.includes(npc.id));
+    push("item_obtained", [String(itemId), ...(giver === undefined ? [] : [String(giver.id)])],
+      giver === undefined ? `获得物品「${item?.name ?? "未知物品"}」` : `${giver.name}将「${item?.name ?? "未知物品"}」交给你`);
   }
 
   // ── 事实发现 ──

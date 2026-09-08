@@ -1412,3 +1412,134 @@ describe("performTurn — 自动揭示必经事实（Task 3）", () => {
     ]);
   });
 });
+
+import { applyEntityMutations } from "@/game/gameplay/rpg/entityWorld";
+import { buildNarrativeBundleDescriptors } from "@/game/gameplay/rpg/narrativeBundle";
+import { projectGameSessionView } from "./gameSessionView";
+
+describe("NPC 赠物与对话同次提交", () => {
+  function fixture(acquisition: "scene" | "npc_gift") {
+    const itemId = asItemId("item_gift");
+    const world = buildWorldState({
+      npcs: [{ ...npc1, met: true }],
+      locations: [{ ...loc1, availableItemIds: [itemId] }, loc2],
+      items: [{ id: itemId, name: "密信", description: "记录线索的信", kind: "quest", tags: [] }],
+      enemies: [{ id: asEnemyId("gift_guard"), name: "拦路人", locationId: loc1.id, tier: "normal", stats: { hp: 20, attack: 5, defense: 2 }, tags: [] }],
+      quests: [{ id: asQuestId("quest_gift"), name: "追查信物", description: "获得信物并处理拦路人", kind: "main", stage: 1, status: "active", tags: [], onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
+        objectives: [{ kind: "talk_to_npc", npcId: npc1.id }, { kind: "obtain_item", itemId, ...(acquisition === "npc_gift" ? { giftFromNpcId: npc1.id } : {}) }, { kind: "defeat_enemy", enemyId: asEnemyId("gift_guard") }, { kind: "talk_to_npc", npcId: npc1.id }] }],
+    });
+    const changed = acquisition === "npc_gift" ? applyEntityMutations(world, [{ kind: "transfer_item", itemId, owner: { kind: "npc", npcId: npc1.id } }]) : { ok: true as const, worldState: world };
+    if (!changed.ok) throw new Error("gift fixture ownership failed");
+    const base = buildFocusedDialogueStoryState();
+    if (base.narrative.status !== "ready") throw new Error("not ready");
+    const story: StoryState = { ...base, reveal: { questId: asQuestId("quest_gift"), visibleObjectiveIndex: 0 }, narrative: {
+      ...base.narrative, mode: "ai", currentScene: { ...base.narrative.currentScene, source: "generated" },
+      dialogueSession: { npcId: npc1.id, turnCount: 1, requiredTurns: 2, completed: false },
+    } };
+    return { world: changed.worldState, story, itemId };
+  }
+  it.each(["scene", "npc_gift"] as const)("%s 在真实对白请求内保持取物方式，并仅提交一次", async acquisition => {
+    const before = fixture(acquisition);
+    const saved = createSpyRepo(before.world, before.story);
+    const token = firstApprovedChoice(before.story).choiceToken;
+    const command = { gameId: asGameId("g1"), actionId: "finish-gift-dialogue", expectedRevision: 0, choiceMap: buildChoiceMap(before.world, before.story, 0), interaction: { kind: "fixed_choice" as const, choiceToken: token } };
+    expect(projectGameSessionView(before.world, before.story, 0, "gift").obtainableItems).toEqual([]);
+    const result = await performTurn(command, { repository: saved.repo, now: () => "2026-01-01T00:00:00.000Z" });
+    expect(result.ok).toBe(true);
+    expect(saved.applyCalls()).toHaveLength(1);
+    const record = saved.record()!;
+    expect(record.worldState.inventory).toEqual(acquisition === "npc_gift" ? [before.itemId] : []);
+    expect(record.storyState.turnNumber).toBe(before.story.turnNumber + 1);
+    expect(record.storyState.memory).toEqual(rebuildEpisodicMemory(record.worldState.eventLedger));
+    const pending = pendingNarrative(record.storyState.narrative);
+    expect(pending.job.actionSummary).toEqual({ kind: "talk", npcId: npc1.id });
+    const beats = pending.job.mandatoryBeats.filter(beat => beat.kind === "item_obtained");
+    if (acquisition === "npc_gift") {
+      expect(beats).toContainEqual(expect.objectContaining({ subjectIds: [before.itemId, npc1.id], instruction: "老板将「密信」交给你" }));
+      expect(pending.job.objectiveTransition.after?.objectiveIndex).toBe(2);
+      expect(record.worldState.eventLedger.filter(event => event.kind === "item_obtained")).toHaveLength(1);
+    } else {
+      expect(beats).toEqual([]);
+      expect(pending.job.objectiveTransition.after?.objectiveIndex).toBe(1);
+    }
+    const graph = buildNarrativeBundleDescriptors({ worldState: record.worldState, storyState: record.storyState, transition: pending.job.objectiveTransition });
+    expect(graph.steps.some(step => step.trigger.kind === "take_item")).toBe(acquisition === "scene");
+    expect(await performTurn(command, { repository: saved.repo, now: () => "2026-01-01T00:00:00.000Z" })).toMatchObject({ ok: false, code: "STALE_GAME_REVISION" });
+    expect(saved.applyCalls()).toHaveLength(1);
+  });
+  it("赠物对白 CAS 冲突后保留原 NPC 归属、回合与叙事", async () => {
+    const before = fixture("npc_gift");
+    const saved = createSpyRepo(before.world, before.story);
+    let writes = 0;
+    const repo: GameRepository = { ...saved.repo, async applyState() { writes += 1; return { ok: false, code: "STALE_GAME_REVISION" }; } };
+    const result = await performTurn({ gameId: asGameId("g1"), actionId: "gift-conflict", expectedRevision: 0, choiceMap: buildChoiceMap(before.world, before.story, 0), interaction: { kind: "fixed_choice", choiceToken: firstApprovedChoice(before.story).choiceToken } }, { repository: repo, now: () => "2026-01-01T00:00:00.000Z" });
+    expect(result).toMatchObject({ ok: false, code: "STALE_GAME_REVISION" });
+    expect(writes).toBe(1);
+    expect(saved.record()!.worldState).toEqual(before.world);
+    expect(saved.record()!.storyState).toEqual(before.story);
+  });
+});
+
+import { createTownRuntime, bindNpcToTownSlot } from "@/game/gameplay/rpg/town";
+import { approveNarrativeBundle } from "./approveNarrativeBundle";
+import { commitEventDrafts } from "@/game/domain/eventLedger";
+import type { NarrativeBundleProposal } from "@/game/domain/narrativeBundle";
+
+describe("生产城镇建筑到达续接", () => {
+  it("从生产 descriptor 审批事实首步，opaque 建筑进入同次发现连续事实并显示已生成对白", async () => {
+    const town = bindNpcToTownSlot(createTownRuntime({ locationId: loc1.id, seed: "fact-arrival" }), npc1.id).town;
+    const factIds = [asFactId("town_tracks"), asFactId("town_seal")];
+    const questId = asQuestId("town_fact_quest");
+    const world = buildWorldState({
+      locations: [{ ...loc1, scale: "town", town }, loc2],
+      worldFacts: factIds.map((factId, index) => ({ factId, text: `现场线索${index}`, source: "generated", discovered: false, locationId: loc1.id })),
+      quests: [{ id: questId, name: "进入现场", description: "查明两条线索后听取口供", kind: "main", stage: 1, status: "active", tags: [], onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
+        objectives: [...factIds.map(factId => ({ kind: "discover_fact" as const, factId })), { kind: "talk_to_npc", npcId: npc1.id }] }],
+    });
+    const base = buildFocusedDialogueStoryState();
+    const story: StoryState = { ...base, reveal: { questId, visibleObjectiveIndex: 0 } };
+    const transition = { before: null, completed: [], after: { questId, objectiveIndex: 0, label: "进入现场" }, mode: "progressed" as const };
+    const graph = buildNarrativeBundleDescriptors({ worldState: world, storyState: story, transition });
+    expect(graph.steps.map(step => step.trigger.kind)).toEqual(["explore"]);
+    expect(graph.currentChoiceCandidates).toEqual([]);
+    const proposal: NarrativeBundleProposal = {
+      worldDelta: null,
+      currentScene: { segments: [{ beatId: "atmosphere", text: "老板请你到屋内查看。" }], npcLine: null, objectiveLink: { questId, objectiveIndex: 0, mode: "hint" }, choices: [] },
+      continuationScenes: graph.steps.map(step => ({ stepKey: step.stepKey, scene: {
+        segments: [{ beatId: "atmosphere", text: "屋内的脚印与印痕证实了来者的路线。" }],
+        npcLine: { npcId: npc1.id, text: "你已经看见线索了，现在可以问我。", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedEventIds: [] },
+        objectiveLink: { questId, objectiveIndex: step.authority.objectiveIndex, mode: "progress" },
+        choices: step.choiceCandidates.map((candidate, index) => ({ candidateId: candidate.candidateId, label: index === 0 ? "请说出实情。" : "请解释这些痕迹。" })),
+      } })),
+      terminal: graph.terminal,
+    };
+    const eventSource = { turnId: asTurnId("town-generation"), actionId: "town-generation", turnNumber: 0, committedAt: "2026-01-01T00:00:00.000Z" };
+    const approved = approveNarrativeBundle({ proposal, worldState: world, storyState: story, transition, evolutionNeed: { kind: "none" }, jobId: asNarrativeJobId("town-arrival"), basedOnRevision: 0, mandatoryBeats: [],
+      eventContext: { ...eventSource, domainEventIds: [], episodeKey: "town-generation" }, now: () => eventSource.committedAt });
+    expect(approved.ok).toBe(true);
+    if (!approved.ok) throw new Error(approved.code);
+    const committed = commitEventDrafts({ ledger: world.eventLedger, drafts: approved.approved.eventDrafts, source: eventSource, entityStore: approved.approved.nextWorldState.entityStore });
+    if (!committed.ok) throw new Error(committed.code);
+    const readyWorld = { ...approved.approved.nextWorldState, eventLedger: committed.ledger };
+    const readyStory: StoryState = { ...approved.approved.nextStoryStatePreview, narrative: { status: "ready", mode: "ai", currentScene: approved.approved.currentScene, choiceRegistry: approved.approved.choiceRegistry, narrativeBundle: approved.approved.bundle } };
+    const beforeView = projectGameSessionView(readyWorld, readyStory, 0, "town");
+    expect(beforeView.currentLocation.actions.some(choice => choice.presentation === "explore" || choice.presentation === "investigate")).toBe(false);
+    const token = beforeView.currentLocation.town!.interactiveBuildings.find(building => building.npcId === npc1.id)!.arrivalChoiceToken!;
+    expect(token).toBeDefined();
+    const saved = createSpyRepo(readyWorld, readyStory);
+    const result = await performTurn({ gameId: asGameId("g1"), actionId: "enter-approved-building", expectedRevision: 0, choiceMap: buildChoiceMap(readyWorld, readyStory, 0), interaction: { kind: "fixed_choice", choiceToken: token } }, { repository: saved.repo, now: () => eventSource.committedAt });
+    expect(result.ok).toBe(true);
+    expect(saved.applyCalls()).toHaveLength(1);
+    const after = saved.record()!;
+    expect(after.worldState.worldFacts.every(fact => fact.discovered)).toBe(true);
+    expect(after.worldState.eventLedger.filter(event => event.kind === "fact_discovered")).toHaveLength(2);
+    expect(after.storyState.narrative.status).toBe("ready");
+    expect(after.storyState.turnNumber).toBe(story.turnNumber + 1);
+    const afterView = projectGameSessionView(after.worldState, after.storyState, after.revision, "town");
+    const dialogue = afterView.narrative.npcDialogues.find(entry => entry.npcId === npc1.id)!;
+    expect(dialogue.speechPages.join("")).toContain("你已经看见线索了");
+    expect(dialogue.choices).toHaveLength(2);
+    expect(dialogue.choices.every(choice => buildChoiceMap(after.worldState, after.storyState, after.revision).has(choice.choiceToken))).toBe(true);
+    expect(afterView.currentLocation.town!.interactiveBuildings.every(building => building.arrivalChoiceToken === undefined)).toBe(true);
+  });
+});

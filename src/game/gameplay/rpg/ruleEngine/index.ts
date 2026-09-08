@@ -1,3 +1,5 @@
+import { resolveNpcGift } from "./resolveNpcGift";
+import { locationScaleOf } from "@/game/domain/worldEntity";
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { Action, Interaction } from "@/game/domain/action";
@@ -225,21 +227,42 @@ export function resolveTurn(
   // discover_fact。此前这里仍使用回合开始时的 dialogueStoryState，导致 move
   // 完成 visit_location 后游标停在旧目标；带 investigationApproaches 的事实又
   // 不投影 investigate 按钮，于是新地点出现“无 action”死路。
-  // 自动揭示最多一个事实，并为该自动事实只再执行一次 quest reconciliation。
+  // 同地点连续事实按事实数量有界确认；城镇建筑事实等待明确的到达边界。
   // 自动事件、目标推进、张力和 eventLedger 仍属于同一个规则回合/CAS。
   const revealedAtBoundary = advanceStoryReveal({
     worldState: quests.nextWorldState,
     storyState: dialogueStoryState,
   });
   let ruleWorldState = revealedAtBoundary.worldState;
-  const ruleStoryState = revealedAtBoundary.storyState;
+  let ruleStoryState = revealedAtBoundary.storyState;
   let questEvents = quests.drafts;
-  const autoInvestigation = autoResolveCurrentInvestigation(ruleWorldState, ruleStoryState);
-  if (autoInvestigation.drafts.length > 0) {
-    ruleWorldState = autoInvestigation.nextWorldState;
-    const afterAutoInvestigation = reconcileQuests(ruleWorldState, { now: deps.now });
-    ruleWorldState = afterAutoInvestigation.nextWorldState;
-    questEvents = [...questEvents, ...autoInvestigation.drafts, ...afterAutoInvestigation.drafts];
+  const gift = action.type === "talk" && dialogueEvents.length > 0
+    ? resolveNpcGift(ruleWorldState, ruleStoryState, action.npcId)
+    : { ok: true as const, nextWorldState: ruleWorldState, drafts: [], stateChanges: [] };
+  if (!gift.ok) return { ok: false, code: "INVALID_RESOLUTION", feedback: "NPC 赠物状态无效。" };
+  if (gift.drafts.length > 0) {
+    const afterGift = reconcileQuests(gift.nextWorldState, { now: deps.now }, dialogueSession === undefined ? undefined : {
+      talkToNpcSession: { npcId: String(dialogueSession.npcId), completed: dialogueSession.completed },
+    });
+    const giftReveal = advanceStoryReveal({ worldState: afterGift.nextWorldState, storyState: ruleStoryState });
+    ruleWorldState = giftReveal.worldState;
+    ruleStoryState = giftReveal.storyState;
+    questEvents = [...questEvents, ...gift.drafts, ...afterGift.drafts];
+  }
+  const currentLocation = ruleWorldState.locations.find(location => location.id === ruleWorldState.currentLocationId);
+  const atTown = currentLocation !== undefined && locationScaleOf(currentLocation) === "town";
+  // A shared town container cannot prove entry into the objective's building.
+  const canDiscover = !atTown || action.type === "explore" || action.type === "take_item";
+  for (let remaining = canDiscover ? ruleWorldState.worldFacts.length : 0; remaining > 0; remaining -= 1) {
+    const automatic = autoResolveCurrentInvestigation(ruleWorldState, ruleStoryState);
+    if (automatic.drafts.length === 0) break;
+    const after = reconcileQuests(automatic.nextWorldState, { now: deps.now }, dialogueSession === undefined ? undefined : {
+      talkToNpcSession: { npcId: String(dialogueSession.npcId), completed: dialogueSession.completed },
+    });
+    const revealed = advanceStoryReveal({ worldState: after.nextWorldState, storyState: ruleStoryState });
+    ruleWorldState = revealed.worldState;
+    ruleStoryState = revealed.storyState;
+    questEvents = [...questEvents, ...automatic.drafts, ...after.drafts];
   }
   const allQuestEvents = questEvents;
   domainEvents.splice(0, domainEvents.length, ...resolved.drafts, ...propagated.drafts, ...dialogueEvents, ...allQuestEvents);
@@ -320,7 +343,7 @@ export function resolveTurn(
     actionId,
     status: resolved.status,
     eventKind: eventKindForAction(action),
-    stateChanges: resolved.stateChanges,
+    stateChanges: [...resolved.stateChanges, ...gift.stateChanges],
     facts: resolved.facts,
     costs: [],
     rewards: [],

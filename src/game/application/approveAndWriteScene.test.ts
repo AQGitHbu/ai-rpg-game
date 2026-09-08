@@ -199,7 +199,7 @@ function makeContext(overrides: {
     },
     legalActionCandidates: overrides.legalActionCandidates ?? [
       { kind: "talk", label: "与老板交谈", targetId: "npc_1" },
-      { kind: "explore", label: "查看四周" },
+      { kind: "move", label: "前往街道", targetId: "loc_2" },
     ],
     legalEventTargets: {
       locationIds: [asLocationId("loc_1"), asLocationId("loc_2")],
@@ -1068,7 +1068,7 @@ describe("approveScenePerformance (Task 6)", () => {
       legalActionCandidates: [
         { kind: "move", label: "前往客栈", targetId: "loc_1" },
         { kind: "move", label: "前往街道", targetId: "loc_2" },
-        { kind: "explore", label: "查看四周" },
+        { kind: "talk", label: "与老板交谈", targetId: "npc_1" },
       ],
     });
     const result = approveScenePerformance({
@@ -1077,7 +1077,7 @@ describe("approveScenePerformance (Task 6)", () => {
         objectiveLink: { questId: "quest_0", objectiveIndex: 0, mode: "hint" },
         choices: [
           { candidateId: "candidate_1", label: "前往客栈" },
-          { candidateId: "candidate_3", label: "查看四周" },
+          { candidateId: "candidate_3", label: "与老板交谈" },
         ],
       }),
       basedOnRevision: 8,

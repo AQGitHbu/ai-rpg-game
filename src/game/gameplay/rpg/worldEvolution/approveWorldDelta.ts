@@ -214,6 +214,7 @@ export type ApprovedWorldDeltaCore = {
   }[];
   /** item/enemy 的挂载地点（fact 为世界级事实，无地点）。 */
   readonly itemLocationId: LocationId | null;
+  readonly itemGiftNpcId?: NpcId;
   readonly enemyLocationId: LocationId | null;
   /** 规则层降级/修复产生的日志类别（如 investigation_approach_invalid），仅非空时携带。 */
   readonly logCategories?: readonly string[];
@@ -545,10 +546,13 @@ export function deriveActObjectives(
   }
   if (p.newFact && ids.factId) full.push({ kind: "discover_fact", factId: ids.factId });
   if (p.newNpc && ids.npcId) full.push({ kind: "talk_to_npc", npcId: ids.npcId });
-  if (p.newItem && ids.itemId) full.push({ kind: "obtain_item", itemId: ids.itemId });
+  if (p.newItem && ids.itemId) full.push({ kind: "obtain_item", itemId: ids.itemId,
+    ...(p.newItem.acquisition === "npc_gift" && ids.npcId ? { giftFromNpcId: ids.npcId } : {}),
+  });
   if (p.newEnemy && ids.enemyId) full.push({ kind: "defeat_enemy", enemyId: ids.enemyId });
   const allowed = SHAPE_ALLOWED_KINDS[shape];
-  const shaped = full.filter((objective) => allowed.has(objective.kind));
+  const shaped = full.filter((objective) => allowed.has(objective.kind)
+    || (objective.kind === "obtain_item" && objective.giftFromNpcId !== undefined));
   // 任何变体都必须保留可达锚点：过滤后为空回退全程链
   let chain: readonly QuestObjective[];
   if (shaped.length > 0) {
@@ -686,6 +690,13 @@ export function approveWorldDelta(input: {
   if (p.newItem) {
     itemLocationId = resolveMountedLocationId(ws, p, p.newItem.locationRef, ids.locationId);
     if (itemLocationId === null) return reject("invalid_location_ref", "item_location");
+  }
+  if (p.newItem?.acquisition !== undefined && p.newItem.acquisition !== "scene" && p.newItem.acquisition !== "npc_gift") {
+    return reject("unreachable_objective", "invalid_item_acquisition");
+  }
+  if (p.newItem?.acquisition === "npc_gift"
+    && (p.newNpc === null || ids.npcId === null || p.nextMainQuest === null || npcLocationId !== itemLocationId)) {
+    return reject("unreachable_objective", "npc_gift_requires_colocated_quest_giver");
   }
   if (p.newEnemy) {
     enemyLocationId = resolveMountedLocationId(ws, p, p.newEnemy.locationRef, ids.locationId);
@@ -890,7 +901,7 @@ export function approveWorldDelta(input: {
       kind: "main",
       connectedLocationIds: [p.newLocation.connectFromLocationId as LocationId],
       npcIds: p.newNpc && npcLocationId === ids.locationId && ids.npcId ? [ids.npcId] : [],
-      availableItemIds: p.newItem && itemLocationId === ids.locationId && ids.itemId ? [ids.itemId] : [],
+      availableItemIds: p.newItem && p.newItem.acquisition !== "npc_gift" && itemLocationId === ids.locationId && ids.itemId ? [ids.itemId] : [],
       tags: ["dynamic"],
       scale: p.newLocation.scale,
     });
@@ -1049,6 +1060,7 @@ export function approveWorldDelta(input: {
       newEndings,
       townBuildingBindings,
       itemLocationId,
+      ...(p.newItem?.acquisition === "npc_gift" && ids.npcId ? { itemGiftNpcId: ids.npcId } : {}),
       enemyLocationId,
       ...(logCategories.length > 0 ? { logCategories } : {}),
       nextEvolution,
