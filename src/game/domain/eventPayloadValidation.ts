@@ -40,6 +40,8 @@ const combatResult = shape({
 /** Closed payload schemas shared by draft commit and persisted ledger parsing. */
 const PAYLOAD_CHECKS = {
   game_initialized: shape({ type: text, generation }),
+  opening_history_established: shape({ type: text, factIds: ids }),
+  opening_thread_established: shape({ type: text, threadId: id, questionFactId: id, supportingFactIds: ids }),
   location_observed: shape({ type: text, locationId: id }),
   location_visited: shape({ type: text, locationId: id }),
   location_explored: shape({ type: text, locationId: id }),

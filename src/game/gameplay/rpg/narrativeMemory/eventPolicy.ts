@@ -30,6 +30,16 @@ export const EVENT_POLICY = {
     defaultSalience: 100,
     summaryKeys: ["game_started"],
   },
+  opening_history_established: {
+    defaultOutcome: "neutral" as const,
+    defaultSalience: 70,
+    summaryKeys: ["opening_history_established"],
+  },
+  opening_thread_established: {
+    defaultOutcome: "neutral" as const,
+    defaultSalience: 80,
+    summaryKeys: ["opening_thread_established"],
+  },
   location_observed: {
     defaultOutcome: "neutral" as const,
     defaultSalience: 20,

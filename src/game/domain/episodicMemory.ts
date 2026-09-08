@@ -81,7 +81,7 @@ function uniqueByString<T>(values: readonly T[], key: (value: T) => string): T[]
 }
 
 function episodeKind(event: CommittedNarrativeEvent): NarrativeEpisode["kind"] {
-  if (event.kind === "game_initialized") return "initialization";
+  if (["game_initialized", "opening_history_established", "opening_thread_established"].includes(event.kind)) return "initialization";
   return String(event.episodeId).startsWith("episode:battle:") ? "battle" : "turn";
 }
 

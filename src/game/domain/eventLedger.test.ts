@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   commitEventDrafts,
+  commitInitializationEvent,
   type EventCommitSource,
   type EventCommitResult,
 } from "./eventLedger";
@@ -639,5 +640,66 @@ describe("commitEventDrafts: causal and reference validation", () => {
     expect(r2.ok).toBe(false);
     if (r2.ok) return;
     expect(r2.code).toBe("EVENT_ID_CONFLICT");
+  });
+
+  it("atomically commits initialization, history, and thread with stable causes", () => {
+    const store = buildMinimalEntityStore();
+    const history: NarrativeEventDraft = {
+      eventKey: "history_shared_past", episodeKey: "initialization",
+      actorIds: [PLAYER_ENTITY_ID, NPC_1], targetIds: [], locationId: LOC_START,
+      causeKeys: [], factIds: [asFactId("fact_1")], questIds: [], outcome: "neutral", salience: 70,
+      payload: { type: "opening_history_established", factIds: [asFactId("fact_1")] },
+    };
+    const thread: NarrativeEventDraft = {
+      eventKey: "thread_open_question", episodeKey: "initialization",
+      actorIds: [PLAYER_ENTITY_ID, NPC_1], targetIds: [], locationId: LOC_START,
+      causeKeys: [{ kind: "same_batch", eventKey: "history_shared_past" }],
+      factIds: [asFactId("fact_1")], questIds: [], outcome: "neutral", salience: 80,
+      payload: {
+        type: "opening_thread_established", threadId: "thread_init_open_question",
+        questionFactId: asFactId("fact_1"), supportingFactIds: [],
+      },
+    };
+
+    const result = commitInitializationEvent({
+      generation: buildGeneration(), locationId: LOC_START, entityStore: store,
+      committedAt: "2026-09-02T00:00:00Z", backgroundDrafts: [history, thread],
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.ledger.map((event) => event.kind)).toEqual([
+      "game_initialized", "opening_history_established", "opening_thread_established",
+    ]);
+    expect(result.ledger[2]?.causeEventIds).toEqual([result.ledger[1]?.eventId]);
+    expect(result.ledger.every((event) => event.turnNumber === 0)).toBe(true);
+  });
+
+  it("rejects invalid background causes without partially committing initialization", () => {
+    const result = commitInitializationEvent({
+      generation: buildGeneration(), locationId: LOC_START, entityStore: buildMinimalEntityStore(),
+      committedAt: "2026-09-02T00:00:00Z",
+      backgroundDrafts: [{
+        eventKey: "thread_bad", episodeKey: "initialization", actorIds: [PLAYER_ENTITY_ID], targetIds: [],
+        locationId: LOC_START, causeKeys: [{ kind: "same_batch", eventKey: "history_missing" }],
+        factIds: [asFactId("fact_1")], questIds: [], outcome: "neutral", salience: 80,
+        payload: { type: "opening_thread_established", threadId: "thread_init_bad", questionFactId: asFactId("fact_1"), supportingFactIds: [] },
+      }],
+    });
+
+    expect(result).toEqual({ ok: false, code: "CAUSE_NOT_FOUND" });
+  });
+
+  it("rejects opening payload fact references that do not match the validated envelope", () => {
+    const result = commitEventDrafts({
+      ledger: [], source: buildInitSource("init:refs"), entityStore: buildMinimalEntityStore(),
+      drafts: [{
+        eventKey: "history_bad_refs", episodeKey: "initialization", actorIds: [PLAYER_ENTITY_ID], targetIds: [],
+        locationId: LOC_START, causeKeys: [], factIds: [], questIds: [], outcome: "neutral", salience: 70,
+        payload: { type: "opening_history_established", factIds: [asFactId("fact_1")] },
+      }],
+    });
+
+    expect(result).toEqual({ ok: false, code: "INVALID_REFS" });
   });
 });
