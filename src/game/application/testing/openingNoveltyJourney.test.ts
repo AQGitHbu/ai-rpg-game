@@ -3,7 +3,8 @@ import { createFixtureOpeningCandidateSource, createFixtureOpeningSource, create
 import type { NarrativeBundleSourceContext } from "../narrativeBundleSource";
 import type { GameRecord, GameRepository } from "../server/persistence/gameRepository";
 import { asGameId } from "../server/persistence/gameRepository";
-import { createOpeningNoveltyRecord } from "@/game/domain/openingNovelty";
+import { createOpeningNoveltyRecord, isOpeningTooSimilar } from "@/game/domain/openingNovelty";
+import type { OpeningGenerationCandidate } from "@/game/domain/openingGenerationCandidate";
 
 function createRepo(history: readonly ReturnType<typeof createOpeningNoveltyRecord>[] = []): {
   readonly repo: GameRepository;
@@ -115,6 +116,7 @@ describe("opening novelty journey", () => {
     const { repo } = createRepo([historyRecord]);
     const fixture = createFixtureOpeningSource();
     const calls: Extract<NarrativeBundleSourceContext, { kind: "opening" }>[] = [];
+    let firstReturnedCandidate: OpeningGenerationCandidate | null = null;
 
     const result = await createGame(
       { gameId: asGameId("retry-context"), gameType: "science_fiction", gameLength: "short", seed, setup },
@@ -125,10 +127,22 @@ describe("opening novelty journey", () => {
           async generate(context) {
             if (context.kind === "opening") calls.push(context);
             if (context.kind === "opening" && calls.length === 1) {
-              return fixture.generate({
+              const generated = await fixture.generate({
                 ...context,
                 input: { ...context.input, novelty: { recent: [], attempt: 0 }, attempt: 0 },
               });
+              if (!generated.ok || generated.kind !== "opening") return generated;
+              firstReturnedCandidate = {
+                ...generated.proposal.opening,
+                opening: {
+                  ...generated.proposal.opening.opening,
+                  quest: { ...generated.proposal.opening.opening.quest, name: "同一局面的不同任务名" },
+                },
+              };
+              return {
+                ...generated,
+                proposal: { ...generated.proposal, opening: firstReturnedCandidate },
+              };
             }
             return fixture.generate(context);
           },
@@ -139,8 +153,17 @@ describe("opening novelty journey", () => {
     expect(result.ok).toBe(true);
     expect(calls).toHaveLength(2);
     expect(calls.map((call) => call.input.setup)).toEqual([setup, setup]);
+    expect(firstReturnedCandidate).not.toBeNull();
+    const rejectedRecord = createOpeningNoveltyRecord({
+      candidate: firstReturnedCandidate!, gameType: "science_fiction", createdAt: "2026-09-09T00:00:00.000Z",
+    });
+    expect(rejectedRecord.summary).not.toBe(historyRecord.summary);
+    expect(isOpeningTooSimilar(rejectedRecord, [historyRecord])).toBe(true);
     expect(calls[1]!.input.novelty?.attempt).toBe(1);
     expect(calls[1]!.input.novelty?.recent).toHaveLength(2);
-    expect(calls[1]!.input.novelty?.recent.at(-1)?.summary).toBe(historyRecord.summary);
+    expect(calls[1]!.input.novelty?.recent.map((record) => record.summary)).toEqual([
+      historyRecord.summary,
+      rejectedRecord.summary,
+    ]);
   });
 });

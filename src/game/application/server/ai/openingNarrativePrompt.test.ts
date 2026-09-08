@@ -67,6 +67,9 @@ describe("buildOpeningNarrativePrompt", () => {
     expect(prompt).toContain("[a-z][a-z0-9_]*");
     expect(prompt).toContain("knownFactKeys");
     expect(prompt).toContain("privateFactKeys");
+    expect(prompt).toContain("privateFactKeys 可被 history.factKeys 引用并存入 ledger");
+    expect(prompt).toContain("私密事实正文不得出现在 prologue、currentScene、choices、公开 history 渲染、thread question 或 response");
+    expect(prompt).toContain("history.factKeys 不要求全部属于 knownFactKeys");
     expect(prompt).toContain("candidateId");
     expect(prompt).toContain("不得在序幕或 NPC 台词中宣称玩家已接受其中一项");
     expect(prompt).toContain("结局 theme 仅表达开放价值方向");
