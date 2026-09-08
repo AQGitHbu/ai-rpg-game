@@ -319,9 +319,9 @@ firstJob/secondJob 为两份 source 捕获的真实 decision job；secondPrompt 
 
 ## Plan 自审与执行状态
 
-- Task 1–6 已在指定 worktree 实施，阶段指针未改；全分支独立审查在收尾进行。
+- Task 1–6 已在指定 worktree 实施，阶段指针未改；全分支独立审查及收尾修复定向复审通过。
 - 新类型、key、事件 payload 和版本决策在 Spec 唯一详细维护，Task 使用同名接口。
 - 已将“初始化线程种子”与未实现的动态生命周期区分；不会把背景问题永久当作当前问题。
 - 已区分逻辑生成请求、transport 重试与真实样本质量；只通过工程检查不能宣称质量目标达成。
 - 实际 RED/GREEN、真实调用、逐样本评分与前轮失败证据见[验收报告](../reports/2026-09-09-opening-quality.md)。
-- 最终门禁：`npm run typecheck`、`npm run test:boundaries`（124 项）、`npm run check:docs`（34 份）、`npm test`（2,560 通过，live 默认跳过）、`git diff --check`。真实最终批次 12/12 创建、6/6 续接通过，最低 9/10，全部强制维度 2/2。
+- 最终门禁：`npm run typecheck`、`npm run test:boundaries`（124 项）、`npm run check:docs`（34 份）、`npm test`（2,564 通过，live 默认跳过）、`git diff --check`。真实最终批次 12/12 创建、6/6 续接通过，最低 9/10，全部强制维度 2/2。
