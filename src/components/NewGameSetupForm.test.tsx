@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NewGameSetupForm } from "./NewGameSetupForm";
@@ -56,6 +56,24 @@ describe("NewGameSetupForm canonical contract", () => {
       contentIntensity: "normal",
       restart: { identity: "opaque-ended-session", expectedRevision: 9 },
     });
+  });
+  it("uses the original seven cover URLs and survives an image load failure", async () => {
+    const { container } = render(<NewGameSetupForm onCreated={vi.fn()} />);
+    const cards = [...container.querySelectorAll(".game-type-card")];
+    expect(cards).toHaveLength(7);
+    for (const card of cards) {
+      const input = card.querySelector("input")!;
+      const image = card.querySelector("img")!;
+      const src = new URL(image.getAttribute("src")!, "http://localhost");
+      expect(src.searchParams.get("url") ?? src.pathname).toBe(`/assets/genres/${input.value}.jpg`);
+    }
+    const first = cards[0]!;
+    fireEvent.error(first.querySelector("img")!);
+    expect(first.querySelector("img")).toBeNull();
+    expect(first.querySelector(".game-type-card--visual")).toBeInTheDocument();
+    await userEvent.click(first.querySelector("input")!);
+    expect(first.querySelector("input")).toBeChecked();
+    expect(screen.getByRole("button", { name: "踏上旅程" })).toBeEnabled();
   });
 });
 
