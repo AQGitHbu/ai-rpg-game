@@ -25,6 +25,7 @@ import {
   renderNarrativeMemory,
   retrieveNarrativeMemory,
 } from "@/game/gameplay/rpg/narrativeMemory";
+import { buildOpeningHandoffContext } from "./openingHandoffContext";
 
 export const NARRATIVE_BUNDLE_CONTEXT_MAX_ESTIMATED_TOKENS = 8_000;
 
@@ -218,11 +219,12 @@ export function buildDecisionNarrativeContextBlocks(
     fact.discovered && !privateFactIds.has(String(fact.factId)),
   );
   const activeQuest = worldState.quests.find((quest) => quest.status === "active" && quest.kind === "main");
+  const openingHandoff = buildOpeningHandoffContext({ worldState, job });
   const narrativeMemory = renderNarrativeMemory({
     retrieved: retrieveNarrativeMemory({
       memory: storyState.memory,
       ledger: worldState.eventLedger,
-      requiredEventIds: job.domainEventIds,
+      requiredEventIds: [...job.domainEventIds, ...(openingHandoff?.requiredEventIds ?? [])],
       beforeSequenceExclusive: Math.min(worldState.eventLedger.length, ...worldState.eventLedger
         .filter((event) => job.domainEventIds.includes(event.eventId)).map((event) => event.sequence)),
       relevantEntityIds: [
@@ -243,6 +245,11 @@ export function buildDecisionNarrativeContextBlocks(
     }),
     entityStore: worldState.entityStore,
   });
+  const openingHandoffEventIds = new Set((openingHandoff?.requiredEventIds ?? []).map(String));
+  const currentRequiredEventsText = narrativeMemory.requiredEventsText
+    .split("\n")
+    .filter((line) => ![...openingHandoffEventIds].some((eventId) => line.startsWith(`eventId=${eventId};`)))
+    .join("\n");
   const style = buildStylePolicy(worldState.generation.setup);
   const expectedObjectiveLink = job.objectiveTransition.after === null
     ? "null"
@@ -388,12 +395,21 @@ export function buildDecisionNarrativeContextBlocks(
     }),
   ];
 
-  if (narrativeMemory.requiredEventsText !== "") {
+  if (openingHandoff !== null) {
+    blocks.push(block({
+      id: "bundle:opening-handoff", slot: "relevant_events", title: "开局背景与本次回应",
+      authority: "event", retention: "mandatory", priority: 985,
+      source: { kind: "committed_event", refs: openingHandoff.requiredEventIds.map(String) },
+      content: openingHandoff.publicText,
+    }));
+  }
+
+  if (currentRequiredEventsText !== "") {
     blocks.push(block({
       id: "bundle:required-events", slot: "relevant_events", title: "本回合已提交事件",
       authority: "event", retention: "mandatory", priority: 980,
-      source: { kind: "committed_event", refs: narrativeMemory.manifestRefs.eventIds.map(String) },
-      content: narrativeMemory.requiredEventsText,
+      source: { kind: "committed_event", refs: narrativeMemory.manifestRefs.eventIds.map(String).filter((eventId) => !openingHandoffEventIds.has(eventId)) },
+      content: currentRequiredEventsText,
     }));
   }
   if (narrativeMemory.relevantEpisodesText !== "") {
