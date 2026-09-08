@@ -1104,7 +1104,7 @@ git commit -m "feat(ui): bind scene and NPC visuals without interrupting dialogu
 - Produces: 浏览器图片正常/阻断/延迟状态证据、无玩法回归证据，以及准确的已实现/未实现边界。
 - 当前浏览器没有旧文档所说的“使用已有数据开始”入口；不要通过正式“踏上旅程”按钮误触生产 AI，也不要修改 composition root 注入 fixture。
 
-- [ ] **Step 1: 建立一次性预览页。** 先确认 `src/app/asset-preview/` 不存在再创建。该页不是生产功能，不写入存档；对白提交只返回夹具小镇并卸载场景，重新进入可继续验收，不模拟规则成功。不能为恒定 `busy={false}` 的场景传空提交回调，否则真实对白会停在 waiting，锁住后续交互。真实 UI 与规则旅程分开验证。
+- [x] **Step 1: 建立一次性预览页。** 先确认 `src/app/asset-preview/` 不存在再创建。该页不是生产功能，不写入存档；对白提交只返回夹具小镇并卸载场景，重新进入可继续验收，不模拟规则成功。不能为恒定 `busy={false}` 的场景传空提交回调，否则真实对白会停在 waiting，锁住后续交互。真实 UI 与规则旅程分开验证。
 
 ```bash
 test ! -e src/app/asset-preview
@@ -1198,7 +1198,7 @@ export default function AssetPreview() {
 }
 ```
 
-- [ ] **Step 2: 浏览器验证四个真实消费者。**
+- [x] **Step 2: 浏览器验证四个真实消费者。**
 
 Run: `npm run dev`，打开本地 `/asset-preview`。在 1440×900 与 390×844 两个视口验收并把截图放 `tmp/content-asset-review/`：
 
@@ -1211,7 +1211,7 @@ Run: `npm run dev`，打开本地 `/asset-preview`。在 1440×900 与 390×844 
 
 此夹具验证展示/输入，不模拟规则回合、结局或存档恢复；这些由下一步的现有离线 journey 验证。不把它记录为真实 API 生图验收。
 
-- [ ] **Step 3: 移除一次性预览页，再跑生产门禁。** 只删除本 Task 刚创建的精确文件和空目录；不能触碰原 page.tsx、public 文件或链接目录。停止该预览 dev server 后执行：
+- [x] **Step 3: 移除一次性预览页，再跑生产门禁。** 只删除本 Task 刚创建的精确文件和空目录；不能触碰原 page.tsx、public 文件或链接目录。停止该预览 dev server 后执行：
 
 ```bash
 rm src/app/asset-preview/page.tsx
@@ -1227,7 +1227,7 @@ Expected: 全部通过；`npm test` 包含 `src/game/application/testing/foundat
 
 检查 `git status --short`：没有预览页、图片改动、server/持久化/领域逻辑改动、current-phase 或共享目录改动。不要为了让门禁通过更改真实 AI fallback、共享基础设施或放宽既有断言。
 
-- [ ] **Step 4: 记录完成后的实现事实。** 先确认浏览器与自动门禁证据齐全，再创建 `docs/agent/图片展示框架.md`：
+- [x] **Step 4: 记录完成后的实现事实。** 先确认浏览器与自动门禁证据齐全，再创建 `docs/agent/图片展示框架.md`：
 
 ```markdown
 # 图片展示框架
@@ -1273,7 +1273,7 @@ Agent 索引新增系统行，并保留原“视觉资产与 AI 生图参考”�
 | 图片展示框架 | `agent/图片展示框架.md` | `AI生图资产制作参考.md` | 已建立四个生产图片位、静态 manifest、可选安全视图与展示期固定/降级；真实生图 provider、队列与持久化未实现 |
 ```
 
-- [ ] **Step 5: 文档一致性与最终提交。**
+- [x] **Step 5: 文档一致性与最终提交。**
 
 Run: `git diff --check`，检查仅本任务的文件被修改；更新本 Plan 的任务勾选与真实验收记录。无需再跑未受文档影响的全套测试。
 
@@ -1281,6 +1281,16 @@ Run: `git diff --check`，检查仅本任务的文件被修改；更新本 Plan 
 git add docs/agent/图片展示框架.md docs/agent/地图与地点冒险.md docs/agent/小镇程序化生成.md docs/Agent文档索引.md docs/AI生图资产制作参考.md docs/superpowers/plans/2026-09-08-content-asset-registry.md
 git commit -m "docs: record RPG image presentation contracts and verified limits"
 ```
+
+### 执行验收（2026-09-08）
+
+一次性本地 UI 夹具 `/asset-preview` 已按 Step 1–2 用于验收并依 Step 3 删除，从未提交。`npm run dev` 后经 Google Chrome 152.0.7977.77（headless，DevTools Protocol）在 1440×900 与 390×844 两个视口验证四个真实消费者，截图与 `acceptance*.json` 落 `tmp/content-asset-review/`（不提交）。
+
+自动化门禁（worktree 内）：`npm test` 186 文件 / 2495 用例全过（约 28s）；`npm run test:fast` 124 过（含 `dependencyBoundaries` 121/121）；`npm run test:components` 216 过；`npm run lint` 0 错误（46 条既有无关警告）；`npm run build` 成功且路由仍为原始六条。`git status --short` 仅见未跟踪的 `node_modules`（主仓安装符号链接），无预览页、图片、server/持久化/领域或 current-phase 改动。
+
+浏览器结果：七题材封面 7/7 加载且双视口一致；武侠小镇 1 个屋顶 `<image>` + 1 个未探索块，科幻小镇 0 图/576 瓦片/6 按钮且交互完好；场景 generating 仅占位可见；同周期 `generating → ready` 输入“未提交的草稿”保留并聚焦、立绘仍缺、选项与关闭完好；重开对白后立绘加载占位隐藏；阻断 `/assets/*` 与 `/_next/image*`（25 失败请求）时立绘回退无破图、输入可输入、选项与关闭仍在；解除阻断后封面 7/7 恢复。
+
+边界：展示合同已接入，真实生图服务未实现——无 provider、API 路由、队列或持久化；`visualAssets` 当前仅由测试注入。未调用真实 AI，未修改图片文件。
 
 ## Spec 覆盖与 review 记录
 
