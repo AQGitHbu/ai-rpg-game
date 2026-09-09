@@ -1,3 +1,4 @@
+import { createAiSourceFailure, aiRepairAuditContext, renderAiRepairFeedback } from "../../aiGenerationRetry";
 import type { Action, DialogueAct, StructuredDialogueTopic } from "@/game/domain/action";
 import type { AiTransport, AiTransportConfig } from "@ai-game/ai-transport";
 import { DIALOGUE_ACTS } from "@/game/domain/action";
@@ -281,7 +282,7 @@ export function createLiveIntentParser(
     })
     : undefined);
   const failIntent = (category: Parameters<typeof classifyAiFailure>[0]["category"]): IntentParserResult => {
-    const failure = classifyAiFailure({ phase: "intent", category });
+    const { failure } = createAiSourceFailure("intent", category);
     return { ok: false, reason: "service_error", failureKind: failure.kind };
   };
   return {
@@ -296,9 +297,8 @@ export function createLiveIntentParser(
         runAttempt: async (attempt, priorReason) => {
           const auditAttempt = attempt - 1;
           try {
-            const repairMessage = priorReason === undefined
-              ? ""
-              : `上一次返回未通过 ${priorReason} 校验。请只修复 JSON 结构与可执行意图引用，不要解释。`;
+            const repair = priorReason === undefined ? undefined : { attempt: auditAttempt, reason: priorReason };
+            const repairMessage = renderAiRepairFeedback(repair);
             const response = await client.complete(
               "intent",
               [
@@ -315,7 +315,7 @@ export function createLiveIntentParser(
                 },
                 ...(priorReason === undefined
                   ? {}
-                  : { retry: { origin: "normal", mechanism: "content_repair", attempt: auditAttempt, reason: priorReason } }),
+                  : { retry: aiRepairAuditContext(repair!) }),
               },
             );
             if (!response.ok) {

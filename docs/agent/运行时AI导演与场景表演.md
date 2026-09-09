@@ -10,7 +10,7 @@
 
 - 生产 provider 只有 `initialization`、`narrative_choice`、`npc_free_text` 三类触发。开局由 opening source 直接编译为 ready；正式选择和焦点 NPC 自定义输入进入 pending job。
 - 初始化由唯一的 `buildOpeningNarrativePrompt` 传入完整 `GameSetup`、叙事风格策略和最多三条近期 novelty 摘要；玩家设定优先于 novelty。开局 source 与后续叙事共用生产 `RpgAiClient`、transport 策略和 application 审批，不增加质量评审 provider 调用。
-- 初始化最多三次完整尝试；source 的结构解析失败通过 `repairReason`、`repairDetail` 传到下一次 opening context 的 `contentRepair`，prompt 点明上一轮稳定拒绝原因。调查方式须符合对象数组契约，陌生人关系仍要求 neutral 且无历史依据；格式或关系失败不靠补造字段放行。
+- 初始化最多三次完整尝试；source、候选校验、场景审批和 novelty 拒绝都通过统一修复反馈传到下一次 opening context。调查方式须符合对象数组契约，陌生人关系仍要求 neutral 且无历史依据；格式或关系失败不靠补造字段放行。
 - `NarrativeBundleSource.generate` 一次返回原子提案：可选 `worldDelta`、`currentScene`、`continuationScenes` 和 `terminal`。生产续接图唯一存放在 `storyState.narrative.narrativeBundle`。
 - `generatePendingNarrativeBundle` 最多四次完整尝试。后续尝试携带稳定解析、引用或审批拒绝原因；仍失败则保留同一 `jobId` 的 `provider_failed`，由显式 `{ "retry": true }` 手动重试。
 - 成功路径是审批生成包、提交场景事件、重建记忆，再调用 `repository.applyState`。世界增量、ready scene、choice registry、bundle 和记忆在同一次 scene CAS 中写回。
@@ -38,9 +38,18 @@ Prompt 只接收编译后的公开事实、当前位置、焦点 NPC 的有限�
 
 每个逻辑 pending job 最多执行四次完整的 source 生成加审批尝试；后续完整尝试携带稳定拒绝原因。每次完整尝试内部仍可由 `RpgAiClient` 执行 transport retry；顶层 `ai_call.attempt` 是 transport 序号，`context.retry.attempt` 是重试机制内序号，两者不能混用。空响应不重复发送同一请求。
 
+## 统一重试反馈
+
+`src/game/application/aiGenerationRetry.ts` 是 RPG 生成层的公共反馈契约，覆盖 opening、intent、scene、world 和 narrative bundle。各 source 使用 `createAiSourceFailure` 构造失败；bundle、scene、world 端口直接复用 `AiSourceFailure`，intent 结果与旧开局异常端口只作既有边界格式转换。业务校验只提供稳定 `repairReason`、`repairDetail`，审批使用统一 `rejectionCode`。`repairFromSourceFailure` 负责缺失原因的统一分类：调用失败为 `provider_failure`，结构失败为 `invalid_schema`，不能把网络失败或空响应冒充 `invalid_json`。
+
+内容修复使用 `AiContentRepair`（attempt、reason、可选 rejectionCode/detail）；prompt 由 `renderAiRepairFeedback` 渲染公共反馈段，业务可以追加针对性说明。反馈留在各上下文编译器的必选块内并计入预算；`aiRepairAuditContext` 统一投影审计原因和来源，自动修复序号逐次递增。各用例仍负责各自的次数上限及哪些业务拒绝允许修复。
+
+传输层只重发网络、超时、限流和服务错误请求，沿用相同 messages，在审计中记录上一 transport 失败码；它不理解 JSON schema、实体引用或审批。后续叙事失败保留实际 `AI_CALL_FAILED`/`AI_RESPONSE_INVALID` 分类，并通过已有 failure.reason 保存有界稳定原因码；手动重试消费同 job 的 retryContext。实体名称等自由文本细节只用于当次自动修复，不写入持久化 reason。
+
 ## 代码与测试入口
 
 - 编排：`src/game/application/generatePendingNarrativeBundle.ts`、`src/game/application/narrativeBundleSource.ts`、`src/game/application/approveNarrativeBundle.ts`
+- 统一反馈：`src/game/application/aiGenerationRetry.ts`、`src/game/application/aiGenerationRetry.test.ts`
 - 领域契约：`src/game/domain/narrativeBundle.ts`、`src/game/domain/narrative.ts`、`src/game/domain/pendingNarrativeJob.ts`
 - 生产 source 与 prompt：`src/game/application/server/ai/liveNarrativeBundleSource.ts`、`src/game/application/server/ai/openingNarrativePrompt.ts`、`src/game/application/server/ai/narrativeContext/narrativeBundleContext.ts`
 - 消费与规则：`src/game/application/consumeNarrativeBundle.ts`、`src/game/gameplay/rpg/narrativeBundle/`

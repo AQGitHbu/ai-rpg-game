@@ -1,6 +1,6 @@
 import type { AiMessage } from "@ai-game/ai-transport";
 import type { GameLogger } from "@/game/logging";
-import type { AiGenerationFailure } from "@/game/domain/narrativeGenerationFailure";
+import { createAiSourceFailure, aiRepairAuditContext } from "../../aiGenerationRetry";
 import { classifyAiFailure, transportFailureCodeToCategory } from "../../aiGenerationFailure";
 import { parseStructuredJsonObject } from "@/game/core/json";
 import { parseNarrativeBundleProposal } from "@/game/domain/narrativeBundle";
@@ -41,13 +41,7 @@ function failBundle(
   repairReason?: NarrativeBundleRepairReason,
   repairDetail?: string,
 ): Extract<NarrativeBundleSourceResult, { readonly ok: false }> {
-  const failure: AiGenerationFailure = classifyAiFailure({ phase: "scene", category });
-  return {
-    ok: false,
-    failure,
-    ...(repairReason === undefined ? {} : { repairReason }),
-    ...(repairDetail === undefined ? {} : { repairDetail }),
-  };
+  return createAiSourceFailure("scene", category, repairReason, repairDetail);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -409,6 +403,7 @@ export function createNarrativeBundleSource(
           messages,
           {
             ...(context.auditLink ?? {}),
+            ...(context.contentRepair === undefined ? {} : { retry: aiRepairAuditContext(context.contentRepair, context.auditLink?.retry) }),
             purpose: "narrative_bundle_generation",
             trigger: context.kind === "decision"
               ? context.job.utterance === undefined ? "narrative_choice" : "npc_free_text"
@@ -426,8 +421,8 @@ export function createNarrativeBundleSource(
           logger?.warn("narrative_bundle_ai_failed", { code: result.code });
           const category = transportFailureCodeToCategory(result.code);
           return result.code === "empty_response"
-            ? failBundle(category, "invalid_json")
-            : failBundle(category);
+            ? failBundle(category, "empty_response")
+            : failBundle(category, undefined, result.code);
         }
 
         const parsed = parseStructuredJsonObject(result.content);

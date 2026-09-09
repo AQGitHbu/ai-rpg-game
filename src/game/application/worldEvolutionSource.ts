@@ -3,7 +3,7 @@ import type { StoryState } from "@/game/domain/storyState";
 import type { Action } from "@/game/domain/action";
 import type { EvolutionNeed, WorldDeltaProposal } from "@/game/domain/worldDelta";
 import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
-import type { AiGenerationFailure } from "@/game/domain/narrativeGenerationFailure";
+import type { AiContentRepair, AiSourceFailure } from "./aiGenerationRetry";
 import type { WorldDeltaRejection } from "@/game/gameplay/rpg/worldEvolution";
 
 // ---------------------------------------------------------------------------
@@ -17,15 +17,7 @@ import type { WorldDeltaRejection } from "@/game/gameplay/rpg/worldEvolution";
  * 只供修复 prompt/审计使用的稳定内容修复描述。修复预算只由 application 层
  * （evolveWorld 两轮循环）统一控制；source 自身不递归多次 propose。
  */
-export type WorldEvolutionContentRepair = Readonly<{
-  readonly attempt: 1;
-  readonly reason:
-    | "invalid_json"
-    | "invalid_schema"
-    | "invalid_reference"
-    | "approval_rejected";
-  readonly approvalCode?: WorldDeltaRejection;
-}>;
+export type WorldEvolutionContentRepair = AiContentRepair<WorldEvolutionRepairReason | "approval_rejected", WorldDeltaRejection>;
 
 export type WorldEvolutionSourceContext = {
   readonly worldState: WorldState;
@@ -50,11 +42,7 @@ export type WorldEvolutionRepairReason = "invalid_json" | "invalid_schema" | "in
  */
 export type WorldEvolutionSourceResult =
   | { readonly ok: true; readonly proposal: WorldDeltaProposal | null }
-  | {
-      readonly ok: false;
-      readonly failure: AiGenerationFailure;
-      readonly repairReason?: WorldEvolutionRepairReason;
-    };
+  | AiSourceFailure<WorldEvolutionRepairReason>;
 
 export type WorldEvolutionSource = {
   propose(ctx: WorldEvolutionSourceContext): Promise<WorldEvolutionSourceResult>;

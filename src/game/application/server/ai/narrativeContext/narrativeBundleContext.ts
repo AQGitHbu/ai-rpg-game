@@ -25,6 +25,7 @@ import {
   renderNarrativeMemory,
   retrieveNarrativeMemory,
 } from "@/game/gameplay/rpg/narrativeMemory";
+import { renderAiRepairFeedback } from "../../../aiGenerationRetry";
 import { buildOpeningHandoffContext } from "./openingHandoffContext";
 
 export const NARRATIVE_BUNDLE_CONTEXT_MAX_ESTIMATED_TOKENS = 8_000;
@@ -82,10 +83,6 @@ function itemStateSection(context: EntityContextProjection): string {
 }
 
 function repairInstruction(repair: NarrativeBundleRepair): string {
-  const rejection = [
-    repair.rejectionCode === undefined ? "" : `拒绝码 ${repair.rejectionCode}`,
-    repair.detail === undefined ? "" : `细分原因 ${repair.detail}`,
-  ].filter((part) => part !== "").join("，");
   const duplicateEntries = repair.detail?.startsWith("duplicate_name:")
     ? repair.detail.slice("duplicate_name:".length).split("|")
       .map((entry) => entry.match(/^(npc|location|item|enemy|quest):(.+)$/u))
@@ -99,7 +96,7 @@ function repairInstruction(repair: NarrativeBundleRepair): string {
     : repair.reason === "invalid_schema" && repair.detail === "world_delta_invalid"
       ? "- worldDelta.newFact 若出现 investigationApproaches，必须恰好提供 2–3 条合法条目；无法提供完整列表时将 newFact 设为 null，绝不能保留单条列表。"
       : "";
-  return `上一轮提案已被服务端拒绝。\n${rejection === "" ? `失败类型 ${repair.reason}。` : `${rejection}。`}
+  return `${renderAiRepairFeedback(repair)}
 本轮只需修正被拒绝的那一项，其余中文叙事文本可以沿用你自己的写法。硬性要求：
 - continuationScenes 必须与服务端投影步骤一一对应：不得新增投影之外的步骤，也不得漏掉投影中的步骤。
 - 终点步骤（terminal.target.stepKey 指向的那一步）必须给出该步骤列出的全部 candidateId 选项，每个选项都要有中文 label；其余步骤 choices 必须为空。

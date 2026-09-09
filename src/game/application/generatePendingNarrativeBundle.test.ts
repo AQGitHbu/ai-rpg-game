@@ -14,6 +14,7 @@ import { createGame, createFixtureOpeningSource } from "./createGame";
 import { asGameId } from "./server/persistence/gameRepository";
 import { projectGameSessionView } from "./gameSessionView";
 import { rebuildEpisodicMemory } from "@/game/domain/episodicMemory";
+import { retryNarrativeGeneration } from "./retryNarrativeGeneration";
 
 const GENERATION: GenerationMetadata = {
   generationId: "gen_test" as never,
@@ -142,6 +143,27 @@ function createInMemoryRepo(record: GameRecord | null): { repo: GameRepository; 
 }
 
 describe("generatePendingNarrativeBundle", () => {
+  it("persists the final cause and delivers it to the same job on manual retry", async () => {
+    const job = { ...createPendingJob(), generationKind: "npc_fixed_choice" as const, sceneRequestKind: "npc_response" as const };
+    const { repo, getRecord } = createInMemoryRepo({
+      gameId: asGameId("manual-repair"), worldState: createMinimalWorldState(),
+      storyState: createMinimalStoryState({ status: "provider_pending", mode: "ai", job, lastPresentedScene: null }),
+      revision: 0, createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    const generate = vi.fn<NarrativeBundleSource["generate"]>().mockResolvedValue({
+      ok: false, failure: { kind: "AI_RESPONSE_INVALID", phase: "scene" },
+      repairReason: "invalid_schema", repairDetail: "world_delta_invalid",
+    });
+    await generatePendingNarrativeBundle({ repository: repo, source: { generate }, now: () => "2026-01-01T00:00:00.000Z" });
+    expect(generate.mock.calls.map(([ctx]) => ctx.contentRepair?.attempt)).toEqual([undefined, 1, 2, 3]);
+    expect(getRecord()?.storyState.narrative).toMatchObject({ status: "provider_failed", failure: { reason: "invalid_schema:world_delta_invalid" } });
+    const retry = await retryNarrativeGeneration(repo, asGameId("manual-repair"), () => "2026-01-01T00:00:00.000Z");
+    expect(retry).toMatchObject({ ok: true, result: "requeued" });
+    generate.mockClear();
+    await generatePendingNarrativeBundle({ repository: repo, source: { generate }, now: () => "2026-01-01T00:00:00.000Z", auditLink: { retry: { origin: "manual_failed_job", mechanism: "initial", attempt: 0 } } });
+    expect(generate.mock.calls[0]?.[0]).toMatchObject({ job, contentRepair: { reason: "invalid_schema:world_delta_invalid" }, auditLink: { retry: { origin: "manual_failed_job", reason: "invalid_schema:world_delta_invalid" } } });
+    expect(generate.mock.calls.map(([ctx]) => ctx.contentRepair?.attempt)).toEqual([1, 2, 3, 4]);
+  });
   it("returns NOT_PENDING when narrative is not provider_pending", async () => {
     const worldState = createMinimalWorldState();
     const storyState = createMinimalStoryState({
@@ -223,14 +245,17 @@ describe("generatePendingNarrativeBundle", () => {
     });
 
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.code).toBe("AI_RESPONSE_INVALID");
+    if (!result.ok) expect(result.code).toBe("AI_CALL_FAILED");
     // Should have written provider_failed state
     expect(getApplyCount()).toBe(1);
     const record = getRecord();
     if (record) {
       expect(record.storyState.narrative).toMatchObject({ status: "provider_failed", job });
+      expect(record.storyState.narrative).toHaveProperty("failure.reason", "provider_failure");
       expect(record.worldState).toEqual(worldState);
     }
+    const contexts = vi.mocked(source.generate).mock.calls.map(([context]) => context);
+    expect(contexts.slice(1).map((context) => context.contentRepair?.reason)).toEqual(["provider_failure", "provider_failure", "provider_failure"]);
   });
 
   it("reports CAS conflict instead of claiming that the retryable failure was saved", async () => {

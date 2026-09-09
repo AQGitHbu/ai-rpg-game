@@ -1,6 +1,6 @@
 import type { AiTransport, AiTransportConfig } from "@ai-game/ai-transport";
 import type { GameLogger } from "@/game/logging";
-import type { WorldEvolutionContentRepair, WorldEvolutionRepairReason, WorldEvolutionSource, WorldEvolutionSourceContext, WorldEvolutionSourceResult } from "../../worldEvolutionSource";
+import type { WorldEvolutionRepairReason, WorldEvolutionSource, WorldEvolutionSourceContext, WorldEvolutionSourceResult } from "../../worldEvolutionSource";
 import type { WorldDeltaProposal, DynamicLocationPlacement } from "@/game/domain/worldDelta";
 import type { WorldState, InvestigationApproach } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
@@ -8,7 +8,7 @@ import type { GameTypeId } from "@/game/domain/newGame";
 import { createRpgAiClient, RPG_AI_DEFAULT_POLICIES, type RpgAiClient } from "./rpgAiClient";
 import type { ProviderJsonMode } from "./providerRequestOptions";
 import { classifyAiFailure, transportFailureCodeToCategory } from "../../aiGenerationFailure";
-import type { AiGenerationFailure } from "@/game/domain/narrativeGenerationFailure";
+import { createAiSourceFailure, aiRepairAuditContext } from "../../aiGenerationRetry";
 import { compileWorldNarrativeContext } from "./narrativeContext";
 import type { NarrativePromptCompilation } from "./narrativeContext";
 import { parseStructuredJsonObject } from "@/game/core/json";
@@ -356,25 +356,11 @@ export function createLiveWorldEvolutionSource(deps: WorldEvolutionLiveDeps): Wo
     category: Parameters<typeof classifyAiFailure>[0]["category"],
     repairReason?: WorldEvolutionRepairReason,
   ): WorldEvolutionSourceResult => {
-    const failure: AiGenerationFailure = classifyAiFailure({ phase: "world", category });
-    logger?.warn("world_evolution_failed", { category, kind: failure.kind });
-    return repairReason === undefined
-      ? { ok: false, failure }
-      : { ok: false, failure, repairReason };
+    const result = createAiSourceFailure("world", category, repairReason);
+    logger?.warn("world_evolution_failed", { category, kind: result.failure.kind });
+    return result;
   };
 
-  /**
-   * 审计 reason：审批拒绝用 `approval_rejected:<code>` 保留稳定 code，
-   * 其余直接使用解析器稳定原因。该字符串只进审计/诊断字段，不进玩家可见正文。
-   */
-  function repairAuditReason(repair: WorldEvolutionContentRepair): string {
-    if (repair.reason === "approval_rejected") {
-      return repair.approvalCode === undefined
-        ? "approval_rejected"
-        : `approval_rejected:${repair.approvalCode}`;
-    }
-    return repair.reason;
-  }
 
   return {
     async propose(ctx) {
@@ -391,14 +377,7 @@ export function createLiveWorldEvolutionSource(deps: WorldEvolutionLiveDeps): Wo
         // JSON 不再重复相同请求，避免 provider reasoning 失败时重复计费。
         // content repair（由 application 层控制预算）通过 retry.origin/mechanism
         // 标记为 content_repair，传输层 only 保留 origin/mechanism/attempt/reason。
-        const repairRetry = ctx.contentRepair === undefined
-          ? undefined
-          : {
-              origin: ctx.auditLink?.retry?.origin ?? "normal",
-              mechanism: "content_repair" as const,
-              attempt: ctx.contentRepair.attempt,
-              reason: repairAuditReason(ctx.contentRepair),
-            };
+        const repairRetry = ctx.contentRepair === undefined ? undefined : aiRepairAuditContext(ctx.contentRepair, ctx.auditLink?.retry);
         const result = await aiClient.complete("world", messages, {
           purpose: "world_evolution",
           trigger: ctx.reason,

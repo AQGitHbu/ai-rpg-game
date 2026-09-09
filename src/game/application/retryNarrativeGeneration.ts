@@ -1,3 +1,4 @@
+import { repairFromSourceFailure } from "./aiGenerationRetry";
 import type { GameId } from "./server/persistence/gameRepository";
 import type { GameRepository } from "./server/persistence/gameRepository";
 import { commitState } from "./stateCommit";
@@ -30,8 +31,7 @@ export async function retryNarrativeGeneration(
 
   // 同一个 failed job 的下一次生成必须知道上一次失败的稳定原因；
   // 旧存档没有 reason 时使用安全兜底，仍保证一次自动内容修复预算。
-  const repairReason = generation.failure.reason
-    ?? (generation.failure.kind === "AI_RESPONSE_INVALID" ? "invalid_schema" : "provider_failure");
+  const repairReason = repairFromSourceFailure({ ok: false, failure: generation.failure, repairReason: generation.failure.reason }, 1).reason;
 
   const committed = await commitState(repository, {
     gameId,

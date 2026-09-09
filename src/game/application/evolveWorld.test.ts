@@ -99,7 +99,7 @@ describe("evolveWorld content repair 重试", () => {
     expect(source.propose).toHaveBeenCalledTimes(2);
     const secondCtx = (source.propose as ReturnType<typeof vi.fn>).mock.calls[1]![0] as { readonly contentRepair?: unknown };
     expect(secondCtx.contentRepair).toEqual({
-      attempt: 1, reason: "approval_rejected", approvalCode: "invalid_location_ref",
+      attempt: 1, reason: "approval_rejected", rejectionCode: "invalid_location_ref",
     });
     expect(result.ok).toBe(true);
   });
@@ -123,7 +123,7 @@ describe("evolveWorld content repair 重试", () => {
     expect(source.propose).toHaveBeenCalledTimes(2);
     const secondCtx = (source.propose as ReturnType<typeof vi.fn>).mock.calls[1]![0] as { readonly contentRepair?: unknown };
     expect(secondCtx.contentRepair).toEqual({
-      attempt: 1, reason: "approval_rejected", approvalCode: "duplicate_name",
+      attempt: 1, reason: "approval_rejected", rejectionCode: "duplicate_name",
     });
     expect(result.ok).toBe(true);
   });

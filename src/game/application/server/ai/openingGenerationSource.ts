@@ -1,3 +1,4 @@
+import { createAiSourceFailure } from "../../aiGenerationRetry";
 import type { AiTransport, AiTransportConfig } from "@ai-game/ai-transport";
 import type { GameLogger } from "@/game/logging";
 import type { OpeningGenerationSource } from "../../createGame";
@@ -286,7 +287,7 @@ export function createOpeningGenerationSource(
     : undefined);
 
   const failOpening = (category: Parameters<typeof classifyAiFailure>[0]["category"]): AiGenerationError => {
-    const failure = classifyAiFailure({ phase: "opening", category });
+    const { failure } = createAiSourceFailure("opening", category);
     return new AiGenerationError(failure.kind, "opening", `opening generation failed: ${category}`);
   };
 

@@ -1,4 +1,5 @@
 import type { NarrativeBundleSourceContext } from "../../narrativeBundleSource";
+import { renderAiRepairFeedback } from "../../aiGenerationRetry";
 import { buildStylePolicy } from "../../stylePolicy";
 
 type OpeningContext = Extract<NarrativeBundleSourceContext, { readonly kind: "opening" }>;
@@ -32,7 +33,7 @@ export function buildOpeningNarrativePrompt(context: OpeningContext): string {
   return `你是 RPG 的叙事 AI。一次调用生成贴合玩家设定的初始历史、当前局面和第一处正式对话决策；不得要求第二次初始化调用。
 ${context.contentRepair === undefined ? "" : `
 # 上次生成的拒绝原因
-${context.contentRepair.reason}: ${context.contentRepair.detail ?? context.contentRepair.reason}
+${renderAiRepairFeedback(context.contentRepair)}
 请依据下面的精确契约修复并重新输出完整 JSON。opening_INVALID_FACT 时检查 publicFacts 和 investigationApproaches 对象字段；invalid_response_reference 时检查 situation 引用、公开权限和 npcConnection：stranger 必须 neutral 且 basisHistoryKeys=[]，不能因为初见时的戒备表情改成 wary；情绪可由 npcLine.emotion=guarded 表达。
 `}
 

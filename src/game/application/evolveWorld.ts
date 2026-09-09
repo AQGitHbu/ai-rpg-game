@@ -1,3 +1,4 @@
+import { repairFromSourceFailure } from "./aiGenerationRetry";
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { Action } from "@/game/domain/action";
@@ -115,7 +116,7 @@ export async function evolveWorld(input: EvolveWorldInput): Promise<EvolveWorldR
             return {
               ok: false,
               retryable: true,
-              reason: { attempt: 1, reason: sourceResult.repairReason },
+              reason: { ...repairFromSourceFailure(sourceResult, attempt), reason: sourceResult.repairReason },
             };
           }
           return { ok: false, retryable: false, reason: repair ?? { attempt: 1, reason: "invalid_schema" } };
@@ -148,8 +149,8 @@ export async function evolveWorld(input: EvolveWorldInput): Promise<EvolveWorldR
             failure: { kind: "AI_RESPONSE_INVALID", phase: "world" },
           };
           return attempt === 1
-            ? { ok: false, retryable: true, reason: { attempt: 1, reason: "approval_rejected", approvalCode: approval.code } }
-            : { ok: false, retryable: false, reason: repair ?? { attempt: 1, reason: "approval_rejected", approvalCode: approval.code } };
+            ? { ok: false, retryable: true, reason: { attempt: 1, reason: "approval_rejected", rejectionCode: approval.code } }
+            : { ok: false, retryable: false, reason: repair ?? { attempt: 1, reason: "approval_rejected", rejectionCode: approval.code } };
         }
 
         const delta = materializeWorldDelta({

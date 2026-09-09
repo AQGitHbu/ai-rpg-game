@@ -1,3 +1,4 @@
+import { repairFromSourceFailure, aiRepairAuditContext } from "./aiGenerationRetry";
 import type { GameRepository } from "./server/persistence/gameRepository";
 import type { GameId } from "./server/persistence/gameRepository";
 import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
@@ -281,24 +282,10 @@ export async function createGame(
 
   const recentHistory = [...historyResult.records];
   const rejectedCandidates: OpeningNoveltyRecord[] = [];
-  const prepareCandidate = (generated: OpeningGenerationCandidate) => {
-    const parsed = parseOpeningGenerationCandidate(generated);
-    if (!parsed.ok) return null;
-
-    const validated = validateOpeningGenerationCandidate(parsed.value, {
-      gameLength: input.gameLength,
-      targetActs: TARGET_ACTS[input.gameLength],
-    });
-    if (!validated.ok) return null;
-
-    return validated.validated;
-  };
   let lastFailureKind: AiFailureKind | undefined;
-  let contentRepair: NarrativeBundleRepair | undefined;
   // The logical initialization job exists before the first provider attempt so
   // novelty/content/transport retries share the same audit identity.
   const jobId = asNarrativeJobId(`job_${input.seed}_0`);
-  type OpeningAttemptReason = "source_error" | "empty_candidate" | "invalid_candidate" | "novelty_conflict";
   const bounded = await runBoundedAttempts<
     {
       readonly candidate: OpeningGenerationCandidate;
@@ -308,11 +295,12 @@ export async function createGame(
       readonly worldState: ReturnType<typeof compileOpeningGenerationCandidate>["worldState"];
       readonly storyState: ReturnType<typeof compileOpeningGenerationCandidate>["storyState"];
     },
-    OpeningAttemptReason
+    NarrativeBundleRepair
   >({
     maxAttempts: MAX_OPENING_GENERATION_ATTEMPTS,
-    runAttempt: async (attempt) => {
+    runAttempt: async (attempt, priorRepair) => {
       const openingAttempt = attempt - 1;
+      const contentRepair = priorRepair === undefined ? undefined : { ...priorRepair, attempt: openingAttempt };
       let generated: OpeningGenerationCandidate;
       let generatedProposal: OpeningNarrativeBundleProposal;
       try {
@@ -343,28 +331,35 @@ export async function createGame(
             gameId: String(input.gameId),
             jobId: String(jobId),
             turnNumber: 0,
-            retry: { origin: "normal", mechanism: openingAttempt === 0 ? "initial" : "content_repair", attempt: openingAttempt },
+            retry: contentRepair === undefined ? { origin: "normal", mechanism: "initial", attempt: 0 } : aiRepairAuditContext(contentRepair, deps.auditLink?.retry),
           },
         });
+        if (result == null) {
+          lastFailureKind = "AI_RESPONSE_INVALID";
+          return { ok: false, retryable: true, reason: { attempt, reason: "invalid_schema", detail: "invalid_source_result" } };
+        }
         if (!result.ok || result.kind !== "opening") {
           lastFailureKind = result.ok ? "AI_RESPONSE_INVALID" : result.failure.kind;
-          contentRepair = !result.ok && result.repairReason !== undefined
-            ? { attempt: 1, reason: result.repairReason, ...(result.repairDetail === undefined ? {} : { detail: result.repairDetail }) }
-            : undefined;
-          return { ok: false, retryable: true, reason: "source_error" as const };
+          return { ok: false, retryable: true, reason: result.ok
+            ? { attempt, reason: "invalid_schema", detail: "unexpected_source_kind" }
+            : repairFromSourceFailure(result, attempt) };
         }
         generated = result.proposal.opening;
         generatedProposal = result.proposal;
-        contentRepair = undefined;
       } catch (error) {
-        contentRepair = undefined;
-        if (error instanceof AiGenerationError) lastFailureKind = error.kind;
-        return { ok: false, retryable: true, reason: "source_error" as const };
+        lastFailureKind = error instanceof AiGenerationError ? error.kind : "AI_CALL_FAILED";
+        return { ok: false, retryable: true, reason: repairFromSourceFailure({
+          ok: false, failure: { kind: lastFailureKind, phase: "opening" }, repairDetail: "source_exception",
+        }, attempt) };
       }
-      if (!generated) return { ok: false, retryable: true, reason: "empty_candidate" as const };
+      if (!generated) return { ok: false, retryable: true, reason: { attempt, reason: "invalid_schema", detail: "empty_candidate" } };
 
-      const candidate = prepareCandidate(generated);
-      if (candidate === null) return { ok: false, retryable: true, reason: "invalid_candidate" as const };
+      lastFailureKind = "AI_RESPONSE_INVALID";
+      const parsed = parseOpeningGenerationCandidate(generated);
+      if (!parsed.ok) return { ok: false, retryable: true, reason: { attempt, reason: "invalid_schema", detail: parsed.code } };
+      const validated = validateOpeningGenerationCandidate(parsed.value, { gameLength: input.gameLength, targetActs: TARGET_ACTS[input.gameLength] });
+      if (!validated.ok) return { ok: false, retryable: true, reason: { attempt, reason: "approval_rejected", detail: validated.issues.map((issue) => issue.code).join("|") } };
+      const candidate = validated.validated;
 
       // Compile this exact candidate into an in-memory preview before any
       // novelty decision. The preview is the state that will be persisted.
@@ -374,7 +369,7 @@ export async function createGame(
         jobId,
         deps.aiEnabled === false ? "offline" : "ai",
       );
-      if (narrative === null) return { ok: false, retryable: true, reason: "invalid_candidate" as const };
+      if (narrative === null) return { ok: false, retryable: true, reason: { attempt, reason: "invalid_schema", detail: "opening_scene_invalid" } };
       const generation = {
         generationId: asGenerationId(`gen_${input.seed}`),
         seed: input.seed,
@@ -391,7 +386,7 @@ export async function createGame(
         initialNarrative: narrative,
       });
       if (!approveOpeningSpeech(narrative, preview.worldState)) {
-        return { ok: false, retryable: true, reason: "invalid_candidate" as const };
+        return { ok: false, retryable: true, reason: { attempt, reason: "approval_rejected", detail: "opening_speech_rejected" } };
       }
 
       const comparableHistory = [...recentHistory, ...rejectedCandidates];
@@ -402,7 +397,7 @@ export async function createGame(
       });
       if (isOpeningTooSimilar(novelty, comparableHistory)) {
         rejectedCandidates.push(novelty);
-        return { ok: false, retryable: true, reason: "novelty_conflict" as const };
+        return { ok: false, retryable: true, reason: { attempt, reason: "approval_rejected", detail: "novelty_conflict" } };
       }
       return {
         ok: true,

@@ -109,7 +109,7 @@ describe("createGame", () => {
     expect(contexts).toHaveLength(3);
     expect(contexts[0]).not.toHaveProperty("contentRepair");
     expect(contexts[1]).toHaveProperty("contentRepair", { attempt: 1, reason: "invalid_schema", detail: "opening_INVALID_FACT" });
-    expect(contexts[2]).toHaveProperty("contentRepair", { attempt: 1, reason: "invalid_schema", detail: "invalid_response_reference" });
+    expect(contexts[2]).toHaveProperty("contentRepair", { attempt: 2, reason: "invalid_schema", detail: "invalid_response_reference" });
     expect(getRecord()).not.toBeNull();
   });
   it("authority-rejects an opening line that cites the NPC's undisclosed fact before persistence", async () => {

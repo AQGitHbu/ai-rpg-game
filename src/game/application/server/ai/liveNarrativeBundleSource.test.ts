@@ -713,8 +713,9 @@ describe("createNarrativeBundleSource", () => {
 
     const messages = complete.mock.calls[0]![1] as readonly AiMessage[];
     const systemPrompt = messages[0]!.content as string;
-    expect(systemPrompt).toContain("上一轮提案已被服务端拒绝");
-    expect(systemPrompt).toContain("拒绝码 world_delta_rejected，细分原因 duplicate_name:enemy:蒙面劫匪|item:旧令牌");
+    expect(systemPrompt).toContain("上一轮生成未完成");
+    expect(systemPrompt).toContain("拒绝码=world_delta_rejected");
+    expect(systemPrompt).toContain("细分原因=duplicate_name:enemy:蒙面劫匪|item:旧令牌");
     expect(systemPrompt).toContain("上一轮新enemy名称“蒙面劫匪”已与世界中现有实体重复");
     expect(systemPrompt).toContain("上一轮新item名称“旧令牌”已与世界中现有实体重复");
   });
@@ -740,7 +741,7 @@ describe("createNarrativeBundleSource", () => {
 
     const messages = complete.mock.calls[0]![1] as readonly AiMessage[];
     const systemPrompt = messages[0]!.content as string;
-    expect(systemPrompt).toContain("细分原因 terminal_step_requires_two_choices（步骤 battle_resolved:victory:enemy_dyn_3）");
+    expect(systemPrompt).toContain("细分原因=terminal_step_requires_two_choices（步骤 battle_resolved:victory:enemy_dyn_3）");
     expect(systemPrompt).toContain("终点步骤（terminal.target.stepKey 指向的那一步）必须给出该步骤列出的全部 candidateId 选项");
   });
 

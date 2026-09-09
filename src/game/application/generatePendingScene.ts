@@ -1,3 +1,4 @@
+import { repairFromSourceFailure, aiRepairAuditContext } from "./aiGenerationRetry";
 import type { GameRepository, GameRecord } from "./server/persistence/gameRepository";
 import type { AiTextAuditRecorder, AiTextAuditLink } from "./server/ai/textAuditTypes";
 import type { SceneSource, ScenePerformanceProposal } from "./sceneSource";
@@ -55,12 +56,7 @@ function buildAuditedSceneGenerationContext(
     : { attempt: retryContext.attempt, reason: retryContext.reason };
   const retry = retryContext === undefined
     ? auditLink?.retry
-    : {
-        origin: auditLink?.retry?.origin ?? "normal",
-        mechanism: "content_repair" as const,
-        attempt: retryContext.attempt,
-        reason: retryContext.reason,
-      };
+    : aiRepairAuditContext(retryContext, auditLink?.retry);
   return {
     ...context,
     ...(repairAttempt === undefined ? {} : { repairAttempt }),
@@ -84,12 +80,7 @@ function withSceneRepairContext<TContext extends ReturnType<typeof buildAuditedS
     repairAttempt,
     auditLink: {
       ...context.auditLink,
-      retry: {
-        origin: context.auditLink?.retry?.origin ?? "normal",
-        mechanism: "content_repair",
-        attempt: repairAttempt.attempt,
-        reason: repairAttempt.reason,
-      },
+      retry: aiRepairAuditContext(repairAttempt, context.auditLink?.retry),
     },
   } as TContext;
 }
@@ -315,8 +306,7 @@ export async function generatePendingScene(
         return { ok: false, retryable: false, reason: "source_exception" };
       }
       if (!sceneResult.ok) {
-        const reason = sceneResult.repairReason
-          ?? (sceneResult.failure.kind === "AI_CALL_FAILED" ? "provider_failure" : "invalid_schema");
+        const { reason } = repairFromSourceFailure(sceneResult, attempt);
         terminalFailure = sceneFailure(sceneResult.failure.kind, reason);
         return {
           ok: false,

@@ -4,6 +4,7 @@ import {
   createRpgAiClient,
   createServerRpgAiClient,
   RPG_AI_DEFAULT_POLICIES,
+  RPG_AI_ROLES,
   resolveRpgAiThinkingRoles,
 } from "./rpgAiClient";
 import type { AiTextAuditRecorder, AiTextAuditPayload } from "./textAuditTypes";
@@ -32,6 +33,16 @@ function fakeRecorder(): AiTextAuditRecorder & { records: AiTextAuditPayload[] }
 }
 
 describe("createRpgAiClient", () => {
+  it.each(RPG_AI_ROLES)("records the previous transport cause for %s without altering messages", async (role) => {
+    const audit = fakeRecorder();
+    const complete = vi.fn().mockResolvedValueOnce({ ok: false, code: "rate_limited", retryable: true, latencyMs: 1 }).mockResolvedValueOnce({ ok: true, content: "{}", latencyMs: 1 });
+    const client = createRpgAiClient({ transport: transportFor(complete), config, auditRecorder: audit });
+    await client.complete(role, messages);
+    expect(complete).toHaveBeenCalledTimes(2);
+    expect(complete.mock.calls[0]?.[1]).toEqual(messages);
+    expect(complete.mock.calls[1]?.[1]).toEqual(messages);
+    expect(audit.records[1]).toMatchObject({ context: { retry: { mechanism: "transport", attempt: 2, reason: "rate_limited" } } });
+  });
   it("has explicit off thinking policies and role-specific budgets", () => {
     expect(RPG_AI_DEFAULT_POLICIES.intent).toMatchObject({ thinking: "off", maxTokens: 320, maxAttempts: 2 });
     expect(RPG_AI_DEFAULT_POLICIES.scene).toMatchObject({ thinking: "off", maxTokens: 3_000, maxAttempts: 2 });
