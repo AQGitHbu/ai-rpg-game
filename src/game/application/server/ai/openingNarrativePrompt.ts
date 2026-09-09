@@ -30,6 +30,11 @@ export function buildOpeningNarrativePrompt(context: OpeningContext): string {
     : novelty.map((summary, index) => `- 最近 ${index + 1}：${summary}`).join("\n");
 
   return `你是 RPG 的叙事 AI。一次调用生成贴合玩家设定的初始历史、当前局面和第一处正式对话决策；不得要求第二次初始化调用。
+${context.contentRepair === undefined ? "" : `
+# 上次生成的拒绝原因
+${context.contentRepair.reason}: ${context.contentRepair.detail ?? context.contentRepair.reason}
+请依据下面的精确契约修复并重新输出完整 JSON。opening_INVALID_FACT 时检查 publicFacts 和 investigationApproaches 对象字段；invalid_response_reference 时检查 situation 引用、公开权限和 npcConnection：stranger 必须 neutral 且 basisHistoryKeys=[]，不能因为初见时的戒备表情改成 wary；情绪可由 npcLine.emotion=guarded 表达。
+`}
 
 # 玩家开局输入（最高优先级）
 - 题材：${input.gameType}
@@ -65,6 +70,7 @@ ${noveltyLines}
 
 # opening 精确契约
 - world 只能含 summary、tone、themes、publicFacts。publicFacts 每项含 key、text，可选 investigationApproaches；事实 key 必须唯一。
+- investigationApproaches 不需要时省略或为 []；非空时必须是 2–3 项对象数组，不能是字符串数组。每项精确包含 approachId、label、evidenceQuality、tensionDelta，可选 hint；approachId 非空且列表内唯一，label 和提供的 hint 非空且不能包含完整事实正文；evidenceQuality 只能为 clean 或 noisy，tensionDelta 必须为 [-5,20] 内的有限数值。无法完整提供时省略该可选字段。
 - player 必须是 {"name":"...","identity":"...","backgroundSummary":"...","baseStats":{"hp":100,"attack":10,"defense":5}}。name、identity 和 backgroundSummary 必须保留玩家输入的含义，不擅自补写玩家未做过的承诺或行动。
 - prologue 为简短字符串。
 - storyContract 必须是 {"version":1,"targetActs":${targetActs},"centralConflict":"...","endingDirections":[{"key":"trust","theme":"..."},{"key":"doubt","theme":"..."}]}。

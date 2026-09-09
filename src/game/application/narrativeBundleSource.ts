@@ -65,6 +65,7 @@ export type NarrativeBundleSourceContext =
     readonly jobId: NarrativeJobId;
     readonly input: OpeningGenerationInput;
     readonly auditLink?: AiTextAuditLink;
+    readonly contentRepair?: NarrativeBundleRepair;
   }
   | {
     readonly kind: "decision";

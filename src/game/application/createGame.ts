@@ -3,7 +3,7 @@ import type { GameId } from "./server/persistence/gameRepository";
 import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
 import type { NarrativeRuntimeState, NarrativeSceneState } from "@/game/domain/narrative";
 import type { WorldState } from "@/game/domain/worldState";
-import type { NarrativeBundleSource, OpeningNarrativeBundleProposal } from "./narrativeBundleSource";
+import type { NarrativeBundleSource, NarrativeBundleRepair, OpeningNarrativeBundleProposal } from "./narrativeBundleSource";
 import type { GameTypeId, GameLength, GameSetup, NewGameInput } from "@/game/domain/newGame";
 import { validateNewGameInput } from "@/game/domain/newGame";
 import type { OpeningGenerationCandidate } from "@/game/domain/openingGenerationCandidate";
@@ -294,6 +294,7 @@ export async function createGame(
     return validated.validated;
   };
   let lastFailureKind: AiFailureKind | undefined;
+  let contentRepair: NarrativeBundleRepair | undefined;
   // The logical initialization job exists before the first provider attempt so
   // novelty/content/transport retries share the same audit identity.
   const jobId = asNarrativeJobId(`job_${input.seed}_0`);
@@ -318,6 +319,7 @@ export async function createGame(
         const result = await deps.source.generate({
           kind: "opening",
           jobId,
+          ...(contentRepair === undefined ? {} : { contentRepair }),
           input: {
             gameType: input.gameType,
             seed: input.seed,
@@ -346,11 +348,16 @@ export async function createGame(
         });
         if (!result.ok || result.kind !== "opening") {
           lastFailureKind = result.ok ? "AI_RESPONSE_INVALID" : result.failure.kind;
+          contentRepair = !result.ok && result.repairReason !== undefined
+            ? { attempt: 1, reason: result.repairReason, ...(result.repairDetail === undefined ? {} : { detail: result.repairDetail }) }
+            : undefined;
           return { ok: false, retryable: true, reason: "source_error" as const };
         }
         generated = result.proposal.opening;
         generatedProposal = result.proposal;
+        contentRepair = undefined;
       } catch (error) {
+        contentRepair = undefined;
         if (error instanceof AiGenerationError) lastFailureKind = error.kind;
         return { ok: false, retryable: true, reason: "source_error" as const };
       }

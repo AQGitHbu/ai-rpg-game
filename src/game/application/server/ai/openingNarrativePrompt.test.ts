@@ -37,6 +37,15 @@ function openingContext(): Extract<NarrativeBundleSourceContext, { kind: "openin
 }
 
 describe("buildOpeningNarrativePrompt", () => {
+  it("explains structured investigation approaches and includes the last rejection", () => {
+    const context = { ...openingContext(), contentRepair: { attempt: 1 as const, reason: "invalid_schema" as const, detail: "opening_INVALID_FACT" } };
+    const prompt = buildOpeningNarrativePrompt(context);
+    expect(prompt).toContain("opening_INVALID_FACT");
+    expect(prompt).toContain("approachId");
+    expect(prompt).toContain("evidenceQuality");
+    expect(prompt).toContain("tensionDelta");
+    expect(prompt).toContain("不能是字符串数组");
+  });
   it("preserves full player setup and uses only the latest three novelty summaries", () => {
     const prompt = buildOpeningNarrativePrompt(openingContext());
 

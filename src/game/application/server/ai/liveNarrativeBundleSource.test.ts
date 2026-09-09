@@ -1228,6 +1228,8 @@ describe("createNarrativeBundleSource", () => {
     };
     const mutations: readonly ((payload: typeof basePayload) => void)[] = [
       (payload) => { delete (payload.opening.opening as unknown as Record<string, unknown>).situation; },
+      (payload) => { (payload.opening.world.publicFacts[0] as unknown as Record<string, unknown>).investigationApproaches = ["细看告示", "打听来历"]; },
+      (payload) => { (payload.opening.opening.situation as unknown as Record<string, unknown>).npcConnection = { familiarity: "stranger", stance: "wary", basisHistoryKeys: [] }; },
       (payload) => { (payload.opening.opening.situation.responses[0] as { topic: { key: string } }).topic.key = "unknown_fact"; },
       (payload) => { (payload.currentScene.choices[0] as { candidateId: string }).candidateId = "unknown_response"; },
     ];
@@ -1242,6 +1244,7 @@ describe("createNarrativeBundleSource", () => {
         input: { gameType: "wuxia", gameLength: "short", seed: "opening-live-invalid-situation" },
       });
       expect(result).toMatchObject({ ok: false, failure: { kind: "AI_RESPONSE_INVALID" } });
+      expect(result).toHaveProperty("repairDetail", expect.any(String));
       expect(complete).toHaveBeenCalledTimes(1);
     }
   });

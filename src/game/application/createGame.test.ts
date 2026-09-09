@@ -86,6 +86,32 @@ function structuralSignature(record: GameRecord) {
 }
 
 describe("createGame", () => {
+  it("passes the latest schema rejection into the next opening attempt before saving", async () => {
+    const { repo, getRecord } = createInMemoryRepo();
+    const fixture = createFixtureOpeningSource();
+    const contexts: NarrativeBundleSourceContext[] = [];
+    const result = await createGame(
+      { gameId: asGameId("schema-repair"), gameType: "wuxia", gameLength: "short", seed: "schema-repair" },
+      { repository: repo, now: () => "2026-09-09", source: {
+        async generate(context) {
+          contexts.push(context);
+          expect(getRecord()).toBeNull();
+          if (contexts.length <= 2) return {
+            ok: false, failure: { kind: "AI_RESPONSE_INVALID", phase: "opening" },
+            repairReason: "invalid_schema",
+            repairDetail: contexts.length === 1 ? "opening_INVALID_FACT" : "invalid_response_reference",
+          };
+          return fixture.generate(context);
+        },
+      } },
+    );
+    expect(result.ok).toBe(true);
+    expect(contexts).toHaveLength(3);
+    expect(contexts[0]).not.toHaveProperty("contentRepair");
+    expect(contexts[1]).toHaveProperty("contentRepair", { attempt: 1, reason: "invalid_schema", detail: "opening_INVALID_FACT" });
+    expect(contexts[2]).toHaveProperty("contentRepair", { attempt: 1, reason: "invalid_schema", detail: "invalid_response_reference" });
+    expect(getRecord()).not.toBeNull();
+  });
   it("authority-rejects an opening line that cites the NPC's undisclosed fact before persistence", async () => {
     const { repo: repository } = createInMemoryRepo();
     const fixture = createFixtureOpeningSource();

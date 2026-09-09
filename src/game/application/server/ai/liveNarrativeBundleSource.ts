@@ -503,7 +503,7 @@ export function createNarrativeBundleSource(
         const openingResult = parseOpeningBundleProposal(parsed.value, context.input.gameLength === "medium" ? 5 : 3);
         if (!openingResult.ok) {
           logger?.warn(`narrative_bundle_invalid_opening_schema_${openingResult.reason}`);
-          return failBundle("invalid_schema", "invalid_schema");
+          return failBundle("invalid_schema", "invalid_schema", openingResult.reason);
         }
         return { ok: true, kind: "opening", proposal: openingResult.proposal };
       } catch (error) {

@@ -10,6 +10,7 @@
 
 - 生产 provider 只有 `initialization`、`narrative_choice`、`npc_free_text` 三类触发。开局由 opening source 直接编译为 ready；正式选择和焦点 NPC 自定义输入进入 pending job。
 - 初始化由唯一的 `buildOpeningNarrativePrompt` 传入完整 `GameSetup`、叙事风格策略和最多三条近期 novelty 摘要；玩家设定优先于 novelty。开局 source 与后续叙事共用生产 `RpgAiClient`、transport 策略和 application 审批，不增加质量评审 provider 调用。
+- 初始化最多三次完整尝试；source 的结构解析失败通过 `repairReason`、`repairDetail` 传到下一次 opening context 的 `contentRepair`，prompt 点明上一轮稳定拒绝原因。调查方式须符合对象数组契约，陌生人关系仍要求 neutral 且无历史依据；格式或关系失败不靠补造字段放行。
 - `NarrativeBundleSource.generate` 一次返回原子提案：可选 `worldDelta`、`currentScene`、`continuationScenes` 和 `terminal`。生产续接图唯一存放在 `storyState.narrative.narrativeBundle`。
 - `generatePendingNarrativeBundle` 最多四次完整尝试。后续尝试携带稳定解析、引用或审批拒绝原因；仍失败则保留同一 `jobId` 的 `provider_failed`，由显式 `{ "retry": true }` 手动重试。
 - 成功路径是审批生成包、提交场景事件、重建记忆，再调用 `repository.applyState`。世界增量、ready scene、choice registry、bundle 和记忆在同一次 scene CAS 中写回。
