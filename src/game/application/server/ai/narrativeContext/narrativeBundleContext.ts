@@ -275,12 +275,19 @@ export function buildDecisionNarrativeContextBlocks(
         objectiveIndex: job.objectiveTransition.after.objectiveIndex,
         mode: "progress",
       });
+  const narrativeBeats = job.mandatoryBeats.filter((beat) => beat.beatId !== ATMOSPHERE_BEAT_ID);
   const beatLines = job.mandatoryBeats.map((beat) => {
     const requirement = beat.beatId === ATMOSPHERE_BEAT_ID
       ? "可选，可省略；若写，必须放在所有 segments 最后"
       : "必须覆盖，恰好一次";
     return `- beatId="${beat.beatId}"（${beat.kind}，${requirement}）：${beat.instruction}`;
   }).join("\n");
+  // 仅当「强制节拍只有可选 atmosphere」时收紧为单段契约；mandatoryBeats 为空不属于该场景。
+  const atmosphereOnly = narrativeBeats.length === 0
+    && job.mandatoryBeats.some((beat) => beat.beatId === ATMOSPHERE_BEAT_ID);
+  const segmentContract = atmosphereOnly
+    ? `本回合没有其他强制叙事节拍。currentScene.segments 可以省略；若返回，必须且只能包含一条氛围段，固定使用 beatId="${ATMOSPHERE_BEAT_ID}"；不得出现 dialogue、narration、response、player_utterance 或任何其他自造 beatId。`
+    : `本回合强制叙事节拍（currentScene.segments 的 beatId 只能是下列之一）：\n${beatLines || "（无；只允许可选 atmosphere）"}`;
   const utteranceBeat = job.mandatoryBeats.find((beat) => beat.kind === "player_utterance");
   const actionSummary = job.utterance !== undefined
     ? `玩家自定义输入：${job.utterance}`
@@ -340,7 +347,7 @@ export function buildDecisionNarrativeContextBlocks(
       id: "bundle:resolution", slot: "current_resolution", title: "当前已结算结果",
       authority: "state", retention: "mandatory", priority: 950,
       source: { kind: "pending_narrative_job", refs: [String(job.jobId)] },
-      content: `本回合强制叙事节拍（currentScene.segments 的 beatId 只能是下列之一）：\n${beatLines || "（无；只允许可选 atmosphere）"}\ncurrentScene.objectiveLink 必须严格为 ${expectedObjectiveLink}。${utteranceBeat === undefined ? "" : `\n存在 player_utterance 节拍：npcLine 必须为 npcId=\"${utteranceBeat.subjectIds[0] ?? ""}\" 的直接回应，answeredBeatIds 必须包含 \"${utteranceBeat.beatId}\"。`}${job.actionSummary.kind === "talk" && focusNpc !== undefined ? `\ncurrentScene.npcLine 必须是 ${focusNpc.name} 对本轮行动的第一人称直接回应，不能为 null。` : ""}${projection.dialogueFocusNpc === undefined ? "" : `\n当前决策点是 ${projection.dialogueFocusNpc.name} 的对话，currentScene.npcLine 必须提供其直接对白。`}`,
+      content: `${segmentContract}\ncurrentScene.objectiveLink 必须严格为 ${expectedObjectiveLink}。${utteranceBeat === undefined ? "" : `\n存在 player_utterance 节拍：npcLine 必须为 npcId=\"${utteranceBeat.subjectIds[0] ?? ""}\" 的直接回应，answeredBeatIds 必须包含 \"${utteranceBeat.beatId}\"。`}${job.actionSummary.kind === "talk" && focusNpc !== undefined ? `\ncurrentScene.npcLine 必须是 ${focusNpc.name} 对本轮行动的第一人称直接回应，不能为 null。` : ""}${projection.dialogueFocusNpc === undefined ? "" : `\n当前决策点是 ${projection.dialogueFocusNpc.name} 的对话，currentScene.npcLine 必须提供其直接对白。`}`,
     }),
     block({
       id: "bundle:location", slot: "current_location", title: "当前地点",

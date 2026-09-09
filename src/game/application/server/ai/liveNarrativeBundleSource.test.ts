@@ -602,6 +602,32 @@ describe("createNarrativeBundleSource", () => {
     expect(systemPrompt).toContain('"questId":"quest_0","objectiveIndex":1,"mode":"progress"');
   });
 
+  it("constrains dialogue-only turns to a single atmosphere segment", async () => {
+    const complete = vi.fn().mockResolvedValue({
+      ok: true,
+      content: JSON.stringify(validBundleResponse),
+    });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+
+    await source.generate({
+      kind: "decision",
+      worldState: makeWorldState(),
+      storyState: makeStoryState(),
+      job: {
+        ...makeJob(),
+        mandatoryBeats: [
+          { beatId: "atmosphere", kind: "atmosphere", subjectIds: [], instruction: "氛围描写（可选，放在最后）" },
+        ],
+      },
+    });
+
+    const systemPrompt = (complete.mock.calls[0]![1] as readonly AiMessage[])[0]!.content as string;
+    expect(systemPrompt).toContain("本回合没有其他强制叙事节拍");
+    expect(systemPrompt).toContain('currentScene.segments 可以省略；若返回，必须且只能包含一条氛围段，固定使用 beatId="atmosphere"');
+    expect(systemPrompt).toContain("不得出现 dialogue、narration、response、player_utterance");
+    expect(systemPrompt).not.toContain("currentScene.segments 的 beatId 只能是下列之一");
+  });
+
   it("projects the post-expansion arrival graph for a next-act response", async () => {
     const complete = vi.fn().mockResolvedValue({
       ok: true,
