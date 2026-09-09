@@ -390,6 +390,84 @@ describe("generatePendingNarrativeBundle", () => {
     expect(saved.storyState.memory).toEqual(rebuildEpisodicMemory(saved.worldState.eventLedger));
   });
 
+  it("事件账本提交失败时持久化独立稳定码，不伪装成审批拒绝", async () => {
+    const { repo, getRecord } = createInMemoryRepo(null);
+    const opening = await createGame(
+      { gameId: asGameId("event-commit-failure"), gameType: "wuxia", gameLength: "short", seed: "event-commit-failure" },
+      { repository: repo, source: createFixtureOpeningSource(), now: () => "2026-01-01", aiEnabled: true },
+    );
+    expect(opening.ok).toBe(true);
+    const initialized = getRecord();
+    if (initialized === null || initialized.storyState.narrative.status !== "ready") throw new Error("opening fixture missing");
+
+    const npc = initialized.worldState.npcs[0]!;
+    const quest = initialized.worldState.quests[0]!;
+    // 破坏账本序号连续性：审批不读严格账本解析，提交阶段才失败（INVALID_LEDGER）。
+    const corruptLedger = initialized.worldState.eventLedger.map((event, index) => ({ ...event, sequence: index + 7 }));
+    const pendingJob: PendingNarrativeJob = {
+      ...createPendingJob(),
+      domainEventIds: [initialized.worldState.eventLedger[0]!.eventId],
+      focusNpcId: npc.id,
+      actionSummary: { kind: "talk", npcId: npc.id },
+      objectiveTransition: {
+        before: { questId: quest.id, objectiveIndex: 0, label: "与 NPC 交谈" },
+        completed: [],
+        after: { questId: quest.id, objectiveIndex: 0, label: "与 NPC 交谈" },
+        mode: "unchanged",
+      },
+    };
+    const pendingWrite = await repo.applyState({
+      gameId: initialized.gameId,
+      expectedRevision: initialized.revision,
+      nextWorldState: { ...initialized.worldState, eventLedger: corruptLedger },
+      nextStoryState: {
+        ...initialized.storyState,
+        narrative: {
+          status: "provider_pending",
+          mode: "ai",
+          job: pendingJob,
+          lastPresentedScene: initialized.storyState.narrative.currentScene,
+        },
+      },
+    });
+    expect(pendingWrite.ok).toBe(true);
+
+    const source: NarrativeBundleSource = {
+      async generate() {
+        return {
+          ok: true,
+          kind: "decision",
+          proposal: {
+            worldDelta: null,
+            currentScene: {
+              segments: [{ beatId: "atmosphere", text: "老酒鬼放下酒坛，等你开口。" }],
+              npcLine: {
+                npcId: String(npc.id), text: "这件事不能在街上说。", emotion: "guarded",
+                answeredBeatIds: [], usedFactIds: [], usedEventIds: [],
+              },
+              objectiveLink: { questId: String(quest.id), objectiveIndex: 0, mode: "progress" },
+              choices: [
+                { candidateId: "current_scene_choice_1", label: "请他细说。" },
+                { candidateId: "current_scene_choice_2", label: "追问酒钱的缘由。" },
+              ],
+            },
+            continuationScenes: [],
+            terminal: { kind: "next_decision", target: { kind: "current_scene" } },
+          },
+        };
+      },
+    };
+
+    const generated = await generatePendingNarrativeBundle({ repository: repo, source, now: () => "2026-01-01" });
+    expect(generated).toEqual({ ok: false, code: "AI_RESPONSE_INVALID", failureKind: "AI_RESPONSE_INVALID" });
+    // 审批已通过：持久化独立稳定码，手动重试不会被"审批拒绝码"误导修复方向。
+    const narrative = getRecord()?.storyState.narrative;
+    expect(narrative).toMatchObject({
+      status: "provider_failed",
+      failure: { kind: "AI_RESPONSE_INVALID", reason: "invalid_schema:event_commit_failed", phase: "scene" },
+    });
+  });
+
   it("把审批拒绝码与理由带给第二次尝试，而不是泛化提示", async () => {
     const worldState = createMinimalWorldState();
     const job = createPendingJob();

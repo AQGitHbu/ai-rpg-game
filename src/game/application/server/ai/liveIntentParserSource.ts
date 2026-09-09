@@ -313,9 +313,9 @@ export function createLiveIntentParser(
                   kind: "free_text_action",
                   ...(targetNpcId === undefined ? {} : { targetNpcId: String(targetNpcId) }),
                 },
-                ...(priorReason === undefined
+                ...(repair === undefined
                   ? {}
-                  : { retry: aiRepairAuditContext(repair!) }),
+                  : { retry: aiRepairAuditContext(repair) }),
               },
             );
             if (!response.ok) {

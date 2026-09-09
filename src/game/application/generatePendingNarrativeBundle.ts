@@ -81,6 +81,8 @@ export async function generatePendingNarrativeBundle(
   const bounded = await runBoundedAttempts<ApprovedNarrativeBundle, NarrativeBundleRepair>({
     maxAttempts: MAX_NARRATIVE_BUNDLE_ATTEMPTS,
     runAttempt: async (attempt, priorRepair) => {
+      // 自动修复从 1 开始；本次循环若由手动重试启动，则以 retryContext
+      // 的首次修复序号为偏移。该偏移不代表之前多次手动重试的累计次数。
       const repairHint: NarrativeBundleRepair | undefined = attempt > 1 && priorRepair !== undefined
         ? { ...priorRepair, attempt: attempt - 1 + (narrative.retryContext?.attempt ?? 0) }
         : narrative.retryContext;
@@ -231,7 +233,11 @@ export async function generatePendingNarrativeBundle(
     entityStore: approved.nextWorldState.entityStore,
   });
   if (!eventCommit.ok) {
-    lastRepair = { attempt: 1, reason: "approval_rejected", detail: eventCommit.code.toLowerCase() };
+    // 审批已通过：事件账本提交失败是内容/基础设施契约问题，不是审批拒绝。
+    // 持久化独立稳定码，避免手动重试被"拒绝码"误导去修复已通过的内容；
+    // 同时覆盖 lastRepair，防止残留上一轮失败原因被错误归因。
+    deps.logger?.warn("narrative_bundle_event_commit_rejected", { code: eventCommit.code });
+    lastRepair = { attempt: 1, reason: "invalid_schema", detail: "event_commit_failed" };
     return failPendingJob();
   }
   const nextWorldState = { ...approved.nextWorldState, eventLedger: eventCommit.ledger };
