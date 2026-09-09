@@ -58,7 +58,7 @@
     "test:logs": "node --preserve-symlinks --test scripts/logs.node-test.mjs",
     "handoff:check:docs": "npm run check:docs && node scripts/checkHandoff.mjs",
     "handoff:check": "npm run check:docs && node scripts/checkHandoff.mjs --strict-branch",
-    "setup": "npm run env:bootstrap && npm run bootstrap:foundation && npm ci && npm run sync:standards && npm run doctor",
+    "setup": "npm run env:bootstrap && npm run bootstrap:foundation && npm ci --prefer-offline --no-audit --no-fund && npm run sync:standards && npm run doctor",
     "check:docs": "node scripts/checkDocs.mjs",
     "test:docs": "node --test scripts/checkDocs.node-test.mjs"
   },
