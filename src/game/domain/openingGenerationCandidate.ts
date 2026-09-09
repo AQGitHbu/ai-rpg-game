@@ -8,6 +8,7 @@ import {
   parseNpcGoalProposals,
 } from "./entity/npcComponents";
 import type { NpcGoalProposal, NpcIdentityAnchors } from "./entity/npcComponents";
+import { parseOpeningSituation, type OpeningSituationProposal } from "./openingSituation";
 
 // ---------------------------------------------------------------------------
 // Task 2：开局切片候选——AI/确定性 fallback 只产出这一份材料：
@@ -62,6 +63,7 @@ export type OpeningGenerationCandidate = {
       readonly description: string;
       readonly objective: { readonly kind: "talk_to_opening_npc" };
     };
+    readonly situation: OpeningSituationProposal;
     /** Task 6：开局首个决策场景——AI 生成的一句焦点 NPC 台词、旁白与恰好两个候选选项。 */
     readonly firstScene?: {
       readonly narration: string;
@@ -234,6 +236,8 @@ export function parseOpeningGenerationCandidate(
   ) {
     return { ok: false, code: "INVALID_OPENING_QUEST" };
   }
+  const situation = parseOpeningSituation(opening.situation);
+  if (situation === null) return { ok: false, code: "INVALID_OPENING_SITUATION" };
 
   // Task 6: parse optional firstScene
   let firstScene: OpeningGenerationCandidate["opening"]["firstScene"] | undefined = undefined;
@@ -327,6 +331,7 @@ export function parseOpeningGenerationCandidate(
         description: opening.quest.description as string,
         objective: { kind: "talk_to_opening_npc" },
       },
+      situation,
       ...(firstScene === undefined ? {} : { firstScene }),
       ...(normalizedVariationProfile === undefined ? {} : { variationProfile: normalizedVariationProfile }),
     },

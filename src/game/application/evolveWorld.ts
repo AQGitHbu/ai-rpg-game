@@ -112,10 +112,17 @@ export async function evolveWorld(input: EvolveWorldInput): Promise<EvolveWorldR
         if (!sourceResult.ok) {
           terminalResult = { ok: false, code: "source_error", failure: sourceResult.failure };
           if (attempt === 1 && sourceResult.repairReason !== undefined) {
+            // repairFromSourceFailure 的 reason 联合包含 provider_failure/invalid_schema
+            // 兜底，而本分支已确定携带 source 自身的世界演化稳定原因，直接构造
+            // WorldEvolutionContentRepair，避免类型收窄用的冗余覆盖。
             return {
               ok: false,
               retryable: true,
-              reason: { attempt: 1, reason: sourceResult.repairReason },
+              reason: {
+                attempt,
+                reason: sourceResult.repairReason,
+                ...(sourceResult.repairDetail === undefined ? {} : { detail: sourceResult.repairDetail }),
+              },
             };
           }
           return { ok: false, retryable: false, reason: repair ?? { attempt: 1, reason: "invalid_schema" } };
@@ -148,8 +155,8 @@ export async function evolveWorld(input: EvolveWorldInput): Promise<EvolveWorldR
             failure: { kind: "AI_RESPONSE_INVALID", phase: "world" },
           };
           return attempt === 1
-            ? { ok: false, retryable: true, reason: { attempt: 1, reason: "approval_rejected", approvalCode: approval.code } }
-            : { ok: false, retryable: false, reason: repair ?? { attempt: 1, reason: "approval_rejected", approvalCode: approval.code } };
+            ? { ok: false, retryable: true, reason: { attempt: 1, reason: "approval_rejected", rejectionCode: approval.code } }
+            : { ok: false, retryable: false, reason: repair ?? { attempt: 1, reason: "approval_rejected", rejectionCode: approval.code } };
         }
 
         const delta = materializeWorldDelta({

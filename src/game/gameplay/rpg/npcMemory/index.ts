@@ -4,6 +4,7 @@
 // 分不清「还没有边」与「调用方跳过了查边」。gameplay/game 内的写入一律走组件入口
 // `applyRelationshipSignalToComponent`（它自己查边），规则层表测试直接 import 内部文件。
 export {
+  INITIAL_RELATIONSHIP_SEED_POLICY,
   RELATIONSHIP_COMMITMENT_OP_KINDS,
   RELATIONSHIP_COMMITMENT_TARGETS,
   RELATIONSHIP_SIGNAL_CAPS,

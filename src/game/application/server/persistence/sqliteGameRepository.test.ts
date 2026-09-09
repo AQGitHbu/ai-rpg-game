@@ -21,6 +21,8 @@ import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import { createApprovedChoice } from "@/game/domain/approvedChoice";
 import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
+import { compileOpeningGenerationCandidate } from "@/game/gameplay/rpg/openingGeneration";
+import { makeOpeningQualityCandidate } from "@/game/domain/openingSituation.testutil";
 
 // 每个 Vitest 进程使用独立的 OS 临时目录，避免 Git Bash/Windows 下多个
 // test run 争用源码目录中的固定 SQLite 文件，也避免清理残留目录时受句柄影响。
@@ -182,6 +184,67 @@ describe("sqliteGameRepository", () => {
     }
   });
 
+  it("reloads one compiled opening with world, ledger, memory, and choice registry intact", async () => {
+    const dbPath = nextDbPath();
+    const repo = openRepo(dbPath);
+    const compiled = compileOpeningGenerationCandidate({
+      candidate: makeOpeningQualityCandidate(),
+      generation: TEST_GENERATION,
+      gameLength: "short",
+      initialNarrative: createFixtureNarrativeRuntimeState(),
+    });
+    await repo.createInitialGame({
+      gameId: asGameId("opening-roundtrip"),
+      ...compiled,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    const record = await expectActiveCurrentGame(repo);
+    expect(record.worldState.entityStore).toEqual(compiled.worldState.entityStore);
+    expect(record.worldState.eventLedger).toEqual(compiled.worldState.eventLedger);
+    expect(record.storyState.memory).toEqual(compiled.storyState.memory);
+    expect(record.storyState.narrative.status).toBe("ready");
+    if (record.storyState.narrative.status === "ready" && compiled.storyState.narrative.status === "ready") {
+      expect(record.storyState.narrative.choiceRegistry).toEqual(compiled.storyState.narrative.choiceRegistry);
+    }
+  });
+
+  it("roundtrips a compiled opening whose thread question is also supporting evidence", async () => {
+    const dbPath = nextDbPath();
+    const repo = openRepo(dbPath);
+    const candidate = makeOpeningQualityCandidate();
+    const overlapCandidate: typeof candidate = {
+      ...candidate,
+      opening: {
+        ...candidate.opening,
+        situation: {
+          ...candidate.opening.situation,
+          threads: candidate.opening.situation.threads.map((thread, index) => index === 0
+            ? { ...thread, supportingFactKeys: [thread.questionFactKey, ...thread.supportingFactKeys] }
+            : thread),
+        },
+      },
+    };
+    const compiled = compileOpeningGenerationCandidate({
+      candidate: overlapCandidate,
+      generation: TEST_GENERATION,
+      gameLength: "short",
+      initialNarrative: createFixtureNarrativeRuntimeState(),
+    });
+    await repo.createInitialGame({
+      gameId: asGameId("opening-overlap-roundtrip"),
+      ...compiled,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    const record = await expectActiveCurrentGame(repo);
+    const thread = record.worldState.eventLedger.find((event) => event.kind === "opening_thread_established")!;
+    expect(thread.factIds).toEqual(["fact_1", "fact_2", "fact_3"]);
+    if (thread.payload.type !== "opening_thread_established") throw new Error("missing opening thread payload");
+    expect(thread.payload.supportingFactIds).toEqual(["fact_1", "fact_2", "fact_3"]);
+    expect(record.storyState.memory).toEqual(compiled.storyState.memory);
+  });
+
   it("classifies malformed v4 entity state as ENTITY_STATE_INVALID", async () => {
     const dbPath = nextDbPath();
     const repo = openRepo(dbPath);
@@ -215,6 +278,8 @@ describe("sqliteGameRepository", () => {
     await raw.execute({ sql: "INSERT INTO current_game (slot, game_id) VALUES (1, ?)", args: ["legacy_world_v3"] });
 
     expect(await repo.getCurrentGame()).toEqual({ ok: true, status: "corrupt", reason: "UNSUPPORTED_RECORD" });
+    const pointer = await raw.execute({ sql: "SELECT game_id FROM current_game WHERE slot = 1", args: [] });
+    expect(pointer.rows[0]?.["game_id"]).toBe("legacy_world_v3");
   });
 
   it("createInitialGame rejects when active game exists", async () => {

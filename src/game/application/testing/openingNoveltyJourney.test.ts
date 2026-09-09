@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { createFixtureOpeningSource, createGame } from "../createGame";
+import { createFixtureOpeningCandidateSource, createFixtureOpeningSource, createGame } from "../createGame";
+import type { NarrativeBundleSourceContext } from "../narrativeBundleSource";
 import type { GameRecord, GameRepository } from "../server/persistence/gameRepository";
 import { asGameId } from "../server/persistence/gameRepository";
-import { createOpeningNoveltyRecord } from "@/game/domain/openingNovelty";
+import { createOpeningNoveltyRecord, isOpeningTooSimilar } from "@/game/domain/openingNovelty";
+import type { OpeningGenerationCandidate } from "@/game/domain/openingGenerationCandidate";
 
 function createRepo(history: readonly ReturnType<typeof createOpeningNoveltyRecord>[] = []): {
   readonly repo: GameRepository;
@@ -94,5 +96,74 @@ describe("opening novelty journey", () => {
     expect(second.worldState.generation.openingAttempt ?? 0).toBeGreaterThanOrEqual(0);
     expect(second.worldState).not.toEqual(first.worldState);
     expect(second.worldState.npcs[0]?.name).not.toBe(first.worldState.npcs[0]?.name);
+  });
+
+  it("novelty retry keeps the complete setup and includes the rejected candidate summary", async () => {
+    const seed = "retry-preserves-opening-context";
+    const setup = {
+      characterName: "林舟", characterIdentity: "领航员", characterProfile: "曾在船厂修理引擎。",
+      personalityTags: ["冷静", "多疑"], worldPremise: "殖民卫星依靠老旧轨道港维持补给。",
+      storyOpening: "林舟发现一份署有自己名字的陌生维修清单。",
+      narrativeStyle: "cinematic" as const, contentIntensity: "dark" as const,
+    };
+    const existing = await createFixtureOpeningCandidateSource().generate({
+      gameType: "science_fiction", gameLength: "short", seed, setup,
+      novelty: { recent: [], attempt: 0 }, attempt: 0,
+    });
+    const historyRecord = createOpeningNoveltyRecord({
+      candidate: existing, gameType: "science_fiction", createdAt: "2026-09-08T00:00:00.000Z",
+    });
+    const { repo } = createRepo([historyRecord]);
+    const fixture = createFixtureOpeningSource();
+    const calls: Extract<NarrativeBundleSourceContext, { kind: "opening" }>[] = [];
+    let firstReturnedCandidate: OpeningGenerationCandidate | null = null;
+
+    const result = await createGame(
+      { gameId: asGameId("retry-context"), gameType: "science_fiction", gameLength: "short", seed, setup },
+      {
+        repository: repo,
+        now: () => "2026-09-09T00:00:00.000Z",
+        source: {
+          async generate(context) {
+            if (context.kind === "opening") calls.push(context);
+            if (context.kind === "opening" && calls.length === 1) {
+              const generated = await fixture.generate({
+                ...context,
+                input: { ...context.input, novelty: { recent: [], attempt: 0 }, attempt: 0 },
+              });
+              if (!generated.ok || generated.kind !== "opening") return generated;
+              firstReturnedCandidate = {
+                ...generated.proposal.opening,
+                opening: {
+                  ...generated.proposal.opening.opening,
+                  quest: { ...generated.proposal.opening.opening.quest, name: "同一局面的不同任务名" },
+                },
+              };
+              return {
+                ...generated,
+                proposal: { ...generated.proposal, opening: firstReturnedCandidate },
+              };
+            }
+            return fixture.generate(context);
+          },
+        },
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(calls).toHaveLength(2);
+    expect(calls.map((call) => call.input.setup)).toEqual([setup, setup]);
+    expect(firstReturnedCandidate).not.toBeNull();
+    const rejectedRecord = createOpeningNoveltyRecord({
+      candidate: firstReturnedCandidate!, gameType: "science_fiction", createdAt: "2026-09-09T00:00:00.000Z",
+    });
+    expect(rejectedRecord.summary).not.toBe(historyRecord.summary);
+    expect(isOpeningTooSimilar(rejectedRecord, [historyRecord])).toBe(true);
+    expect(calls[1]!.input.novelty?.attempt).toBe(1);
+    expect(calls[1]!.input.novelty?.recent).toHaveLength(2);
+    expect(calls[1]!.input.novelty?.recent.map((record) => record.summary)).toEqual([
+      historyRecord.summary,
+      rejectedRecord.summary,
+    ]);
   });
 });

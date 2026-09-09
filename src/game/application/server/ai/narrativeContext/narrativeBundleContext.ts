@@ -1,4 +1,4 @@
-import type { Action } from "@/game/domain/action";
+import { dialogueTopicKey, type Action } from "@/game/domain/action";
 import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
 import type { NarrativeSceneState } from "@/game/domain/narrative";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
@@ -25,6 +25,8 @@ import {
   renderNarrativeMemory,
   retrieveNarrativeMemory,
 } from "@/game/gameplay/rpg/narrativeMemory";
+import { renderAiRepairFeedback } from "../../../aiGenerationRetry";
+import { buildOpeningHandoffContext } from "./openingHandoffContext";
 
 export const NARRATIVE_BUNDLE_CONTEXT_MAX_ESTIMATED_TOKENS = 8_000;
 
@@ -41,6 +43,26 @@ function block(input: NarrativeContextBlock): NarrativeContextBlock {
 
 function list(values: readonly string[]): string {
   return values.length === 0 ? "（无）" : values.join("、");
+}
+
+function candidateActionProjection(action: Action): string {
+  switch (action.type) {
+    case "talk": return JSON.stringify({ type: action.type, npcId: String(action.npcId), dialogueAct: action.dialogueAct, topic: dialogueTopicKey(action.topic) });
+    case "move": return JSON.stringify({ type: action.type, locationId: String(action.locationId) });
+    case "investigate": return JSON.stringify({ type: action.type, factId: String(action.factId), approachId: action.approachId ?? null });
+    case "give_item": return JSON.stringify({ type: action.type, itemId: String(action.itemId), npcId: String(action.npcId) });
+    case "take_item": return JSON.stringify({ type: action.type, itemId: String(action.itemId) });
+    case "attack": return JSON.stringify({ type: action.type, enemyId: String(action.enemyId) });
+    case "battle_action": return JSON.stringify({ type: action.type, action: action.action });
+    case "explore":
+    case "ack_prologue":
+    case "freeform":
+      return JSON.stringify({ type: action.type });
+  }
+}
+
+function candidateProjection(candidate: { readonly candidateId: string; readonly action: Action }): string {
+  return `${candidate.candidateId} => ${candidateActionProjection(candidate.action)}`;
 }
 
 function occupiedNamesSection(context: EntityContextProjection): string {
@@ -61,10 +83,6 @@ function itemStateSection(context: EntityContextProjection): string {
 }
 
 function repairInstruction(repair: NarrativeBundleRepair): string {
-  const rejection = [
-    repair.rejectionCode === undefined ? "" : `拒绝码 ${repair.rejectionCode}`,
-    repair.detail === undefined ? "" : `细分原因 ${repair.detail}`,
-  ].filter((part) => part !== "").join("，");
   const duplicateEntries = repair.detail?.startsWith("duplicate_name:")
     ? repair.detail.slice("duplicate_name:".length).split("|")
       .map((entry) => entry.match(/^(npc|location|item|enemy|quest):(.+)$/u))
@@ -78,7 +96,7 @@ function repairInstruction(repair: NarrativeBundleRepair): string {
     : repair.reason === "invalid_schema" && repair.detail === "world_delta_invalid"
       ? "- worldDelta.newFact 若出现 investigationApproaches，必须恰好提供 2–3 条合法条目；无法提供完整列表时将 newFact 设为 null，绝不能保留单条列表。"
       : "";
-  return `上一轮提案已被服务端拒绝。\n${rejection === "" ? `失败类型 ${repair.reason}。` : `${rejection}。`}
+  return `${renderAiRepairFeedback(repair)}
 本轮只需修正被拒绝的那一项，其余中文叙事文本可以沿用你自己的写法。硬性要求：
 - continuationScenes 必须与服务端投影步骤一一对应：不得新增投影之外的步骤，也不得漏掉投影中的步骤。
 - 终点步骤（terminal.target.stepKey 指向的那一步）必须给出该步骤列出的全部 candidateId 选项，每个选项都要有中文 label；其余步骤 choices 必须为空。
@@ -165,13 +183,13 @@ function expectedBundleProjection(worldState: WorldState, storyState: StoryState
     : null;
   const expectedChoices = nextActProjection !== null || descriptorGraph.currentChoiceCandidates.length === 0
     ? "当前场景不允许 choices；终点步骤的 choices 必须使用下方对应候选。"
-    : descriptorGraph.currentChoiceCandidates.map((candidate) => candidate.candidateId).join("、");
+    : descriptorGraph.currentChoiceCandidates.map(candidateProjection).join("；");
   const expectedSteps = nextActProjection !== null
-    ? `- move:${nextActProjection.locationId}；choices: move:${nextActProjection.locationId}_choice_1、move:${nextActProjection.locationId}_choice_2；到达 NPC: ${nextActProjection.npcId}；这是终点步骤，scene.npcLine 必须是该 NPC 的直接开场对白，不能为 null。`
+    ? `- move:${nextActProjection.locationId}；choices: move:${nextActProjection.locationId}_choice_1 => ${candidateActionProjection({ type: "talk", npcId: nextActProjection.npcId as never, dialogueAct: "support" })}；move:${nextActProjection.locationId}_choice_2 => ${candidateActionProjection({ type: "talk", npcId: nextActProjection.npcId as never, dialogueAct: "challenge" })}；到达 NPC: ${nextActProjection.npcId}；这是终点步骤，scene.npcLine 必须是该 NPC 的直接开场对白，不能为 null。`
     : descriptorGraph.steps.length === 0
       ? "无 continuation step。"
       : descriptorGraph.steps.map((step) => {
-          const choices = step.choiceCandidates.map((candidate) => candidate.candidateId).join("、") || "无";
+          const choices = step.choiceCandidates.map(candidateProjection).join("；") || "无";
           const terminalArrivalRequirement = descriptorGraph.terminal.kind === "next_decision"
             && descriptorGraph.terminal.target.kind === "continuation_step"
             && descriptorGraph.terminal.target.stepKey === step.stepKey
@@ -218,11 +236,12 @@ export function buildDecisionNarrativeContextBlocks(
     fact.discovered && !privateFactIds.has(String(fact.factId)),
   );
   const activeQuest = worldState.quests.find((quest) => quest.status === "active" && quest.kind === "main");
+  const openingHandoff = buildOpeningHandoffContext({ worldState, job });
   const narrativeMemory = renderNarrativeMemory({
     retrieved: retrieveNarrativeMemory({
       memory: storyState.memory,
       ledger: worldState.eventLedger,
-      requiredEventIds: job.domainEventIds,
+      requiredEventIds: [...job.domainEventIds, ...(openingHandoff?.requiredEventIds ?? [])],
       beforeSequenceExclusive: Math.min(worldState.eventLedger.length, ...worldState.eventLedger
         .filter((event) => job.domainEventIds.includes(event.eventId)).map((event) => event.sequence)),
       relevantEntityIds: [
@@ -243,6 +262,11 @@ export function buildDecisionNarrativeContextBlocks(
     }),
     entityStore: worldState.entityStore,
   });
+  const openingHandoffEventIds = new Set((openingHandoff?.requiredEventIds ?? []).map(String));
+  const currentRequiredEventsText = narrativeMemory.requiredEventsText
+    .split("\n")
+    .filter((line) => ![...openingHandoffEventIds].some((eventId) => line.startsWith(`eventId=${eventId};`)))
+    .join("\n");
   const style = buildStylePolicy(worldState.generation.setup);
   const expectedObjectiveLink = job.objectiveTransition.after === null
     ? "null"
@@ -251,17 +275,24 @@ export function buildDecisionNarrativeContextBlocks(
         objectiveIndex: job.objectiveTransition.after.objectiveIndex,
         mode: "progress",
       });
+  const narrativeBeats = job.mandatoryBeats.filter((beat) => beat.beatId !== ATMOSPHERE_BEAT_ID);
   const beatLines = job.mandatoryBeats.map((beat) => {
     const requirement = beat.beatId === ATMOSPHERE_BEAT_ID
       ? "可选，可省略；若写，必须放在所有 segments 最后"
       : "必须覆盖，恰好一次";
     return `- beatId="${beat.beatId}"（${beat.kind}，${requirement}）：${beat.instruction}`;
   }).join("\n");
+  // 仅当「强制节拍只有可选 atmosphere」时收紧为单段契约；mandatoryBeats 为空不属于该场景。
+  const atmosphereOnly = narrativeBeats.length === 0
+    && job.mandatoryBeats.some((beat) => beat.beatId === ATMOSPHERE_BEAT_ID);
+  const segmentContract = atmosphereOnly
+    ? `本回合没有其他强制叙事节拍。currentScene.segments 可以省略；若返回，必须且只能包含一条氛围段，固定使用 beatId="${ATMOSPHERE_BEAT_ID}"；不得出现 dialogue、narration、response、player_utterance 或任何其他自造 beatId。`
+    : `本回合强制叙事节拍（currentScene.segments 的 beatId 只能是下列之一）：\n${beatLines || "（无；只允许可选 atmosphere）"}`;
   const utteranceBeat = job.mandatoryBeats.find((beat) => beat.kind === "player_utterance");
   const actionSummary = job.utterance !== undefined
     ? `玩家自定义输入：${job.utterance}`
     : job.selectedDialogue?.label !== undefined
-      ? `玩家选择了选项：“${job.selectedDialogue.label}”`
+      ? `玩家选择了选项：“${job.selectedDialogue.label}”\n本次所选结构化意图：dialogueAct=${job.selectedDialogue.dialogueAct}；topic=${dialogueTopicKey(job.selectedDialogue.topic)}。若是 ask，已批准事实只代表当前已知材料，不代表其中已经含有问题的精确答案；NPC 可回答已知部分，并明确哪些部分仍待核对。`
       : `玩家行动：${job.actionSummary.kind}`;
   const evolutionRequirement = storyState.evolution.status === "needs_next_act"
     ? `本回合已进入第 ${storyState.currentAct} 幕：worldDelta 绝不能为 null，必须提供 newLocation、newNpc、newItem、newEnemy、nextMainQuest；其余字段可为 null。`
@@ -316,7 +347,7 @@ export function buildDecisionNarrativeContextBlocks(
       id: "bundle:resolution", slot: "current_resolution", title: "当前已结算结果",
       authority: "state", retention: "mandatory", priority: 950,
       source: { kind: "pending_narrative_job", refs: [String(job.jobId)] },
-      content: `本回合强制叙事节拍（currentScene.segments 的 beatId 只能是下列之一）：\n${beatLines || "（无；只允许可选 atmosphere）"}\ncurrentScene.objectiveLink 必须严格为 ${expectedObjectiveLink}。${utteranceBeat === undefined ? "" : `\n存在 player_utterance 节拍：npcLine 必须为 npcId=\"${utteranceBeat.subjectIds[0] ?? ""}\" 的直接回应，answeredBeatIds 必须包含 \"${utteranceBeat.beatId}\"。`}${job.actionSummary.kind === "talk" && focusNpc !== undefined ? `\ncurrentScene.npcLine 必须是 ${focusNpc.name} 对本轮行动的第一人称直接回应，不能为 null。` : ""}${projection.dialogueFocusNpc === undefined ? "" : `\n当前决策点是 ${projection.dialogueFocusNpc.name} 的对话，currentScene.npcLine 必须提供其直接对白。`}`,
+      content: `${segmentContract}\ncurrentScene.objectiveLink 必须严格为 ${expectedObjectiveLink}。${utteranceBeat === undefined ? "" : `\n存在 player_utterance 节拍：npcLine 必须为 npcId=\"${utteranceBeat.subjectIds[0] ?? ""}\" 的直接回应，answeredBeatIds 必须包含 \"${utteranceBeat.beatId}\"。`}${job.actionSummary.kind === "talk" && focusNpc !== undefined ? `\ncurrentScene.npcLine 必须是 ${focusNpc.name} 对本轮行动的第一人称直接回应，不能为 null。` : ""}${projection.dialogueFocusNpc === undefined ? "" : `\n当前决策点是 ${projection.dialogueFocusNpc.name} 的对话，currentScene.npcLine 必须提供其直接对白。`}`,
     }),
     block({
       id: "bundle:location", slot: "current_location", title: "当前地点",
@@ -348,7 +379,7 @@ export function buildDecisionNarrativeContextBlocks(
       id: "bundle:director-guidance", slot: "director_guidance", title: "导演与风格",
       authority: "plan", retention: "mandatory", priority: 825,
       source: { kind: "style_policy", refs: [] },
-      content: `${style.narrationInstruction} ${style.intensityInstruction}\ncurrentScene 必须直接承接上一场景与玩家本轮行动，不得回到更早情节、重复上一场景开场或把玩家写回已经离开的旧地点。`,
+      content: `${style.narrationInstruction} ${style.intensityInstruction}\ncurrentScene 必须直接承接上一场景与玩家本轮行动，不得回到更早情节、重复上一场景开场或把玩家写回已经离开的旧地点。若玩家本轮是在询问，NPC 必须先直接回答或明确承认自己不知道、无权确认，再继续回应；不能用格言、反问或重复问题代替答复。任何台词、旁白与选项都不能补写状态中没有的既成事实、先前承诺、已完成动作、持有物或具体病情/记录。`,
     }),
     block({
       id: "bundle:player-action", slot: "player_action", title: "玩家本轮行动",
@@ -360,7 +391,7 @@ export function buildDecisionNarrativeContextBlocks(
       id: "bundle:legal-graph", slot: "legal_actions", title: "唯一合法续接图",
       authority: "rule", retention: "mandatory", priority: 925,
       source: { kind: "narrative_bundle_descriptors", refs: [String(job.jobId)] },
-      content: `符号引用白名单：@current.location、@current.focus_npc、@new.location、@new.npc、@new.item、@new.enemy、@new.fact、@new.quest、@ending.trust、@ending.doubt。\ncontinuationScenes 必须与第 8 条投影的步骤完全一致，数量、stepKey、顺序都不得改动，不得投影之外自行规划未来步骤。\n这是服务端重建的唯一合法图，必须逐字使用 stepKey 与 candidateId，不得自创、遗漏、重复或继续规划未来：\n- terminal: ${JSON.stringify(projection.expectedTerminal)}\n- currentScene choices: ${projection.expectedChoices}\n- continuationScenes:\n${projection.expectedSteps}`,
+      content: `符号引用白名单：@current.location、@current.focus_npc、@new.location、@new.npc、@new.item、@new.enemy、@new.fact、@new.quest、@ending.trust、@ending.doubt。\ncontinuationScenes 必须与第 8 条投影的步骤完全一致，数量、stepKey、顺序都不得改动，不得投影之外自行规划未来步骤。选项 label 必须忠于其服务端 Action：talk 只能写玩家对 NPC 说出的对话意图，不得写成转身、推门、调出设备、接通通信、拿取物品、移动或其他物理动作；也不得在 label 中假定尚未发生的事实、承诺或结果。\n这是服务端重建的唯一合法图，必须逐字使用 stepKey 与 candidateId，不得自创、遗漏、重复或继续规划未来：\n- terminal: ${JSON.stringify(projection.expectedTerminal)}\n- currentScene choices: ${projection.expectedChoices}\n- continuationScenes:\n${projection.expectedSteps}`,
     }),
     block({
       id: "bundle:world-evolution", slot: "director_guidance", title: "世界演化要求",
@@ -388,12 +419,21 @@ export function buildDecisionNarrativeContextBlocks(
     }),
   ];
 
-  if (narrativeMemory.requiredEventsText !== "") {
+  if (openingHandoff !== null) {
+    blocks.push(block({
+      id: "bundle:opening-handoff", slot: "relevant_events", title: "开局背景与本次回应",
+      authority: "event", retention: "mandatory", priority: 985,
+      source: { kind: "committed_event", refs: openingHandoff.requiredEventIds.map(String) },
+      content: openingHandoff.publicText,
+    }));
+  }
+
+  if (currentRequiredEventsText !== "") {
     blocks.push(block({
       id: "bundle:required-events", slot: "relevant_events", title: "本回合已提交事件",
       authority: "event", retention: "mandatory", priority: 980,
-      source: { kind: "committed_event", refs: narrativeMemory.manifestRefs.eventIds.map(String) },
-      content: narrativeMemory.requiredEventsText,
+      source: { kind: "committed_event", refs: narrativeMemory.manifestRefs.eventIds.map(String).filter((eventId) => !openingHandoffEventIds.has(eventId)) },
+      content: currentRequiredEventsText,
     }));
   }
   if (narrativeMemory.relevantEpisodesText !== "") {

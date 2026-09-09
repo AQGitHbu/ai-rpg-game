@@ -1,3 +1,4 @@
+import type { AiContentRepair } from "./aiGenerationRetry";
 import type { PendingNarrativeJob, ProviderGenerationKind } from "@/game/domain/pendingNarrativeJob";
 import type { PacingNeed } from "@/game/domain/storyState";
 import type { StoryContract } from "@/game/domain/storyContract";
@@ -192,10 +193,7 @@ export type PreviousDialogueContext = {
 };
 
 /** 同一 pending 回合的内容修复尝试；不持久化，只用于下一次 live prompt。 */
-export type SceneGenerationRepair = {
-  readonly attempt: number;
-  readonly reason: NarrativeGenerationRepairReason;
-};
+export type SceneGenerationRepair = AiContentRepair<NarrativeGenerationRepairReason>;
 
 function actionSummaryEntityIds(action: PendingNarrativeJob["actionSummary"]): readonly string[] {
   switch (action.kind) {

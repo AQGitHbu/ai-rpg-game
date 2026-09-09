@@ -14,6 +14,7 @@ import { createGame, createFixtureOpeningSource } from "./createGame";
 import { asGameId } from "./server/persistence/gameRepository";
 import { projectGameSessionView } from "./gameSessionView";
 import { rebuildEpisodicMemory } from "@/game/domain/episodicMemory";
+import { retryNarrativeGeneration } from "./retryNarrativeGeneration";
 
 const GENERATION: GenerationMetadata = {
   generationId: "gen_test" as never,
@@ -142,6 +143,27 @@ function createInMemoryRepo(record: GameRecord | null): { repo: GameRepository; 
 }
 
 describe("generatePendingNarrativeBundle", () => {
+  it("persists the final cause and delivers it to the same job on manual retry", async () => {
+    const job = { ...createPendingJob(), generationKind: "npc_fixed_choice" as const, sceneRequestKind: "npc_response" as const };
+    const { repo, getRecord } = createInMemoryRepo({
+      gameId: asGameId("manual-repair"), worldState: createMinimalWorldState(),
+      storyState: createMinimalStoryState({ status: "provider_pending", mode: "ai", job, lastPresentedScene: null }),
+      revision: 0, createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    const generate = vi.fn<NarrativeBundleSource["generate"]>().mockResolvedValue({
+      ok: false, failure: { kind: "AI_RESPONSE_INVALID", phase: "scene" },
+      repairReason: "invalid_schema", repairDetail: "world_delta_invalid",
+    });
+    await generatePendingNarrativeBundle({ repository: repo, source: { generate }, now: () => "2026-01-01T00:00:00.000Z" });
+    expect(generate.mock.calls.map(([ctx]) => ctx.contentRepair?.attempt)).toEqual([undefined, 1, 2, 3]);
+    expect(getRecord()?.storyState.narrative).toMatchObject({ status: "provider_failed", failure: { reason: "invalid_schema:world_delta_invalid" } });
+    const retry = await retryNarrativeGeneration(repo, asGameId("manual-repair"), () => "2026-01-01T00:00:00.000Z");
+    expect(retry).toMatchObject({ ok: true, result: "requeued" });
+    generate.mockClear();
+    await generatePendingNarrativeBundle({ repository: repo, source: { generate }, now: () => "2026-01-01T00:00:00.000Z", auditLink: { retry: { origin: "manual_failed_job", mechanism: "initial", attempt: 0 } } });
+    expect(generate.mock.calls[0]?.[0]).toMatchObject({ job, contentRepair: { reason: "invalid_schema:world_delta_invalid" }, auditLink: { retry: { origin: "manual_failed_job", reason: "invalid_schema:world_delta_invalid" } } });
+    expect(generate.mock.calls.map(([ctx]) => ctx.contentRepair?.attempt)).toEqual([1, 2, 3, 4]);
+  });
   it("returns NOT_PENDING when narrative is not provider_pending", async () => {
     const worldState = createMinimalWorldState();
     const storyState = createMinimalStoryState({
@@ -223,14 +245,17 @@ describe("generatePendingNarrativeBundle", () => {
     });
 
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.code).toBe("AI_RESPONSE_INVALID");
+    if (!result.ok) expect(result.code).toBe("AI_CALL_FAILED");
     // Should have written provider_failed state
     expect(getApplyCount()).toBe(1);
     const record = getRecord();
     if (record) {
       expect(record.storyState.narrative).toMatchObject({ status: "provider_failed", job });
+      expect(record.storyState.narrative).toHaveProperty("failure.reason", "provider_failure");
       expect(record.worldState).toEqual(worldState);
     }
+    const contexts = vi.mocked(source.generate).mock.calls.map(([context]) => context);
+    expect(contexts.slice(1).map((context) => context.contentRepair?.reason)).toEqual(["provider_failure", "provider_failure", "provider_failure"]);
   });
 
   it("reports CAS conflict instead of claiming that the retryable failure was saved", async () => {
@@ -363,6 +388,84 @@ describe("generatePendingNarrativeBundle", () => {
     expect(saved.storyState.narrative.dialogueSession).toEqual({ npcId: npc.id, turnCount: 1, requiredTurns: 2, completed: false });
     expect(projectGameSessionView(saved.worldState, saved.storyState, saved.revision, "test-session").narrative.npcDialogues[0]?.choices).toHaveLength(2);
     expect(saved.storyState.memory).toEqual(rebuildEpisodicMemory(saved.worldState.eventLedger));
+  });
+
+  it("事件账本提交失败时持久化独立稳定码，不伪装成审批拒绝", async () => {
+    const { repo, getRecord } = createInMemoryRepo(null);
+    const opening = await createGame(
+      { gameId: asGameId("event-commit-failure"), gameType: "wuxia", gameLength: "short", seed: "event-commit-failure" },
+      { repository: repo, source: createFixtureOpeningSource(), now: () => "2026-01-01", aiEnabled: true },
+    );
+    expect(opening.ok).toBe(true);
+    const initialized = getRecord();
+    if (initialized === null || initialized.storyState.narrative.status !== "ready") throw new Error("opening fixture missing");
+
+    const npc = initialized.worldState.npcs[0]!;
+    const quest = initialized.worldState.quests[0]!;
+    // 破坏账本序号连续性：审批不读严格账本解析，提交阶段才失败（INVALID_LEDGER）。
+    const corruptLedger = initialized.worldState.eventLedger.map((event, index) => ({ ...event, sequence: index + 7 }));
+    const pendingJob: PendingNarrativeJob = {
+      ...createPendingJob(),
+      domainEventIds: [initialized.worldState.eventLedger[0]!.eventId],
+      focusNpcId: npc.id,
+      actionSummary: { kind: "talk", npcId: npc.id },
+      objectiveTransition: {
+        before: { questId: quest.id, objectiveIndex: 0, label: "与 NPC 交谈" },
+        completed: [],
+        after: { questId: quest.id, objectiveIndex: 0, label: "与 NPC 交谈" },
+        mode: "unchanged",
+      },
+    };
+    const pendingWrite = await repo.applyState({
+      gameId: initialized.gameId,
+      expectedRevision: initialized.revision,
+      nextWorldState: { ...initialized.worldState, eventLedger: corruptLedger },
+      nextStoryState: {
+        ...initialized.storyState,
+        narrative: {
+          status: "provider_pending",
+          mode: "ai",
+          job: pendingJob,
+          lastPresentedScene: initialized.storyState.narrative.currentScene,
+        },
+      },
+    });
+    expect(pendingWrite.ok).toBe(true);
+
+    const source: NarrativeBundleSource = {
+      async generate() {
+        return {
+          ok: true,
+          kind: "decision",
+          proposal: {
+            worldDelta: null,
+            currentScene: {
+              segments: [{ beatId: "atmosphere", text: "老酒鬼放下酒坛，等你开口。" }],
+              npcLine: {
+                npcId: String(npc.id), text: "这件事不能在街上说。", emotion: "guarded",
+                answeredBeatIds: [], usedFactIds: [], usedEventIds: [],
+              },
+              objectiveLink: { questId: String(quest.id), objectiveIndex: 0, mode: "progress" },
+              choices: [
+                { candidateId: "current_scene_choice_1", label: "请他细说。" },
+                { candidateId: "current_scene_choice_2", label: "追问酒钱的缘由。" },
+              ],
+            },
+            continuationScenes: [],
+            terminal: { kind: "next_decision", target: { kind: "current_scene" } },
+          },
+        };
+      },
+    };
+
+    const generated = await generatePendingNarrativeBundle({ repository: repo, source, now: () => "2026-01-01" });
+    expect(generated).toEqual({ ok: false, code: "AI_RESPONSE_INVALID", failureKind: "AI_RESPONSE_INVALID" });
+    // 审批已通过：持久化独立稳定码，手动重试不会被"审批拒绝码"误导修复方向。
+    const narrative = getRecord()?.storyState.narrative;
+    expect(narrative).toMatchObject({
+      status: "provider_failed",
+      failure: { kind: "AI_RESPONSE_INVALID", reason: "invalid_schema:event_commit_failed", phase: "scene" },
+    });
   });
 
   it("把审批拒绝码与理由带给第二次尝试，而不是泛化提示", async () => {

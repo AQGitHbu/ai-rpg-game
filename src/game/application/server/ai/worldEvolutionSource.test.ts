@@ -845,7 +845,7 @@ describe("world source 内容修复契约", () => {
     await source.propose(makeCtx(
       { auditLink: { traceId: "t1" }, contentRepair: { attempt: 1, reason: "invalid_json" } },
     ));
-    expect(prompt).toContain("content repair");
+    expect(prompt).toContain("上一轮生成未完成");
     expect(prompt).toContain("invalid_json");
     // 审计上下文把 content repair 标记为 content_repair，attempt/reason 来自契约。
     const auditContext = ai.complete.mock.calls[0]?.[2] as { readonly retry?: unknown };
@@ -882,7 +882,7 @@ describe("world source 内容修复契约", () => {
       return { ok: true as const, content: "not json", latencyMs: 1 };
     });
     await source.propose(makeCtx({
-      contentRepair: { attempt: 1, reason: "approval_rejected", approvalCode: "duplicate_name" },
+      contentRepair: { attempt: 1, reason: "approval_rejected", rejectionCode: "duplicate_name" },
     }));
     expect(prompt).toContain("duplicate_name");
     const auditContext = ai.complete.mock.calls[0]?.[2] as { readonly retry?: { readonly reason?: string } };
@@ -918,7 +918,7 @@ describe("world source 内容修复契约", () => {
     const repairPrompt = buildWorldEvolutionPrompt({
       ...base,
       worldState,
-      contentRepair: { attempt: 1, reason: "approval_rejected", approvalCode: "town_capacity" },
+      contentRepair: { attempt: 1, reason: "approval_rejected", rejectionCode: "town_capacity" },
     });
     expect(repairPrompt).toContain("当前城镇建筑槽位已满：必须把新地点改为 placement=world");
     expect(repairPrompt).toContain("必须把其 locationRef 改为 {\"kind\":\"new_location\"}");

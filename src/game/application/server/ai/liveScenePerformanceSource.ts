@@ -1,3 +1,4 @@
+import { createAiSourceFailure, aiRepairAuditContext } from "../../aiGenerationRetry";
 import type { AiMessage, AiTransport, AiTransportConfig } from "@ai-game/ai-transport";
 import type { GameLogger } from "@/game/logging";
 import type {
@@ -18,7 +19,6 @@ import {
 } from "../../sceneChoiceCandidates";
 import { classifyAiFailure, transportFailureCodeToCategory } from "../../aiGenerationFailure";
 import type {
-  AiGenerationFailure,
   NarrativeGenerationRepairReason,
 } from "@/game/domain/narrativeGenerationFailure";
 import { NARRATIVE_EMOTIONS, type NarrativeEmotion } from "@/game/domain/narrative";
@@ -560,9 +560,9 @@ export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps)
   const failScene = (
     category: Parameters<typeof classifyAiFailure>[0]["category"],
   ): Extract<SceneSourceResult, { readonly ok: false }> => {
-    const failure: AiGenerationFailure = classifyAiFailure({ phase: "scene", category });
-    logger?.warn("scene_generation_failed", { category, kind: failure.kind });
-    return { ok: false, failure };
+    const result = createAiSourceFailure<NarrativeGenerationRepairReason>("scene", category);
+    logger?.warn("scene_generation_failed", { category, kind: result.failure.kind });
+    return result;
   };
 
   const generateSceneInner = async (context: SceneGenerationContext): Promise<SceneSourceResult> => {
@@ -583,6 +583,7 @@ export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps)
           purpose: "scene_performance",
           trigger: context.auditTrigger ?? `${context.job.actionSummary.kind}_action`,
           ...(context.auditLink ?? {}),
+          ...(context.repairAttempt === undefined ? {} : { retry: aiRepairAuditContext(context.repairAttempt, context.auditLink?.retry) }),
           action: context.job.actionSummary,
           narrativeContext: compilation.manifest,
         });

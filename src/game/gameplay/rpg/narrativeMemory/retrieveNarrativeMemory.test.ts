@@ -34,6 +34,29 @@ function event(sequence: number, input: Parameters<typeof makeCommittedEvent>[0]
 }
 
 describe("retrieveNarrativeMemory", () => {
+  it("recalls the opening history cause behind a required opening thread", () => {
+    const backgroundFact = asFactId("fact:background");
+    const questionFact = asFactId("fact:question");
+    const history = event(0, {
+      type: "opening_history_established", factIds: [backgroundFact],
+    }, { factIds: [backgroundFact], turnNumber: 0 });
+    const thread = event(1, {
+      type: "opening_thread_established",
+      threadId: "thread_init_question",
+      questionFactId: questionFact,
+      supportingFactIds: [],
+    }, { factIds: [questionFact], causeEventIds: [history.eventId], turnNumber: 0 });
+    const ledger = [history, thread];
+
+    const result = retrieveNarrativeMemory({
+      memory: rebuildEpisodicMemory(ledger), ledger, requiredEventIds: [thread.eventId],
+      beforeSequenceExclusive: thread.sequence,
+    });
+    expect(result.requiredEvents).toEqual([thread]);
+    const causeMatch = result.relevantEpisodes.find((match) => match.matchedBy.includes("cause"));
+    expect(causeMatch?.episode.eventIds).toContain(history.eventId);
+  });
+
   it("recalls an item from its payload without inventing a character participant or including current events", () => {
     const itemId = asItemId("item:keepsake");
     const ledger = [

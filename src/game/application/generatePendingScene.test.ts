@@ -217,6 +217,29 @@ function makeDeps(record: GameRecord | null, source: SceneSource) {
 }
 
 describe("generatePendingScene", () => {
+  it.each([false, true])("保留自动修复的细分原因和序号（手动启动=%s）", async (manual) => {
+    const baseRecord = makeGameRecord({ kind: "pending", job: makeJob({ summary: { kind: "explore" }, eventKind: "observe" }) });
+    if (baseRecord.storyState.narrative.status !== "provider_pending") throw new Error("pending fixture missing");
+    const record: GameRecord = manual ? {
+      ...baseRecord,
+      storyState: {
+        ...baseRecord.storyState,
+        narrative: { ...baseRecord.storyState.narrative, retryContext: { attempt: 1, reason: "invalid_json" } },
+      },
+    } : baseRecord;
+    const generateScene = vi.fn<SceneSource["generateScene"]>().mockResolvedValue({
+      ok: false, failure: { kind: "AI_RESPONSE_INVALID", phase: "scene" },
+      repairReason: "invalid_schema", repairDetail: "world_delta_invalid",
+    });
+    const result = await generatePendingScene(makeDeps(record, { generateScene }));
+    expect(result).toBe("failed");
+    expect(generateScene).toHaveBeenCalledTimes(2);
+    const secondContext = generateScene.mock.calls[1]![0];
+    expect(secondContext.repairAttempt).toEqual({
+      attempt: manual ? 2 : 1, reason: "invalid_schema", detail: "world_delta_invalid",
+    });
+    expect(secondContext.auditLink?.retry).toMatchObject({ attempt: manual ? 2 : 1, reason: "invalid_schema" });
+  });
   it("returns not_pending when generation is idle", async () => {
     const record = makeGameRecord({ kind: "idle" });
     const spy = makeSpySceneSource();
@@ -264,7 +287,13 @@ describe("generatePendingScene", () => {
     const result = await generatePendingScene(deps);
     expect(result).toBe("failed");
     const latest = await deps.repository.getCurrentGame();
-    expect(latest.ok && latest.status === "active" ? latest.record.storyState.narrative.status : "ready").toBe("provider_failed");
+    const narrative = latest.ok && latest.status === "active" ? latest.record.storyState.narrative : null;
+    expect(narrative?.status).toBe("provider_failed");
+    // scene 路径与 bundle 路径一致：异常持久化为 provider_failure:source_exception，
+    // 且经过 persistedAiRepairReason 白名单而非调用点约定。
+    if (narrative?.status === "provider_failed") {
+      expect(narrative.failure).toMatchObject({ kind: "AI_CALL_FAILED", reason: "provider_failure:source_exception" });
+    }
   });
 
   it("hands the real persisted job to the source and writes back to idle", async () => {
@@ -561,6 +590,13 @@ describe("generatePendingScene", () => {
     const result = await generatePendingScene({ repository: repo, sceneSource: stub, now: () => "2026-01-02" });
     expect(result).toBe("failed");
     expect(vi.mocked(repo.applySceneWriteBack)).not.toHaveBeenCalled();
+    // 审批拒绝在 scene 路径持久化为 approval:<拒绝码>，经统一白名单过滤。
+    const latest = await repo.getCurrentGame();
+    const narrative = latest.ok && latest.status === "active" ? latest.record.storyState.narrative : null;
+    expect(narrative).toMatchObject({
+      status: "provider_failed",
+      failure: { kind: "AI_RESPONSE_INVALID", reason: "approval:missing_mandatory_beat" },
+    });
   });
 
   it("真实 AI 形状的提案被审批拒绝时先修复重试，成功后保持 generated", async () => {

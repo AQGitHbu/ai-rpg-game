@@ -7,6 +7,10 @@ import { asGenerationId, asLocationId, asNpcId, asQuestId, asFactId } from "@/ga
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import { entitiesOfKind } from "@/game/domain/entity";
+import { makeOpeningQualityCandidate } from "@/game/domain/openingSituation.testutil";
+import { rebuildEpisodicMemory } from "@/game/domain/episodicMemory";
+import { INITIAL_RELATIONSHIP_SEED_POLICY } from "@/game/gameplay/rpg/npcMemory";
+import type { NarrativeRuntimeState } from "@/game/domain/narrative";
 
 function validCandidate(): OpeningGenerationCandidate {
   return {
@@ -47,11 +51,19 @@ function validCandidate(): OpeningGenerationCandidate {
         name: "取得沈掌柜的信任", description: "从关键线人口中确认追索方向。",
         objective: { kind: "talk_to_opening_npc" },
       },
+      situation: {
+        history: [], threads: [{ key: "lead", questionFactKey: "fact_inn", supportingFactKeys: ["fact_pact"], participantRefs: ["player", "opening_npc"], causeHistoryKeys: [] }],
+        npcConnection: { familiarity: "stranger", stance: "neutral", basisHistoryKeys: [] },
+        responses: [{ key: "ask_lead", dialogueAct: "ask", topic: { kind: "fact", key: "fact_inn" } }, { key: "challenge_lead", dialogueAct: "challenge", topic: { kind: "thread", key: "lead" } }],
+      },
     },
   };
 }
 
-function compile(candidate: OpeningGenerationCandidate = validCandidate()) {
+function compile(
+  candidate: OpeningGenerationCandidate = validCandidate(),
+  initialNarrative: NarrativeRuntimeState = createFixtureNarrativeRuntimeState(),
+) {
   return compileOpeningGenerationCandidate({
     candidate,
     generation: {
@@ -62,18 +74,87 @@ function compile(candidate: OpeningGenerationCandidate = validCandidate()) {
       gameType: "wuxia",
     },
     gameLength: "short",
-    initialNarrative: createFixtureNarrativeRuntimeState(),
+    initialNarrative,
   });
 }
 
 describe("compileOpeningGenerationCandidate", () => {
+  it("commits opening history and thread into the initialization episode", () => {
+    const compiled = compile(makeOpeningQualityCandidate());
+    const history = compiled.worldState.eventLedger.find((event) => event.kind === "opening_history_established")!;
+    const thread = compiled.worldState.eventLedger.find((event) => event.kind === "opening_thread_established")!;
+
+    expect(history.factIds).toEqual([asFactId("fact_0")]);
+    expect(thread.causeEventIds).toContain(history.eventId);
+    expect(thread.turnNumber).toBe(0);
+    expect(compiled.storyState.memory.episodes[0]?.kind).toBe("initialization");
+    expect(compiled.storyState.memory).toEqual(rebuildEpisodicMemory(compiled.worldState.eventLedger));
+  });
+
+  it("canonicalizes a thread envelope when its question is also supporting evidence", () => {
+    const candidate = makeOpeningQualityCandidate();
+    const compiled = compile({
+      ...candidate,
+      opening: {
+        ...candidate.opening,
+        situation: {
+          ...candidate.opening.situation,
+          threads: candidate.opening.situation.threads.map((thread, index) => index === 0
+            ? { ...thread, supportingFactKeys: [thread.questionFactKey, ...thread.supportingFactKeys] }
+            : thread),
+        },
+      },
+    });
+    const thread = compiled.worldState.eventLedger.find((event) => event.kind === "opening_thread_established")!;
+
+    expect(thread.factIds).toEqual([asFactId("fact_1"), asFactId("fact_2"), asFactId("fact_3")]);
+    if (thread.payload.type !== "opening_thread_established") throw new Error("missing opening thread payload");
+    expect(thread.payload.questionFactId).toBe(asFactId("fact_1"));
+    expect(thread.payload.supportingFactIds).toEqual([asFactId("fact_1"), asFactId("fact_2"), asFactId("fact_3")]);
+  });
+
   it("初始化事件提交后，Story memory 由同一 ledger 重建", () => {
     const result = compile(validCandidate());
-    expect(result.worldState.eventLedger).toHaveLength(1);
-    expect(result.storyState.memory.reducedThroughSequence).toBe(0);
-    expect(result.storyState.memory.episodes[0]?.eventIds).toEqual([
-      result.worldState.eventLedger[0]?.eventId,
-    ]);
+    expect(result.worldState.eventLedger).toHaveLength(2);
+    expect(result.storyState.memory.reducedThroughSequence).toBe(1);
+    expect(result.storyState.memory.episodes[0]?.eventIds).toEqual(
+      result.worldState.eventLedger.map((event) => event.eventId),
+    );
+  });
+
+  it.each(["ally", "rival"] as const)("seeds the %s relationship from the rule policy without evidence or commitments", (stance) => {
+    const candidate = makeOpeningQualityCandidate();
+    const compiled = compile({
+      ...candidate,
+      opening: {
+        ...candidate.opening,
+        situation: {
+          ...candidate.opening.situation,
+          npcConnection: { familiarity: "known", stance, basisHistoryKeys: ["worked_together"] },
+        },
+      },
+    });
+    const npc = entitiesOfKind(compiled.worldState.entityStore, "npc")[0]!;
+    const edge = npc.relationships.outgoing[0]!;
+
+    expect(edge.dimensions).toEqual(INITIAL_RELATIONSHIP_SEED_POLICY[stance].dimensions);
+    expect(edge.stage).toBe(INITIAL_RELATIONSHIP_SEED_POLICY[stance].stage);
+    expect(edge.evidence).toEqual([]);
+    expect(edge.commitments).toEqual([]);
+    expect(edge.origin).toEqual({ kind: "initial_world", createdAtTurn: 0, reasonKey: "worked_together" });
+  });
+
+  it("marks a known NPC as met and initializes emotion from the approved opening line", () => {
+    const narrative = createFixtureNarrativeRuntimeState({
+      sceneId: "opening", turn: 0, narration: "开场", usedFactIds: [], choices: [], source: "generated",
+      npcLine: { npcId: asNpcId("npc_0"), text: "先看看记录。", emotion: "guarded", usedFactIds: [], usedEventIds: [] },
+    });
+    const compiled = compile(makeOpeningQualityCandidate(), narrative);
+    const npc = entitiesOfKind(compiled.worldState.entityStore, "npc")[0]!;
+
+    expect(npc.dynamicState.met).toBe(true);
+    expect(npc.dynamicState.emotion).toBe("guarded");
+    expect(npc.relationships.outgoing[0]?.stage).toBe("acquainted");
   });
 
   it("从 anchors/goals proposals 显式创建 npc_0 的非占位组件与初始 provenance", () => {

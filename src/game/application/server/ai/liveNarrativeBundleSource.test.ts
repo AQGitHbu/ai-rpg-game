@@ -602,6 +602,32 @@ describe("createNarrativeBundleSource", () => {
     expect(systemPrompt).toContain('"questId":"quest_0","objectiveIndex":1,"mode":"progress"');
   });
 
+  it("constrains dialogue-only turns to a single atmosphere segment", async () => {
+    const complete = vi.fn().mockResolvedValue({
+      ok: true,
+      content: JSON.stringify(validBundleResponse),
+    });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+
+    await source.generate({
+      kind: "decision",
+      worldState: makeWorldState(),
+      storyState: makeStoryState(),
+      job: {
+        ...makeJob(),
+        mandatoryBeats: [
+          { beatId: "atmosphere", kind: "atmosphere", subjectIds: [], instruction: "氛围描写（可选，放在最后）" },
+        ],
+      },
+    });
+
+    const systemPrompt = (complete.mock.calls[0]![1] as readonly AiMessage[])[0]!.content as string;
+    expect(systemPrompt).toContain("本回合没有其他强制叙事节拍");
+    expect(systemPrompt).toContain('currentScene.segments 可以省略；若返回，必须且只能包含一条氛围段，固定使用 beatId="atmosphere"');
+    expect(systemPrompt).toContain("不得出现 dialogue、narration、response、player_utterance");
+    expect(systemPrompt).not.toContain("currentScene.segments 的 beatId 只能是下列之一");
+  });
+
   it("projects the post-expansion arrival graph for a next-act response", async () => {
     const complete = vi.fn().mockResolvedValue({
       ok: true,
@@ -713,8 +739,9 @@ describe("createNarrativeBundleSource", () => {
 
     const messages = complete.mock.calls[0]![1] as readonly AiMessage[];
     const systemPrompt = messages[0]!.content as string;
-    expect(systemPrompt).toContain("上一轮提案已被服务端拒绝");
-    expect(systemPrompt).toContain("拒绝码 world_delta_rejected，细分原因 duplicate_name:enemy:蒙面劫匪|item:旧令牌");
+    expect(systemPrompt).toContain("上一轮生成未完成");
+    expect(systemPrompt).toContain("拒绝码=world_delta_rejected");
+    expect(systemPrompt).toContain("细分原因=duplicate_name:enemy:蒙面劫匪|item:旧令牌");
     expect(systemPrompt).toContain("上一轮新enemy名称“蒙面劫匪”已与世界中现有实体重复");
     expect(systemPrompt).toContain("上一轮新item名称“旧令牌”已与世界中现有实体重复");
   });
@@ -740,7 +767,7 @@ describe("createNarrativeBundleSource", () => {
 
     const messages = complete.mock.calls[0]![1] as readonly AiMessage[];
     const systemPrompt = messages[0]!.content as string;
-    expect(systemPrompt).toContain("细分原因 terminal_step_requires_two_choices（步骤 battle_resolved:victory:enemy_dyn_3）");
+    expect(systemPrompt).toContain("细分原因=terminal_step_requires_two_choices（步骤 battle_resolved:victory:enemy_dyn_3）");
     expect(systemPrompt).toContain("终点步骤（terminal.target.stepKey 指向的那一步）必须给出该步骤列出的全部 candidateId 选项");
   });
 
@@ -1031,8 +1058,8 @@ describe("createNarrativeBundleSource", () => {
           },
           objectiveLink: null,
           choices: [
-            { candidateId: "support", label: "我愿意帮忙。" },
-            { candidateId: "challenge", label: "先说清楚缘由。" },
+            { candidateId: "ask_lead", label: "把线索告诉我。" },
+            { candidateId: "challenge_lead", label: "先说清楚缘由。" },
           ],
         },
         continuationScenes: [],
@@ -1065,6 +1092,57 @@ describe("createNarrativeBundleSource", () => {
     expect(prompt).toContain("backgroundSummary");
     expect(prompt).toContain('"targetActs": 3');
     expect(prompt).toContain('"scale": "town"');
+    expect(prompt).toContain("opening.opening.situation.responses");
+  });
+
+  it("passes the full opening setup and bounded latest novelty through the actual AI messages", async () => {
+    const opening = await createFixtureOpeningCandidateSource().generate({
+      gameType: "science_fiction", gameLength: "short", seed: "opening-context-transport",
+    });
+    const complete = vi.fn().mockResolvedValue({
+      ok: true,
+      content: JSON.stringify({
+        opening,
+        currentScene: {
+          segments: [{ beatId: "opening", text: "船坞的警示灯扫过检修台。" }],
+          npcLine: { npcId: "npc_0", text: "这份清单上的签名，你认得吗？", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedEventIds: [] },
+          objectiveLink: null,
+          choices: opening.opening.situation.responses.map((response, index) => ({ candidateId: response.key, label: index === 0 ? "先核对清单来源。" : "指出签名并非本人所留。" })),
+        },
+        continuationScenes: [],
+        terminal: { kind: "next_decision", target: { kind: "current_scene" } },
+      }),
+    });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+    const novelty = (summary: string, createdAt: string) => ({
+      gameType: "science_fiction" as const, fingerprint: summary, semanticFingerprint: summary,
+      semanticText: summary, summary, createdAt,
+      profile: { sceneFrame: "other" as const, npcArchetype: "other" as const, leadType: "other" as const, conflictMode: "other" as const },
+    });
+
+    await source.generate({
+      kind: "opening",
+      jobId: asNarrativeJobId("job-opening-context-transport"),
+      input: {
+        gameType: "science_fiction", gameLength: "short", seed: "opening-context-transport",
+        setup: {
+          characterName: "林舟", characterIdentity: "领航员", characterProfile: "曾在船厂修理引擎。",
+          personalityTags: ["冷静", "多疑"], worldPremise: "殖民卫星依靠轨道港补给。",
+          storyOpening: "一份陌生维修清单写着林舟的名字。", narrativeStyle: "cinematic", contentIntensity: "dark",
+        },
+        novelty: { attempt: 1, recent: [
+          novelty("过旧的样本", "2026-09-01"), novelty("上次为码头商人交接清单", "2026-09-05"),
+          novelty("第二新的样本", "2026-09-04"), novelty("第三新的样本", "2026-09-03"),
+        ] },
+      },
+    });
+
+    expect(complete).toHaveBeenCalledTimes(1);
+    const prompt = (complete.mock.calls[0]![1] as readonly AiMessage[])[0]!.content as string;
+    for (const text of ["曾在船厂修理引擎。", "冷静", "多疑", "cinematic", "dark", "上次为码头商人交接清单"]) {
+      expect(prompt).toContain(text);
+    }
+    expect(prompt).not.toContain("过旧的样本");
   });
 
   it("requires opening NPC anchors and typed goal proposals without normalizer defaults", async () => {
@@ -1156,6 +1234,44 @@ describe("createNarrativeBundleSource", () => {
         input: { gameType: "wuxia", gameLength: "short", seed: "opening-live-unknown-fields" },
       });
       expect(result).toMatchObject({ ok: false, failure: { kind: "AI_RESPONSE_INVALID" } });
+      expect(complete).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("rejects missing situation, invalid response references, and choice keys not declared by responses", async () => {
+    const opening = await createFixtureOpeningCandidateSource().generate({
+      gameType: "wuxia", gameLength: "short", seed: "opening-live-invalid-situation",
+    });
+    const basePayload = {
+      opening,
+      currentScene: {
+        segments: [{ beatId: "opening", text: "檐下有人等候回应。" }],
+        npcLine: { npcId: "npc_0", text: "你怎么看？", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedEventIds: [] },
+        objectiveLink: null,
+        choices: opening.opening.situation.responses.map((response) => ({ candidateId: response.key, label: response.key })),
+      },
+      continuationScenes: [],
+      terminal: { kind: "next_decision", target: { kind: "current_scene" } },
+    };
+    const mutations: readonly ((payload: typeof basePayload) => void)[] = [
+      (payload) => { delete (payload.opening.opening as unknown as Record<string, unknown>).situation; },
+      (payload) => { (payload.opening.world.publicFacts[0] as unknown as Record<string, unknown>).investigationApproaches = ["细看告示", "打听来历"]; },
+      (payload) => { (payload.opening.opening.situation as unknown as Record<string, unknown>).npcConnection = { familiarity: "stranger", stance: "wary", basisHistoryKeys: [] }; },
+      (payload) => { (payload.opening.opening.situation.responses[0] as { topic: { key: string } }).topic.key = "unknown_fact"; },
+      (payload) => { (payload.currentScene.choices[0] as { candidateId: string }).candidateId = "unknown_response"; },
+    ];
+
+    for (const mutate of mutations) {
+      const payload = structuredClone(basePayload);
+      mutate(payload);
+      const complete = vi.fn().mockResolvedValue({ ok: true, content: JSON.stringify(payload) });
+      const result = await createNarrativeBundleSource({ aiClient: mockAiClient(complete) }).generate({
+        kind: "opening",
+        jobId: asNarrativeJobId("job-opening-invalid-situation"),
+        input: { gameType: "wuxia", gameLength: "short", seed: "opening-live-invalid-situation" },
+      });
+      expect(result).toMatchObject({ ok: false, failure: { kind: "AI_RESPONSE_INVALID" } });
+      expect(result).toHaveProperty("repairDetail", expect.any(String));
       expect(complete).toHaveBeenCalledTimes(1);
     }
   });

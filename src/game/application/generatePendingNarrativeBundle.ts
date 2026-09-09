@@ -1,3 +1,4 @@
+import { repairFromSourceFailure, aiRepairAuditContext, persistedAiRepairReason } from "./aiGenerationRetry";
 import type { GameRepository } from "./server/persistence/gameRepository";
 import type { NarrativeBundleSource, NarrativeBundleRepair } from "./narrativeBundleSource";
 import { approveNarrativeBundle, type ApprovedNarrativeBundle } from "./approveNarrativeBundle";
@@ -72,42 +73,58 @@ export async function generatePendingNarrativeBundle(
   const transition: ObjectiveTransition = job.objectiveTransition;
   const evolutionNeed = deriveEvolutionNeed(storyState);
 
+  const retryOrigin = deps.auditLink?.retry ?? (narrative.retryContext === undefined
+    ? undefined
+    : { origin: "manual_failed_job" as const, mechanism: "initial" as const, attempt: 0 });
+  let lastFailureKind: AiFailureKind = "AI_RESPONSE_INVALID";
+  let lastRepair: NarrativeBundleRepair | undefined;
   const bounded = await runBoundedAttempts<ApprovedNarrativeBundle, NarrativeBundleRepair>({
     maxAttempts: MAX_NARRATIVE_BUNDLE_ATTEMPTS,
     runAttempt: async (attempt, priorRepair) => {
-      const repairHint = attempt > 1 ? priorRepair : undefined;
+      // 自动修复从 1 开始；本次循环若由手动重试启动，则以 retryContext
+      // 的首次修复序号为偏移。该偏移不代表之前多次手动重试的累计次数。
+      const repairHint: NarrativeBundleRepair | undefined = attempt > 1 && priorRepair !== undefined
+        ? { ...priorRepair, attempt: attempt - 1 + (narrative.retryContext?.attempt ?? 0) }
+        : narrative.retryContext;
 
-      const sourceResult = await deps.source.generate({
-        kind: "decision",
-        worldState,
-        storyState,
-        job,
-        auditLink: {
-          ...(deps.auditLink ?? {}),
-          gameId: String(record.gameId),
-          jobId: String(job.jobId),
-          turnNumber: job.turnNumber,
-          retry: repairHint === undefined
-            ? (deps.auditLink?.retry ?? { origin: "normal", mechanism: "initial", attempt: 0 })
-            : { origin: deps.auditLink?.retry?.origin ?? "normal", mechanism: "content_repair", attempt: repairHint.attempt, reason: repairHint.reason },
-        },
-        ...(repairHint === undefined ? {} : { contentRepair: repairHint }),
-      });
+      let sourceResult;
+      try {
+        sourceResult = await deps.source.generate({
+          kind: "decision",
+          worldState,
+          storyState,
+          job,
+          auditLink: {
+            ...(deps.auditLink ?? {}),
+            gameId: String(record.gameId),
+            jobId: String(job.jobId),
+            turnNumber: job.turnNumber,
+            retry: repairHint === undefined
+              ? (retryOrigin ?? { origin: "normal", mechanism: "initial", attempt: 0 })
+              : aiRepairAuditContext(repairHint, retryOrigin),
+          },
+          ...(repairHint === undefined ? {} : { contentRepair: repairHint }),
+        });
+      } catch {
+        lastFailureKind = "AI_CALL_FAILED";
+        lastRepair = { attempt, reason: "provider_failure", detail: "source_exception" };
+        return { ok: false, retryable: true, reason: lastRepair };
+      }
 
       if (!sourceResult.ok) {
+        lastFailureKind = sourceResult.failure.kind;
+        lastRepair = repairFromSourceFailure(sourceResult, attempt);
         return {
           ok: false,
           retryable: true,
-          reason: {
-            attempt: 1,
-            reason: sourceResult.repairReason ?? "invalid_json",
-            ...(sourceResult.repairDetail === undefined ? {} : { detail: sourceResult.repairDetail }),
-          },
+          reason: lastRepair,
         };
       }
 
+      lastFailureKind = "AI_RESPONSE_INVALID";
       if (sourceResult.kind !== "decision") {
-        return { ok: false, retryable: true, reason: { attempt: 1, reason: "invalid_schema" } };
+        lastRepair = { attempt, reason: "invalid_schema", detail: "unexpected_source_kind" };
+        return { ok: false, retryable: true, reason: lastRepair };
       }
       const approvalResult = approveNarrativeBundle({
         proposal: sourceResult.proposal,
@@ -135,15 +152,11 @@ export async function generatePendingNarrativeBundle(
       });
 
       if (!approvalResult.ok) {
+        lastRepair = { attempt, reason: "approval_rejected", rejectionCode: approvalResult.code, ...(approvalResult.detail === undefined ? {} : { detail: approvalResult.detail }) };
         return {
           ok: false,
           retryable: true,
-          reason: {
-            attempt: 1,
-            reason: "approval_rejected",
-            rejectionCode: approvalResult.code,
-            ...(approvalResult.detail === undefined ? {} : { detail: approvalResult.detail }),
-          },
+          reason: lastRepair,
         };
       }
 
@@ -158,7 +171,8 @@ export async function generatePendingNarrativeBundle(
       mode: narrative.mode,
       job,
       failure: {
-        kind: "AI_RESPONSE_INVALID",
+        kind: lastFailureKind,
+        reason: persistedAiRepairReason(lastRepair ?? { attempt: 1, reason: "invalid_schema" }),
         phase: "scene",
         failedAt: deps.now(),
       },
@@ -186,8 +200,8 @@ export async function generatePendingNarrativeBundle(
 
     return {
       ok: false,
-      code: "AI_RESPONSE_INVALID",
-      failureKind: "AI_RESPONSE_INVALID",
+      code: lastFailureKind,
+      failureKind: lastFailureKind,
     };
   }
 
@@ -218,7 +232,14 @@ export async function generatePendingNarrativeBundle(
     },
     entityStore: approved.nextWorldState.entityStore,
   });
-  if (!eventCommit.ok) return failPendingJob();
+  if (!eventCommit.ok) {
+    // 审批已通过：事件账本提交失败是内容/基础设施契约问题，不是审批拒绝。
+    // 持久化独立稳定码，避免手动重试被"拒绝码"误导去修复已通过的内容；
+    // 同时覆盖 lastRepair，防止残留上一轮失败原因被错误归因。
+    deps.logger?.warn("narrative_bundle_event_commit_rejected", { code: eventCommit.code });
+    lastRepair = { attempt: 1, reason: "invalid_schema", detail: "event_commit_failed" };
+    return failPendingJob();
+  }
   const nextWorldState = { ...approved.nextWorldState, eventLedger: eventCommit.ledger };
 
   // The next story state includes the new world state from the bundle,

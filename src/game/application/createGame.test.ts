@@ -86,6 +86,32 @@ function structuralSignature(record: GameRecord) {
 }
 
 describe("createGame", () => {
+  it("passes the latest schema rejection into the next opening attempt before saving", async () => {
+    const { repo, getRecord } = createInMemoryRepo();
+    const fixture = createFixtureOpeningSource();
+    const contexts: NarrativeBundleSourceContext[] = [];
+    const result = await createGame(
+      { gameId: asGameId("schema-repair"), gameType: "wuxia", gameLength: "short", seed: "schema-repair" },
+      { repository: repo, now: () => "2026-09-09", source: {
+        async generate(context) {
+          contexts.push(context);
+          expect(getRecord()).toBeNull();
+          if (contexts.length <= 2) return {
+            ok: false, failure: { kind: "AI_RESPONSE_INVALID", phase: "opening" },
+            repairReason: "invalid_schema",
+            repairDetail: contexts.length === 1 ? "opening_INVALID_FACT" : "invalid_response_reference",
+          };
+          return fixture.generate(context);
+        },
+      } },
+    );
+    expect(result.ok).toBe(true);
+    expect(contexts).toHaveLength(3);
+    expect(contexts[0]).not.toHaveProperty("contentRepair");
+    expect(contexts[1]).toHaveProperty("contentRepair", { attempt: 1, reason: "invalid_schema", detail: "opening_INVALID_FACT" });
+    expect(contexts[2]).toHaveProperty("contentRepair", { attempt: 2, reason: "invalid_schema", detail: "invalid_response_reference" });
+    expect(getRecord()).not.toBeNull();
+  });
   it("authority-rejects an opening line that cites the NPC's undisclosed fact before persistence", async () => {
     const { repo: repository } = createInMemoryRepo();
     const fixture = createFixtureOpeningSource();
@@ -346,6 +372,112 @@ describe("createGame", () => {
     expect(generation.currentScene.npcLine?.npcId).toBe(openingNpcId);
     expect(generation.currentScene.choices).toHaveLength(2);
     expect(generation.choiceRegistry).toHaveLength(2);
+    expect(generation.choiceRegistry.map((choice) => choice.action)).toEqual([
+      expect.objectContaining({ dialogueAct: "ask", topic: { kind: "fact", factId: "fact_0" } }),
+      expect.objectContaining({ dialogueAct: "challenge", topic: { kind: "thread", threadId: "thread_init_lead" } }),
+    ]);
+    expect(new Set(generation.choiceRegistry.map((choice) => choice.choiceToken)).size).toBe(2);
+  });
+
+  it("rejects opening scene choices that do not match situation responses atomically", async () => {
+    const { repo } = createInMemoryRepo();
+    const fixture = createFixtureOpeningSource();
+    const source = {
+      async generate(input: Parameters<typeof fixture.generate>[0]) {
+        const result = await fixture.generate(input);
+        if (!result.ok || result.kind !== "opening") return result;
+        return { ...result, proposal: { ...result.proposal, currentScene: {
+          ...result.proposal.currentScene,
+          choices: [{ candidateId: "ask_lead", label: "先问线索" }, { candidateId: "extra", label: "额外选项" }],
+        } } } as typeof result;
+      },
+    };
+    const result = await createGame(
+      { gameId: asGameId("opening-choice-mismatch"), gameType: "wuxia", gameLength: "short", seed: "opening-choice-mismatch" },
+      { repository: repo, source, now: () => "2026-01-01" },
+    );
+    expect(result).toMatchObject({ ok: false, code: "AI_GENERATION_FAILED" });
+    expect(await repo.getCurrentGame()).toMatchObject({ status: "none" });
+  });
+
+  it("compiles ask/refuse and equal-act distinct-topic responses through createGame", async () => {
+    for (const [suffix, acts] of [["ask-refuse", ["ask", "refuse"]], ["ask-ask", ["ask", "ask"]]] as const) {
+      const { repo, getRecord } = createInMemoryRepo();
+      const fixture = createFixtureOpeningSource();
+      const source = {
+        async generate(input: Parameters<typeof fixture.generate>[0]) {
+          const result = await fixture.generate(input);
+          if (!result.ok || result.kind !== "opening") return result;
+          const responses = [
+            { key: "fact_response", dialogueAct: acts[0], topic: { kind: "fact", key: "fact_inn" } },
+            { key: "thread_response", dialogueAct: acts[1], topic: { kind: "thread", key: "lead" } },
+          ] as const;
+          return { ...result, proposal: {
+            ...result.proposal,
+            opening: { ...result.proposal.opening, opening: { ...result.proposal.opening.opening,
+              situation: { ...result.proposal.opening.opening.situation, responses },
+            } },
+            currentScene: { ...result.proposal.currentScene, choices: [
+              { candidateId: "fact_response", label: "先核对消息" },
+              { candidateId: "thread_response", label: "回应当前问题" },
+            ] },
+          } } as typeof result;
+        },
+      };
+      const created = await createGame(
+        { gameId: asGameId(`opening-${suffix}`), gameType: "wuxia", gameLength: "short", seed: `opening-${suffix}` },
+        { repository: repo, source, now: () => "2026-01-01" },
+      );
+      expect(created.ok).toBe(true);
+      const narrative = getRecord()!.storyState.narrative;
+      expect(narrative.status).toBe("ready");
+      if (narrative.status !== "ready") continue;
+      expect(narrative.choiceRegistry.map((choice) => choice.action)).toEqual([
+        expect.objectContaining({ dialogueAct: "ask", topic: { kind: "fact", factId: "fact_0" } }),
+        expect.objectContaining({ dialogueAct: acts[1], topic: { kind: "thread", threadId: "thread_init_lead" } }),
+      ]);
+      expect(new Set(narrative.choiceRegistry.map((choice) => choice.choiceToken)).size).toBe(2);
+    }
+  });
+
+  it("rejects semantic duplicates and unknown or private response topics through createGame", async () => {
+    const invalidResponses = [
+      [
+        { key: "duplicate_a", dialogueAct: "ask", topic: { kind: "fact", key: "fact_inn" } },
+        { key: "duplicate_b", dialogueAct: "ask", topic: { kind: "fact", key: "fact_inn" } },
+      ],
+      [
+        { key: "unknown", dialogueAct: "ask", topic: { kind: "fact", key: "fact_missing" } },
+        { key: "thread", dialogueAct: "refuse", topic: { kind: "thread", key: "lead" } },
+      ],
+      [
+        { key: "private", dialogueAct: "ask", topic: { kind: "fact", key: "fact_pact" } },
+        { key: "thread", dialogueAct: "refuse", topic: { kind: "thread", key: "lead" } },
+      ],
+    ] as const;
+    for (const [index, responses] of invalidResponses.entries()) {
+      const { repo } = createInMemoryRepo();
+      const fixture = createFixtureOpeningSource();
+      const source = {
+        async generate(input: Parameters<typeof fixture.generate>[0]) {
+          const result = await fixture.generate(input);
+          if (!result.ok || result.kind !== "opening") return result;
+          return { ...result, proposal: {
+            ...result.proposal,
+            opening: { ...result.proposal.opening, opening: { ...result.proposal.opening.opening,
+              situation: { ...result.proposal.opening.opening.situation, responses },
+            } },
+            currentScene: { ...result.proposal.currentScene, choices: responses.map((response) => ({ candidateId: response.key, label: response.key })) },
+          } } as typeof result;
+        },
+      };
+      const created = await createGame(
+        { gameId: asGameId(`opening-invalid-topic-${index}`), gameType: "wuxia", gameLength: "short", seed: `opening-invalid-topic-${index}` },
+        { repository: repo, source, now: () => "2026-01-01" },
+      );
+      expect(created).toMatchObject({ ok: false, code: "AI_GENERATION_FAILED" });
+      expect(await repo.getCurrentGame()).toMatchObject({ status: "none" });
+    }
   });
 
   it("honors every game type in compiled fallback structure and remains deterministic", async () => {

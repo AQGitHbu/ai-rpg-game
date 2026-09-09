@@ -157,23 +157,27 @@ export type NarrativeBundleState = {
 /**
  * 提案契约的细分拒绝原因。整包仍然只按同一套规则严格校验，
  * 这里只是把"哪一条规则没满足"带出来，供修复重试回传给 provider。
+ * 运行时清单供类型派生与持久化细分码白名单共用，新增码自动进入白名单。
  */
-export type NarrativeBundleProposalRejectionReason =
-  | "not_object"
-  | "unknown_keys"
-  | "current_scene_invalid"
-  | "continuation_scenes_invalid"
-  | "terminal_invalid"
-  | "current_scene_terminal_requires_empty_continuation"
-  | "current_scene_terminal_requires_two_choices"
-  | "continuation_terminal_requires_continuation_scenes"
-  | "current_scene_must_have_no_choices"
-  | "continuation_terminal_step_not_found"
-  | "terminal_step_requires_two_choices"
-  | "non_terminal_step_must_have_no_choices"
-  | "ending_terminal_requires_empty_bundle"
-  | "too_many_steps"
-  | "duplicate_step_keys";
+export const NARRATIVE_BUNDLE_PROPOSAL_REJECTION_REASONS = [
+  "not_object",
+  "unknown_keys",
+  "current_scene_invalid",
+  "continuation_scenes_invalid",
+  "terminal_invalid",
+  "current_scene_terminal_requires_empty_continuation",
+  "current_scene_terminal_requires_two_choices",
+  "continuation_terminal_requires_continuation_scenes",
+  "current_scene_must_have_no_choices",
+  "continuation_terminal_step_not_found",
+  "terminal_step_requires_two_choices",
+  "non_terminal_step_must_have_no_choices",
+  "ending_terminal_requires_empty_bundle",
+  "too_many_steps",
+  "duplicate_step_keys",
+] as const;
+
+export type NarrativeBundleProposalRejectionReason = typeof NARRATIVE_BUNDLE_PROPOSAL_REJECTION_REASONS[number];
 
 export type ParseNarrativeBundleProposalResult =
   | { readonly ok: true; readonly proposal: NarrativeBundleProposal }

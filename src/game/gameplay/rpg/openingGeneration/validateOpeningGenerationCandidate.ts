@@ -3,6 +3,7 @@ import { TARGET_ACTS } from "@/game/domain/storyBudget";
 import type { OpeningGenerationCandidate } from "@/game/domain/openingGenerationCandidate";
 import { parseNpcCreationAnchors, parseNpcGoalProposals } from "@/game/domain/entity";
 import { investigationApproachListIsValid } from "@/game/gameplay/rpg/worldEvolution";
+import { resolveOpeningResponses } from "./openingSituationRules";
 
 // ---------------------------------------------------------------------------
 // Task 2：开局切片候选的 gameplay 校验（无 schema 校验——那由 domain parser
@@ -21,7 +22,8 @@ export type OpeningGenerationIssueCode =
   | "unknown_fact_key"
   | "invalid_investigation_approaches"
   | "invalid_npc_anchors"
-  | "invalid_npc_goals";
+  | "invalid_npc_goals"
+  | "invalid_opening_situation";
 
 export type OpeningGenerationIssue = {
   readonly code: OpeningGenerationIssueCode;
@@ -72,6 +74,10 @@ export function validateOpeningGenerationCandidate(
       issues.push({ code: "duplicate_fact_key", params: { key: fact.key } });
     }
     factKeys.add(fact.key);
+  }
+
+  if (resolveOpeningResponses(candidate) === null) {
+    issues.push({ code: "invalid_opening_situation" });
   }
 
   for (const key of [...candidate.opening.npc.knownFactKeys, ...candidate.opening.npc.privateFactKeys]) {

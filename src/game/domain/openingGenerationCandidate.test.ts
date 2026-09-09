@@ -56,11 +56,24 @@ function validCandidate(): OpeningGenerationCandidate {
         name: "取得沈掌柜的信任", description: "从关键线人口中确认追索方向。",
         objective: { kind: "talk_to_opening_npc" },
       },
+      situation: {
+        history: [], threads: [{ key: "lead", questionFactKey: "fact_inn", supportingFactKeys: ["fact_pact"], participantRefs: ["player", "opening_npc"], causeHistoryKeys: [] }],
+        npcConnection: { familiarity: "stranger", stance: "neutral", basisHistoryKeys: [] },
+        responses: [{ key: "ask_lead", dialogueAct: "ask", topic: { kind: "fact", key: "fact_inn" } }, { key: "challenge_lead", dialogueAct: "challenge", topic: { kind: "thread", key: "lead" } }],
+      },
     },
   };
 }
 
 describe("parseOpeningGenerationCandidate", () => {
+  it("requires situation and preserves its exact parsed structure", () => {
+    const candidate = validCandidate();
+    expect(parseOpeningGenerationCandidate(candidate)).toMatchObject({ ok: true, value: { opening: { situation: candidate.opening.situation } } });
+    const missing = rawCandidate();
+    delete (missing.opening as Record<string, unknown>).situation;
+    expect(parseOpeningGenerationCandidate(missing)).toEqual({ ok: false, code: "INVALID_OPENING_SITUATION" });
+  });
+
   it("接受带完整 anchors 与 typed goal proposals 的开场 NPC", () => {
     const base = rawCandidate();
     const candidate = {

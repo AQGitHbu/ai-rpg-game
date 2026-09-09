@@ -450,7 +450,7 @@ describe("applyEntityMutations — create_entities 与批量原子性", () => {
   it("成功结果逐字携带非实体权威字段", () => {
     const ws = world();
     const next = okApply(ws, [{ kind: "discover_fact", factId: FACT_1 }]);
-    expect(next.version).toBe(5);
+    expect(next.version).toBe(ws.version);
     expect(next.generation).toBe(ws.generation);
     expect(next.battle).toBe(ws.battle);
     expect(next.endings).toBe(ws.endings);

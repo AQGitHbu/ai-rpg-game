@@ -1,3 +1,4 @@
+import { repairFromSourceFailure, aiRepairAuditContext, persistedAiRepairReason, type AiContentRepair } from "./aiGenerationRetry";
 import type { GameRepository, GameRecord } from "./server/persistence/gameRepository";
 import type { AiTextAuditRecorder, AiTextAuditLink } from "./server/ai/textAuditTypes";
 import type { SceneSource, ScenePerformanceProposal } from "./sceneSource";
@@ -55,12 +56,7 @@ function buildAuditedSceneGenerationContext(
     : { attempt: retryContext.attempt, reason: retryContext.reason };
   const retry = retryContext === undefined
     ? auditLink?.retry
-    : {
-        origin: auditLink?.retry?.origin ?? "normal",
-        mechanism: "content_repair" as const,
-        attempt: retryContext.attempt,
-        reason: retryContext.reason,
-      };
+    : aiRepairAuditContext(retryContext, auditLink?.retry);
   return {
     ...context,
     ...(repairAttempt === undefined ? {} : { repairAttempt }),
@@ -77,19 +73,14 @@ function buildAuditedSceneGenerationContext(
 
 function withSceneRepairContext<TContext extends ReturnType<typeof buildAuditedSceneGenerationContext>>(
   context: TContext,
-  repairAttempt: { readonly attempt: 1; readonly reason: NarrativeGenerationRepairReason },
+  repairAttempt: AiContentRepair<NarrativeGenerationRepairReason>,
 ): TContext {
   return {
     ...context,
     repairAttempt,
     auditLink: {
       ...context.auditLink,
-      retry: {
-        origin: context.auditLink?.retry?.origin ?? "normal",
-        mechanism: "content_repair",
-        attempt: repairAttempt.attempt,
-        reason: repairAttempt.reason,
-      },
+      retry: aiRepairAuditContext(repairAttempt, context.auditLink?.retry),
     },
   } as TContext;
 }
@@ -150,14 +141,16 @@ export async function generatePendingScene(
     return marked.code === "STALE_GAME_REVISION" ? "stale" : "unavailable";
   };
 
+  // 与 bundle 路径一致：持久化原因统一经 persistedAiRepairReason 白名单过滤，
+  // 不依赖"调用点恰好不携带 detail"的约定。
   const sceneFailure = (
     kind: "AI_CALL_FAILED" | "AI_RESPONSE_INVALID",
-    reason?: NarrativeGenerationRepairReason,
+    repair?: AiContentRepair,
   ): NarrativeGenerationFailure => ({
     kind,
     phase: "scene",
     failedAt: deps.now(),
-    ...(reason === undefined ? {} : { reason }),
+    ...(repair === undefined ? {} : { reason: persistedAiRepairReason(repair) }),
   });
 
   if (!providerAllowedFor(generation.job.generationKind)) {
@@ -165,7 +158,7 @@ export async function generatePendingScene(
       runtimeStatus: generation.status,
       generationKind: generation.job.generationKind,
     });
-    return fail(sceneFailure("AI_RESPONSE_INVALID", "invalid_schema"));
+    return fail(sceneFailure("AI_RESPONSE_INVALID", { attempt: 1, reason: "invalid_schema" }));
   }
 
   // Task 3：场景编排同样可能挂着演化需求（幕推进/结局对）。
@@ -295,14 +288,14 @@ export async function generatePendingScene(
     readonly context: ReturnType<typeof buildAuditedSceneGenerationContext>;
   };
   let terminalFailure: NarrativeGenerationFailure = sceneFailure("AI_RESPONSE_INVALID");
-  const bounded = await runBoundedAttempts<SceneAttemptValue, NarrativeGenerationRepairReason>({
+  const bounded = await runBoundedAttempts<SceneAttemptValue, AiContentRepair<NarrativeGenerationRepairReason>>({
     maxAttempts: 2,
-    runAttempt: async (attempt, priorReason) => {
+    runAttempt: async (attempt, priorRepair) => {
       const attemptContext = attempt === 1
         ? context
         : withSceneRepairContext(context, {
-            attempt: 1,
-            reason: priorReason ?? "invalid_schema",
+            ...(priorRepair ?? { reason: "invalid_schema" }),
+            attempt: attempt - 1 + (context.repairAttempt?.attempt ?? 0),
           });
       let sceneResult;
       try {
@@ -311,17 +304,16 @@ export async function generatePendingScene(
         deps.logger?.warn("scene_generation_source_exception", {
           message: error instanceof Error ? error.message.slice(0, 240) : "unknown_error",
         });
-        terminalFailure = sceneFailure("AI_CALL_FAILED", "source_exception");
-        return { ok: false, retryable: false, reason: "source_exception" };
+        terminalFailure = sceneFailure("AI_CALL_FAILED", { attempt: 1, reason: "provider_failure", detail: "source_exception" });
+        return { ok: false, retryable: false, reason: { attempt, reason: "provider_failure", detail: "source_exception" } };
       }
       if (!sceneResult.ok) {
-        const reason = sceneResult.repairReason
-          ?? (sceneResult.failure.kind === "AI_CALL_FAILED" ? "provider_failure" : "invalid_schema");
-        terminalFailure = sceneFailure(sceneResult.failure.kind, reason);
+        const repair = repairFromSourceFailure(sceneResult, attempt);
+        terminalFailure = sceneFailure(sceneResult.failure.kind, repair);
         return {
           ok: false,
           retryable: attempt === 1 && sceneResult.repairReason !== undefined,
-          reason,
+          reason: repair,
         };
       }
 
@@ -348,7 +340,11 @@ export async function generatePendingScene(
         deps.logger?.warn("scene_generation_rejected", { code: approvedGenerated.code });
       }
       const repairReason = `approval:${approvedGenerated.code}` as const;
-      terminalFailure = sceneFailure("AI_RESPONSE_INVALID", repairReason);
+      terminalFailure = sceneFailure("AI_RESPONSE_INVALID", {
+        attempt,
+        reason: "approval_rejected",
+        rejectionCode: approvedGenerated.code,
+      });
       const canRepair = attempt === 1 && proposal.source === "generated";
       if (canRepair) {
         deps.logger?.warn("scene_generation_content_retry", {
@@ -356,7 +352,7 @@ export async function generatePendingScene(
           attempt,
         });
       }
-      return { ok: false, retryable: canRepair, reason: repairReason };
+      return { ok: false, retryable: canRepair, reason: { attempt, reason: repairReason } };
     },
   });
   if (!bounded.ok) return fail(terminalFailure);
@@ -382,7 +378,8 @@ export async function generatePendingScene(
   });
   if (!eventCommit.ok) {
     deps.logger?.warn("scene_event_commit_rejected", { code: eventCommit.code });
-    return fail(sceneFailure("AI_RESPONSE_INVALID"));
+    // 与 bundle 路径一致：事件提交失败不是审批拒绝，持久化独立稳定码。
+    return fail(sceneFailure("AI_RESPONSE_INVALID", { attempt: 1, reason: "invalid_schema", detail: "event_commit_failed" }));
   }
   const committedScenarioWs = { ...scenarioWs, eventLedger: eventCommit.ledger };
 

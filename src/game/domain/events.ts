@@ -94,6 +94,25 @@ export type GameInitializedPayload = Readonly<{
   readonly generation: GenerationMetadata;
 }>;
 
+export type OpeningHistoryEstablishedPayload = Readonly<{
+  readonly type: "opening_history_established";
+  readonly factIds: readonly FactId[];
+}>;
+
+export type OpeningThreadEstablishedPayload = Readonly<{
+  readonly type: "opening_thread_established";
+  readonly threadId: string;
+  readonly questionFactId: FactId;
+  readonly supportingFactIds: readonly FactId[];
+}>;
+
+/** Canonical envelope refs preserve first occurrence while payload keeps question/support roles. */
+export function canonicalOpeningThreadEnvelopeFactIds(
+  payload: Pick<OpeningThreadEstablishedPayload, "questionFactId" | "supportingFactIds">,
+): readonly FactId[] {
+  return [...new Set([payload.questionFactId, ...payload.supportingFactIds])];
+}
+
 export type LocationObservedPayload = Readonly<{
   readonly type: "location_observed";
   readonly locationId: LocationId;
@@ -289,6 +308,8 @@ export type NpcRelationshipChangedPayload = Readonly<{
  */
 export type NarrativeEventPayload =
   | GameInitializedPayload
+  | OpeningHistoryEstablishedPayload
+  | OpeningThreadEstablishedPayload
   | LocationObservedPayload
   | NpcMetPayload
   | NpcDialogueCompletedPayload
@@ -368,6 +389,8 @@ export type EventCauseKey =
 
 const PAYLOAD_TYPE_KEYS: ReadonlySet<string> = new Set<NarrativeEventPayload["type"]>([
   "game_initialized",
+  "opening_history_established",
+  "opening_thread_established",
   "location_observed",
   "npc_met",
   "npc_dialogue_completed",
@@ -452,6 +475,20 @@ export function parseCommittedEventLedger(value: unknown): ParseCommittedEventLe
     }
     if (e.actionId !== undefined && typeof e.actionId !== "string") {
       return { ok: false, code: "INVALID_LEDGER" };
+    }
+    const payload = e.payload as NarrativeEventPayload;
+    const envelopeFactIds = e.factIds as readonly string[];
+    if (payload.type === "opening_history_established"
+      && (payload.factIds.length !== envelopeFactIds.length
+        || payload.factIds.some((factId, index) => factId !== envelopeFactIds[index]))) {
+      return { ok: false, code: "INVALID_LEDGER" };
+    }
+    if (payload.type === "opening_thread_established") {
+      const payloadFactIds = canonicalOpeningThreadEnvelopeFactIds(payload);
+      if (payloadFactIds.length !== envelopeFactIds.length
+        || payloadFactIds.some((factId, index) => factId !== envelopeFactIds[index])) {
+        return { ok: false, code: "INVALID_LEDGER" };
+      }
     }
     seenIds.add(e.eventId);
     result.push(e as unknown as CommittedNarrativeEvent);

@@ -1,3 +1,4 @@
+import { renderAiRepairFeedback } from "../../../aiGenerationRetry";
 import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
 import {
   isFinalDialogueHandoff,
@@ -72,7 +73,7 @@ function mandatoryBeatContent(context: SceneGenerationContext): { readonly beats
   };
 }
 
-function repairInstruction(context: SceneGenerationContext): string {
+function specificRepairInstruction(context: SceneGenerationContext): string {
   const reason = context.repairAttempt?.reason;
   if (reason === undefined) return "";
   switch (reason) {
@@ -96,6 +97,10 @@ function repairInstruction(context: SceneGenerationContext): string {
     default:
       return `上次失败字段：${reason}。只修复该契约问题，其他主线、NPC、历史对话和事实边界保持不变。`;
   }
+}
+
+function repairInstruction(context: SceneGenerationContext): string {
+  return [renderAiRepairFeedback(context.repairAttempt), specificRepairInstruction(context)].filter(Boolean).join("\n");
 }
 
 function focusContent(context: SceneGenerationContext): string {
@@ -371,7 +376,7 @@ export function buildSceneNarrativeContextBlocks(
     blocks.push(sceneBlock({
       id: "scene:repair", slot: "current_resolution", title: "当前已结算结果", sourceKind: "scene_generation_repair", sourceRefs: [String(job.jobId)],
       authority: "state", retention: "mandatory", priority: 950,
-      content: `这是同一回合的第${context.repairAttempt.attempt + 1}次内容生成。上一次提案未通过${context.repairAttempt.reason}。${repairInstruction(context)} 请保留当前主线、NPC、历史对话和事实边界。`,
+      content: `${repairInstruction(context)} 请保留当前主线、NPC、历史对话和事实边界。`,
     }));
   }
   return blocks;

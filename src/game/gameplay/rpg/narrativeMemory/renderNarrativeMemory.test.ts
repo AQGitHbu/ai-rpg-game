@@ -6,6 +6,10 @@ import { asFactId, asItemId, asLocationId, asNpcId } from "@/game/domain/worldEn
 import { renderNarrativeMemory } from "./renderNarrativeMemory";
 import { retrieveNarrativeMemory } from "./retrieveNarrativeMemory";
 import type { EntityStore } from "@/game/domain/entity";
+import { compileOpeningGenerationCandidate } from "@/game/gameplay/rpg/openingGeneration";
+import { makeOpeningQualityCandidate } from "@/game/domain/openingSituation.testutil";
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
+import { asGenerationId } from "@/game/domain/worldEntity";
 
 const OLD_LOCATION = asLocationId("location:old");
 const CURRENT_LOCATION = asLocationId("location:current");
@@ -26,6 +30,29 @@ const entityStore = {
 } as unknown as EntityStore;
 
 describe("renderNarrativeMemory", () => {
+  it("renders grounded public opening history and thread text without secret supporting facts", () => {
+    const compiled = compileOpeningGenerationCandidate({
+      candidate: makeOpeningQualityCandidate(),
+      generation: { generationId: asGenerationId("opening"), seed: "s", templateVersion: "v", inputDigest: "", gameType: "science_fiction" },
+      gameLength: "short",
+      initialNarrative: createFixtureNarrativeRuntimeState(),
+    });
+    const openingEvents = compiled.worldState.eventLedger.filter((event) =>
+      event.kind === "opening_history_established" || event.kind === "opening_thread_established");
+    const retrieved = retrieveNarrativeMemory({
+      memory: compiled.storyState.memory,
+      ledger: compiled.worldState.eventLedger,
+      requiredEventIds: openingEvents.map((event) => event.eventId),
+    });
+    const rendered = renderNarrativeMemory({ retrieved, entityStore: compiled.worldState.entityStore });
+    const renderedText = `${rendered.requiredEventsText}\n${rendered.relevantEventsText}`;
+
+    expect(renderedText).toContain("主角过去曾与船厂技师共同维修引擎");
+    expect(renderedText).toContain("技师希望先停机检查，船厂却急于恢复作业");
+    expect(renderedText).toContain("开局时已成立");
+    expect(renderedText).not.toContain("技师私自隐去了上次维修失误");
+    expect(renderedText).not.toContain("fact_secret");
+  });
   it("renders the exact historical item and source event from item-only recall", () => {
     const itemId = asItemId("item:keepsake");
     const ledger = [makeCommittedEvent({ type: "item_given", itemId, npcId: NPC, locationId: OLD_LOCATION }, {

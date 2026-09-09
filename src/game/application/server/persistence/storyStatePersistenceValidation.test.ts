@@ -3,6 +3,7 @@ import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestF
 import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { rebuildEpisodicMemory } from "@/game/domain/episodicMemory";
+import { asEventId } from "@/game/domain/events";
 import { parsePersistableStoryState } from "./storyStatePersistenceValidation";
 
 function storyState() {
@@ -41,5 +42,13 @@ describe("parsePersistableStoryState", () => {
         episodes: validMemory.episodes.map((episode) => ({ ...episode, eventIds: ["missing:1"] })),
       },
     }, [event])).toMatchObject({ ok: false, code: "INVALID_STORY_STATE" });
+  });
+
+  it("rejects a structurally valid memory rebuilt from a different opening ledger", () => {
+    const first = makeCommittedEvent({ type: "opening_history_established", factIds: ["fact_0"] } as never);
+    const second = { ...first, eventId: asEventId("init:other:event:0") };
+    expect(parsePersistableStoryState({
+      ...storyState(), memory: rebuildEpisodicMemory([second]),
+    }, [first])).toMatchObject({ ok: false, code: "INVALID_STORY_STATE" });
   });
 });

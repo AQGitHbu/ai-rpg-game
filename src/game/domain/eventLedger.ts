@@ -4,7 +4,7 @@ import type {
   EventId,
   TurnId,
 } from "./events";
-import { eventIdFor, asEpisodeId, asTurnId, episodeIdForTurn, parseCommittedEventLedger } from "./events";
+import { canonicalOpeningThreadEnvelopeFactIds, eventIdFor, asEpisodeId, asTurnId, episodeIdForTurn, parseCommittedEventLedger } from "./events";
 import type {
   LocationId,
   GenerationMetadata,
@@ -60,6 +60,7 @@ export function commitInitializationEvent(input: {
   readonly locationId: LocationId;
   readonly entityStore: EntityStore;
   readonly committedAt: string;
+  readonly backgroundDrafts?: readonly NarrativeEventDraft[];
 }): EventCommitResult {
   const turnId = asTurnId(`init:${input.generation.generationId}`);
   return commitEventDrafts({
@@ -76,7 +77,7 @@ export function commitInitializationEvent(input: {
       outcome: "neutral",
       salience: 100,
       payload: { type: "game_initialized", generation: input.generation },
-    }],
+    }, ...(input.backgroundDrafts ?? [])],
     source: {
       turnId,
       turnNumber: 0,
@@ -154,6 +155,8 @@ export function commitEventDrafts(input: {
     // payload type 必须在 union 内（通过检查 type 字段是否已知）
     const knownPayloadTypes = new Set([
       "game_initialized",
+      "opening_history_established",
+      "opening_thread_established",
       "location_observed",
       "npc_met",
       "npc_dialogue_completed",
@@ -191,6 +194,18 @@ export function commitEventDrafts(input: {
       return { ok: false, code: "UNKNOWN_PAYLOAD_TYPE" };
     }
     if (!isNarrativeEventPayload(draft.payload)) return { ok: false, code: "INVALID_PAYLOAD" };
+    if (draft.payload.type === "opening_history_established"
+      && (draft.payload.factIds.length !== draft.factIds.length
+        || draft.payload.factIds.some((factId, index) => factId !== draft.factIds[index]))) {
+      return { ok: false, code: "INVALID_REFS" };
+    }
+    if (draft.payload.type === "opening_thread_established") {
+      const payloadFactIds = canonicalOpeningThreadEnvelopeFactIds(draft.payload);
+      if (payloadFactIds.length !== draft.factIds.length
+        || payloadFactIds.some((factId, index) => factId !== draft.factIds[index])) {
+        return { ok: false, code: "INVALID_REFS" };
+      }
+    }
 
     // 引用校验：actorIds/targetIds/locationId/factIds/questIds
     for (const a of draft.actorIds) {

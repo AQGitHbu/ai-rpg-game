@@ -5,6 +5,7 @@ import { asLocationId, asNpcId, asQuestId, asFactId, PLAYER_ENTITY_ID } from "@/
 import type { WorldState } from "@/game/domain/worldState";
 import { createWorldStateFromProjection } from "@/game/domain/worldState";
 import { commitInitializationEvent } from "@/game/domain/eventLedger";
+import { canonicalOpeningThreadEnvelopeFactIds, type NarrativeEventDraft } from "@/game/domain/events";
 import type {
   LocationEntry, NpcEntry, QuestEntry, WorldFactEntry,
 } from "@/game/domain/worldEntries";
@@ -19,6 +20,7 @@ import type {
   NpcDynamicStateComponent, NpcGoal, NpcHistoryComponent, NpcKnowledgeComponent,
   NpcRelationshipComponent,
 } from "@/game/domain/entity";
+import { INITIAL_RELATIONSHIP_SEED_POLICY } from "@/game/gameplay/rpg/npcMemory";
 
 // ---------------------------------------------------------------------------
 // Task 2：把已验证的开局切片编译为单一 World State + Story State。
@@ -71,10 +73,14 @@ export function compileOpeningGenerationCandidate(
       source: { kind: "initial_world", learnedAtTurn: 0 },
     })),
   };
+  const connection = candidate.opening.situation.npcConnection;
+  const initialEmotion = input.initialNarrative.status === "ready"
+    ? input.initialNarrative.currentScene.npcLine?.emotion ?? "neutral"
+    : "neutral";
   const openingDynamicState: NpcDynamicStateComponent = {
     isCompanion: false,
-    met: false,
-    emotion: "neutral",
+    met: connection.familiarity === "known",
+    emotion: initialEmotion,
     goals: candidate.opening.npc.goals.map((proposal, index): NpcGoal => ({
       goalId: npcGoalId(String(npcId), index + 1),
       horizon: proposal.horizon,
@@ -84,15 +90,26 @@ export function compileOpeningGenerationCandidate(
       reason: proposal.reason,
     })),
   };
+  const relationshipRule = connection.stance === "neutral"
+    ? {
+        dimensions: { affinity: 0, trust: 0, fear: 0, hostility: 0 },
+        stage: connection.familiarity === "known" ? "acquainted" as const : "unknown" as const,
+        reasonKey: connection.basisHistoryKeys[0] ?? "opening_npc",
+      }
+    : INITIAL_RELATIONSHIP_SEED_POLICY[connection.stance];
   const openingRelationships: NpcRelationshipComponent = {
     outgoing: [{
       targetId: PLAYER_ENTITY_ID,
-      dimensions: { affinity: 0, trust: 0, fear: 0, hostility: 0 },
-      stage: "unknown",
+      dimensions: relationshipRule.dimensions,
+      stage: relationshipRule.stage,
       trend: "stable",
       commitments: [],
       evidence: [],
-      origin: { kind: "initial_world", createdAtTurn: 0, reasonKey: "opening_npc" },
+      origin: {
+        kind: "initial_world",
+        createdAtTurn: 0,
+        reasonKey: connection.basisHistoryKeys[0] ?? relationshipRule.reasonKey,
+      },
       lastChangedAtTurn: 0,
     }],
   };
@@ -134,14 +151,14 @@ export function compileOpeningGenerationCandidate(
     locationId,
     isCompanion: false,
     tags: [],
-    met: false,
+    met: connection.familiarity === "known",
     memory: {
       npcId,
       knownFactIds,
       hiddenFactIds: privateFactIds,
       interactionHistory: [],
-      relationship: { affinity: 0 },
-      emotion: "neutral",
+      relationship: { affinity: relationshipRule.dimensions.affinity },
+      emotion: initialEmotion,
       goals: candidate.opening.npc.goals.map((goal) => goal.description),
     },
   };
@@ -203,11 +220,52 @@ export function compileOpeningGenerationCandidate(
     eventLedger: [],
   });
 
+  const factIdByKey = new Map(factIds.map((fact) => [fact.key, fact.factId] as const));
+  const participantId = (ref: "player" | "opening_npc") => ref === "player" ? PLAYER_ENTITY_ID : npcId;
+  const historyDrafts: NarrativeEventDraft[] = candidate.opening.situation.history.map((history) => {
+    const referencedFactIds = history.factKeys.map((key) => factIdByKey.get(key)!);
+    return {
+      eventKey: `history_${history.key}`,
+      episodeKey: "initialization",
+      actorIds: history.participantRefs.map(participantId),
+      targetIds: [],
+      locationId,
+      causeKeys: history.causeHistoryKeys.map((key) => ({ kind: "same_batch" as const, eventKey: `history_${key}` })),
+      factIds: referencedFactIds,
+      questIds: [],
+      outcome: "neutral",
+      salience: 70,
+      payload: { type: "opening_history_established", factIds: referencedFactIds },
+    };
+  });
+  const threadDrafts: NarrativeEventDraft[] = candidate.opening.situation.threads.map((thread) => {
+    const questionFactId = factIdByKey.get(thread.questionFactKey)!;
+    const supportingFactIds = thread.supportingFactKeys.map((key) => factIdByKey.get(key)!);
+    return {
+      eventKey: `thread_${thread.key}`,
+      episodeKey: "initialization",
+      actorIds: thread.participantRefs.map(participantId),
+      targetIds: [],
+      locationId,
+      causeKeys: thread.causeHistoryKeys.map((key) => ({ kind: "same_batch" as const, eventKey: `history_${key}` })),
+      factIds: canonicalOpeningThreadEnvelopeFactIds({ questionFactId, supportingFactIds }),
+      questIds: [],
+      outcome: "neutral",
+      salience: 80,
+      payload: {
+        type: "opening_thread_established",
+        threadId: `thread_init_${thread.key}`,
+        questionFactId,
+        supportingFactIds,
+      },
+    };
+  });
   const initCommit = commitInitializationEvent({
     generation,
     locationId,
     committedAt: "1970-01-01T00:00:00Z",
     entityStore: worldState.entityStore,
+    backgroundDrafts: [...historyDrafts, ...threadDrafts],
   });
   if (!initCommit.ok) throw new Error("Failed to commit game_initialized event");
   const committedWorldState: WorldState = { ...worldState, eventLedger: initCommit.ledger };

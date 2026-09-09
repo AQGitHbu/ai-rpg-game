@@ -1543,3 +1543,51 @@ describe("生产城镇建筑到达续接", () => {
     expect(afterView.currentLocation.town!.interactiveBuildings.every(building => building.arrivalChoiceToken === undefined)).toBe(true);
   });
 });
+
+describe("opening dialogue intent persistence boundaries", () => {
+  function sameActStory(): StoryState {
+    const base = buildFocusedDialogueStoryState();
+    if (base.narrative.status !== "ready") throw new Error("not ready");
+    const choices = [
+      createApprovedChoice({ sceneId: base.narrative.currentScene.sceneId, basedOnRevision: 0, label: "问任务", action: { type: "talk", npcId: npc1.id, dialogueAct: "ask", topic: { kind: "quest", questId: asQuestId("quest_0") } } }),
+      createApprovedChoice({ sceneId: base.narrative.currentScene.sceneId, basedOnRevision: 0, label: "问问题", action: { type: "talk", npcId: npc1.id, dialogueAct: "ask", topic: { kind: "thread", threadId: "thread_init_problem" } } }),
+    ];
+    if (!choices[0].ok || !choices[1].ok) throw new Error("choice invalid");
+    const approved = [choices[0].choice, choices[1].choice];
+    return { ...base, narrative: { ...base.narrative, currentScene: { ...base.narrative.currentScene, choices: approved.map((choice) => ({ choiceToken: choice.choiceToken, label: choice.label })) }, choiceRegistry: approved } };
+  }
+
+  it("same act with different topics creates distinct tokens and preserves each job topic", async () => {
+    const story = sameActStory();
+    if (story.narrative.status !== "ready") throw new Error("not ready");
+    expect(new Set(story.narrative.currentScene.choices.map((choice) => choice.choiceToken)).size).toBe(2);
+    const topics: unknown[] = [];
+    for (const choice of story.narrative.currentScene.choices) {
+      const saved = createSpyRepo(buildWorldWithMainQuest(), story);
+      const result = await performTurn({ gameId: asGameId("g1"), actionId: choice.choiceToken, expectedRevision: 0, interaction: { kind: "fixed_choice", choiceToken: choice.choiceToken }, choiceMap: buildChoiceMap(saved.record()!.worldState, story, 0) }, { repository: saved.repo, now: () => "2026-09-09" });
+      if (!result.ok) throw new Error(JSON.stringify(result));
+      topics.push(pendingNarrative(saved.record()!.storyState.narrative).job.selectedDialogue?.topic);
+    }
+    expect(topics).toEqual([{ kind: "quest", questId: "quest_0" }, { kind: "thread", threadId: "thread_init_problem" }]);
+  });
+
+  it("invalid token and CAS failure persist no history; retrying the same command is idempotent", async () => {
+    const story = sameActStory();
+    const world = buildWorldWithMainQuest();
+    const saved = createSpyRepo(world, story);
+    expect(await performTurn({ gameId: asGameId("g1"), actionId: "bad", expectedRevision: 0, interaction: { kind: "fixed_choice", choiceToken: "bad" }, choiceMap: new Map() }, { repository: saved.repo, now: () => "2026-09-09" })).toMatchObject({ ok: false, code: "UNKNOWN_CHOICE" });
+    expect(saved.record()!.worldState.eventLedger).toEqual(world.eventLedger);
+    if (story.narrative.status !== "ready") throw new Error("not ready");
+    const token = story.narrative.currentScene.choices[0]!.choiceToken;
+    const command = { gameId: asGameId("g1"), actionId: "same-job", expectedRevision: 0, interaction: { kind: "fixed_choice" as const, choiceToken: token }, choiceMap: buildChoiceMap(world, story, 0) };
+    const beforeCas = saved.record()!;
+    const staleRepository: GameRepository = { ...saved.repo, async applyState() { return { ok: false, code: "STALE_GAME_REVISION" }; } };
+    expect(await performTurn(command, { repository: staleRepository, now: () => "2026-09-09" })).toMatchObject({ ok: false, code: "STALE_GAME_REVISION" });
+    expect(saved.record()).toEqual(beforeCas);
+    const first = await performTurn(command, { repository: saved.repo, now: () => "2026-09-09" });
+    if (!first.ok) throw new Error(JSON.stringify(first));
+    const after = saved.record()!.worldState.eventLedger;
+    expect(await performTurn(command, { repository: saved.repo, now: () => "2026-09-09" })).toMatchObject({ ok: false, code: "STALE_GAME_REVISION" });
+    expect(saved.record()!.worldState.eventLedger).toEqual(after);
+  });
+});

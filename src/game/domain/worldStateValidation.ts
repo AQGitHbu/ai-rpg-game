@@ -28,13 +28,14 @@ export type WorldStateEventLedgerIssue = Readonly<{
     | "sequence_gap"
     | "unknown_cause_event"
     | "future_cause_event"
-    | "unknown_event_entity_ref";
+    | "unknown_event_entity_ref"
+    | "wrong_event_entity_kind";
   eventId: string;
   referencedId?: string;
 }>;
 
 /**
- * Cross-document checks for the v5 append-only ledger. The envelope parser
+ * Cross-document checks for the v6 append-only ledger. The envelope parser
  * owns local shape validation; this pass owns identities, causal ordering,
  * and references that only the entity store can resolve.
  */
@@ -44,9 +45,9 @@ export function validateWorldStateEventLedger(
 ): readonly WorldStateEventLedgerIssue[] {
   const issues: WorldStateEventLedgerIssue[] = [];
   const eventById = new Map<string, CommittedNarrativeEvent>();
-  const knownEntityIds = entityStore === undefined
+  const entityKindById = entityStore === undefined
     ? undefined
-    : new Set(entityStore.records.map((record) => String(record.core.id)));
+    : new Map(entityStore.records.map((record) => [String(record.core.id), record.core.kind] as const));
 
   for (const [index, event] of ledger.entries()) {
     const eventId = String(event.eventId);
@@ -73,15 +74,23 @@ export function validateWorldStateEventLedger(
         issues.push({ code: "future_cause_event", eventId, referencedId: String(causeId) });
       }
     }
-    if (knownEntityIds === undefined) continue;
+    if (entityKindById === undefined) continue;
     for (const referencedId of [...event.actorIds, ...event.targetIds]) {
-      if (!knownEntityIds.has(String(referencedId))) {
+      if (!entityKindById.has(String(referencedId))) {
         issues.push({ code: "unknown_event_entity_ref", eventId, referencedId: String(referencedId) });
       }
     }
-    for (const referencedId of [event.locationId, ...event.factIds, ...event.questIds]) {
-      if (referencedId !== null && !knownEntityIds.has(String(referencedId))) {
-        issues.push({ code: "unknown_event_entity_ref", eventId, referencedId: String(referencedId) });
+    const typedReferences = [
+      ...(event.locationId === null ? [] : [{ id: String(event.locationId), kind: "location" as const }]),
+      ...event.factIds.map((id) => ({ id: String(id), kind: "fact" as const })),
+      ...event.questIds.map((id) => ({ id: String(id), kind: "quest" as const })),
+    ];
+    for (const reference of typedReferences) {
+      const actualKind = entityKindById.get(reference.id);
+      if (actualKind === undefined) {
+        issues.push({ code: "unknown_event_entity_ref", eventId, referencedId: reference.id });
+      } else if (actualKind !== reference.kind) {
+        issues.push({ code: "wrong_event_entity_kind", eventId, referencedId: reference.id });
       }
     }
   }

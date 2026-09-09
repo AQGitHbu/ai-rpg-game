@@ -1,3 +1,4 @@
+import { renderAiRepairFeedback } from "../../../aiGenerationRetry";
 import type { Action } from "@/game/domain/action";
 import type { EvolutionNeed } from "@/game/domain/worldDelta";
 import type { QuestObjective, WorldState } from "@/game/domain/worldState";
@@ -120,24 +121,13 @@ function contentRepairInstruction(
   repair: WorldEvolutionSourceContext["contentRepair"],
 ): string {
   if (repair === undefined) return "contentRepair=无。";
-  const reasonText = repair.reason === "invalid_json"
-    ? "非法 JSON"
-    : repair.reason === "invalid_schema"
-      ? "非法 schema"
-      : repair.reason === "invalid_reference"
-        ? "引用了不存在的实体"
-        : repair.approvalCode === undefined
-          ? "审批拒绝"
-          : `审批拒绝（${repair.approvalCode}）`;
-  const reasonCode = repair.reason === "approval_rejected" && repair.approvalCode !== undefined
-    ? `approval_rejected:${repair.approvalCode}`
-    : repair.reason;
-  const repairDirective = repair.approvalCode === "town_capacity"
+  const repairDirective = repair.rejectionCode === "town_capacity"
     ? "当前城镇建筑槽位已满：必须把新地点改为 placement=world；若同时有 newNpc，必须把其 locationRef 改为 {\"kind\":\"new_location\"}，不能继续引用当前城镇。"
-    : repair.approvalCode === "unreachable_objective"
+    : repair.rejectionCode === "unreachable_objective"
       ? "新地点主线不可达：next_act 的 world 新地点必须把 connectFromLocationId 写成当前地点 ID；若同时有 newNpc、newItem 或 newEnemy 且它们进入下一幕主线，必须把对应 locationRef 写成 {\"kind\":\"new_location\"}，以保证先抵达新地点再处理目标。"
       : "";
-  return `上一轮的响应需要一次内容修复（content repair）：原因=${reasonText}（${reasonCode}）。${repairDirective}只修复该问题并重发完整提案；保留当前世界事实边界，严禁通过省略字段绕过 placement、locationRef、已有地点名、任务目标可达性等契约。`;
+  return `${renderAiRepairFeedback(repair)}
+${repairDirective}只修复该问题并重发完整提案；保留当前世界事实边界，严禁通过省略字段绕过 placement、locationRef、已有地点名、任务目标可达性等契约。`;
 }
 
 function detailPriority(input: {

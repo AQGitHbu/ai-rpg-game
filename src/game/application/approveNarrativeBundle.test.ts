@@ -477,6 +477,25 @@ describe("approveNarrativeBundle", () => {
     expect(result.approved.currentScene.npcLine?.text).toBe("账本、血手。");
   });
 
+  it("preserves a direct answer containing an ordinary colon through approval", () => {
+    const proposal = currentSceneProposal();
+    const answer = "你既问到这里，我就把我知道的都说清楚：药是救人的，规矩也是救人的。";
+    const result = approveNarrativeBundle(baseInput({
+      proposal: {
+        ...proposal,
+        currentScene: {
+          ...proposal.currentScene,
+          npcLine: { ...proposal.currentScene.npcLine!, text: answer },
+        },
+      },
+      worldState: directTalkWorld(),
+    }));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.approved.currentScene.npcLine?.text).toBe(answer);
+  });
+
   it("reclassifies a continuation's pure NPC stage direction as generated narration", () => {
     const proposal = validProposal();
     const result = approveNarrativeBundle(baseInput({
@@ -625,6 +644,52 @@ describe("approveNarrativeBundle", () => {
     }));
 
     expect(result).toEqual({ ok: false, code: "missing_mandatory_beat", detail: "quest_progress_0（quest_progress）" });
+  });
+
+  it("keeps atmosphere optional when it is the only listed beat", () => {
+    const proposal = validProposal();
+    const result = approveNarrativeBundle(baseInput({
+      proposal: {
+        ...proposal,
+        currentScene: { ...proposal.currentScene, segments: [] },
+      },
+      mandatoryBeats: [
+        { beatId: "atmosphere", kind: "atmosphere", subjectIds: [], instruction: "氛围描写（可选，放在最后）" },
+      ],
+    }));
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("approves a single atmosphere segment when atmosphere is the only listed beat", () => {
+    const proposal = validProposal();
+    const result = approveNarrativeBundle(baseInput({
+      proposal: {
+        ...proposal,
+        currentScene: {
+          ...proposal.currentScene,
+          segments: [{ beatId: "atmosphere", text: "暮色四合。" }],
+        },
+      },
+      mandatoryBeats: [
+        { beatId: "atmosphere", kind: "atmosphere", subjectIds: [], instruction: "氛围描写（可选，放在最后）" },
+      ],
+    }));
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("keeps atmosphere optional when mandatory beats are absent", () => {
+    const proposal = validProposal();
+    const result = approveNarrativeBundle(baseInput({
+      proposal: {
+        ...proposal,
+        currentScene: { ...proposal.currentScene, segments: [] },
+      },
+      mandatoryBeats: [],
+    }));
+
+    expect(result.ok).toBe(true);
   });
 
   it("requires the focus NPC to answer the player_utterance beat", () => {
