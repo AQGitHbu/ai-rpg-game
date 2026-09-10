@@ -50,6 +50,12 @@ export type RunJobDeps = Readonly<{
   source: StageSource;
   now: () => string;
   signal: AbortSignal;
+  /**
+   * 写入前询问协调器是否续租（惰性保活）。缺省为「原样返回当前租约」，
+   * 使既有测试无需改动即可走与生产相同的写入路径。返回 null 表示租约已丢，
+   * 调用方必须中止——runJob 以 JOB_ABORTED 退出，不再发起新 provider 请求。
+   */
+  renewLease?: () => Promise<Lease | null>;
 }>;
 
 /** 存储单元类型收窄：approved 的表达单元输出。 */
@@ -95,15 +101,29 @@ export async function runJob(input: RunJobInput, deps: RunJobDeps): Promise<RunJ
   let job = loaded.value;
   if (job.status !== "pending") return fail("JOB_CONFLICT");
 
+  // 惰性续租：每次写入前把租约推到 now + TTL（如已过半程）。租约丢失时
+  // 立即中止——继续生成只会得到一批无法发布的单元。
+  let lease: Lease = input.lease;
+  const renewLease = deps.renewLease;
+  async function activeLease(): Promise<Lease | null> {
+    if (renewLease === undefined) return lease;
+    const renewed = await renewLease();
+    if (renewed === null) return null;
+    lease = renewed;
+    return lease;
+  }
+
   // 重启恢复：在途 running → unknown，保留 charge（等待 lease 过期后有界重做）。
   if (job.units.some((unit) => unit.status === "running")) {
+    const kept = await activeLease();
+    if (kept === null) return fail("JOB_ABORTED");
     job = {
       ...job,
       units: job.units.map((unit) => unit.status === "running"
         ? { ...unit, status: "unknown" as const }
         : unit),
     };
-    const saved = await deps.jobs.save({ lease: input.lease, expectedVersion: job.version, job });
+    const saved = await deps.jobs.save({ lease: kept, expectedVersion: job.version, job });
     if (!saved.ok) return saved;
     job = saved.value;
   }
@@ -118,9 +138,11 @@ export async function runJob(input: RunJobInput, deps: RunJobDeps): Promise<RunJ
 
   async function persist(mutateJob: (current: StoredJob) => StoredJob): Promise<true | string> {
     return serialized(async () => {
+      const kept = await activeLease();
+      if (kept === null) return "JOB_ABORTED";
       const next = mutateJob(job);
       // next 继承当前持久化版本；save 内部做 version CAS 后递增。
-      const saved = await deps.jobs.save({ lease: input.lease, expectedVersion: next.version, job: next });
+      const saved = await deps.jobs.save({ lease: kept, expectedVersion: next.version, job: next });
       if (!saved.ok) return saved.code;
       job = saved.value;
       return true;

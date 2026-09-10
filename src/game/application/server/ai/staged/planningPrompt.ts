@@ -149,6 +149,9 @@ export function renderPlanProposalContract(context: PlanningContext): string {
 ## units[] —— 表达单元
 每项恰有 8 键：{"key","stage","point","speakerId","dependencies","taskFactIds","requiredObservationKeys","requiredBeats"}
 - stage 取 "narration" | "character" | "choices"（**不是 type**）。
+- **整份 units 里 stage="choices" 的单元只能有 1 个**，就是这个决策点本身；其余所有单元必须是 narration 或 character。
+  一个 step 里排 2 个 choices 单元、或给每个场景都配一个 choices 单元，都会整体被拒（decision_unit_mismatch）。
+  线性场景（非决策点）**没有** choices，只写 narration/character；玩家在决策点的两个候选由 decision 声明。
 - point 恰有 2 键：${pointShape}（**不是裸字符串**，stepKey 必须是上面声明的 step key）。
 - speakerId：stage="character" 时给 NPC 键，其余必须为 null。
 - dependencies：键数组，元素是其他 unit 的 key（**不是 dependsOn、不是 stepId**）。

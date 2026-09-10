@@ -16,6 +16,7 @@ import {
 import { asGenerationId } from "@/game/domain/worldEntity";
 import { asGameId } from "@/game/application/server/persistence/gameRepository";
 import type {
+  Lease,
   NarrativeJobRepository,
   StoredJob,
 } from "@/game/application/server/persistence/narrativeJobRepository";
@@ -38,9 +39,33 @@ import {
 // 内存 job 仓储（与 stagedNarrativeHarness 同语义，另提供 initialization slot）
 // ---------------------------------------------------------------------------
 
-function createMemoryJobs(): NarrativeJobRepository {
-  const rows = new Map<string, { job: StoredJob; requestId: string; digest: string }>();
+type MemoryRow = {
+  job: StoredJob;
+  requestId: string;
+  digest: string;
+  lease: { owner: string; fence: number; expiresAt: string } | null;
+};
+
+/**
+ * 内存 job 仓储：**镜像 sqliteNarrativeJobs 的租约语义**（owner + fence +
+ * expiresAt 三元组）。`save` 只做三元组等值匹配（与生产一致，**不查过期**），
+ * 而 `renew` / `publish`（经 `leaseMatches` + 显式过期判定）在 `expiresAt <= now`
+ * 时返回 LEASE_LOST。这正是真实 smoke 中「全部单元 approved 却卡 pending」的
+ * 触发面：没有续租，30s TTL 一到，中间 save 仍成功、收尾 publish 被拒。
+ *
+ * `now` 由调用方注入，测试可用可推进的时钟复现长生成场景。
+ */
+function createMemoryJobs(now: () => string): NarrativeJobRepository {
+  const rows = new Map<string, MemoryRow>();
   let slot: string | null = null;
+
+  function leaseMatches(row: MemoryRow | undefined, lease: Lease): boolean {
+    if (row === undefined || row.lease === null) return false;
+    return row.lease.owner === lease.owner
+      && row.lease.fence === lease.fence
+      && row.lease.expiresAt === lease.expiresAt;
+  }
+
   return {
     async start({ requestId, digest, job }) {
       for (const row of rows.values()) {
@@ -49,7 +74,7 @@ function createMemoryJobs(): NarrativeJobRepository {
           return { ok: true, value: row.job };
         }
       }
-      rows.set(job.id, { job, requestId, digest });
+      rows.set(job.id, { job, requestId, digest, lease: null });
       if (job.scope === "initialization") slot = job.id;
       return { ok: true, value: job };
     },
@@ -63,15 +88,36 @@ function createMemoryJobs(): NarrativeJobRepository {
       const row = rows.get(slot);
       return { ok: true, value: row === undefined ? null : row.job };
     },
-    async claim({ id, owner, expiresAt }) {
+    async claim({ id, owner, now, expiresAt }) {
       const row = rows.get(id);
       if (row === undefined) return { ok: false, code: "JOB_NOT_FOUND" as const };
-      return { ok: true, value: { jobId: id, owner, fence: 1, expiresAt } };
+      if (row.job.status === "published" || row.job.status === "cancelled") {
+        return { ok: false, code: "JOB_CONFLICT" as const };
+      }
+      if (row.lease !== null && row.lease.expiresAt > now) {
+        if (row.lease.owner === owner) {
+          return { ok: true, value: { jobId: id, owner, fence: row.lease.fence, expiresAt: row.lease.expiresAt } };
+        }
+        return { ok: false, code: "JOB_CONFLICT" as const };
+      }
+      const fence = (row.lease?.fence ?? 0) + 1;
+      row.lease = { owner, fence, expiresAt };
+      return { ok: true, value: { jobId: id, owner, fence, expiresAt } };
     },
-    async renew({ lease, expiresAt }) {
+    async renew({ lease, now, expiresAt }) {
+      const row = rows.get(lease.jobId);
+      if (row === undefined) return { ok: false, code: "JOB_NOT_FOUND" as const };
+      if (!leaseMatches(row, lease) || lease.expiresAt <= now) {
+        return { ok: false, code: "LEASE_LOST" as const };
+      }
+      row.lease = { owner: lease.owner, fence: lease.fence, expiresAt };
       return { ok: true, value: { ...lease, expiresAt } };
     },
-    async release() {
+    async release({ lease }) {
+      const row = rows.get(lease.jobId);
+      if (row === undefined) return { ok: false, code: "JOB_NOT_FOUND" as const };
+      if (!leaseMatches(row, lease)) return { ok: false, code: "LEASE_LOST" as const };
+      row.lease = null;
       return { ok: true, value: true as const };
     },
     async control({ id, operation, expectedVersion, expectedCycle }) {
@@ -84,20 +130,34 @@ function createMemoryJobs(): NarrativeJobRepository {
         ? { ...row.job, status: "cancelled", version: row.job.version + 1 }
         : { ...row.job, status: "pending", version: row.job.version + 1, cycle: row.job.cycle + 1 };
       row.job = next;
+      row.lease = null;
       return { ok: true, value: next };
     },
     async save({ lease, expectedVersion, job }) {
       const row = rows.get(lease.jobId);
       if (row === undefined) return { ok: false, code: "JOB_NOT_FOUND" as const };
+      // 与生产一致：save 只做三元组等值匹配，不查过期。
+      if (!leaseMatches(row, lease)) return { ok: false, code: "LEASE_LOST" as const };
       if (row.job.version !== expectedVersion) return { ok: false, code: "JOB_CONFLICT" as const };
+      if (row.job.status === "published" || row.job.status === "cancelled") {
+        return { ok: false, code: "JOB_CONFLICT" as const };
+      }
       row.job = { ...job, version: row.job.version + 1 };
       return { ok: true, value: row.job };
     },
     async publish({ lease, expectedVersion }) {
       const row = rows.get(lease.jobId);
       if (row === undefined) return { ok: false, code: "JOB_NOT_FOUND" as const };
+      // 与生产一致：过期即 LEASE_LOST（发布是唯一显式查过期的写入路径）。
+      if (!leaseMatches(row, lease) || lease.expiresAt <= now()) {
+        return { ok: false, code: "LEASE_LOST" as const };
+      }
       if (row.job.version !== expectedVersion) return { ok: false, code: "JOB_CONFLICT" as const };
+      if (!row.job.units.every((unit) => unit.status === "approved")) {
+        return { ok: false, code: "JOB_CONFLICT" as const };
+      }
       row.job = { ...row.job, status: "published", version: row.job.version + 1 };
+      row.lease = null;
       return { ok: true, value: row.job };
     },
   };
@@ -155,8 +215,8 @@ function startInput(now: () => string, requestId = "req-1") {
 
 describe("initializationJob", () => {
   it("同 requestId 同输入幂等：只有一次 start，不重复计费", async () => {
-    const jobs = createMemoryJobs();
     const now = () => "2026-09-09T08:00:00.000Z";
+    const jobs = createMemoryJobs(now);
     const first = await startInitialization(startInput(now), jobs);
     const second = await startInitialization(startInput(now), jobs);
     expect(first.ok).toBe(true);
@@ -168,8 +228,8 @@ describe("initializationJob", () => {
   });
 
   it("同 requestId 异输入返回冲突（digest 不同）", async () => {
-    const jobs = createMemoryJobs();
     const now = () => "2026-09-09T08:00:00.000Z";
+    const jobs = createMemoryJobs(now);
     const ok = await startInitialization(startInput(now), jobs);
     expect(ok.ok).toBe(true);
     const conflict = await startInitialization(
@@ -191,8 +251,8 @@ describe("initializationJob", () => {
   });
 
   it("完整 run：四段表达各一次，安装 ready 叙事并原子发布", async () => {
-    const jobs = createMemoryJobs();
     const now = () => "2026-09-09T08:00:00.000Z";
+    const jobs = createMemoryJobs(now);
     const candidate = await openingCandidate();
     const plan = makeOpeningStagedPlan(candidate);
     const source = createOpeningSource(plan);
@@ -215,8 +275,8 @@ describe("initializationJob", () => {
   });
 
   it("query 无 slot 返回 none；start 后返回当前任务；cancel 经 CAS 置为 cancelled", async () => {
-    const jobs = createMemoryJobs();
     const now = () => "2026-09-09T08:00:00.000Z";
+    const jobs = createMemoryJobs(now);
 
     const none = await queryInitialization(jobs);
     expect(none.ok).toBe(true);
@@ -255,8 +315,8 @@ describe("initializationJob", () => {
   });
 
   it("失败后 retry 经 control 进入新 cycle 且重置未批准单元", async () => {
-    const jobs = createMemoryJobs();
     const now = () => "2026-09-09T08:00:00.000Z";
+    const jobs = createMemoryJobs(now);
     const started = await startInitialization(startInput(now), jobs);
     expect(started.ok).toBe(true);
     if (!started.ok) return;
@@ -264,9 +324,18 @@ describe("initializationJob", () => {
     const current = await queryInitialization(jobs);
     if (!current.ok || current.value === null) throw new Error("expected initialization job");
 
-    // 模拟失败：直接 save 一个 failed job（走版本 CAS）。
+    // 模拟失败：先按生产语义 claim 取得租约，再 save 一个 failed job（走版本 CAS）。
+    const claimed = await jobs.claim({
+      id: started.job.id,
+      owner: "w",
+      now: now(),
+      expiresAt: "2099-01-01T00:00:00.000Z",
+    });
+    expect(claimed.ok).toBe(true);
+    if (!claimed.ok) return;
+
     const failed = await jobs.save({
-      lease: { jobId: started.job.id, owner: "w", fence: 1, expiresAt: "2099-01-01T00:00:00.000Z" },
+      lease: claimed.value,
       expectedVersion: current.value.version,
       job: { ...current.value, status: "failed", failureCode: "AI_CALL_FAILED" },
     });
@@ -284,5 +353,53 @@ describe("initializationJob", () => {
     if (!retried.ok) return;
     expect(retried.value.status).toBe("pending");
     expect(retried.value.cycle).toBe(failed.value.cycle + 1);
+  });
+
+  // -------------------------------------------------------------------------
+  // 租约长跑：真实 smoke 暴露的「全部单元 approved 却卡 pending」缺陷。
+  //
+  // 30s TTL 内没有续租：中间 save 只做三元组等值匹配（不看过期）所以全部
+  // 通过；收尾 publish 显式判定 `expiresAt <= now` 于是 LEASE_LOST，job 留在
+  // pending 且 lease 已被 finally 的 release 清空——外部只看到「永久 pending」。
+  // 真实观测：sci-fi 局 10 单元 / 36.3s，超过 30s TTL。
+  // -------------------------------------------------------------------------
+
+  it("生成耗时超过租约 TTL 时仍能发布：中途续租使末段 publish 不丢租约", async () => {
+    const epoch = Date.parse("2026-09-09T08:00:00.000Z");
+    let offsetMs = 0;
+    const now = () => new Date(epoch + offsetMs).toISOString();
+
+    const jobs = createMemoryJobs(now);
+    const candidate = await openingCandidate();
+    const plan = makeOpeningStagedPlan(candidate);
+    const inner = createOpeningSource(plan);
+    // 每个 provider 调用耗时 8s：四个表达阶段累计 32s，跨过 30s TTL。
+    const source: StageSource & { readonly stages: string[] } = {
+      stages: inner.stages,
+      async generate(request, execution) {
+        offsetMs += 8_000;
+        return inner.generate(request, execution);
+      },
+    };
+
+    const started = await startInitialization(startInput(now), jobs);
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    const run = await runInitialization(started.job.id, "init-worker", {
+      jobs,
+      source,
+      now,
+      signal: new AbortController().signal,
+      createdAt: now(),
+    });
+
+    // 生成确实跨过了初始租约窗口（否则本用例没有验证到目标路径）。
+    // 惰性续租对注入时钟天然成立：每次 save 前都会按 now 判定是否过半并续租；
+    // 修复前此处 publish 必然 LEASE_LOST（租约在 30s 处过期）。
+    expect(offsetMs).toBeGreaterThan(30_000);
+    expect(run.ok).toBe(true);
+    if (!run.ok) return;
+    expect(run.job.status).toBe("published");
   });
 });

@@ -35,6 +35,7 @@ import { assembleBundle } from "./assembleBundle";
 import { realizeObservations } from "./realizeObservations";
 import { publishJob } from "./publishJob";
 import { runJob } from "./runJob";
+import { LEASE_TTL_MS, composeSignals, startLeaseKeeper } from "./leaseKeeper";
 import type {
   InitializationEnvelope,
   JobCheck,
@@ -392,35 +393,45 @@ export type RunInitializationResult =
   | { readonly ok: false; readonly code: string };
 
 /**
- * 完整初始化执行：claim → runJob 生成与审批 → 安装 → publishJob → release。
- * 续租失败即中止（lease 已丢）；release 只按本租约 fenced 释放。
+ * 完整初始化执行：claim → 启动续租 → runJob 生成与审批 → 安装 →
+ * publishJob → 停止续租并 fenced release。租约丢失时保活层 abort，runJob 在
+ * 下一次 signal 检查处中止；release 只按当前租约 fenced 释放。
  */
 export async function runInitialization(
   id: string,
   owner: string,
   deps: RunInitializationDeps,
 ): Promise<RunInitializationResult> {
-  const leaseTtlMs = 30_000;
   const loaded = await deps.jobs.get(id);
   if (!loaded.ok) return { ok: false, code: loaded.code };
   const job = loaded.value;
   if (job.scope !== "initialization" || job.initialization === null) return { ok: false, code: "JOB_CONFLICT" };
 
+  const controller = new AbortController();
   const claimed = await deps.jobs.claim({
     id,
     owner,
     now: deps.now(),
-    expiresAt: new Date(Date.parse(deps.now()) + leaseTtlMs).toISOString(),
+    expiresAt: new Date(Date.parse(deps.now()) + LEASE_TTL_MS).toISOString(),
   });
   if (!claimed.ok) return { ok: false, code: claimed.code };
   const lease: Lease = claimed.value;
+
+  const keeper = startLeaseKeeper({
+    jobs: deps.jobs,
+    lease,
+    now: deps.now,
+    controller,
+  });
 
   try {
     const ran = await runJob({ id, lease }, {
       jobs: deps.jobs,
       source: deps.source,
       now: deps.now,
-      signal: deps.signal,
+      signal: composeSignals(deps.signal, controller.signal),
+      // 惰性续租：runJob 在每次 save 前询问租约是否已过半程。
+      renewLease: () => keeper.acquire(),
     });
     if (!ran.ok) return { ok: false, code: ran.code };
 
@@ -431,6 +442,10 @@ export async function runInitialization(
     if (envelope === null || pendingJob.input.kind !== "opening") {
       return { ok: false, code: "JOB_CONFLICT" };
     }
+
+    // 发布前最后续租：生成结束到 publish 之间可能已跨过 TTL 边界。
+    const activeLease = await keeper.acquire();
+    if (activeLease === null) return { ok: false, code: "LEASE_LOST" };
 
     const proposal = planningProposalOf(pendingJob);
     if (proposal === null) return { ok: false, code: "install_plan_missing" };
@@ -466,13 +481,15 @@ export async function runInitialization(
     if (!publication.ok) return { ok: false, code: publication.code };
 
     const published = await publishJob(
-      { job: pendingJob, lease, publication: publication.publication },
+      { job: pendingJob, lease: activeLease, publication: publication.publication },
       deps.jobs,
     );
     if (!published.ok) return { ok: false, code: published.code };
     return { ok: true, job: published.value };
   } finally {
-    await deps.jobs.release({ lease }).catch(() => undefined);
+    keeper.stop();
+    const releaseLease = keeper.current() ?? lease;
+    await deps.jobs.release({ lease: releaseLease }).catch(() => undefined);
   }
 }
 

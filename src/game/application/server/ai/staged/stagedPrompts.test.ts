@@ -349,6 +349,18 @@ describe("buildPlanningPrompt 契约完整性", () => {
     expect(prompt).toContain("恰好一个 choices 单元承接 decision");
   });
 
+  it("units[] 契约段直接声明「choices 单元只能有 1 个」（缺陷 15）", () => {
+    // 真实 smoke：模型给每个场景都配了 choices 单元，产出 2 个 choices，而 decision
+    // 只声明 1 个 → checkUnitGraph 判 decision_unit_mismatch。规则此前只写在预算段，
+    // 离模型实际写 units 的位置太远。现在在 units[] 契约段就地声明并解释原因。
+    const prompt = decisionPrompt();
+    expect(prompt).toContain("的单元只能有 1 个");
+    expect(prompt).toContain("decision_unit_mismatch");
+    // 必须明确「线性场景没有 choices」，否则模型仍会按场景直觉补 choices。
+    expect(prompt).toContain("线性场景（非决策点）");
+    expect(prompt).toContain("没有");
+  });
+
   it("opening 链路渲染 OpeningGenerationCandidate 精确契约，决策链路不渲染", () => {
     const opening = openingPrompt();
     for (const key of ["summary", "tone", "themes", "publicFacts", "storyContract", "endingDirections", "npcConnection", "responses"]) {
