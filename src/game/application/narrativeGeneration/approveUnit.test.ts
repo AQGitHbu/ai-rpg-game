@@ -135,6 +135,82 @@ describe("approveUnit", () => {
       .toEqual({ ok: false, code: "unit_output_fact_unavailable" });
   });
 
+  // 回归（缺陷 14）：披露要求把同一事实标为 suspected，而 visibleFacts 因编译层
+  // 硬编码为 known。模型按「不得升级、可降级」写 suspected → 旧规则要求严格相等，
+  // 会把降级误杀成 unit_output_fact_unavailable（真实 smoke char_liu_2 失败码）。
+  it("披露要求低于可见事实时允许降级（known→suspected）", () => {
+    const u = unit({
+      key: "char_liu_2", stage: "character", speakerId: "npc_0",
+      requiredObservationKeys: ["obs_liu_warehouse"],
+    });
+    const ctx = context({
+      unit: u,
+      visibleFacts: [{ id: "fact_0", text: "盐仓夜里有人影。", certainty: "known", sources: [] }],
+      requiredObservations: [{ key: "obs_liu_warehouse", factId: "fact_0", certainty: "suspected" }],
+    });
+    const suspected: UnitOutput = {
+      stage: "character", speakerId: "npc_0",
+      parts: [part("盐仓夜里像是有人影。", { facts: [{ factId: "fact_0", certainty: "suspected" }] })],
+      emotion: "neutral", actions: [], answeredBeatIds: [],
+    };
+    expect(approveUnit({ unit: u, context: ctx, output: suspected }).ok).toBe(true);
+    // 升级仍必须被拒：披露要求是 suspected，输出写 known 即升级。
+    const upgraded: UnitOutput = {
+      ...suspected,
+      parts: [part("盐仓夜里有人影。", { facts: [{ factId: "fact_0", certainty: "known" }] })],
+    };
+    expect(approveUnit({ unit: u, context: ctx, output: upgraded }))
+      .toEqual({ ok: false, code: "unit_output_fact_unavailable" });
+  });
+
+  it("两侧同标 known 时，降级为 suspected 也允许（只拒升级）", () => {
+    // 与 collectDisclosures 同规则：只拒绝 certainty 升级，不拒绝保守的降级表达。
+    // 「确定的事说得不确定」是自然的谨慎措辞，不是泄密或臆造。
+    const u = unit({
+      key: "c1", stage: "character", speakerId: "npc_0",
+      requiredObservationKeys: ["obs_x"],
+    });
+    const ctx = context({
+      unit: u,
+      visibleFacts: [{ id: "fact_1", text: "货在废窑。", certainty: "known", sources: [] }],
+      requiredObservations: [{ key: "obs_x", factId: "fact_1", certainty: "known" }],
+    });
+    const output: UnitOutput = {
+      stage: "character", speakerId: "npc_0",
+      parts: [part("货也许在废窑。", { facts: [{ factId: "fact_1", certainty: "suspected" }] })],
+      emotion: "neutral", actions: [], answeredBeatIds: [],
+    };
+    expect(approveUnit({ unit: u, context: ctx, output }).ok).toBe(true);
+  });
+
+  it("披露要求引用的事实即使不在 visibleFacts 也可用（按上限判定）", () => {
+    // 观察的 factId 未必出现在 visibleFacts（例如秘密/受控披露路径），
+    // 只要披露要求自身给出 certainty，引用该事实就不应被判不可见。
+    const u = unit({
+      key: "c1", stage: "character", speakerId: "npc_0",
+      requiredObservationKeys: ["obs_y"],
+    });
+    const ctx = context({
+      unit: u,
+      visibleFacts: [],
+      requiredObservations: [{ key: "obs_y", factId: "fact_2", certainty: "suspected" }],
+    });
+    const output: UnitOutput = {
+      stage: "character", speakerId: "npc_0",
+      parts: [part("我听说货在废窑。", { facts: [{ factId: "fact_2", certainty: "suspected" }] })],
+      emotion: "neutral", actions: [], answeredBeatIds: [],
+    };
+    expect(approveUnit({ unit: u, context: ctx, output }).ok).toBe(true);
+    expect(approveUnit({
+      unit: u,
+      context: ctx,
+      output: {
+        ...output,
+        parts: [part("货在废窑。", { facts: [{ factId: "fact_2", certainty: "known" }] })],
+      },
+    })).toEqual({ ok: false, code: "unit_output_fact_unavailable" });
+  });
+
   it("committed 事件引用必须来自可见事实来源", () => {
     const u = unit({ key: "c1", stage: "character", speakerId: "npc_0" });
     const output: UnitOutput = {

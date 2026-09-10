@@ -451,6 +451,29 @@ describe("buildNarrationPrompt", () => {
     expect(prompt).not.toContain("# 本单元必须披露的观察");
   });
 
+  // 回归（缺陷 14）：同一事实在 visibleFacts 标 known、在披露要求标 suspected 时，
+  // prompt 必须明确「按更低 certainty 写」，否则两套标注并存会让模型写出被
+  // approveUnit 拒绝的输出（真实 smoke char_liu_2 → unit_output_fact_unavailable）。
+  it("旁白 prompt 在同一事实 certainty 冲突时给出按更低值写的规则", () => {
+    const plan = approvedPlan();
+    const base = contextFor(plan, FIXTURE_NARRATION_UNIT);
+    const context = {
+      ...base,
+      visibleFacts: [{ id: "fact_0", text: "盐仓夜里有人影。", certainty: "known" as const, sources: [] }],
+      requiredObservations: [{ key: "obs_x", factId: "fact_0", certainty: "suspected" as const }],
+    };
+    const prompt = buildNarrationPrompt(context);
+    expect(prompt).toContain("fact_0 同时出现在");
+    expect(prompt).toContain("按更低的 certainty 写");
+    // 无冲突时不渲染该提示。
+    const clean = buildNarrationPrompt({
+      ...base,
+      visibleFacts: [{ id: "fact_0", text: "盐仓夜里有人影。", certainty: "suspected" as const, sources: [] }],
+      requiredObservations: [{ key: "obs_x", factId: "fact_0", certainty: "suspected" as const }],
+    });
+    expect(clean).not.toContain("同时出现在");
+  });
+
   it("旁白 prompt 只暴露一套事实命名：必选节拍不得泄漏计划语义键", () => {
     const plan = approvedPlan();
     const base = contextFor(plan, FIXTURE_NARRATION_UNIT);
@@ -529,6 +552,23 @@ describe("buildCharacterPrompt", () => {
     const plan = approvedPlan();
     const prompt = buildCharacterPrompt(contextFor(plan, FIXTURE_NPC_A_UNIT));
     expect(prompt).not.toContain("# 本单元必须披露的观察");
+  });
+
+  // 回归（缺陷 14）：真实 smoke char_liu_2 的失败：同一 fact 在「你可说的事实」
+  // 标 known、在披露要求标 suspected，prompt 必须给出唯一的取舍规则。
+  it("角色 prompt 在同一事实 certainty 冲突时给出按更低值写的规则", () => {
+    const plan = approvedPlan();
+    const base = contextFor(plan, FIXTURE_NPC_A_UNIT);
+    const context = {
+      ...base,
+      visibleFacts: [{ id: "fact_0", text: "盐仓夜里有人影。", certainty: "known" as const, sources: [] }],
+      requiredObservations: [{ key: "obs_x", factId: "fact_0", certainty: "suspected" as const }],
+    };
+    const prompt = buildCharacterPrompt(context);
+    expect(prompt).toContain("fact_0 同时出现在");
+    expect(prompt).toContain("按更低的 certainty 写");
+    // 侧栏标题不再宣称「certainty 不得改写」（那只在无冲突时成立）。
+    expect(prompt).not.toContain("certainty 不得改写");
   });
 });
 

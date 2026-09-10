@@ -23,12 +23,24 @@ export type ApproveUnitInput = Readonly<{
   output: UnitOutput;
 }>;
 
-function visibleFactIndex(context: SafeContext): ReadonlyMap<string, "known" | "suspected"> {
-  const map = new Map<string, "known" | "suspected">();
+/**
+ * 可引用事实的 certainty 上限：visibleFacts 与 requiredObservations 都构成权威参考，
+ * 取**更严**的一个（suspected 优先）。这样当某事实既在可见事实里标 known、又被观察
+ * 要求以 suspected 披露时，模型写 suspected（降级）不被误杀，写 known（升级）仍被拒。
+ * 与 collectDisclosures 的「不得升级」同一语义（单一规则，两处共用）。
+ */
+function factCertaintyCeiling(context: SafeContext): ReadonlyMap<string, "known" | "suspected"> {
+  const ceiling = new Map<string, "known" | "suspected">();
   for (const fact of context.visibleFacts) {
-    map.set(fact.id, fact.certainty);
+    ceiling.set(fact.id, fact.certainty);
   }
-  return map;
+  for (const observation of context.requiredObservations) {
+    const current = ceiling.get(observation.factId);
+    if (current === undefined || observation.certainty === "suspected") {
+      ceiling.set(observation.factId, observation.certainty);
+    }
+  }
+  return ceiling;
 }
 
 function visibleEventIds(context: SafeContext): ReadonlySet<string> {
@@ -42,14 +54,16 @@ function visibleEventIds(context: SafeContext): ReadonlySet<string> {
 }
 
 function checkParts(context: SafeContext, output: Extract<UnitOutput, { stage: "narration" | "character" }>): string | null {
-  const facts = visibleFactIndex(context);
+  const facts = factCertaintyCeiling(context);
   const eventIds = visibleEventIds(context);
   const knownBeats = new Set(context.requiredBeats.map((beat) => beat.beatId));
   for (const part of output.parts) {
     if (part.text.includes(LEGACY_IMPORT_REASON_KEY)) return "unit_output_secret_leak";
     for (const fact of part.facts) {
-      const visible = facts.get(fact.factId);
-      if (visible === undefined || visible !== fact.certainty) {
+      const ceiling = facts.get(fact.factId);
+      // 不可见 → 拒绝；可见但输出升级（suspected→known）→ 拒绝。降级（known→suspected）允许。
+      if (ceiling === undefined) return "unit_output_fact_unavailable";
+      if (ceiling === "suspected" && fact.certainty === "known") {
         return "unit_output_fact_unavailable";
       }
     }

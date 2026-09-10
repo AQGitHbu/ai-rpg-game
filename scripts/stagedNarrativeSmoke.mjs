@@ -613,24 +613,34 @@ async function withTempEntry(overrides, run) {
   }
 }
 
-/** 轮询初始化任务直到终态：成功 / 失败 / 超时。只返回白名单字段。 */
+/**
+ * 轮询初始化任务直到终态：成功 / 失败 / 超时。只返回白名单字段。
+ *
+ * `getInitialization` 的返回形状是 `{ ok: true, view: InitializationView }`，
+ * 状态在 `result.view.status`（不是 `result.status`）。早期版本误读顶层
+ * `status`，导致失败的 job 永远轮询不到终态、一律超时，把真实失败码
+ * `unit_output_fact_unavailable` 掩盖成 `INITIALIZATION_TIMEOUT`，
+ * 同时摘要显示 `requestCount: 0`（看起来像「零请求秒失败」）。
+ * 视图只投影 `failureKind`（白名单分类），不含 `failureCode`，因此失败时
+ * 以 `failureKind` 为准，缺失时回退稳定码。
+ */
 async function awaitInitialization(entry, requestId, budget) {
   const deadline = performance.now() + budget;
   while (performance.now() < deadline) {
-    const status = await entry.getInitialization(requestId);
-    if (status.ok === true && typeof status.status === "string") {
-      if (status.status === "ready" || status.status === "published") return { ok: true };
-      if (status.status === "failed") {
-        return {
-          ok: false,
-          failureCode: typeof status.failureCode === "string" ? status.failureCode : "INITIALIZATION_FAILED",
-          failureKind: "AI_CALL_FAILED",
-        };
-      }
+    const result = await entry.getInitialization(requestId);
+    const view = result?.ok === true ? result.view : undefined;
+    const status = typeof view?.status === "string" ? view.status : undefined;
+    if (status === "published") return { ok: true };
+    if (status === "failed" || status === "cancelled") {
+      return {
+        ok: false,
+        failureCode: typeof result.failureCode === "string" ? result.failureCode : "INITIALIZATION_FAILED",
+        failureKind: typeof view?.failureKind === "string" ? view.failureKind : "AI_CALL_FAILED",
+      };
     }
     await sleep(1000);
   }
-  return { ok: false, failureCode: "INITIALIZATION_TIMEOUT", failureKind: "AI_CALL_FAILED" };
+  return { ok: false, failureCode: "INITIALIZATION_TIMEOUT", failureKind: "AI_TIMEOUT" };
 }
 
 /**
