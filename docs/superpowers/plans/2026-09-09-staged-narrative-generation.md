@@ -127,7 +127,7 @@ type UnitOutput =
 
 worldDelta 的当前 parser 在 server/ai/liveWorldEvolutionSource.ts，domain 禁止反向导入。Task 1 同时将 `parseWorldDeltaProposal` 及它的纯解析依赖移动到新 `src/game/domain/worldDeltaProposal.ts`，旧文件 import/re-export 同一实现，更新其测试 import；规则过滤仍留 gameplay，不将 parser 复制一份。opening 使用已有 domain parser。`opening` 用于结构素材，后续阶段分离序幕等最终展示文本，见 Task 5。
 
-- [ ] **Step 1:** 编写 exact-key、缺字段、循环、超限和空句段测试；最低示例：
+- [x] **Step 1:** 编写 exact-key、缺字段、循环、超限和空句段测试；最低示例：
 
 ```ts
 expect(parsePlanProposal({ opening: null, worldDelta: null, steps: [], units: [],
@@ -139,10 +139,10 @@ expect(parseUnitOutput({ stage: "choices", labels: [
 ] }).ok).toBe(false);
 ```
 
-- [ ] **Step 2:** `npx vitest run src/game/domain/narrativePlan.test.ts src/game/domain/narrativeUnit.test.ts src/game/domain/narrativeBranch.test.ts src/game/domain/narrativeObservation.test.ts`；预期缺少模块/导出，或新非法输入尚未拒绝而失败。
-- [ ] **Step 3:** 实现逐字段重建；key 上限 128，句段 text 1–500 字、每输出最多 12 段，label 1–80 字；拒绝重复 ID、未知 enum。fixture 导出 `makeStagedPlan(): PlanProposal`：两个在场 NPC、两个可达地点、二选一分别指向不同地点；不含正式文本。定义 `makeCharacterOutput(): UnitOutput` 与 `makeChoiceOutput(): UnitOutput` 提供有效和可局部替换的生成结果。
-- [ ] **Step 4:** 上述测试通过，运行 `npm run typecheck`、`npm run test:boundaries`。
-- [ ] **Step 5:** 只 stage 本 Task 文件，提交 `feat: define staged narrative contracts`。
+- [x] **Step 2:** `npx vitest run src/game/domain/narrativePlan.test.ts src/game/domain/narrativeUnit.test.ts src/game/domain/narrativeBranch.test.ts src/game/domain/narrativeObservation.test.ts`；预期缺少模块/导出，或新非法输入尚未拒绝而失败。
+- [x] **Step 3:** 实现逐字段重建；key 上限 128，句段 text 1–500 字、每输出最多 12 段，label 1–80 字；拒绝重复 ID、未知 enum。fixture 导出 `makeStagedPlan(): PlanProposal`：两个在场 NPC、两个可达地点、二选一分别指向不同地点；不含正式文本。定义 `makeCharacterOutput(): UnitOutput` 与 `makeChoiceOutput(): UnitOutput` 提供有效和可局部替换的生成结果。
+- [x] **Step 4:** 上述测试通过，运行 `npm run typecheck`、`npm run test:boundaries`。
+- [x] **Step 5:** 只 stage 本 Task 文件，提交 `feat: define staged narrative contracts`。
 
 ### Task 2: 有界路线分支、token 与真实规则后果
 
@@ -161,7 +161,7 @@ expect(parseUnitOutput({ stage: "choices", labels: [
 - Produces `applyNarrativeBranch(input: { world: WorldState; story: StoryState; decision: Decision; candidateId: string }): Check<{ world: WorldState; story: StoryState; drafts: readonly NarrativeEventDraft[] }>`，只从 gameplay facade 导出。
 - `ApprovedChoice`/构造输入增加 `branch?: { decisionId: string; candidateId: string }`；`StoryState` 增加 `branchDecisions`（批准 decisionId → Decision）和 `selectedBranches`（decisionId → candidateId）。其严格持久化接入 Task 7；此 Task 使用显式 fixture。
 
-- [ ] **Step 1:** 用同一真实状态的两个副本执行真实 choice token，断言：
+- [x] **Step 1:** 用同一真实状态的两个副本执行真实 choice token，断言：
 
 ```ts
 expect(left.record.storyState.selectedBranches[decisionId]).not.toBe(
@@ -172,10 +172,10 @@ expect(right.record.worldState.currentLocationId).toBe(before.worldState.current
 ```
 
 `left/right/before/decisionId` 在测试内由新 fixture 真实创建与 `performTurn` 调用得到；`quests` 是现有 GameSessionView 的正式字段，另检查 `currentLocation.currentObjectiveLabel` 随路线正确变化。
-- [ ] **Step 2:** `npx vitest run src/game/gameplay/rpg/narrativePlanning/branches.test.ts src/game/application/testing/stagedBranchJourney.test.ts`；预期新分支状态缺失/目标相同导致失败。
-- [ ] **Step 3:** 按规则可达性审批两条 target；拒绝同 target、无前提依据、未有获批延迟定义的不存在实体、已完成目标、无可继续主线。选择只替换当前主线的下一个未执行目标，保留既有已完成前缀及共同可完成后缀；生成 `narrative_branch_selected` 事件（decisionId、candidateId、target 的结构化 refs）。在 resolveTurn 的单次事件提交前纳入变化，不额外 commit，不把对话直接变成 move。`performTurn` 从 registry 获得 branch，不接受客户端提交。下一次规划强制携带所选 target，不允许改写路线来制造假分支。
-- [ ] **Step 4:** token hash 与 semanticSummary 纳入 branch 两个 ID；重铸、复制 registry 和同 act/topic 的两条候选均保留 branch；不修改通用 Action union 暴露任意分支。回归旧 token、重复选择、CAS 失败零写入。narrativePlanning 加入 facade 清单。运行步骤 2、`npx vitest run src/game/domain/approvedChoice.test.ts src/game/application/performTurn.test.ts src/game/application/buildChoiceMap.test.ts` 与全局最低门禁。
-- [ ] **Step 5:** 逐文件 stage，提交 `feat: apply approved narrative route choices`。
+- [x] **Step 2:** `npx vitest run src/game/gameplay/rpg/narrativePlanning/branches.test.ts src/game/application/testing/stagedBranchJourney.test.ts`；预期新分支状态缺失/目标相同导致失败。
+- [x] **Step 3:** 按规则可达性审批两条 target；拒绝同 target、无前提依据、未有获批延迟定义的不存在实体、已完成目标、无可继续主线。选择只替换当前主线的下一个未执行目标，保留既有已完成前缀及共同可完成后缀；生成 `narrative_branch_selected` 事件（decisionId、candidateId、target 的结构化 refs）。在 resolveTurn 的单次事件提交前纳入变化，不额外 commit，不把对话直接变成 move。`performTurn` 从 registry 获得 branch，不接受客户端提交。下一次规划强制携带所选 target，不允许改写路线来制造假分支。
+- [x] **Step 4:** token hash 与 semanticSummary 纳入 branch 两个 ID；重铸、复制 registry 和同 act/topic 的两条候选均保留 branch；不修改通用 Action union 暴露任意分支。回归旧 token、重复选择、CAS 失败零写入。narrativePlanning 加入 facade 清单。运行步骤 2、`npx vitest run src/game/domain/approvedChoice.test.ts src/game/application/performTurn.test.ts src/game/application/buildChoiceMap.test.ts` 与全局最低门禁。
+- [x] **Step 5:** 逐文件 stage，提交 `feat: apply approved narrative route choices`。
 
 开局分支采用有界的“延迟地点定义”，不假设初始已有两个 NPC/地点。`deferredLocation` 默认 null；非 null 时只允许 visit_location，target.locationId 必须等于服务端分配给该定义的稳定 ID。复用 newLocation 的严格结构与连通性校验，但提取无 evolutionNeed 前提的纯结构审批 helper，不能伪造普通 world evolution 触发或绕过其 gate。两条定义分别在独立 sandbox 通过现有地点材质化和目标可达性检查；允许共用一个剩余地点额度（至多选择一条），不得合并计算为已生成两个地点。两条路线须在公开目的和后续可执行目标上不同，不接受只换地点名。未选择时定义仅保存在服务端 decision registry，不加入 EntityStore/地图/知识；真实开局仍一个 NPC、一个地点。选择时在同一次规则事务中仅材质化所选地点并设置访问目标，玩家位置不变；这属于获批分支效果，不发 provider 请求、不递增幕数。目标完成后沿用共同后缀/正常演化。预算不够或后缀无法完成则拒绝该候选，不能临时多造实体。新地点公开名称和选择理由必须有当前 NPC 可披露、玩家经本场表达可知的依据；隐藏地点细节不进入 options DTO。
 
@@ -218,7 +218,7 @@ type StepDependency = { phase: "before" | "after"; predicate:
 
 审批把存在性、lifecycle 枚举与 EntityStore 实际契约对齐。before 检查在 resolveTurn 前，after 检查在纯规则结果上、同次 CAS 前；任何失败都不提交规则变化。
 
-- [ ] **Step 1:** 测试图排序与同点未来观察不可见：
+- [x] **Step 1:** 测试图排序与同点未来观察不可见：
 
 ```ts
 const units: Unit[] = [
@@ -231,10 +231,10 @@ expect(readyUnits(units, new Set()).map(x => x.key)).toEqual(["npc"]);
 expect(readyUnits(units, new Set(["npc"])).map(x => x.key)).toEqual(["labels"]);
 ```
 
-- [ ] **Step 2:** `npx vitest run src/game/gameplay/rpg/narrativePlanning`；预期新增接口缺失失败。
-- [ ] **Step 3:** 复用 worldEvolution 的 approveWorldDelta/materializeWorldDelta，以及现有 openingGeneration compiler 形成 preview；用服务端 descriptors 限制动作图，不以 AI stepKey 决定合法 Action。强制当前片段至下一 NPC 决策止，1 个决策单元、每包 39 个表达单元上限。拒绝缺依赖、跨未选分支、循环、需回应的文本尚未批准、无观察来源的知识传播。并行只在依赖闭包互不依赖时成立。
-- [ ] **Step 4:** 为未来 move、胜利后 NPC 和赠物预览逐步骤执行纯规则投影；不向真实 repository 写入。步骤依赖记录实体/位置/持有/已选分支/知识来源，不能仅记录全局 revision；战斗随机细节不在快照可保证内容中。运行上述测试与最低门禁。
-- [ ] **Step 5:** 提交 `feat: approve staged plans and scene dependencies`。
+- [x] **Step 2:** `npx vitest run src/game/gameplay/rpg/narrativePlanning`；预期新增接口缺失失败。
+- [x] **Step 3:** 复用 worldEvolution 的 approveWorldDelta/materializeWorldDelta，以及现有 openingGeneration compiler 形成 preview；用服务端 descriptors 限制动作图，不以 AI stepKey 决定合法 Action。强制当前片段至下一 NPC 决策止，1 个决策单元、每包 39 个表达单元上限。拒绝缺依赖、跨未选分支、循环、需回应的文本尚未批准、无观察来源的知识传播。并行只在依赖闭包互不依赖时成立。
+- [x] **Step 4:** 为未来 move、胜利后 NPC 和赠物预览逐步骤执行纯规则投影；不向真实 repository 写入。步骤依赖记录实体/位置/持有/已选分支/知识来源，不能仅记录全局 revision；战斗随机细节不在快照可保证内容中。运行上述测试与最低门禁。
+- [x] **Step 5:** 提交 `feat: approve staged plans and scene dependencies`。
 
 开局不能给 approvePlan 填造假的现成 world/story。拆出 `compileOpeningStructure`，接收 candidate、generation、gameLength、seed，返回已审批的结构 world/story 与稳定实体 ID；不依赖 initialNarrative，不发布 planner.prologue。原 compileOpeningGenerationCandidate 改为该纯结构编译器加叙事安装的兼容包装，Task 10 切换前旧入口仍通过测试。结构 preview 的 narrative 使用正式 pending 状态，而非伪造 ready 台词。ApprovedPlan 保存这一结构结果；最终仅安装获批 narration/character/choices 和 observations，不能再次运行结构编译或分配 ID。generation/seed/gameLength 全部来自 durable initialization 输入与 envelope。测试从 opening 输入无 GameRecord 完成 approve→表达→publish，断言所有实体 ID、结构与 preview 一致，且 planner 序幕没有进入视图。
 
@@ -253,7 +253,7 @@ expect(readyUnits(units, new Set(["npc"])).map(x => x.key)).toEqual(["labels"]);
 
 SafeContext 还必须有 `persona: SafePersona | null`，其中 `SafePersona = { publicName: string; publicRole: TextPart; anchors: readonly TextPart[]; goals: readonly TextPart[]; emotion: NarrativeEmotion; relationshipTier: string; behavior: readonly ("answer_directly" | "withhold_source" | "express_uncertainty")[] }`；narration/choices 的 persona 为 null。anchors/goals 只取有公开依据且对受众可说的内容，敏感动机转受控 behavior 由规则批准，不返回秘密正文。“过滤原始自由字段”不能被实施成丢掉全部人格与当前情绪。SafePersona 与 SafeContext 同模块导出。
 
-- [ ] **Step 1:** 隐藏事实用唯一 sentinel，断言实际整个 DTO 不含：
+- [x] **Step 1:** 隐藏事实用唯一 sentinel，断言实际整个 DTO 不含：
 
 ```ts
 expect(JSON.stringify(npcContext)).not.toContain("SECRET_TRACKING_SEAL");
@@ -263,10 +263,10 @@ expect(npcContext.priorText).toEqual([]); // 未在场，不可获知玩家私�
 ```
 
 context 由 makeStagedPlan 派生 preview、审批相应输出后获得，不能手写 safe DTO 跳过投影。覆盖秘密嵌入目标 description/reason、人格 taboos、旧记忆标题、任务名与修复信息。
-- [ ] **Step 2:** `npx vitest run src/game/application/narrativeGeneration/perspectiveContext.test.ts src/game/gameplay/rpg/narrativePlanning/observations.test.ts`；预期新投影缺失失败。
-- [ ] **Step 3:** 使用 buildNpcSpeechAuthority；actor 可说事实 = actor 可知 ∩ 对受众可披露；旁白 = 玩家现场观察 + 玩家已知且本场相关；选项 = 玩家视角 + 前序已批准可见表达。不能把 discovered 全集当 NPC 知识。结构化目标/人格仅传公开且有事实依据的字段；无法证明不含秘密的 raw goal.reason、history.summary、anchors 自由正文不原样传，优先用公开角色身份和受控风格字段，不能用全量字符串删敏感词充当安全投影。
-- [ ] **Step 4:** collectDisclosures 校验要求披露的每个 observation 都有已批准句段 fact 引用，audience 实际在场且 disclosure 可用；遗漏拒绝。NPC 声称只产生 speech 来源认知，certainty 不能升级；先审批所有输出，Task 9 实际消费时提交。现有 propagateKnownFacts 的自动传播必须在 staged 模式下改为消费该证据，不能在 talk 规则阶段先把计划披露写入。运行两组测试、npcSpeechAuthority 测试与最低门禁。
-- [ ] **Step 5:** 提交 `feat: isolate narrative speaker and player contexts`。
+- [x] **Step 2:** `npx vitest run src/game/application/narrativeGeneration/perspectiveContext.test.ts src/game/gameplay/rpg/narrativePlanning/observations.test.ts`；预期新投影缺失失败。
+- [x] **Step 3:** 使用 buildNpcSpeechAuthority；actor 可说事实 = actor 可知 ∩ 对受众可披露；旁白 = 玩家现场观察 + 玩家已知且本场相关；选项 = 玩家视角 + 前序已批准可见表达。不能把 discovered 全集当 NPC 知识。结构化目标/人格仅传公开且有事实依据的字段；无法证明不含秘密的 raw goal.reason、history.summary、anchors 自由正文不原样传，优先用公开角色身份和受控风格字段，不能用全量字符串删敏感词充当安全投影。
+- [x] **Step 4:** collectDisclosures 校验要求披露的每个 observation 都有已批准句段 fact 引用，audience 实际在场且 disclosure 可用；遗漏拒绝。NPC 声称只产生 speech 来源认知，certainty 不能升级；先审批所有输出，Task 9 实际消费时提交。现有 propagateKnownFacts 的自动传播必须在 staged 模式下改为消费该证据，不能在 talk 规则阶段先把计划披露写入。运行两组测试、npcSpeechAuthority 测试与最低门禁。
+- [x] **Step 5:** 提交 `feat: isolate narrative speaker and player contexts`。
 
 强制节拍链：服务端源 mandatory beat → 按 speaker/玩家投影 SafeBeat → source 的 TextPart.beatIds/answeredBeatIds → approveUnit 核对 coverage → assembleBundle 保留原 ID。安全投影不得携带隐藏 instruction；无法在权限内完成必需 beat 时返回 `beat_authority_conflict`，回到规划修复，而非删 beat 或扩大 actor 权限。终幕安全 options 从 ApprovedPlan.choiceExpression 的 ending 臂投影，不要求 RouteTarget。
 
@@ -301,7 +301,7 @@ StageSource port 不导入 transport。liveStageSource 调用已有 RpgAiClient�
 
 四个 prompt 模块分别导出 `buildPlanningPrompt(context: PlanningContext, repair?: AiContentRepair): string`、`buildNarrationPrompt(context: SafeContext, repair?: AiContentRepair): string`、`buildCharacterPrompt(context: SafeContext, repair?: AiContentRepair): string`、`buildChoicePrompt(context: SafeContext, repair?: AiContentRepair): string`。PlanningContext/StageRequest/StageSource 定义于 stageSource；SafeContext 定义于 perspectiveContext。既有 AiContentRepair/AiSourceFailure 从 application/aiGenerationRetry 导入，审计类型从现有 textAuditTypes 导入，不重复定义错误 envelope。
 
-- [ ] **Step 1:** source 注入 recording client，每类各一次 complete，角色请求不含 planning 内容；验证 provider JSON 无未知字段、source failure 保留分类、AbortSignal 原样透传。示例：
+- [x] **Step 1:** source 注入 recording client，每类各一次 complete，角色请求不含 planning 内容；验证 provider JSON 无未知字段、source failure 保留分类、AbortSignal 原样透传。示例：
 
 ```ts
 expect(calls.map(call => call.role)).toEqual(["planning", "narration", "character", "choices"]);
@@ -310,10 +310,10 @@ expect(calls[3].messages.map(m => m.content).join("\n")).toContain("只返回玩
 expect(transportOptions.signal).toBe(controller.signal);
 ```
 
-- [ ] **Step 2:** `npx vitest run src/game/application/server/ai/staged src/game/application/server/ai/rpgAiClient.test.ts`；预期新 roles/参数缺失失败。
-- [ ] **Step 3:** planning prompt 使用预算、公开与私密分区、已选 branch、开局 situation/history/novelty；openingNarrativePrompt 提取既有设定风格要求，禁止遗失 characterProfile/personalityTags。规划 opening 中的 prologue、描述为内容素材，最终序幕由 narration 单元覆盖后才发布；不能直接展示 planner 的 prologue。角色 prompt 只接 SafeContext；旁白不含 NPC 台词输出字段；choice prompt 只返回两条 id/label，禁止前缀、效果、Action。每个 stage 独立 messages，无共享会话。
-- [ ] **Step 4:** 四类政策使用固定决策表预算；reuse renderAiRepairFeedback/persistedAiRepairReason，不新增自由文本错误存储。审计 context 加 unitKey、inputDigest、cycle、stage、dependencyVersion 和 retry 分类；普通日志只稳定码。测试 timeout 剩余预算、aborted 不重试、空响应进入有界内容修复、配置越界失败。运行本组测试、`npm run typecheck`、`npm run test:boundaries`、`npm run test:fast`。
-- [ ] **Step 5:** 提交 `feat: add isolated narrative generation sources`。
+- [x] **Step 2:** `npx vitest run src/game/application/server/ai/staged src/game/application/server/ai/rpgAiClient.test.ts`；预期新 roles/参数缺失失败。
+- [x] **Step 3:** planning prompt 使用预算、公开与私密分区、已选 branch、开局 situation/history/novelty；openingNarrativePrompt 提取既有设定风格要求，禁止遗失 characterProfile/personalityTags。规划 opening 中的 prologue、描述为内容素材，最终序幕由 narration 单元覆盖后才发布；不能直接展示 planner 的 prologue。角色 prompt 只接 SafeContext；旁白不含 NPC 台词输出字段；choice prompt 只返回两条 id/label，禁止前缀、效果、Action。每个 stage 独立 messages，无共享会话。
+- [x] **Step 4:** 四类政策使用固定决策表预算；reuse renderAiRepairFeedback/persistedAiRepairReason，不新增自由文本错误存储。审计 context 加 unitKey、inputDigest、cycle、stage、dependencyVersion 和 retry 分类；普通日志只稳定码。测试 timeout 剩余预算、aborted 不重试、空响应进入有界内容修复、配置越界失败。运行本组测试、`npm run typecheck`、`npm run test:boundaries`、`npm run test:fast`。
+- [x] **Step 5:** 提交 `feat: add isolated narrative generation sources`。
 
 ### Task 6: 纯对白、表演与旁白审批和确定性审核范围
 
@@ -326,7 +326,7 @@ expect(transportOptions.signal).toBe(controller.signal);
 - `approveUnit(input: { unit: Unit; context: SafeContext; output: UnitOutput }): Check<UnitOutput>`。
 - `assembleBundle(input: { plan: ApprovedPlan; approved: ReadonlyMap<string, UnitOutput> }): Check<NarrativeBundleProposal>`；新 bundle proposal 扩展 stage provenance/顺序元数据，但最终状态仍由现有 approveNarrativeBundle 转换，避免重写其规则。
 
-- [ ] **Step 1:** 纯对白失败断言及合法冒号：
+- [x] **Step 1:** 纯对白失败断言及合法冒号：
 
 ```ts
 expect(checkDialogueLabel("盯着她问：你到底是谁？").ok).toBe(false);
@@ -335,10 +335,10 @@ expect(checkDialogueLabel("我只有一个条件：先放人。").ok).toBe(true)
 expect(checkDialogueLabel("我不替你送信，我要当面问清楚。").ok).toBe(true);
 ```
 
-- [ ] **Step 2:** `npx vitest run src/game/application/narrativeGeneration/approveUnit.test.ts src/game/application/narrativeGeneration/dialogueLabel.test.ts src/game/application/narrativeGeneration/assembleBundle.test.ts`；预期未实现失败。
-- [ ] **Step 3:** 严格 stage/output 匹配；旁白 actionKeys 必须已批准且玩家可见；speaker、facts、eventIds、certainty、披露、观察覆盖、候选映射逐项验证。对白拒绝外层引号、句首说话标签、括号舞台说明、序号、装饰性 >、常见小说式冒号前缀；不能用“任何冒号都是错”代替规则。限制这些检查只证明已列格式和结构，不宣称理解任意语义。
-- [ ] **Step 4:** 装配按 ScenePoint 顺序，不按 Promise 完成顺序；每句直接对白只归对应 NPC，旁白不复制该对白；规划素材不进展示字段；缺必要单元拒绝。组装句段 fact 引用与 observation，保持各 speaker 来源，不能并集后授权全场 NPC。添加 secret sentinel 精确泄漏拒绝作为已知泄漏检查，不能回显 secret 到 repair。对不在引用卡片中的新世界断言归不可建立来源而拒绝；无法自动判别的隐喻/意图细节由 Task 12 人工验收。运行上述测试与最低门禁。
-- [ ] **Step 5:** 提交 `feat: approve and assemble isolated narrative expressions`。
+- [x] **Step 2:** `npx vitest run src/game/application/narrativeGeneration/approveUnit.test.ts src/game/application/narrativeGeneration/dialogueLabel.test.ts src/game/application/narrativeGeneration/assembleBundle.test.ts`；预期未实现失败。
+- [x] **Step 3:** 严格 stage/output 匹配；旁白 actionKeys 必须已批准且玩家可见；speaker、facts、eventIds、certainty、披露、观察覆盖、候选映射逐项验证。对白拒绝外层引号、句首说话标签、括号舞台说明、序号、装饰性 >、常见小说式冒号前缀；不能用“任何冒号都是错”代替规则。限制这些检查只证明已列格式和结构，不宣称理解任意语义。
+- [x] **Step 4:** 装配按 ScenePoint 顺序，不按 Promise 完成顺序；每句直接对白只归对应 NPC，旁白不复制该对白；规划素材不进展示字段；缺必要单元拒绝。组装句段 fact 引用与 observation，保持各 speaker 来源，不能并集后授权全场 NPC。添加 secret sentinel 精确泄漏拒绝作为已知泄漏检查，不能回显 secret 到 repair。对不在引用卡片中的新世界断言归不可建立来源而拒绝；无法自动判别的隐喻/意图细节由 Task 12 人工验收。运行上述测试与最低门禁。
+- [x] **Step 5:** 提交 `feat: approve and assemble isolated narrative expressions`。
 
 审批不得沿用“所有 continuationScenes 共享同一个 previewWorldState”的逻辑。新增 `approveNarrativeBundle` 的 staged 输入字段 `plan: ApprovedPlan`，对每一步调用 sceneSnapshot 与该步的 speaker authority；当前场景仍只允许已提交或本次原子发布真实成立的证据。NarrativeBundleProposal/PreparedSceneSeedState 增加 `conditionalEvidence`（句段索引、observationKey、audienceId）和 `answeredBeatIds` 的逐 speaker 传递；committed eventIds 单独走原有 ledger 校验。条件引用只能指向同包前序且条件可证明的 observation，不能伪造一个已提交 EventId，也不能组装时替模型补造 answeredBeatIds。未来条件 authority 与本次真实 authority 分开验证。
 
@@ -391,7 +391,7 @@ interface NarrativeJobRepository {
 
 get 不暴露给 UI；safe status 单独投影。lease 30 秒 TTL、10 秒续租，renew 验证相同 owner/fence 且未过期，不改变 payload version；接管递增 fence。worker 写入同时验证未过期 lease、版本、status 与当前周期，发布时间额外验证 ready coverage 和游戏 CAS。control 是不需要 worker lease 的独立控制事务，仍强制 expectedVersion/expectedCycle CAS：cancel 只接受 pending/failed，设置 cancelled、递增 fence 并撤销 lease；retry 只接受 failed，递增 cycle/fence、清空 lease、恢复 pending、deadline=now+600秒、清零本周期请求/单元次数并保留历史审计和输入仍匹配的 approved 产物。published/cancelled 不可 retry；重复操作返回安全现状或冲突，不能再增加周期。API 从服务器读取 version/cycle 后执行一次控制 CAS，冲突返回409，不自动循环。error code 使用现有 infrastructure/stale 语义及 JOB_NOT_FOUND、JOB_CONFLICT、LEASE_LOST、UNSUPPORTED_JOB。
 
-- [ ] **Step 1:** SQLite 临时库 reopen、双 claimant 和事务故障测试：
+- [x] **Step 1:** SQLite 临时库 reopen、双 claimant 和事务故障测试：
 
 ```ts
 expect(secondClaim.ok).toBe(false);
@@ -401,10 +401,10 @@ expect(afterFailedPublish.currentGame).toEqual(beforePublish.currentGame);
 expect(afterFailedPublish.job.status).not.toBe("published");
 ```
 
-- [ ] **Step 2:** `npx vitest run src/game/application/server/persistence/sqliteNarrativeJobs.test.ts`；预期接口不存在失败。
-- [ ] **Step 3:** 新表 narrative_jobs（id PK、request_id UNIQUE、digest、version、status、cycle、lease_owner、fence、expires_at、payload_json）、initialization_slot（单当前初始化任务指针）。start 同 requestId 同 digest 返回现有 job，不同 digest 冲突；decision job 唯一键绑定 gameId+pending jobId。任务进度不修改 game revision。未知 job schema 明确拒绝，全部 JSON exact-key/ref 校验。publish 在同 write transaction 修改 game/current/opening_history、job published 和初始化指针；不能先调 applyState 再标记 job。
-- [ ] **Step 4:** 更新版本分类及全部现有 fixture 使用版本常量。新增 branch/observation/bundle 字段严格恢复；observations 的真实来源保存 ledger，StoryState 仅确定性投影，不长期保存额外玩家原文。EntityStore 仍为 2，仅校验新增 event provenance，不给 player 偷添未定义组件。运行 persistence 全目录、domain 测试及最低门禁。
-- [ ] **Step 5:** 提交 `feat: persist fenced narrative jobs and atomic publication`。
+- [x] **Step 2:** `npx vitest run src/game/application/server/persistence/sqliteNarrativeJobs.test.ts`；预期接口不存在失败。
+- [x] **Step 3:** 新表 narrative_jobs（id PK、request_id UNIQUE、digest、version、status、cycle、lease_owner、fence、expires_at、payload_json）、initialization_slot（单当前初始化任务指针）。start 同 requestId 同 digest 返回现有 job，不同 digest 冲突；decision job 唯一键绑定 gameId+pending jobId。任务进度不修改 game revision。未知 job schema 明确拒绝，全部 JSON exact-key/ref 校验。publish 在同 write transaction 修改 game/current/opening_history、job published 和初始化指针；不能先调 applyState 再标记 job。
+- [x] **Step 4:** 更新版本分类及全部现有 fixture 使用版本常量。新增 branch/observation/bundle 字段严格恢复；observations 的真实来源保存 ledger，StoryState 仅确定性投影，不长期保存额外玩家原文。EntityStore 仍为 2，仅校验新增 event provenance，不给 player 偷添未定义组件。运行 persistence 全目录、domain 测试及最低门禁。
+- [x] **Step 5:** 提交 `feat: persist fenced narrative jobs and atomic publication`。
 
 初始化 start 前铸造并保存 InitializationEnvelope；重启后只能从该 envelope 恢复 newGameId、seed、generation 和 replace 条件，不能读取当前 UI 参数重建，不能重试时换 seed。decision job 的 initialization 必须为 null，initialization job 必须非 null。Publication.opening.input.gameId 与 envelope.newGameId 必须匹配；create/replace 模式不允许调用者切换，replace CAS 同时校验目标游戏、revision、仍是结局和 endingIdentity。requestId/digest 唯一键、旧游戏身份和新游戏身份各自独立。测试增加“原游戏A重开失败→进程重启→同任务重试仍只可替换A对应revision”，中间current变成B则发布拒绝且B不变。
 
@@ -419,7 +419,7 @@ expect(afterFailedPublish.job.status).not.toBe("published");
 
 Harness 导出 `createStagedHarness()`，提供 `jobs`, `source`, `calls`, `clock`, `controller`, `startDecision()`, `run()`；基于生产 approvePlan/projectUnitContext/approveUnit，只有 provider 响应 scripted。clock 支持 advance(ms)，source 支持 failNext(stage)、hold(stage)、release(stage)；每个定义在本测试 helper 实现，不放生产 facade。
 
-- [ ] **Step 1:** 先写下游重试和并行顺序测试：
+- [x] **Step 1:** 先写下游重试和并行顺序测试：
 
 ```ts
 const h = createStagedHarness();
@@ -431,10 +431,10 @@ expect(h.calls.filter(c => c.stage === "choices")).toHaveLength(2);
 expect(h.calls.filter(c => c.stage === "narration")).toHaveLength(1);
 ```
 
-- [ ] **Step 2:** `npx vitest run src/game/application/narrativeGeneration/runJob.test.ts src/game/application/narrativeGeneration/jobBudget.test.ts`；预期 runner 不存在失败。
-- [ ] **Step 3:** claim → charge/save running → generate → approve → save approved，绝不先发请求后扣预算；planning 固定逻辑 key，其他 key 由服务端 point/stage/speaker/ordinal 铸造，模型重命名无效。调度 readyUnits，每 job 最多 2 个在途；依赖 inputDigest/版本匹配才复用。骨架重做撤销全部依赖旧骨架的表达，仍累计 attempts；对只改变一独立角色的修复，不取消无关旁白。
-- [ ] **Step 4:** 在途未知请求重启标 unknown、保留 charge，等待 lease 过期后可有界重做；没有 provider 幂等支持不声称恰好一次。超时 signal 传 client，迟到输出用 fence/version/cycle 拒绝。budget policy 使用固定决策数值，最坏单元数与关键路径容纳性在规划审批检查，手动 retry 新 cycle 但保留审计累计。失败状态包括真实 failureKind，不能把 transport 全归 schema。测试 fake clock deadline、四次/额外12额度、取消、lease 丢失和半包不可发布。
-- [ ] **Step 5:** 跑本 Task 测试、ensureCoordinator 测试及最低门禁，提交 `feat: run recoverable bounded narrative unit graphs`。
+- [x] **Step 2:** `npx vitest run src/game/application/narrativeGeneration/runJob.test.ts src/game/application/narrativeGeneration/jobBudget.test.ts`；预期 runner 不存在失败。
+- [x] **Step 3:** claim → charge/save running → generate → approve → save approved，绝不先发请求后扣预算；planning 固定逻辑 key，其他 key 由服务端 point/stage/speaker/ordinal 铸造，模型重命名无效。调度 readyUnits，每 job 最多 2 个在途；依赖 inputDigest/版本匹配才复用。骨架重做撤销全部依赖旧骨架的表达，仍累计 attempts；对只改变一独立角色的修复，不取消无关旁白。
+- [x] **Step 4:** 在途未知请求重启标 unknown、保留 charge，等待 lease 过期后可有界重做；没有 provider 幂等支持不声称恰好一次。超时 signal 传 client，迟到输出用 fence/version/cycle 拒绝。budget policy 使用固定决策数值，最坏单元数与关键路径容纳性在规划审批检查，手动 retry 新 cycle 但保留审计累计。失败状态包括真实 failureKind，不能把 transport 全归 schema。测试 fake clock deadline、四次/额外12额度、取消、lease 丢失和半包不可发布。
+- [x] **Step 5:** 跑本 Task 测试、ensureCoordinator 测试及最低门禁，提交 `feat: run recoverable bounded narrative unit graphs`。
 
 首次规划前 baselineRequests=1；第一次骨架批准后固定为 1+必需表达数，不随之后改版缩减或扩大，新增单元消耗额外额度。扣费与同 job 并行写回由协调器串行化，不能让两个 provider 完成各自覆盖另一方结果。增加生成完成至发布间崩溃/过期/他进程接管测试：新 owner 读取持久化 approved 单元可直接重新装配，无新增 provider；旧 owner publish 必须失败。跨进程 control 撤销 lease 后，即使 provider 不响应 abort，迟到输出也不可写回；测试在持有锁、请求尚未返回时 cancel 立即成功，以及失败后一次 retry 恰好增加一个周期。
 
@@ -449,7 +449,7 @@ expect(h.calls.filter(c => c.stage === "narration")).toHaveLength(1);
 
 **Interfaces:** `publishJob(input: { job: StoredJob; lease: Lease; publication: Publication }, jobs: NarrativeJobRepository): Promise<Check<StoredJob>>` 先复核产物、输入与任务 ready coverage，再调用原子仓储方法。`collectDisclosures` 返回的 observations 在当前 scene 发布、未来 scene 实际消费时转成真实 event draft；新事件 `narrative_observed` 包含 key、audience、factId、certainty、source speaker/见证，不保存模型原文。
 
-- [ ] **Step 1:** 完整 publish/consume 路径验证：
+- [x] **Step 1:** 完整 publish/consume 路径验证：
 
 ```ts
 expect(beforeMove.knowledge.some(x => x.factId === futureFactId)).toBe(false);
@@ -460,10 +460,10 @@ expect(afterDuplicateConsume).toEqual(afterMove);
 ```
 
 这些为测试选择器结果，knowledge 来源由 ledger 重建，revision 来自 repository；不把测试选择器混入 GameRecord。
-- [ ] **Step 2:** `npx vitest run src/game/application/narrativeGeneration/publishJob.test.ts src/game/application/consumeNarrativeBundle.test.ts src/game/application/testing/stagedNarrativeJourney.test.ts`；预期新 observation/依赖未接入失败。
-- [ ] **Step 3:** 所有 provenance 引用由 commitEventDrafts 铸造；按当前/未来时间切分，未来不能先写 presented。bundle contract2 保存每步依赖和表达顺序，consume 时复核实际前提而非 baseRevision 相等。known/suspected 与 witness/speech 分开，已知世界事实不得因听到怀疑说法降级，传播不得升级怀疑为确定。复用 npcMemory mutation，不写投影数组。
-- [ ] **Step 4:** 终幕选择语义由 endingDecision 决定，给 choices 单元安全语义生成纯对白；内部单独存 terminal label map，不能违反 ending bundle 无普通 choices 的契约。点击终幕仍只 resolveEnding，无 provider。战败 checkpoint 恢复 observations、branch state 与事件，所有重新生成的 token 绑定实际 revision。跑上述测试、战斗与结局回归及最低门禁。
-- [ ] **Step 5:** 提交 `feat: publish and consume staged narrative evidence atomically`。
+- [x] **Step 2:** `npx vitest run src/game/application/narrativeGeneration/publishJob.test.ts src/game/application/consumeNarrativeBundle.test.ts src/game/application/testing/stagedNarrativeJourney.test.ts`；预期新 observation/依赖未接入失败。
+- [x] **Step 3:** 所有 provenance 引用由 commitEventDrafts 铸造；按当前/未来时间切分，未来不能先写 presented。bundle contract2 保存每步依赖和表达顺序，consume 时复核实际前提而非 baseRevision 相等。known/suspected 与 witness/speech 分开，已知世界事实不得因听到怀疑说法降级，传播不得升级怀疑为确定。复用 npcMemory mutation，不写投影数组。
+- [x] **Step 4:** 终幕选择语义由 endingDecision 决定，给 choices 单元安全语义生成纯对白；内部单独存 terminal label map，不能违反 ending bundle 无普通 choices 的契约。点击终幕仍只 resolveEnding，无 provider。战败 checkpoint 恢复 observations、branch state 与事件，所有重新生成的 token 绑定实际 revision。跑上述测试、战斗与结局回归及最低门禁。
+- [x] **Step 5:** 提交 `feat: publish and consume staged narrative evidence atomically`。
 
 条件证据兑现：获批 bundle 存 observationKey 与受众映射；实际步骤消费生成 narrative_observed draft，commitEventDrafts 得到真实 EventId 后把本次可用条件引用绑定为真实 provenance，再更新知识和重建记忆，同次 CAS 提交。尚未消费的条件引用保留为条件，绝不进入已提交 ledger。失败/撤退使相应条件不成立，拒绝依赖它的表演。新增测试必须证明“乙只能在前序披露实际发生后引用该事实”既能在预生成审批通过，又不会在消费前进入乙的永久知识。
 
@@ -527,6 +527,8 @@ expect(retryBody).toEqual({ requestId: initialRequestId, operation: "retry" });
 - [x] **Step 5:** 提交 `feat: restore initialization jobs and render dialogue-only choices`。
 
 ### Task 12: 完整旅程、真实质量验收与文档归位
+
+> **记账说明（2026-09-10）**：Task 1–9 的 Step 勾选此前从未回填，导致计划文档显示为未完成。经逐项核对**交付物与测试**后回填：Task 1–9 的测试文件全部存在，运行 `npx vitest run` 覆盖 `src/game/domain`、`src/game/gameplay/rpg/narrativePlanning`、`src/game/application/narrativeGeneration`、`src/game/application/server/persistence/sqliteNarrativeJobs.test.ts` 共 **20 files / 195 tests 全绿**；Task 5 的四类 prompt（`staged/{planning,narration,character,choice}Prompt.ts`）、Task 7 的 `narrativeJobRepository.ts`、Task 9 的 `publishJob.ts` / `consumeNarrativeBundle.ts` / `realizeObservations.ts` 均在位。因此回填是**补记账**，不是补实现。
 
 **Files:**
 - Modify: `src/game/application/testing/stagedNarrativeJourney.test.ts`, `src/game/application/testing/stagedBranchJourney.test.ts`
