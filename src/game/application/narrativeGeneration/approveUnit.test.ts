@@ -39,6 +39,7 @@ function context(overrides: Partial<SafeContext> & Pick<SafeContext, "unit">): S
     playerUtterance: null,
     style: "wuxia",
     requiredBeats: [],
+    requiredObservations: [],
     choiceKind: null,
     ...overrides,
   };

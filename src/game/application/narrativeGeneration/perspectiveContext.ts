@@ -75,6 +75,17 @@ export type SafeOption = Readonly<{
   publicIntent: TextPart;
 }>;
 
+/**
+ * 本单元必须披露的观察的安全投影：只给观察键与它引用的事实键/certainty，
+ * 不含受众、来源细节或任何隐藏事实。角色 prompt 靠它声明披露义务，
+ * 与 collectDisclosures 的判定同源。
+ */
+export type SafeObservation = Readonly<{
+  key: string;
+  factId: string;
+  certainty: "known" | "suspected";
+}>;
+
 export type SafeContext = Readonly<{
   unit: Unit;
   persona: SafePersona | null;
@@ -85,6 +96,7 @@ export type SafeContext = Readonly<{
   playerUtterance: string | null;
   style: string;
   requiredBeats: readonly SafeBeat[];
+  requiredObservations: readonly SafeObservation[];
   choiceKind: "ordinary" | "ending" | null;
 }>;
 
@@ -228,6 +240,34 @@ function rebuildUnit(
   };
 }
 
+/**
+ * 本单元必须披露的观察投影：按 rebuildUnit 保留下来的键，取回观察的 fact/certainty。
+ * 只输出键与事实键，不含受众与来源细节。missing 时 fail-closed（理论不可达：
+ * rebuildUnit 已按同一归属规则过滤）。
+ */
+function requiredObservationsOf(
+  unit: Unit,
+  plan: ApprovedPlan,
+): Check<readonly SafeObservation[]> {
+  const authorized = new Map(
+    observationsForUnit(unit, plan.proposal.observations).map((observation) => [
+      observation.key,
+      observation,
+    ]),
+  );
+  const out: SafeObservation[] = [];
+  for (const key of unit.requiredObservationKeys) {
+    const observation = authorized.get(key);
+    if (observation === undefined) return fail("observation_without_source");
+    out.push({
+      key: observation.key,
+      factId: observation.fact.factId,
+      certainty: observation.fact.certainty,
+    });
+  }
+  return { ok: true, value: out };
+}
+
 // ---------------------------------------------------------------------------
 // 入口
 // ---------------------------------------------------------------------------
@@ -272,11 +312,14 @@ export function projectUnitContext(input: ProjectUnitContextInput): Check<SafeCo
   const priorText = priorTextOf(plan, unit, input.approved);
   if (!priorText.ok) return priorText;
 
-  const visibleFactIds = new Set(visibleFacts.map((fact) => fact.id));
+  const rebuilt = rebuildUnit(unit, new Set(visibleFacts.map((fact) => fact.id)), plan);
+  const requiredObservations = requiredObservationsOf(rebuilt, plan);
+  if (!requiredObservations.ok) return requiredObservations;
+
   return {
     ok: true,
     value: {
-      unit: rebuildUnit(unit, visibleFactIds, plan),
+      unit: rebuilt,
       persona,
       visibleFacts,
       priorText: priorText.value,
@@ -285,6 +328,7 @@ export function projectUnitContext(input: ProjectUnitContextInput): Check<SafeCo
       playerUtterance: null,
       style: ws.generation.gameType,
       requiredBeats: unit.requiredBeats,
+      requiredObservations: requiredObservations.value,
       choiceKind: choiceKindOf(plan, unit),
     },
   };

@@ -424,6 +424,33 @@ describe("buildNarrationPrompt", () => {
     expect(prompt).toContain("conditional");
   });
 
+  it("旁白 prompt 声明必须披露的观察，且只允许 certainty 降级", () => {
+    // 真实缺陷 observation_not_disclosed：prompt 完全没说要披露哪条观察，
+    // 模型写 facts=[] 即被 collectDisclosures 拒绝，任何输出都无法通过。
+    const plan = approvedPlan();
+    const base = contextFor(plan, FIXTURE_NARRATION_UNIT);
+    const context = {
+      ...base,
+      requiredObservations: [{ key: "obs_seen", factId: "fact_0", certainty: "known" as const }],
+    };
+    const prompt = buildNarrationPrompt(context);
+    expect(prompt).toContain("必须披露的观察");
+    expect(prompt).toContain("obs_seen");
+    expect(prompt).toContain("fact_0");
+    // 必须写进 facts，而不是只写进 beatIds/evidence。
+    expect(prompt).toContain("必须写进 facts");
+    expect(prompt).toContain("不算披露");
+    // certainty 不得升级（可降级）。
+    expect(prompt).toContain("不得高于");
+    expect(prompt).toContain("绝不可写成 known");
+  });
+
+  it("旁白 prompt 在没有披露要求时不渲染披露段", () => {
+    const plan = approvedPlan();
+    const prompt = buildNarrationPrompt(contextFor(plan, FIXTURE_NARRATION_UNIT));
+    expect(prompt).not.toContain("# 本单元必须披露的观察");
+  });
+
   it("旁白 prompt 只暴露一套事实命名：必选节拍不得泄漏计划语义键", () => {
     const plan = approvedPlan();
     const base = contextFor(plan, FIXTURE_NARRATION_UNIT);
@@ -476,6 +503,32 @@ describe("buildCharacterPrompt", () => {
     expect(prompt).toContain("确实承接");
     // 与旁白同一约束：不得泄漏计划语义键。
     expect(prompt).not.toContain("可引用事实");
+  });
+
+  it("角色 prompt 声明必须披露的观察，并提示 certainty 只能降级", () => {
+    // 真实缺陷 observation_disclosure_unavailable：观察声明 suspected 而说话人
+    // 知识是 known 时，prompt 教模型写 known、判定却要求 suspected，必败。
+    // 修复后判定放宽为「不得升级」，prompt 同步声明。
+    const plan = approvedPlan();
+    const base = contextFor(plan, FIXTURE_NPC_A_UNIT);
+    const context = {
+      ...base,
+      requiredObservations: [{ key: "obs_liuqi", factId: "fact_0", certainty: "suspected" as const }],
+    };
+    const prompt = buildCharacterPrompt(context);
+    expect(prompt).toContain("必须披露的观察");
+    expect(prompt).toContain("obs_liuqi");
+    expect(prompt).toContain("fact_0");
+    expect(prompt).toContain("必须写进 facts");
+    expect(prompt).toContain("不算披露");
+    expect(prompt).toContain("不得高于");
+    expect(prompt).toContain("绝不可写成 known");
+  });
+
+  it("角色 prompt 在没有披露要求时不渲染披露段", () => {
+    const plan = approvedPlan();
+    const prompt = buildCharacterPrompt(contextFor(plan, FIXTURE_NPC_A_UNIT));
+    expect(prompt).not.toContain("# 本单元必须披露的观察");
   });
 });
 

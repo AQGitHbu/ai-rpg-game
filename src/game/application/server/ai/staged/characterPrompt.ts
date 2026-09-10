@@ -32,6 +32,10 @@ export function buildCharacterPrompt(context: SafeContext, repair?: AiContentRep
   const tasks = context.unit.taskFactIds.length > 0
     ? context.unit.taskFactIds.join("、")
     : "（无）";
+  const disclosures = context.requiredObservations.length > 0
+    ? context.requiredObservations.map((observation) =>
+      `- ${observation.key} → 事实 ${observation.factId}（certainty=${observation.certainty}）`).join("\n")
+    : null;
 
   return `你是 RPG 的角色表现 AI。只扮演当前说话人，输出其对玩家说出的台词与情绪；不代替旁白，不替玩家说话，不宣布规则结果。
 ${repair === undefined ? "" : `\n# 上次生成的校验反馈\n${renderAiRepairFeedback(repair)}\n请依据原契约修复并重新输出完整 JSON。\n`}
@@ -56,7 +60,15 @@ ${prior}
 
 # 必选节拍（必须在台词中自然承接，beatIds 原样回填）
 ${beats.join("\n")}
-
+${disclosures === null ? "" : `
+# 本单元必须披露的观察（硬性要求，缺一即整体被拒）
+这些话必须由你在本单元的台词里说出来。每一条都必须在**某个 part 的 facts** 里出现对应的事实引用，
+且 certainty 与下面标注一致（可降级为 suspected，**绝不可升级**）：
+${disclosures}
+写法示例：若上面要求披露 fact_0（certainty=known），你至少要有一个 part 写成
+{"text":"...","facts":[{"factId":"fact_0","certainty":"known"}],"evidence":[],"beatIds":[]}。
+只把 factId 写进 beatIds 或 evidence **不算披露**，必须写进 facts。
+`}
 # 场景风格
 - 题材风格：${context.style}
 - 玩家原话：${context.playerUtterance ?? "（无）"}
@@ -68,7 +80,8 @@ ${beats.join("\n")}
 - facts 是 FactUse 对象数组，**绝不可写成裸事实键数组**：
   每项恰有 2 键 {"factId": 该句引用的事实键, "certainty": "known" 或 "suspected"}；
   正确写法是 [{"factId":"ferryman_waiting","certainty":"known"}]，不是 ["ferryman_waiting"]；
-  不引用任何事实时写 []。certainty 必须与上方"你可说的事实"标注一致，不得升级。
+  不引用任何事实时写 []。certainty 取 "known" 或 "suspected"：**不得高于**上方"你可说的事实"
+  与"必须披露的观察"里标注的 certainty（标 known 的可降级写 suspected，标 suspected 的绝不可写成 known）。
 - evidence：对象数组，通常为 []；引用本单元的观察时写 {"kind":"conditional","observationKey":上方列出的观察键}。
 - beatIds：键数组，只能引用上方"必选节拍"列出的 beatId；无则写 []。
 - emotion 使用与当前情绪一致的枚举（neutral/warm/guarded/afraid/angry/sad 之一）。

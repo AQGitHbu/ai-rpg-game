@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { collectDisclosures } from "./observations";
+import { collectDisclosures, observationsForUnit } from "./observations";
 import { approvePlan } from "./approvePlan";
 import { branchWorld, branchStory } from "./branchFixture.testutil";
 import {
@@ -161,6 +161,44 @@ describe("collectDisclosures", () => {
     expect(result.value.map((o) => o.key)).toEqual(["obs_pub"]);
   });
 
+  it("同一说话人的后续场景观察不归本单元（按 point 限定归属）", () => {
+    // 回归：同一 NPC 在两个 step 各说一次时，第一个单元只认领自己所在 step 的观察；
+    // 否则它会被迫披露尚未发生的后续场景观察，任何输出都无法通过。
+    const world = knowledgeWorld();
+    const later = { stepKey: "later", order: 1 } as const;
+    const firstUnit = unit({
+      key: FIXTURE_NPC_A_UNIT,
+      stage: "character",
+      speakerId: FIXTURE_NPC_A,
+      point: CURRENT,
+    });
+    const secondUnit = unit({
+      key: "character_second",
+      stage: "character",
+      speakerId: FIXTURE_NPC_A,
+      point: later,
+    });
+    const plan = approve(
+      planWith([firstUnit, secondUnit], [
+        observation({ key: "obs_now", point: CURRENT }),
+        observation({ key: "obs_later", point: later }),
+      ]),
+      world,
+    );
+    expect(observationsForUnit(firstUnit, plan.proposal.observations).map((o) => o.key))
+      .toEqual(["obs_now"]);
+    // 跨 step 的观察互不归属：第二个单元只认领自己 step 内的 obs_later。
+    expect(observationsForUnit(secondUnit, plan.proposal.observations).map((o) => o.key))
+      .toEqual(["obs_later"]);
+    // 第一个单元只需披露 obs_now，引用 fact_pub 即通过。
+    const result = collectDisclosures({
+      plan,
+      unit: firstUnit,
+      output: characterOutput(FIXTURE_NPC_A, [{ factId: FACT_PUB, certainty: "known" }]),
+    });
+    expect(result.ok).toBe(true);
+  });
+
   it("要求披露的观察没有句段 fact 引用时拒绝（遗漏拒绝）", () => {
     const world = knowledgeWorld();
     const npcUnit = unit({ key: FIXTURE_NPC_A_UNIT, stage: "character", speakerId: FIXTURE_NPC_A });
@@ -184,6 +222,26 @@ describe("collectDisclosures", () => {
       unit: npcUnit,
       output: characterOutput(FIXTURE_NPC_A, [{ factId: FACT_SUS, certainty: "known" }]),
     })).toEqual({ ok: false, code: "observation_certainty_invalid" });
+  });
+
+  it("输出 certainty 低于观察声明时允许（确定→存疑的降级表达）", () => {
+    // 观察声明 known、说话人知识也是 known，但模型用「传闻/不确定」语气说出：
+    // 这是合法的降级表达（spec「疑似事实只能用不确定表达」只禁止反向升级）。
+    const world = knowledgeWorld();
+    const npcUnit = unit({ key: FIXTURE_NPC_A_UNIT, stage: "character", speakerId: FIXTURE_NPC_A });
+    const plan = approve(
+      planWith([npcUnit], [observation({
+        key: "obs_pub",
+        fact: { factId: FACT_PUB, certainty: "known" },
+      })]),
+      world,
+    );
+    const result = collectDisclosures({
+      plan,
+      unit: npcUnit,
+      output: characterOutput(FIXTURE_NPC_A, [{ factId: FACT_PUB, certainty: "suspected" }]),
+    });
+    expect(result.ok).toBe(true);
   });
 
   it("观察 certainty 超过说话人自身知识时拒绝（不得升级为确定）", () => {

@@ -22,6 +22,10 @@ export function buildNarrationPrompt(context: SafeContext, repair?: AiContentRep
     ? context.allowedActions.map((action) =>
       `- ${action.key}（${action.kind}，actor=${action.actorId}）`)
     : ["- 无"];
+  const disclosures = context.requiredObservations.length > 0
+    ? context.requiredObservations.map((observation) =>
+      `- ${observation.key} → 事实 ${observation.factId}（certainty=${observation.certainty}）`).join("\n")
+    : null;
 
   return `你是 RPG 的旁白 AI。以玩家视角为当前场景写一段紧凑的旁白；不替玩家做决定，不写任何 NPC 台词或对白。
 ${repair === undefined ? "" : `\n# 上次生成的校验反馈\n${renderAiRepairFeedback(repair)}\n请依据原契约修复并重新输出完整 JSON。\n`}
@@ -38,7 +42,15 @@ ${prior}
 
 # 必选节拍（必须在旁白中自然承接，beatIds 原样回填）
 ${beats.join("\n")}
-
+${disclosures === null ? "" : `
+# 本单元必须披露的观察（硬性要求，缺一即整体被拒）
+这些话必须由你在本单元的旁白里写出来。每一条都必须在**某个 part 的 facts** 里出现对应的事实引用，
+且 certainty 与下面标注一致（可降级为 suspected，**绝不可升级**）：
+${disclosures}
+写法示例：若上面要求披露 fact_0（certainty=known），你至少要有一个 part 写成
+{"text":"...","facts":[{"factId":"fact_0","certainty":"known"}],"evidence":[],"beatIds":[]}。
+只把 factId 写进 beatIds 或 evidence **不算披露**，必须写进 facts。
+`}
 # 可引用的表演动作（actionKeys 只能引用这些 key）
 ${actions.join("\n")}
 
@@ -49,8 +61,9 @@ ${actions.join("\n")}
 - facts 是 FactUse 对象数组，**绝不可写成裸事实键数组**：
   每项恰有 2 键 {"factId": 该句引用的事实键, "certainty": "known" 或 "suspected"}；
   factId **只能取上方"玩家可见事实"里逐条列出的 id**（形如 fact_0），**不得使用任何其他名字、不得自己发明**；
-  不引用任何事实时写 []。certainty 必须与上方标注一致，不得升级。
-  若上方"玩家可见事实"为「无」，则所有 part 的 facts 一律写 []。
+  不引用任何事实时写 []。certainty 取 "known" 或 "suspected"：**不得高于**上方"玩家可见事实"
+  与"必须披露的观察"里标注的 certainty（标 known 的可降级写 suspected，标 suspected 的绝不可写成 known）。
+  若上方"玩家可见事实"为「无」且无披露要求，则所有 part 的 facts 一律写 []。
 - evidence：对象数组，通常为 []。引用已提交事件写 {"kind":"committed","eventId":事件键}；
   引用本单元的观察写 {"kind":"conditional","observationKey":观察键}（本单元没有观察要求时只能用 []）。
 - beatIds：键数组，只能引用上方"必选节拍"列出的 beatId；无则写 []。

@@ -38,18 +38,30 @@ function isFactRecord(record: EntityRecord | undefined): record is FactEntityRec
  * 观察与单元的归属关系：角色单元认领「自己开口说出」的 speech 观察，
  * 旁白单元认领 witness 观察。选项单元不披露认知。collectDisclosures 与
  * perspectiveContext 的观察引用授权共用这一条归属规则（单一事实来源）。
+ *
+ * 归属还必须是「本单元时点之前已发生」的观察：同一 NPC 在多个 step 说话时，
+ * 前一个 step 的单元只认领自己 step 内、且 order 不大于自己的观察，否则会被
+ * 迫披露尚未发生的后续场景观察（任何输出都无法通过）。这与 checkUnitGraph
+ * 的单元-观察时点约束保持同一语义。
  */
 export function observationsForUnit(
   unit: Unit,
   observations: readonly Observation[],
 ): readonly Observation[] {
+  const atOrBefore = (observation: Observation): boolean =>
+    observation.point.stepKey === unit.point.stepKey
+    && observation.point.order <= unit.point.order;
   if (unit.stage === "narration") {
-    return observations.filter((observation) => observation.source.kind === "witness");
+    return observations.filter(
+      (observation) => observation.source.kind === "witness" && atOrBefore(observation),
+    );
   }
   if (unit.stage === "character" && unit.speakerId !== null) {
     return observations.filter(
       (observation) =>
-        observation.source.kind === "speech" && observation.source.speakerId === unit.speakerId,
+        observation.source.kind === "speech"
+        && observation.source.speakerId === unit.speakerId
+        && atOrBefore(observation),
     );
   }
   return [];
@@ -150,7 +162,12 @@ function checkObservation(input: Readonly<{
   }
   const reference = refs.get(observation.fact.factId);
   if (reference === undefined) return "observation_not_disclosed";
-  if (reference !== observation.fact.certainty) return "observation_certainty_invalid";
+  // 输出 certainty 不得高于观察声明的 certainty：允许「确定→存疑」的降级表达，
+  // 禁止把存疑观察说成确定（升级）。与 prompt 的「不得升级」和 spec「疑似事实
+  // 只能用不确定表达」同一语义。
+  if (reference === "known" && observation.fact.certainty === "suspected") {
+    return "observation_certainty_invalid";
+  }
   return null;
 }
 
