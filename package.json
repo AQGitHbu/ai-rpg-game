@@ -50,6 +50,8 @@
     "test:handoff-check": "node --test scripts/checkHandoff.node-test.mjs",
     "test:phase4b-ai-smoke-script": "node --test scripts/phase4bAiSmoke.node-test.mjs",
     "smoke:ai:phase4b": "node scripts/phase4bAiSmoke.mjs",
+    "test:staged-smoke": "node --test scripts/stagedNarrativeSmoke.node-test.mjs",
+    "smoke:ai:staged": "node scripts/stagedNarrativeSmoke.mjs",
     "test:foundation-journey": "vitest run src/game/application/testing/foundationJourney.test.ts",
     "journey:foundation": "node scripts/foundationJourney.mjs --mode=replay",
     "logs:query": "node --preserve-symlinks scripts/logs.mjs query",
