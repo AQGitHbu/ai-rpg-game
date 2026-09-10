@@ -21,6 +21,8 @@
 | `f679ac6` | feat(staged)：接入 `test:staged-smoke` / `smoke:ai:staged` 与 staged 角色说明 |
 | `375f5e3` | docs(plan)：回填 Task 1–9 已完成 Step（纯记账） |
 | `90c3cdf` | fix(staged)：修复观察披露链三处缺陷 |
+| `22caaff` | docs(staged)：文档归位到分阶段叙事链路契约（Step 6） |
+| `9b72a57` | fix(staged)：修复 certainty 冲突导致的 `unit_output_fact_unavailable`（缺陷 14）+ smoke 状态读取 |
 
 ## 工程证据
 
@@ -29,9 +31,11 @@
 | 检查 | 结果 |
 | --- | --- |
 | `tsc --noEmit` | 通过，无输出 |
-| eslint（本次改动的 4 个源文件） | 通过，无输出 |
-| 全量 vitest（domain + narrativePlanning + narrativeGeneration + server/ai + persistence + application/testing） | **95 files / 1090 passed**，1 skipped（既有 live 测试） |
-| 分层边界 | 见下方 Step 4 门禁小节 |
+| eslint | 通过，**0 error / 52 warning**（warning 全部为既有代码，非本次改动） |
+| 全量 vitest | **218 files / 2890 passed**，1 skipped（既有 live 测试） |
+| 分层边界 `test:boundaries` | **2 files / 127 passed** |
+| smoke 门禁 `node --test scripts/stagedNarrativeSmoke.node-test.mjs` | **26 passed** |
+| 文档检查 `check:docs` / `test:docs` | 34 份文档 0 error；13 passed |
 | `npm run build` | 见下方 Step 4 门禁小节 |
 
 定向测试明细（本报告相关）：
@@ -48,8 +52,9 @@
 | `src/game/gameplay/rpg/narrativePlanning/unitGraph.test.ts` | 10 |
 | `src/game/gameplay/rpg/narrativePlanning/sceneSnapshot.test.ts` | 10 |
 | `src/game/application/narrativeGeneration/*.test.ts` | 见全量 |
-| `src/game/application/server/ai/staged/stagedPrompts.test.ts` | 26 |
+| `src/game/application/server/ai/staged/stagedPrompts.test.ts` | 28 |
 | `src/game/application/server/ai/staged/liveStageSource.test.ts` | 7 |
+| `src/game/application/narrativeGeneration/approveUnit.test.ts` | 19 |
 | `src/game/application/server/persistence/sqliteNarrativeJobs.test.ts` | 8 |
 
 ### Task 1–9 记账回填说明
@@ -73,9 +78,33 @@ Task 1–9 的 45 个 Step 此前从未回填勾选，使计划文档误显示�
 | 5 | `observation_not_disclosed`（wuxia） | **代码缺陷** | `observationsForUnit` 只按 stage+speakerId 过滤、未按 `point` 限定，同一 NPC 多 step 说话时前一个单元被迫披露后续场景观察 → 任何输出都无法通过。新增 `atOrBefore`（同 `stepKey` 且 `order ≤` 本单元），与 `checkUnitGraph` 时点约束同语义 |
 | 5 | `observation_disclosure_unavailable`（urban） | **代码缺陷** | `checkObservation` 要求输出 certainty 精确等于观察声明；观察声明 `suspected` 而知识组件为 `known` 时，prompt 教模型写 `known`、判定要 `suspected` → 必败。改为「不得升级」：允许 `known→suspected` 降级，仍拒 `suspected→known` |
 | 5 | `observation_not_disclosed`（两局共有） | prompt 契约 | character/narration prompt 完全没声明本单元必须披露哪条观察。`SafeContext` 新增 `requiredObservations` 安全投影；两 prompt 新增「必须披露的观察」硬性段，明确必须写进 `facts`（写进 `beatIds`/`evidence` 不算披露） |
+| 6 | `unit_output_fact_unavailable`（character 第二单元） | **代码缺陷（回归）** | `approveUnit.checkParts` 要求输出 certainty 与 `visibleFacts` **严格相等**，与缺陷 12 修复后的 `checkObservation`「不得升级」规则矛盾。编译层把 NPC 知识一律标 `known`，而规划观察标 `suspected`；模型按披露段写 `suspected`（合法降级）被 `approveUnit` 判 `unit_output_fact_unavailable`。修复：`approveUnit` 改为「不得超过参考上限」（可见事实与披露要求取更严的一个），与 `collectDisclosures` 统一规则 |
 
-修复提交：`90c3cdf`。回归：全量 95 files / 1090 tests 通过，typecheck 与
-eslint 干净。
+修复提交：`90c3cdf`（缺陷 11–13）、`9b72a57`（缺陷 14）。回归：全量 218 files /
+2890 tests 通过，typecheck 与 eslint 干净。
+
+### 缺陷 14 的取证与定位
+
+首次全量 smoke 报告 `INITIALIZATION_TIMEOUT` + `requestCount: 0`，**这是误导性摘要**，
+真因是 smoke 脚本自身缺陷掩盖了真实失败码：
+
+1. **脚本缺陷**：`awaitInitialization` 读 `result.status`，而 `getInitialization`
+   的真实返回形状是 `{ ok: true, view: InitializationView }`（状态在 `result.view.status`）。
+   状态永远读不到 → 失败 job 也只会轮询到 5 分钟超时，真实失败码被掩盖成
+   `INITIALIZATION_TIMEOUT`。分阶段链路已完成 planning + 3/4 表达单元，摘要却显示
+   「零请求秒失败」。修复：读 `view.status`，失败时取 `view.failureKind`。
+2. **真实失败码**（从遗留临时 SQLite 的 `narrative_jobs` 恢复）：
+   `unit_output_fact_unavailable`，单元 `char_liu_2`；同 NPC 的 `char_liu_1` 已通过，
+   planning 与两个 narration 单元也已 approved。
+3. **离线复现**（`tmp/diagRepro4.mjs`，纯函数、不触网）：
+
+   | 模型输出 | 修复前 | 修复后 |
+   | --- | --- | --- |
+   | `suspected`（按披露段合法降级） | ❌ `unit_output_fact_unavailable` | ✅ 通过 |
+   | `known`（与观察声明相比属升级） | ✅ 通过 | ❌ `unit_output_fact_unavailable` |
+
+**教训（供同类 smoke 复用）**：摘要里的稳定诊断码必须与存储任务记录交叉验证；
+`requestCount: 0` 与「有真实失败码」不可能同时成立，二者矛盾时必须先查脚本读取路径。
 
 ### 修复后的真实探测推进
 
