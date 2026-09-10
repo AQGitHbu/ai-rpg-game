@@ -2,8 +2,9 @@
 //
 // 同一 SQLite 实例实现 job 持久化与游戏发布：publish 在同一 write
 // transaction 内写游戏状态并把 job 标记 published。lease 30 秒 TTL 由调用方
-// 给定；renew 验证相同 owner/fence 且未过期；接管递增 fence。worker 写入
-// 同时验证未过期 lease、version、status 与当前周期。
+// 给定；renew 验证相同 owner/fence（TTL 过期不否决续租，接管递增 fence 后
+// 才会 LEASE_LOST）。worker 写入同时验证 lease 三元组、version、status
+// 与当前周期。
 
 /** @vitest-environment node */
 import { describe, it, expect, afterAll } from "vitest";
@@ -237,7 +238,7 @@ describe("sqliteNarrativeJobs", () => {
     if (takeover.ok) expect(takeover.value.fence).toBe(2);
   });
 
-  it("renew 验证相同 owner/fence 且未过期；stale worker save 返回 LEASE_LOST", async () => {
+  it("renew 验证相同 owner/fence；过期但未被接管的租约可续租；stale worker save 返回 LEASE_LOST", async () => {
     const { jobs } = openStores(nextDbPath());
     const stored = await startDecisionJob(jobs);
     const lease = await jobs.claim({ id: stored.id, owner: OWNER_A, now: NOW, expiresAt: EXPIRES });
@@ -259,6 +260,37 @@ describe("sqliteNarrativeJobs", () => {
     });
     expect(staleSave.ok).toBe(false);
     if (!staleSave.ok) expect(staleSave.code).toBe("LEASE_LOST");
+  });
+
+  it("renew 不否决已过期但未被接管的租约：provider 长跑跨过 TTL 后仍可续租", async () => {
+    // provider 单次调用 45-90s 可超过 30s TTL；TTL 只是 claim 接管的触发条件，
+    // 并发权威是 fence。持有者仍在工作且租约未被接管时必须能续租，
+    // 否则长跑任务会被自己的 TTL 杀死（Medium-1 修复面）。
+    const { jobs } = openStores(nextDbPath());
+    const stored = await startDecisionJob(jobs);
+    const lease = await jobs.claim({ id: stored.id, owner: OWNER_A, now: NOW, expiresAt: EXPIRES });
+    if (!lease.ok) throw new Error("claim failed");
+    // now 已越过 expiresAt，但没人接管（fence 未变）→ 续租成功。
+    const renewedAfterExpiry = await jobs.renew({
+      lease: lease.value,
+      now: "2026-09-09T08:01:20.000Z",
+      expiresAt: "2026-09-09T08:01:50.000Z",
+    });
+    expect(renewedAfterExpiry.ok).toBe(true);
+    if (renewedAfterExpiry.ok) {
+      expect(renewedAfterExpiry.value.fence).toBe(lease.value.fence);
+      expect(renewedAfterExpiry.value.expiresAt).toBe("2026-09-09T08:01:50.000Z");
+    }
+    // 接管后（fence 递增）同一过期租约续租必须失败。
+    // 接管 claim 的 now 必须晚于续租后的 expiresAt（08:01:50），否则撞活跃租约。
+    await jobs.claim({ id: stored.id, owner: OWNER_B, now: "2026-09-09T08:02:00.000Z", expiresAt: "2026-09-09T08:02:30.000Z" });
+    const renewedAfterTakeover = await jobs.renew({
+      lease: lease.value,
+      now: "2026-09-09T08:02:10.000Z",
+      expiresAt: "2026-09-09T08:02:40.000Z",
+    });
+    expect(renewedAfterTakeover.ok).toBe(false);
+    if (!renewedAfterTakeover.ok) expect(renewedAfterTakeover.code).toBe("LEASE_LOST");
   });
 
   it("临时库 reopen 后 approved 单元保留；版本随 save 递增", async () => {

@@ -13,14 +13,16 @@ import {
   parseNpcRelationshipSeedProposals,
 } from "./entity";
 
-const MAX_NAME = 40;
-const MAX_TEXT = 200;
+/** worldDelta 名称类字段（name/label）的长度边界；planning prompt 契约同源引用。 */
+export const WORLD_DELTA_MAX_NAME = 40;
+/** worldDelta 正文类字段（text/description/beatSummary 截断上限）的长度边界。 */
+export const WORLD_DELTA_MAX_TEXT = 200;
 
 // 调查方式安全边界：显式列表必须恰好 2-3 条；张力在 [-5, 20]。
-const MIN_APPROACH_COUNT = 2;
-const MAX_APPROACH_COUNT = 3;
-const MIN_TENSION_DELTA = -5;
-const MAX_TENSION_DELTA = 20;
+export const MIN_APPROACH_COUNT = 2;
+export const MAX_APPROACH_COUNT = 3;
+export const MIN_TENSION_DELTA = -5;
+export const MAX_TENSION_DELTA = 20;
 
 function isStr(v: unknown): v is string {
   return typeof v === "string";
@@ -29,13 +31,13 @@ function isStr(v: unknown): v is string {
 function validName(v: unknown): v is string {
   if (!isStr(v)) return false;
   const t = v.trim();
-  return t.length >= 2 && t.length <= MAX_NAME;
+  return t.length >= 2 && t.length <= WORLD_DELTA_MAX_NAME;
 }
 
 function validText(v: unknown): v is string {
   if (!isStr(v)) return false;
   const t = v.trim();
-  return t.length > 0 && t.length <= MAX_TEXT;
+  return t.length > 0 && t.length <= WORLD_DELTA_MAX_TEXT;
 }
 
 /** 严格键集合：既不允许未知键，也不允许缺字段。 */
@@ -122,7 +124,7 @@ export function parseWorldDeltaProposal(
     "beatSummary", "newLocation", "newNpc", "newItem", "newEnemy", "newFact",
     "nextMainQuest", "endingPair",
   ])) return null;
-  const beatSummary = isStr(rec.beatSummary) ? rec.beatSummary.trim().slice(0, MAX_TEXT) : "";
+  const beatSummary = isStr(rec.beatSummary) ? rec.beatSummary.trim().slice(0, WORLD_DELTA_MAX_TEXT) : "";
   if (beatSummary === "") return null;
 
   let newLocation: WorldDeltaProposal["newLocation"] = null;

@@ -402,6 +402,52 @@ describe("buildPlanningPrompt 契约完整性", () => {
     // taskFactIds / beat.factIds 引用的是实体 id，不是语义 key。
     expect(opening).toContain("事实**实体 id**");
   });
+
+  it("worldDelta 契约覆盖 parseWorldDeltaProposal 的全部顶层键与空提案拒绝", () => {
+    // narrativePlan 已把 worldDelta 委托给 parseWorldDeltaProposal 逐字段解析，
+    // prompt 不给出完整形状时模型只能靠猜，坏形状直接 plan_world_delta_invalid。
+    const prompt = decisionPrompt();
+    for (const key of [
+      "beatSummary", "newLocation", "newNpc", "newItem", "newEnemy",
+      "newFact", "nextMainQuest", "endingPair",
+    ]) {
+      expect(prompt).toContain(key);
+    }
+    expect(prompt).toContain("## worldDelta");
+    // 只有 beatSummary 的空提案被 parseWorldDeltaProposal 判 null。
+    expect(prompt).toContain("plan_world_delta_invalid");
+    expect(prompt).toContain("至少包含一个实体变化字段");
+  });
+
+  it("worldDelta 子结构契约逐字段对齐 parser（newNpc 7 键全必填、锚点/目标/关系种子形状）", () => {
+    const prompt = decisionPrompt();
+    // newNpc 7 键必须全部出现且声明必填（parser 用 hasExactKeys）。
+    for (const key of ["locationRef", "anchors", "goals", "relationshipSeeds"]) {
+      expect(prompt).toContain(key);
+    }
+    expect(prompt).toContain("7 键全部必填");
+    for (const key of ["selfConcept", "values", "speechStyle", "capabilityBoundaries", "taboos"]) {
+      expect(prompt).toContain(key);
+    }
+    for (const key of ["horizon", "priority", "targetNpcId", "stance"]) {
+      expect(prompt).toContain(key);
+    }
+    // locationRef 两种形态：NPC 是对象，物品/敌人是字符串——模型必错的分叉。
+    expect(prompt).toContain('{"kind":"existing","id"');
+    expect(prompt).toContain('{"kind":"new_location"}');
+    expect(prompt).toContain('"current" | "new_location"');
+  });
+
+  it("worldDelta 调查方式契约对齐 parseFactInvestigationApproaches", () => {
+    const prompt = decisionPrompt();
+    for (const key of ["approachId", "evidenceQuality", "tensionDelta", "investigationApproaches"]) {
+      expect(prompt).toContain(key);
+    }
+    expect(prompt).toContain("clean");
+    expect(prompt).toContain("noisy");
+    // 防泄漏：label/hint 不得包含完整事实正文。
+    expect(prompt).toContain("不得出现完整的事实正文");
+  });
 });
 
 describe("buildNarrationPrompt", () => {

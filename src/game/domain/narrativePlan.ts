@@ -20,6 +20,7 @@ import { parseObservation, type Observation } from "./narrativeObservation";
 import { parseDecision, type Decision, type EndingExpression } from "./narrativeBranch";
 import type { NarrativeBundleTerminal, NarrativeBundleTrigger } from "./narrativeBundle";
 import type { WorldDeltaProposal } from "./worldDelta";
+import { parseWorldDeltaProposal } from "./worldDeltaProposal";
 import { MAX_NARRATIVE_BUNDLE_STEPS } from "./narrativeBundle";
 
 export type { Unit } from "./narrativeUnit";
@@ -174,12 +175,15 @@ export function parsePlanProposal(raw: unknown): Check<PlanProposal> {
     opening = parsed.value;
   }
 
-  // worldDelta 的结构解析由 domain 的同一实现承担（见 worldDeltaProposal.ts）；
-  // 规则过滤仍留在 gameplay，本层不做审批。
+  // worldDelta 委托 domain 的同一 parser 做逐字段结构解析（见 worldDeltaProposal.ts）；
+  // 规则审批仍留在 gameplay。不做结构解析时，坏形状会以 as 断言放行，下游
+  // approveWorldDelta 的字段访问不设防：缺 newNpc.role 会抛 TypeError 协调器崩溃，
+  // unknown 键（undefined !== null）会绕过空提案与 next_act 必填检查。
   let worldDelta: WorldDeltaProposal | null = null;
   if (raw.worldDelta !== null && raw.worldDelta !== undefined) {
-    if (!isPlainRecord(raw.worldDelta)) return fail("plan_world_delta_invalid");
-    worldDelta = raw.worldDelta as unknown as WorldDeltaProposal;
+    const parsedDelta = parseWorldDeltaProposal(raw.worldDelta);
+    if (parsedDelta === null) return fail("plan_world_delta_invalid");
+    worldDelta = parsedDelta.proposal;
   }
 
   if (!Array.isArray(raw.steps)) return fail("plan_steps_invalid");

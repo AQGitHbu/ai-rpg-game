@@ -30,11 +30,29 @@ import type {
   StoredUnit,
 } from "../server/persistence/narrativeJobRepository";
 import type { PlanningContext, StageRequest, StageSource } from "./stageSource";
-import type { AiSourceFailure } from "@/game/application/aiGenerationRetry";
 
 const PLANNING_UNIT_KEY = "planning";
 /** 每 job 最多同时在途的 provider 请求；批调度按此上限派发。 */
 const MAX_IN_FLIGHT = 2;
+/**
+ * 规划阶段超时（Plan 固定决策 3 的已记录偏离）：规划要产出 6000 maxTokens
+ * 的完整骨架 JSON，比表达单元大一个量级，45s 对慢 provider 偏紧，放宽到 90s。
+ * 表达单元维持 45s 不变。
+ */
+const PLANNING_TIMEOUT_MS = 90_000;
+/** 表达单元（旁白/角色/选项）超时：与固定决策 3 的 45s 一致。 */
+const EXPRESSION_TIMEOUT_MS = 45_000;
+
+/**
+ * 按 job 剩余时间收缩请求超时：请求不得越过 job.deadline（固定决策 3
+ * 「按剩余时间缩短 timeout」）。deadline 检查本身在 canStartRequest，
+ * 这里只保证发起的请求不会在 deadline 之后才超时，避免「周期已死、
+ * provider 还在跑」的空转。
+ */
+function cappedTimeoutMs(job: StoredJob, defaultMs: number, now: string): number {
+  const remainingMs = Date.parse(job.deadline) - Date.parse(now);
+  return Math.max(1, Math.min(defaultMs, remainingMs));
+}
 
 export type RunJobResult =
   | { readonly ok: true; readonly value: StoredJob }
@@ -206,7 +224,7 @@ export async function runJob(input: RunJobInput, deps: RunJobDeps): Promise<RunJ
     const request: StageRequest = { stage: "planning", context: job.input };
     let response = await deps.source.generate(request, {
       signal: deps.signal,
-      timeoutMs: 90_000,
+      timeoutMs: cappedTimeoutMs(job, PLANNING_TIMEOUT_MS, deps.now()),
       audit: { purpose: "game_api", trigger: "staged_planning", jobId: job.id },
     });
     let repairAttempt = 1;
@@ -223,7 +241,7 @@ export async function runJob(input: RunJobInput, deps: RunJobDeps): Promise<RunJ
       }));
       response = await deps.source.generate(request, {
         signal: deps.signal,
-        timeoutMs: 90_000,
+        timeoutMs: cappedTimeoutMs(job, PLANNING_TIMEOUT_MS, deps.now()),
         audit: { purpose: "game_api", trigger: "staged_planning", jobId: job.id },
       });
       repairAttempt += 1;
@@ -310,12 +328,37 @@ export async function runJob(input: RunJobInput, deps: RunJobDeps): Promise<RunJ
       const request: StageRequest = { stage: unit.stage, context: context.value };
       let response = await deps.source.generate(request, {
         signal: deps.signal,
-        timeoutMs: 45_000,
+        timeoutMs: cappedTimeoutMs(job, EXPRESSION_TIMEOUT_MS, deps.now()),
         audit: { purpose: "game_api", trigger: "staged_expression", jobId: job.id },
       });
-      let repair: AiSourceFailure | undefined = response.ok ? undefined : response;
       let attemptsUsed = attempts + 1;
-      while (!response.ok && attemptsUsed < 4) {
+      // 「先重试表达」（Spec §205）：provider 失败与内容审批失败（approveUnit/
+      // collectDisclosures）都在剩余额度内带修复反馈自动重试；只有额度耗尽
+      // 才落 failed。确属骨架语义冲突的失败码原样上报，由外层 failJob 失效。
+      let approvedOutput: UnitOutput | null = null;
+      let rejection: string | null = null;
+      for (;;) {
+        approvedOutput = null;
+        rejection = null;
+        if (!response.ok) {
+          rejection = response.failure.kind;
+        } else if (response.stage !== unit.stage) {
+          rejection = "unit_output_stage_mismatch";
+        } else {
+          const unitApproval = approveUnit({ unit, context: context.value, output: response.value });
+          if (!unitApproval.ok) {
+            rejection = unitApproval.code;
+          } else {
+            const disclosures = collectDisclosures({ plan: approved, unit, output: response.value });
+            if (!disclosures.ok) {
+              rejection = disclosures.code;
+            } else {
+              approvedOutput = response.value;
+            }
+          }
+        }
+        if (approvedOutput !== null) break;
+        if (attemptsUsed >= 4) break;
         const retryCharge = canStartRequest({ job, unitAttempts: attemptsUsed, now: deps.now() });
         if (!retryCharge.ok) break;
         if (deps.signal.aborted) return fail("JOB_ABORTED");
@@ -324,42 +367,26 @@ export async function runJob(input: RunJobInput, deps: RunJobDeps): Promise<RunJ
           status: "running",
         }));
         attemptsUsed += 1;
+        const providerFailureKind = response.ok ? undefined : response.failure.kind;
         response = await deps.source.generate(request, {
           signal: deps.signal,
-          timeoutMs: 45_000,
-          repair: repair === undefined ? undefined : {
+          timeoutMs: cappedTimeoutMs(job, EXPRESSION_TIMEOUT_MS, deps.now()),
+          repair: {
             attempt: attemptsUsed - 1,
-            reason: repair.failure.kind,
+            reason: providerFailureKind ?? "invalid_schema",
+            rejectionCode: providerFailureKind !== undefined ? undefined : rejection ?? undefined,
           },
           audit: { purpose: "game_api", trigger: "staged_expression", jobId: job.id },
         });
-        repair = response.ok ? undefined : response;
       }
-      if (!response.ok) {
+      if (approvedOutput === null) {
         await persist((current) => patchedUnit(current, unit.key, { status: "failed" }));
-        failures.push(response.failure.kind);
-        continue;
-      }
-      if (response.stage !== unit.stage) {
-        failures.push("unit_output_stage_mismatch");
-        continue;
-      }
-      const output = response.value;
-      const unitApproval = approveUnit({ unit, context: context.value, output });
-      if (!unitApproval.ok) {
-        await persist((current) => patchedUnit(current, unit.key, { status: "failed" }));
-        failures.push(unitApproval.code);
-        continue;
-      }
-      const disclosures = collectDisclosures({ plan: approved, unit, output });
-      if (!disclosures.ok) {
-        await persist((current) => patchedUnit(current, unit.key, { status: "failed" }));
-        failures.push(disclosures.code);
+        failures.push(rejection ?? "unknown_failure");
         continue;
       }
       const approvedSave = await persist((current) => patchedUnit(current, unit.key, {
         status: "approved",
-        value: output,
+        value: approvedOutput,
       }));
       if (approvedSave !== true) failures.push(approvedSave);
     }

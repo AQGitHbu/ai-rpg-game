@@ -2,12 +2,11 @@
 //
 // 背景：claim 写入的租约 TTL 只有 30s，但一次 staged 生成可能远超它——
 // 真实观测：10 单元 / 36.3s（约 2s/单元）；单元重试与修复循环会进一步拉长。
-// 没有续租会撞上两个不对称的判定：
-//   - save 只做 owner/fence/expiresAt 三元组等值匹配，**不看过期** → 中间
-//     写回全部成功；
-//   - publish 显式判定 `expiresAt <= now` → LEASE_LOST。
-// 结果是「全部单元 approved、job 仍 pending、lease 已被 finally 清空」，
-// 外部只看到永久 pending，而失败原因被 summary 掩盖（requestCount 恰为 1）。
+// 写入路径（save/renew/publish）都只做 owner/fence/expiresAt 三元组等值匹配、
+// 不查过期，但 TTL 一到租约就可被外部 claim 接管（fence 递增）：持有者的后续
+// 写入撞新 fence 返回 LEASE_LOST。结果是「全部单元 approved、job 仍 pending、
+// lease 已被 finally 清空」，外部只看到永久 pending，而失败原因被 summary
+// 掩盖（requestCount 恰为 1）。续租让租约保持活跃、无人能接管。
 //
 // 保活采用**惰性续租**（lazy renew）而非后台定时器：每次写入前询问
 // 「当前租约是否已过半程」，是则同步续租到 now + ttl 再继续。相比 setInterval
@@ -16,7 +15,8 @@
 //      后台定时器按墙钟触发，在注入时钟下无法驱动，会造成「测试绿灯、生产仍挂」。
 //   2. 续租与写入在同一调用栈内串行，不存在「publish 与续租竞态」。
 //   3. provider 请求自身有 45s/90s 硬超时，单个慢请求也远小于「过半即续租」
-//      的安全余量，不会出现「一次请求横跨整个 TTL」。
+//      的安全余量，不会出现「一次请求横跨整个 TTL」。即使出现，renew 也不
+//      否决「已过期但未被接管」的租约（fence 才是并发权威），续租仍能成功。
 //
 // 语义要点：
 //   - 续租失败（LEASE_LOST / INFRASTRUCTURE_FAILURE）→ abort 传入的 controller，

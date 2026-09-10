@@ -51,7 +51,11 @@ export type StepDependencyCheckResult =
   | { readonly ok: true; readonly value: true }
   | { readonly ok: false; readonly code: string };
 
-/** 观察回执凭据格式：`audienceId:observationKey`。由任务执行层在批准观察时记录。 */
+/**
+ * 观察回执凭据格式：`audienceId:observationKey`。由任务执行层（decisionJob
+ * 的 observationReceiptsOf）在装配审批前铸造：计划获批即其全部声明观察获批，
+ * 无逐条观察审批。持有回执才能通过 observation 依赖的 fail-closed 检查。
+ */
 export function observationReceiptKey(audienceId: string, observationKey: string): string {
   return `${audienceId}:${observationKey}`;
 }

@@ -48,10 +48,11 @@ type MemoryRow = {
 
 /**
  * 内存 job 仓储：**镜像 sqliteNarrativeJobs 的租约语义**（owner + fence +
- * expiresAt 三元组）。`save` 只做三元组等值匹配（与生产一致，**不查过期**），
- * 而 `renew` / `publish`（经 `leaseMatches` + 显式过期判定）在 `expiresAt <= now`
- * 时返回 LEASE_LOST。这正是真实 smoke 中「全部单元 approved 却卡 pending」的
- * 触发面：没有续租，30s TTL 一到，中间 save 仍成功、收尾 publish 被拒。
+ * expiresAt 三元组等值匹配）。所有写入路径（save/renew/publish）都**不查过期**：
+ * TTL 只是 claim 接管的触发条件，并发权威是 fence——租约被接管后 owner/fence
+ * 不再匹配 row，写入才返回 LEASE_LOST。真实 smoke 的历史缺陷是「没有续租，
+ * 30s TTL 一到，租约被外部接管，收尾 publish 撞新 fence 被拒，job 卡 pending」；
+ * 惰性续租（leaseKeeper）保证长生成期间租约保持活跃、无人能接管。
  *
  * `now` 由调用方注入，测试可用可推进的时钟复现长生成场景。
  */
@@ -107,7 +108,8 @@ function createMemoryJobs(now: () => string): NarrativeJobRepository {
     async renew({ lease, now, expiresAt }) {
       const row = rows.get(lease.jobId);
       if (row === undefined) return { ok: false, code: "JOB_NOT_FOUND" as const };
-      if (!leaseMatches(row, lease) || lease.expiresAt <= now) {
+      // 与生产一致：不否决已过期但未被接管的租约（fence 是并发权威）。
+      if (!leaseMatches(row, lease)) {
         return { ok: false, code: "LEASE_LOST" as const };
       }
       row.lease = { owner: lease.owner, fence: lease.fence, expiresAt };
@@ -148,8 +150,8 @@ function createMemoryJobs(now: () => string): NarrativeJobRepository {
     async publish({ lease, expectedVersion }) {
       const row = rows.get(lease.jobId);
       if (row === undefined) return { ok: false, code: "JOB_NOT_FOUND" as const };
-      // 与生产一致：过期即 LEASE_LOST（发布是唯一显式查过期的写入路径）。
-      if (!leaseMatches(row, lease) || lease.expiresAt <= now()) {
+      // 与生产一致：三元组等值匹配，不查过期（被接管后 fence 不匹配才 LEASE_LOST）。
+      if (!leaseMatches(row, lease)) {
         return { ok: false, code: "LEASE_LOST" as const };
       }
       if (row.job.version !== expectedVersion) return { ok: false, code: "JOB_CONFLICT" as const };
@@ -358,10 +360,11 @@ describe("initializationJob", () => {
   // -------------------------------------------------------------------------
   // 租约长跑：真实 smoke 暴露的「全部单元 approved 却卡 pending」缺陷。
   //
-  // 30s TTL 内没有续租：中间 save 只做三元组等值匹配（不看过期）所以全部
-  // 通过；收尾 publish 显式判定 `expiresAt <= now` 于是 LEASE_LOST，job 留在
-  // pending 且 lease 已被 finally 的 release 清空——外部只看到「永久 pending」。
-  // 真实观测：sci-fi 局 10 单元 / 36.3s，超过 30s TTL。
+  // 30s TTL 内没有续租：租约过期后可被外部 claim 接管（fence 递增），持有者
+  // 收尾 publish 撞新 fence 于是 LEASE_LOST，job 留在 pending 且 lease 已被
+  // finally 的 release 清空——外部只看到「永久 pending」。真实观测：sci-fi 局
+  // 10 单元 / 36.3s，超过 30s TTL。惰性续租让租约跨过 TTL 仍保持活跃、无人能
+  // 接管，末段 publish 三元组匹配成功。
   // -------------------------------------------------------------------------
 
   it("生成耗时超过租约 TTL 时仍能发布：中途续租使末段 publish 不丢租约", async () => {

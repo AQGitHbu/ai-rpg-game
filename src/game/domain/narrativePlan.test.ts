@@ -146,4 +146,71 @@ describe("parsePlanProposal", () => {
   it("rejects an unknown terminal kind", () => {
     expect(parsePlanProposal(raw({ terminal: { kind: "cliffhanger" } })).ok).toBe(false);
   });
+
+  it("accepts a plan carrying a structurally valid worldDelta", () => {
+    const worldDelta = {
+      beatSummary: "官道尽头出现一座废弃驿站。",
+      newLocation: {
+        name: "北岭废驿",
+        description: "官道旁荒废多年的驿站，梁柱上还挂着半幅旧幡。",
+        scale: "scene",
+        placement: "world",
+        connectFromLocationId: "loc_0",
+      },
+      newNpc: null,
+      newItem: null,
+      newEnemy: null,
+      newFact: null,
+      nextMainQuest: null,
+      endingPair: null,
+    };
+    const result = parsePlanProposal(raw({ worldDelta }));
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.worldDelta?.newLocation?.name).toBe("北岭废驿");
+      expect(result.value.worldDelta?.beatSummary).toBe("官道尽头出现一座废弃驿站。");
+    }
+  });
+
+  it("rejects a malformed worldDelta instead of casting it through", () => {
+    // newNpc 缺 role：此前以 as 断言放行，下游 approveWorldDelta 访问 role 会抛 TypeError。
+    const worldDelta = {
+      beatSummary: "驿丞现身拦路。",
+      newLocation: null,
+      newNpc: { name: "老驿丞", description: "守着废驿的老人。" },
+      newItem: null,
+      newEnemy: null,
+      newFact: null,
+      nextMainQuest: null,
+      endingPair: null,
+    };
+    const result = parsePlanProposal(raw({ worldDelta }));
+    expect(result).toEqual({ ok: false, code: "plan_world_delta_invalid" });
+  });
+
+  it("rejects a worldDelta with unknown keys", () => {
+    const worldDelta = {
+      beatSummary: "官道尽头出现一座废弃驿站。",
+      newLocation: {
+        name: "北岭废驿",
+        description: "官道旁荒废多年的驿站，梁柱上还挂着半幅旧幡。",
+        scale: "scene",
+        placement: "world",
+        connectFromLocationId: "loc_0",
+      },
+      hiddenPrompt: "leak",
+    };
+    const result = parsePlanProposal(raw({ worldDelta }));
+    expect(result).toEqual({ ok: false, code: "plan_world_delta_invalid" });
+  });
+
+  it("rejects a worldDelta that carries no concrete increment", () => {
+    const result = parsePlanProposal(raw({ worldDelta: { beatSummary: "什么也没有发生。" } }));
+    expect(result).toEqual({ ok: false, code: "plan_world_delta_invalid" });
+  });
+
+  it("rejects a non-object worldDelta", () => {
+    const result = parsePlanProposal(raw({ worldDelta: "leak" }));
+    expect(result).toEqual({ ok: false, code: "plan_world_delta_invalid" });
+  });
 });

@@ -292,7 +292,11 @@ export function buildDecisionPublication(
   };
 }
 
-/** 已批准计划里声明的观察回执（`audienceId:observationKey`）。 */
+/**
+ * 已批准计划里声明的观察回执（`audienceId:observationKey`）。观察没有逐条
+ * 审批：approvePlan 批准计划即批准其全部声明观察，装配审批前在此一次性
+ * 铸造回执——这就是 sceneSnapshot「任务执行层在批准观察时记录」的落地方式。
+ */
 function observationReceiptsOf(plan: import("@/game/gameplay/rpg/narrativePlanning").ApprovedPlan): ReadonlySet<string> {
   const receipts = new Set<string>();
   for (const observation of plan.proposal.observations) {

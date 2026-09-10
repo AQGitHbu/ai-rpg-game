@@ -168,7 +168,8 @@ function createMemoryJobRepository(): NarrativeJobRepository & { initializeSchem
     async renew({ lease, now, expiresAt }) {
       const row = rowOf(lease.jobId);
       if (row === null) return { ok: false, code: "JOB_NOT_FOUND" };
-      if (!leaseMatches(row, lease) || lease.expiresAt <= now) {
+      // 与生产一致：不否决已过期但未被接管的租约（fence 是并发权威）。
+      if (!leaseMatches(row, lease)) {
         return { ok: false, code: "LEASE_LOST" };
       }
       row.lease = { owner: lease.owner, fence: lease.fence, expiresAt };
@@ -245,18 +246,21 @@ function createMemoryJobRepository(): NarrativeJobRepository & { initializeSchem
 
 export type HarnessSource = {
   generate(request: StageRequest, execution: StageExecution): Promise<StageSuccess | AiSourceFailure>;
-  calls: readonly { readonly stage: StageRequest["stage"] }[];
+  calls: readonly { readonly stage: StageRequest["stage"]; readonly timeoutMs: number; readonly repair?: StageExecution["repair"] }[];
   /** 完整请求正文（与 calls 一一对应），供输入隔离类断言逐字段取证。 */
   requests: readonly StageRequest[];
   failNext(stage: StageRequest["stage"]): void;
+  /** 下一次该 stage 的成功响应改为「审批必失败」的输出（ok 但不合规）。 */
+  failApprovalNext(stage: StageRequest["stage"]): void;
   hold(stage: StageRequest["stage"]): void;
   release(stage: StageRequest["stage"]): void;
 };
 
 function createScriptedSource(): HarnessSource {
-  const calls: { stage: StageRequest["stage"] }[] = [];
+  const calls: { stage: StageRequest["stage"]; timeoutMs: number; repair?: StageExecution["repair"] }[] = [];
   const requests: StageRequest[] = [];
   const failCounts = new Map<StageRequest["stage"], number>();
+  const approvalFailCounts = new Map<StageRequest["stage"], number>();
   const held = new Map<StageRequest["stage"], (() => void)[]>();
 
   function successFor(request: StageRequest): StageSuccess {
@@ -273,10 +277,48 @@ function createScriptedSource(): HarnessSource {
     return { ok: true, stage: "choices", value: makeChoiceOutput() };
   }
 
+  /** 审批必失败的响应：provider 成功但输出违反 approveUnit 的引用契约。 */
+  function poisonedSuccessFor(request: StageRequest): StageSuccess {
+    if (request.stage === "choices") {
+      // candidateId 不在计划的候选里 → unit_output_candidate_unknown。
+      const labels = makeChoiceOutput().labels;
+      return {
+        ok: true,
+        stage: "choices",
+        value: { stage: "choices", labels: [{ candidateId: "poisoned_candidate", label: labels[0]?.label ?? "坏。" }, ...labels.slice(1)] },
+      };
+    }
+    if (request.stage === "character") {
+      const speakerId = request.context.unit.speakerId ?? "npc_0";
+      return {
+        ok: true,
+        stage: "character",
+        value: {
+          ...makeCharacterOutput(speakerId),
+          parts: [{ text: "坏句子。", facts: [{ factId: "fact_poisoned", certainty: "known" as const }], evidence: [], beatIds: [] }],
+        },
+      };
+    }
+    if (request.stage === "narration") {
+      // 引用不可见事实 → unit_output_fact_unavailable。
+      return {
+        ok: true,
+        stage: "narration",
+        value: {
+          stage: "narration",
+          parts: [{ text: "坏句子。", facts: [{ factId: "fact_poisoned", certainty: "known" as const }], evidence: [], beatIds: [] }],
+          actionKeys: [],
+        },
+      };
+    }
+    return successFor(request);
+  }
+
   return {
     calls,
     requests,
     failNext(stage) { failCounts.set(stage, (failCounts.get(stage) ?? 0) + 1); },
+    failApprovalNext(stage) { approvalFailCounts.set(stage, (approvalFailCounts.get(stage) ?? 0) + 1); },
     hold(stage) {
       if (!held.has(stage)) held.set(stage, []);
     },
@@ -286,7 +328,7 @@ function createScriptedSource(): HarnessSource {
       for (const resolve of resolvers ?? []) resolve();
     },
     async generate(request, execution) {
-      calls.push({ stage: request.stage });
+      calls.push({ stage: request.stage, timeoutMs: execution.timeoutMs, ...(execution.repair === undefined ? {} : { repair: execution.repair }) });
       requests.push(request);
       if (execution.signal.aborted) {
         return createAiSourceFailure("scene", "transport");
@@ -299,6 +341,11 @@ function createScriptedSource(): HarnessSource {
       const resolvers = held.get(request.stage);
       if (resolvers !== undefined && held.has(request.stage)) {
         await new Promise<void>((resolve) => { resolvers.push(resolve); });
+      }
+      const pendingApprovalFailures = approvalFailCounts.get(request.stage) ?? 0;
+      if (pendingApprovalFailures > 0) {
+        approvalFailCounts.set(request.stage, pendingApprovalFailures - 1);
+        return poisonedSuccessFor(request);
       }
       return successFor(request);
     },
@@ -339,7 +386,11 @@ export function createStagedHarness() {
     return {
       async generate(request, execution) {
         if (request.stage === "planning") {
-          (base.calls as { stage: StageRequest["stage"] }[]).push({ stage: "planning" });
+          (base.calls as { stage: StageRequest["stage"]; timeoutMs: number; repair?: StageExecution["repair"] }[]).push({
+            stage: "planning",
+            timeoutMs: execution.timeoutMs,
+            ...(execution.repair === undefined ? {} : { repair: execution.repair }),
+          });
           (base.requests as StageRequest[]).push(request);
           return { ok: true, stage: "planning", value: plan };
         }

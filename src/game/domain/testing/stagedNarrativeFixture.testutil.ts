@@ -102,7 +102,7 @@ export function makeStagedPlan(): PlanProposal {
 }
 
 /** 有效角色表现输出；测试可局部替换字段制造非法输入。 */
-export function makeCharacterOutput(speakerId = FIXTURE_NPC_A): UnitOutput {
+export function makeCharacterOutput(speakerId = FIXTURE_NPC_A): Extract<UnitOutput, { stage: "character" }> {
   return {
     stage: "character",
     speakerId,
@@ -114,7 +114,7 @@ export function makeCharacterOutput(speakerId = FIXTURE_NPC_A): UnitOutput {
 }
 
 /** 有效选项表达输出：两条纯对白 label。 */
-export function makeChoiceOutput(): UnitOutput {
+export function makeChoiceOutput(): Extract<UnitOutput, { stage: "choices" }> {
   return {
     stage: "choices",
     labels: [
@@ -125,7 +125,7 @@ export function makeChoiceOutput(): UnitOutput {
 }
 
 /** 有效旁白输出；测试可局部替换 parts。 */
-export function makeNarrationOutput(): UnitOutput {
+export function makeNarrationOutput(): Extract<UnitOutput, { stage: "narration" }> {
   return {
     stage: "narration",
     parts: [{ text: "风从门缝里挤进来，烛火偏了一下。", facts: [], evidence: [], beatIds: [] }],

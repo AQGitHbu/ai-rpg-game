@@ -377,7 +377,12 @@ export function createSqliteNarrativeJobs(
         try {
           const row = await readJobRow(tx, input.lease.jobId);
           if (row === null) return { ok: false, code: "JOB_NOT_FOUND" };
-          if (!leaseMatches(row, input.lease) || input.lease.expiresAt <= input.now) {
+          // renew 不否决「已过期但未被接管」的租约：TTL 只是 claim 接管的触发
+          // 条件，不是续租的失效条件。provider 单次调用可跑 45-90s，超过 30s
+          // TTL 时持有者仍在工作；真正的并发权威是 fence——租约一旦被新执行者
+          // 接管（claim/control 递增 fence），旧 lease 的 owner+fence 不再匹配
+          // row，这里返回 LEASE_LOST，持有者立即停止。
+          if (!leaseMatches(row, input.lease)) {
             return { ok: false, code: "LEASE_LOST" };
           }
           await tx.execute({
@@ -452,9 +457,10 @@ export function createSqliteNarrativeJobs(
             ? Number(row["cycle"] ?? 0) + 1
             : Number(row["cycle"] ?? 0);
           const nextStatus: StoredJobStatus = input.operation === "cancel" ? "cancelled" : "pending";
+          // 取消保持原 deadline；重试重置为 now + 600s 周期。
           const nextDeadline = input.operation === "retry"
             ? new Date(Date.parse(input.now) + 600_000).toISOString()
-            : String(row["payload_json"] ? parsed.value.deadline : parsed.value.deadline);
+            : parsed.value.deadline;
           const nextUnits = input.operation === "retry"
             ? parsed.value.units.map((unit) => unit.status === "approved"
               ? unit

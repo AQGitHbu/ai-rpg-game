@@ -101,4 +101,59 @@ describe("runJob", () => {
       expect(job.value.failureCode).toBe("job_deadline_exceeded");
     }
   });
+
+  it("满预算时 planning 90s / expression 45s（Plan 固定决策 3 的已记录偏离）", async () => {
+    const h = createStagedHarness();
+    await h.startDecision();
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    const planning = h.source.calls.find((c) => c.stage === "planning");
+    expect(planning?.timeoutMs).toBe(90_000);
+    const narration = h.source.calls.find((c) => c.stage === "narration");
+    expect(narration?.timeoutMs).toBe(45_000);
+  });
+
+  it("表达审批失败（引用不可见事实）带修复反馈自动重试后成功", async () => {
+    // Spec §205「先重试表达」：审批拒绝（provider 成功但输出不合规）在剩余
+    // 额度内自动带修复反馈重试，而非直接落 failed。
+    const h = createStagedHarness();
+    h.source.failApprovalNext("narration");
+    await h.startDecision();
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    const narrationCalls = h.source.calls.filter((c) => c.stage === "narration");
+    expect(narrationCalls).toHaveLength(2);
+    expect(narrationCalls[1]?.repair?.rejectionCode).toBe("unit_output_fact_unavailable");
+    expect(narrationCalls[1]?.repair?.reason).toBe("invalid_schema");
+    expect(narrationCalls[1]?.repair?.attempt).toBe(1);
+    if (result.ok) {
+      expect(result.value.units.every((unit) => unit.status === "approved")).toBe(true);
+    }
+  });
+
+  it("表达审批失败（候选 ID 未知）带修复反馈自动重试后成功", async () => {
+    const h = createStagedHarness();
+    h.source.failApprovalNext("choices");
+    await h.startDecision();
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    const choicesCalls = h.source.calls.filter((c) => c.stage === "choices");
+    expect(choicesCalls).toHaveLength(2);
+    expect(choicesCalls[1]?.repair?.rejectionCode).toBe("unit_output_candidate_unknown");
+    expect(choicesCalls[1]?.repair?.attempt).toBe(1);
+  });
+
+  it("剩余时间不足默认超时时按 deadline 收缩 timeout，请求不越过周期", async () => {
+    // 固定决策 3「按剩余时间缩短 timeout」：clock 前进 550s 后剩余 50s，
+    // planning 默认 90s 收缩到 50s；expression 默认 45s 低于剩余时间保持不变。
+    const h = createStagedHarness();
+    await h.startDecision();
+    h.clock.advance(550_000);
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    const planning = h.source.calls.find((c) => c.stage === "planning");
+    expect(planning?.timeoutMs).toBe(50_000);
+    const narration = h.source.calls.find((c) => c.stage === "narration");
+    expect(narration?.timeoutMs).toBe(45_000);
+  });
 });

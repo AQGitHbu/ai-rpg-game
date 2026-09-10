@@ -14,6 +14,26 @@ import { MAX_PLAN_UNITS } from "@/game/domain/narrativePlan";
 import { MAX_NARRATIVE_BUNDLE_STEPS } from "@/game/domain/narrativeBundle";
 import { DIALOGUE_ACTS } from "@/game/domain/action";
 import { MAX_LABEL_LENGTH, MAX_TEXT_PART_LENGTH } from "@/game/domain/narrativeUnit";
+import {
+  MAX_APPROACH_COUNT,
+  MAX_TENSION_DELTA,
+  MIN_APPROACH_COUNT,
+  MIN_TENSION_DELTA,
+  WORLD_DELTA_MAX_NAME,
+  WORLD_DELTA_MAX_TEXT,
+} from "@/game/domain/worldDeltaProposal";
+import {
+  NPC_ANCHOR_LIST_MAX,
+  NPC_ANCHOR_LIST_MIN,
+  NPC_CREATION_TEXT_MAX_LENGTH,
+  NPC_GOAL_HORIZONS,
+  NPC_GOAL_LIST_MAX,
+  NPC_GOAL_LIST_MIN,
+  NPC_GOAL_PRIORITIES,
+  NPC_RELATIONSHIP_SEED_LIST_MAX,
+  NPC_RELATIONSHIP_SEED_STANCES,
+  NPC_TABOO_LIST_MIN,
+} from "@/game/domain/entity";
 import type { PlanningContext } from "@/game/application/narrativeGeneration/stageSource";
 import type { FactEntityRecord, NpcEntityRecord } from "@/game/domain/entity";
 
@@ -216,7 +236,45 @@ ${isOpening
       : "必须为 null；决策链路禁止重跑开局结构编译。"}
 
 ## worldDelta
-对象或 null；决策链路用于声明本回合新引入的地点/NPC/物品/事实/任务/线索。`;
+对象或 null；决策链路用于声明本回合新引入的地点/NPC/物品/敌人/事实/任务/结局对。开局链路必须为 null。
+- null = 本回合不引入任何世界变化；非 null 时**必须至少包含一个实体变化字段**（newLocation/newNpc/newItem/newEnemy/newFact/nextMainQuest/endingPair 至少一个非 null），只有 beatSummary 的空提案会被整体拒绝（plan_world_delta_invalid）。
+- 顶层的键只能是：beatSummary、newLocation、newNpc、newItem、newEnemy、newFact、nextMainQuest、endingPair；未使用的键一律写 null，不得省略之外的未知键。
+- beatSummary：非空中文字符串，≤ ${WORLD_DELTA_MAX_TEXT} 字，概述本回合节拍。
+- newLocation：null 或恰有 5 键 {"name","description","scale","placement","connectFromLocationId"}
+  - name 为 ${2}-${WORLD_DELTA_MAX_NAME} 字；description 为 1-${WORLD_DELTA_MAX_TEXT} 字。
+  - scale ∈ "scene" | "town"；placement ∈ "world" | "town_building"。
+  - connectFromLocationId：已存在地点的实体 id，非空字符串。
+- newNpc：null 或恰有 7 键 {"name","role","description","locationRef","anchors","goals","relationshipSeeds"}（7 键全部必填）
+  - name 为 ${2}-${WORLD_DELTA_MAX_NAME} 字；role、description 为 1-${WORLD_DELTA_MAX_TEXT} 字。
+  - locationRef 二选一：{"kind":"existing","id":已存在地点实体 id} 或 {"kind":"new_location"}（与 newLocation 同时声明时表示落在新地点）。
+  - anchors 恰有 5 键 {"selfConcept","values","speechStyle","capabilityBoundaries","taboos"}：
+    selfConcept、speechStyle 为 1-${NPC_CREATION_TEXT_MAX_LENGTH} 字非空字符串；
+    values、capabilityBoundaries 为 ${NPC_ANCHOR_LIST_MIN}-${NPC_ANCHOR_LIST_MAX} 条非空字符串数组（不得重复）；
+    taboos 为 ${NPC_TABOO_LIST_MIN}-${NPC_ANCHOR_LIST_MAX} 条非空字符串数组（不得重复）。
+  - goals 为 ${NPC_GOAL_LIST_MIN}-${NPC_GOAL_LIST_MAX} 条数组，每项恰有 4 键 {"horizon","description","priority","reason"}：
+    horizon ∈ ${NPC_GOAL_HORIZONS.join(" | ")}；priority 为 ${NPC_GOAL_PRIORITIES[0]}-${NPC_GOAL_PRIORITIES[NPC_GOAL_PRIORITIES.length - 1]} 的整数；
+    description、reason 为 1-${NPC_CREATION_TEXT_MAX_LENGTH} 字非空字符串；description 不得重复。
+  - relationshipSeeds 为 0-${NPC_RELATIONSHIP_SEED_LIST_MAX} 条数组，每项恰有 3 键 {"targetNpcId","stance","reason"}：
+    targetNpcId 为已存在 NPC 的实体 id（非空字符串，不得重复）；
+    stance ∈ ${NPC_RELATIONSHIP_SEED_STANCES.join(" | ")}；reason 为 1-${NPC_CREATION_TEXT_MAX_LENGTH} 字非空字符串。
+- newItem：null 或恰有 4 键 {"name","description","locationRef","acquisition"}
+  - name 为 ${2}-${WORLD_DELTA_MAX_NAME} 字；description 为 1-${WORLD_DELTA_MAX_TEXT} 字。
+  - locationRef ∈ "current" | "new_location"（注意：此处是字符串，不是 newNpc 的对象形式）。
+  - acquisition 可省略；提供时 ∈ "scene" | "npc_gift"。
+- newEnemy：null 或恰有 3 键 {"name","tier","locationRef"}
+  - name 为 ${2}-${WORLD_DELTA_MAX_NAME} 字；tier ∈ "normal" | "boss"；locationRef 同 newItem（"current" | "new_location"）。
+- newFact：null 或恰有 4 键 {"text","visibility","investigationLabel","investigationApproaches"}
+  - text 为 1-${WORLD_DELTA_MAX_TEXT} 字非空字符串；visibility ∈ "public" | "npc_private"。
+  - investigationLabel 可省略；提供时为 ${2}-${WORLD_DELTA_MAX_NAME} 字。
+  - investigationApproaches 可省略（缺省 = 该事实自动揭示）；提供时必须恰好 ${MIN_APPROACH_COUNT}-${MAX_APPROACH_COUNT} 条，每项恰有 5 键
+    {"approachId","label","hint","evidenceQuality","tensionDelta"}：
+    approachId、label、hint 均为非空字符串（approachId 不得重复）；
+    evidenceQuality ∈ "clean" | "noisy"；tensionDelta 为 ${MIN_TENSION_DELTA} 到 ${MAX_TENSION_DELTA} 的整数；
+    label/hint 中不得出现完整的事实正文（防泄漏，含完整正文即整体拒绝）。
+- nextMainQuest：null 或恰有 3 键 {"name","description","objectiveText"}
+  - name 为 ${2}-${WORLD_DELTA_MAX_NAME} 字；description、objectiveText 为 1-${WORLD_DELTA_MAX_TEXT} 字。
+- endingPair：null 或恰好 2 项的数组，每项恰有 3 键 {"themeKey","name","description"}
+  - themeKey ∈ "trust" | "doubt"，两项必须互异（同名主题或同名结局都会被审批拒绝）；name 为 ${2}-${WORLD_DELTA_MAX_NAME} 字且两项互异；description 为 1-${WORLD_DELTA_MAX_TEXT} 字。`;
 }
 
 /** opening 段的精确契约：与 parseOpeningGenerationCandidate 逐字段对应。 */
