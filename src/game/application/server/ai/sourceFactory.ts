@@ -11,9 +11,10 @@ import { createLiveWorldEvolutionSource } from "./liveWorldEvolutionSource";
 import type { WorldEvolutionSource, WorldEvolutionSourceResult } from "../../worldEvolutionSource";
 import { createLiveScenePerformanceSource } from "./liveScenePerformanceSource";
 import { classifyAiFailure } from "../../aiGenerationFailure";
+import { createAiSourceFailure } from "../../aiGenerationRetry";
 import type { AiGenerationFailure } from "@/game/domain/narrativeGenerationFailure";
-import { createNarrativeBundleSource } from "./liveNarrativeBundleSource";
-import type { NarrativeBundleSource } from "../../narrativeBundleSource";
+import { createLiveStageSource } from "./staged/liveStageSource";
+import type { StageSource } from "../../narrativeGeneration/stageSource";
 
 // ---------------------------------------------------------------------------
 // 生产 AI source 工厂：根据运行时配置只注入 live 或 unavailable source。
@@ -104,27 +105,37 @@ export function createWorldEvolutionSource(
   return createUnavailableWorldEvolutionSource();
 }
 
-// --- Narrative Bundle Source Factory (Task 7) ---
+// --- Stage Source Factory (Task 10) ---
 
-export function createNarrativeBundleSourceFactory(
+/**
+ * 生产唯一的分阶段生成源：AI 可用时返回 liveStageSource（每 stage 恰好一次
+ * RpgAiClient.complete），不可用时返回 unavailable 源（只返回 typed failure，
+ * 绝不回退到旧整包源或 deterministic source）。
+ */
+export function createStageSource(
   env: Record<string, string | undefined> = process.env,
   logger?: GameLogger,
   aiClient?: RpgAiClient,
-): NarrativeBundleSource {
+): StageSource {
   const runtime = parseAiRuntimeConfig(env);
   const client = aiClient ?? createServerRpgAiClient(env, logger);
   if (runtime.status === "available" && client !== undefined) {
-    logger?.info("narrative_bundle_source_live", { model: runtime.config.model });
-    return createNarrativeBundleSource({
-      aiClient: client,
-      jsonMode: providerJsonModeFor(runtime.outputFormat),
-      logger,
-    });
+    logger?.info("stage_source_live", { model: runtime.config.model });
+    return createLiveStageSource({ client });
   }
-  logger?.info("narrative_bundle_source_unavailable", {
+  logger?.info("stage_source_unavailable", {
     diagnostics: runtime.status === "available" ? ["AI_CLIENT_UNAVAILABLE"] : runtime.diagnostics,
   });
-  return createNarrativeBundleSource({ logger });
+  return createUnavailableStageSource();
+}
+
+/** AI 配置不可用时的分阶段源：只返回 typed failure，不调用 deterministic source。 */
+function createUnavailableStageSource(): StageSource {
+  return {
+    async generate() {
+      return createAiSourceFailure("scene", "unavailable");
+    },
+  };
 }
 
 /** AI 配置不可用时的场景源：只返回 typed failure，不调用 deterministic source。 */

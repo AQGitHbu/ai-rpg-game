@@ -21,6 +21,23 @@ function shape(required: Readonly<Record<string, Check>>, optional: Readonly<Rec
   };
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** 路线 target 的封闭结构：只允许五类且必须带对应实体 ID，不接受任意字段。 */
+const routeTarget: Check = (value) => {
+  if (!isPlainObject(value)) return false;
+  switch (value.kind) {
+    case "talk_to_npc": return shape({ kind: text, npcId: id })(value);
+    case "visit_location": return shape({ kind: text, locationId: id })(value);
+    case "obtain_item": return shape({ kind: text, itemId: id })(value);
+    case "discover_fact": return shape({ kind: text, factId: id })(value);
+    case "defeat_enemy": return shape({ kind: text, enemyId: id })(value);
+    default: return false;
+  }
+};
+
 const generation = shape({
   generationId: id, seed: text, templateVersion: text, inputDigest: text,
   gameType: oneOf(["wuxia", "xianxia", "fantasy", "science_fiction", "urban", "alternate_history", "post_apocalypse"]),
@@ -79,6 +96,19 @@ const PAYLOAD_CHECKS = {
   npc_interaction_recorded: shape({ type: text, npcId: id, dialogueAct: (value) => oneOf([...DIALOGUE_ACTS, "freeform"])(value) }),
   npc_knowledge_changed: shape({ type: text, npcId: id, factId: id, change: oneOf(["learned", "certainty_upgraded", "disclosure_changed"]) }),
   npc_relationship_changed: shape({ type: text, fromNpcId: id, targetId: id, signal: (value) => oneOf(RELATIONSHIP_SIGNALS)(value) }),
+  narrative_branch_selected: shape({
+    type: text, decisionId: id, candidateId: id, questId: id, objectiveIndex: integer, target: routeTarget,
+  }),
+  narrative_observed: shape({
+    type: text, observationKey: id, audienceId: id, factId: id,
+    certainty: oneOf(["known", "suspected"]),
+    source: (value) => {
+      if (!isPlainObject(value)) return false;
+      return value.kind === "witness"
+        ? shape({ kind: text })(value)
+        : shape({ kind: text, speakerId: id })(value);
+    },
+  }),
 } satisfies Record<NarrativeEventPayload["type"], Check>;
 
 export function isNarrativeEventPayload(value: unknown): value is NarrativeEventPayload {

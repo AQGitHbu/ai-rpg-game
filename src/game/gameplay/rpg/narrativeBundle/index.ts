@@ -10,8 +10,11 @@ export {
 
 export {
   validateNarrativeBundleCoverage,
+  validateStagedReadyCoverage,
   type BundleCoverageErrorCode,
   type BundleCoverageResult,
+  type StagedCoverageErrorCode,
+  type StagedReadyCoverageResult,
 } from "./coverage";
 
 export {

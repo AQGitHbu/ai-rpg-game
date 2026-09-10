@@ -16,3 +16,11 @@ export {
   isTakeItemPrepared,
 } from "./storyReveal";
 export { deriveKeyEndingNpcId } from "./keyEndingNpc";
+export {
+  materializeDeferredLocation,
+  validateDeferredLocationDefinition,
+  type DeferredLocationDefinition,
+  type DeferredLocationCheck,
+  type DeferredLocationRejectionCode,
+  type MaterializeDeferredLocationResult,
+} from "./deferredLocation";

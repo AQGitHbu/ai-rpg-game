@@ -50,6 +50,12 @@ export type PreparedSceneSeedState = {
   readonly objectiveLink: PreparedObjectiveLinkState | null;
   readonly choiceSeeds: readonly PreparedChoiceSeedState[];
   readonly source: "generated" | "fixture";
+  /** 分阶段生成的条件证据元数据（句段索引、observationKey、受众）。 */
+  readonly conditionalEvidence?: readonly {
+    readonly partIndex: number;
+    readonly observationKey: string;
+    readonly audienceId: string;
+  }[];
 };
 
 export type PreparedContinuationStepState = {
@@ -239,6 +245,7 @@ function isNpcDialogue(value: unknown): value is NpcDialogueInScene {
 function isScene(value: unknown): value is PreparedSceneSeedState {
   if (!isRecord(value) || !hasOnlyKeys(value, [
     "segments", "event", "npcLine", "npcDialogues", "objectiveLink", "choiceSeeds", "source",
+    "conditionalEvidence",
   ])) return false;
   if (!Array.isArray(value.segments) || !value.segments.every((segment) => (
     isRecord(segment)
@@ -265,6 +272,14 @@ function isScene(value: unknown): value is PreparedSceneSeedState {
     && isNonEmptyString(choice.label)
     && isAction(choice.action)
   ))) return false;
+  if (value.conditionalEvidence !== undefined
+    && (!Array.isArray(value.conditionalEvidence) || !value.conditionalEvidence.every((entry) => (
+      isRecord(entry)
+      && hasOnlyKeys(entry, ["partIndex", "observationKey", "audienceId"])
+      && typeof entry.partIndex === "number" && Number.isInteger(entry.partIndex)
+      && isNonEmptyString(entry.observationKey)
+      && isNonEmptyString(entry.audienceId)
+    )))) return false;
   return value.source === "generated" || value.source === "fixture";
 }
 

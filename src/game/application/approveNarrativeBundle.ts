@@ -16,6 +16,8 @@ import type {
   NarrativeBundleTrigger,
   BundleSceneProposal,
   BundleStepProposal,
+  BundleStepObservation,
+  BundleEndingLabelMap,
 } from "@/game/domain/narrativeBundle";
 import { parseNarrativeBundleProposal } from "@/game/domain/narrativeBundle";
 import type {
@@ -40,9 +42,12 @@ import {
 import {
   buildNarrativeBundleDescriptors,
   validateNarrativeBundleCoverage,
+  endingDecisionStances,
   type BundleDescriptorGraph,
   type BundleStepDescriptor,
 } from "@/game/gameplay/rpg/narrativeBundle";
+import type { ApprovedPlan } from "@/game/gameplay/rpg/narrativePlanning";
+import { checkStepDependencies } from "@/game/gameplay/rpg/narrativePlanning";
 import type { NarrativeBundleRejection } from "./narrativeBundleSource";
 import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
 import { entitiesOfKind } from "@/game/domain/entity";
@@ -96,6 +101,13 @@ export type ApproveNarrativeBundleInput = {
   readonly now: () => string;
   readonly eventContext?: import("@/game/domain/worldDelta").WorldDeltaEventContext;
   readonly auditLink?: AiTextAuditLink;
+  /**
+   * 分阶段生成（Task 6）的 staged 输入：提供时，对每个步骤先复核该步的
+   * before 依赖（场景快照与观察回执），再走既有审批转换；缺省时行为不变。
+   */
+  readonly plan?: ApprovedPlan;
+  /** 已批准观察的回执凭据（`audienceId:observationKey`）；与 plan 配套传入。 */
+  readonly observationReceipts?: ReadonlySet<string>;
 };
 
 function eventForTrigger(trigger: NarrativeBundleTrigger): NarrativeEventState {
@@ -217,6 +229,10 @@ function buildStepState(
   proposal: BundleStepProposal,
   descriptor: BundleStepDescriptor,
   worldState: WorldState,
+  staged?: Readonly<{
+    observations: readonly BundleStepObservation[];
+    expressionOrder: readonly string[];
+  }>,
 ): NarrativeBundleStepState | NarrativeBundleRejection {
   // The proposal stepKey must match the descriptor stepKey (after symbol resolution)
   if (proposal.stepKey !== descriptor.stepKey) {
@@ -298,6 +314,9 @@ function buildStepState(
     objectiveLink,
     choiceSeeds: choiceSeeds as NonNullable<typeof choiceSeeds[number]>[],
     source: "generated",
+    ...(proposal.scene.conditionalEvidence === undefined
+      ? {}
+      : { conditionalEvidence: [...proposal.scene.conditionalEvidence] }),
   };
 
   return {
@@ -307,6 +326,8 @@ function buildStepState(
     trigger: descriptor.trigger,
     scene,
     nextStepIds: [...descriptor.nextStepKeys],
+    observations: [...(staged?.observations ?? [])],
+    expressionOrder: [...(staged?.expressionOrder ?? [])],
   };
 }
 
@@ -547,6 +568,25 @@ export function approveNarrativeBundle(
   const parsed = parseNarrativeBundleProposal(proposal);
   if (!parsed.ok) return { ok: false, code: "bundle_invalid_scene" };
 
+  // Step 1.5 (staged): 逐步骤复核 before 依赖（场景快照 + 观察回执）。
+  // 观察依赖 fail-closed：没有回执凭据就不能证明受众已观察到。
+  if (input.plan !== undefined) {
+    const plan = input.plan;
+    const stepKeys = ["current", ...proposal.continuationScenes.map((step) => step.stepKey)];
+    for (const stepKey of stepKeys) {
+      const expected = plan.stepDependencies[stepKey] ?? [];
+      if (expected.length === 0) continue;
+      const holds = checkStepDependencies({
+        world: plan.world,
+        story: plan.story,
+        phase: "before",
+        expected,
+        observationReceipts: input.observationReceipts,
+      });
+      if (!holds.ok) return { ok: false, code: "staged_dependency_unmet", detail: holds.code };
+    }
+  }
+
   // Step 2: Approve worldDelta (if present)
   let previewWorldState = worldState;
   let previewStoryState = storyState;
@@ -636,6 +676,36 @@ export function approveNarrativeBundle(
   const descriptorByKey = new Map(graph.steps.map((d) => [d.stepKey, d]));
   const stepStates: NarrativeBundleStepState[] = [];
 
+  // contract 2：每步只保存它真正引用的观察（按条件证据的 key 过滤）与该步
+  // 的表达顺序。消费时按这份清单复核前提，而不是比较 baseRevision。
+  const observationsByStep = new Map<string, BundleStepObservation[]>();
+  const expressionOrderByStep = new Map<string, string[]>();
+  if (input.plan !== undefined) {
+    for (const proposalStep of proposal.continuationScenes) {
+      const referencedKeys = new Set(
+        (proposalStep.scene.conditionalEvidence ?? []).map((entry) => entry.observationKey),
+      );
+      observationsByStep.set(
+        proposalStep.stepKey,
+        input.plan.proposal.observations
+          .filter((observation) => referencedKeys.has(observation.key))
+          .map((observation) => ({
+            key: observation.key,
+            factId: observation.fact.factId,
+            certainty: observation.fact.certainty,
+            source: observation.source,
+          })),
+      );
+      expressionOrderByStep.set(
+        proposalStep.stepKey,
+        input.plan.units
+          .filter((unit) => unit.point.stepKey === proposalStep.stepKey)
+          .sort((left, right) => left.point.order - right.point.order)
+          .map((unit) => unit.key),
+      );
+    }
+  }
+
   // Check for duplicate step keys in proposal
   const proposalStepKeys = proposal.continuationScenes.map((s) => s.stepKey);
   if (new Set(proposalStepKeys).size !== proposalStepKeys.length) {
@@ -648,7 +718,10 @@ export function approveNarrativeBundle(
     if (descriptor === undefined) {
       return { ok: false, code: "bundle_unknown_step" };
     }
-    const stepResult = buildStepState(proposalStep, descriptor, previewWorldState);
+    const stepResult = buildStepState(proposalStep, descriptor, previewWorldState, {
+      observations: observationsByStep.get(proposalStep.stepKey) ?? [],
+      expressionOrder: expressionOrderByStep.get(proposalStep.stepKey) ?? [],
+    });
     if (typeof stepResult === "string") {
       return { ok: false, code: stepResult };
     }
@@ -773,12 +846,25 @@ export function approveNarrativeBundle(
 
   // Build the final bundle state
   const terminalState = resolveTerminalState(graph);
+  // 终幕立场 label：ending 包必须有恰好两条；ordinary 包必须 null。
+  let endingLabels: BundleEndingLabelMap | null = null;
+  if (terminal.kind === "ending") {
+    const stances = endingDecisionStances(previewWorldState, previewStoryState);
+    endingLabels = proposal.endingLabels ?? {
+      trust: stances[0]?.label ?? "",
+      doubt: stances[1]?.label ?? "",
+    };
+    if (endingLabels.trust.trim() === "" || endingLabels.doubt.trim() === "") {
+      return { ok: false, code: "bundle_ending_labels_missing" };
+    }
+  }
   const bundle: NarrativeBundleState = {
-    contractVersion: 1,
+    contractVersion: 2,
     originJobId: jobId,
     steps: stepStates,
     activeStepIds: [...graph.activeStepKeys],
     terminal: terminalState,
+    endingLabels,
   };
 
   // Build the current scene with choices if terminal is current_scene

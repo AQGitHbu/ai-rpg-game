@@ -1,4 +1,5 @@
 import type { BundleDescriptorGraph } from "./descriptors";
+import type { Unit } from "@/game/domain/narrativeUnit";
 
 export type BundleCoverageErrorCode =
   | "step_limit_exceeded"
@@ -14,6 +15,54 @@ export type BundleCoverageResult =
   | { readonly ok: false; readonly code: BundleCoverageErrorCode };
 
 import { MAX_NARRATIVE_BUNDLE_STEPS } from "@/game/domain/narrativeBundle";
+
+// ---------------------------------------------------------------------------
+// 分阶段生成的 ready coverage（Plan 2026-09-09 / Task 9）
+// ---------------------------------------------------------------------------
+
+export type StagedCoverageErrorCode =
+  | "ready_unit_missing"
+  | "ready_unit_not_approved"
+  | "scene_narration_missing"
+  | "ending_choices_missing"
+  | "ending_choices_not_approved";
+
+export type StagedReadyCoverageResult =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly code: StagedCoverageErrorCode };
+
+/**
+ * 发布前的最后一道覆盖校验：计划里的每个表达单元都必须已批准，每个场景
+ * 至少有一段旁白，终幕包的 choices 单元计入必需单元——它失败即阻止整个
+ * 终幕包发布（没有安全语义的终幕立场就不能进终幕）。
+ */
+export function validateStagedReadyCoverage(input: Readonly<{
+  units: readonly Unit[];
+  approvedKeys: ReadonlySet<string>;
+  terminalKind: "ending" | "next_decision";
+}>): StagedReadyCoverageResult {
+  const { units, approvedKeys } = input;
+  if (units.length === 0) return { ok: false, code: "ready_unit_missing" };
+  // 终幕包先查：终幕立场单元失败要给出专属码，它阻止的是整个终幕包发布。
+  if (input.terminalKind === "ending") {
+    const endingChoices = units.filter((unit) => unit.stage === "choices");
+    if (endingChoices.length === 0) return { ok: false, code: "ending_choices_missing" };
+    if (!endingChoices.every((unit) => approvedKeys.has(unit.key))) {
+      return { ok: false, code: "ending_choices_not_approved" };
+    }
+  }
+  for (const unit of units) {
+    if (!approvedKeys.has(unit.key)) return { ok: false, code: "ready_unit_not_approved" };
+  }
+  const narratedSteps = new Set(
+    units.filter((unit) => unit.stage === "narration").map((unit) => unit.point.stepKey),
+  );
+  const allSteps = new Set(units.map((unit) => unit.point.stepKey));
+  for (const stepKey of allSteps) {
+    if (!narratedSteps.has(stepKey)) return { ok: false, code: "scene_narration_missing" };
+  }
+  return { ok: true };
+}
 
 /**
  * Validates that every reachable leaf in the descriptor graph is either a

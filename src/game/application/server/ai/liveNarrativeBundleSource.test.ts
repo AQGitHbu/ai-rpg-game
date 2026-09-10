@@ -869,6 +869,7 @@ describe("createNarrativeBundleSource", () => {
         },
         continuationScenes: [],
         terminal: { kind: "ending", target: { kind: "current_scene" } },
+        endingLabels: { trust: "我们一起把证据摊开。", doubt: "我要先核对每一份证据。" },
       }),
     });
     const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
@@ -889,6 +890,10 @@ describe("createNarrativeBundleSource", () => {
     expect(result.proposal.terminal).toEqual({ kind: "ending" });
     expect(result.proposal.currentScene.choices).toEqual([]);
     expect(result.proposal.continuationScenes).toEqual([]);
+    expect(result.proposal.endingLabels).toEqual({
+      trust: "我们一起把证据摊开。",
+      doubt: "我要先核对每一份证据。",
+    });
     expect(result.proposal.worldDelta).toMatchObject({ endingPair: [{ themeKey: "trust" }, { themeKey: "doubt" }] });
   });
 

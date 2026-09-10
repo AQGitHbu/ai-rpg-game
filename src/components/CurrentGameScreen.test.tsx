@@ -3,14 +3,21 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GameSessionView } from "@/game/application";
 import { CurrentGameScreen } from "./CurrentGameScreen";
-import { fetchCurrentGame, ensureNarrative, retryNarrative, ackPrologue } from "./gameActionRequest";
+import {
+  fetchCurrentGame, ensureNarrative, retryNarrative, ackPrologue, fetchInitialization,
+} from "./gameActionRequest";
 
 vi.mock("./gameActionRequest", () => ({
   fetchCurrentGame: vi.fn(),
   ensureNarrative: vi.fn(async () => true),
   retryNarrative: vi.fn(async () => ({ ok: true, result: "queued" })),
   ackPrologue: vi.fn(async () => true),
+  fetchInitialization: vi.fn(async () => ({ ok: true, view: { status: "none" } })),
+  retryInitialization: vi.fn(async () => ({ ok: true, view: { requestId: "req", status: "pending" } })),
+  cancelInitialization: vi.fn(async () => ({ ok: true, view: { requestId: "req", status: "cancelled" } })),
 }));
+
+const RESTART_SETUP_STORAGE_KEY = "ai-rpg-game:restart-setup";
 
 const baseView: GameSessionView = {
   revision: 9,
@@ -271,5 +278,45 @@ describe("CurrentGameScreen prologue display", () => {
     expect(screen.queryByRole("dialog", { name: "正在处理……" })).not.toBeInTheDocument();
     resolveAck(true);
     await waitFor(() => expect(fetchCurrentGame).toHaveBeenCalledTimes(2));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 11：初始化任务独立于 GameRecord 存在。重开结局期间任务仍在后台推进，
+// 刷新或并存的旧结局都不能让 UI 退回「再创建一个新任务」的入口。
+// ---------------------------------------------------------------------------
+
+describe("CurrentGameScreen initialization recovery", () => {
+  afterEach(() => {
+    vi.mocked(fetchInitialization).mockResolvedValue({ ok: true, view: { status: "none" } });
+  });
+
+  it("重开结局与进行中的初始化任务并存时显示生成进度，不显示重复创建入口", async () => {
+    window.sessionStorage.setItem(RESTART_SETUP_STORAGE_KEY, JSON.stringify({
+      identity: "opaque-ended-session",
+      expectedRevision: 9,
+    }));
+    vi.mocked(fetchCurrentGame).mockResolvedValue({ ok: true, status: "active", view: endedView });
+    vi.mocked(fetchInitialization).mockResolvedValue({
+      ok: true,
+      view: { requestId: "req-restart", status: "pending" },
+    });
+
+    render(<CurrentGameScreen />);
+
+    expect(await screen.findByRole("dialog", { name: /正在生成世界/ })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "开始新的冒险" })).not.toBeInTheDocument();
+    // 失败前旧结局仍然存在；初始化进度不覆盖它，也不触发新的创建请求。
+    expect(screen.queryByRole("button", { name: "踏上旅程" })).not.toBeInTheDocument();
+  });
+
+  it("服务器初始化槽没有任务时回到普通开局表单，不残留恢复态", async () => {
+    vi.mocked(fetchCurrentGame).mockResolvedValue({ ok: true, status: "none" });
+    vi.mocked(fetchInitialization).mockResolvedValue({ ok: true, view: { status: "none" } });
+
+    render(<CurrentGameScreen />);
+
+    expect(await screen.findByRole("heading", { name: "开始新的冒险" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: /正在生成世界/ })).not.toBeInTheDocument();
   });
 });

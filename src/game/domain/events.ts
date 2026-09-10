@@ -3,6 +3,7 @@ import type { CombatActionResult, CombatActionKind } from "./combat";
 import type { DialogueAct } from "./action";
 import type { RelationshipSignal } from "./entity/npcComponents";
 import { isNarrativeEventPayload } from "./eventPayloadValidation";
+import type { RouteTarget } from "./narrativeBranch";
 
 export type StoryPacing = "setup" | "develop" | "turn" | "climax" | "resolution";
 
@@ -292,12 +293,42 @@ export type NpcKnowledgeChangedPayload = Readonly<{
   readonly change: "learned" | "certainty_upgraded" | "disclosure_changed";
 }>;
 
+/**
+ * 分阶段叙事的观察兑现（Plan 2026-09-09 / Task 9）：一次披露在**实际消费**
+ * 的那一刻才成为权威事实。只存结构化引用——observationKey、受众、factId、
+ * certainty 与来源（见证 / 说话人），绝不保存模型原文或台词正文。
+ * 条件引用在消费前只是条件，不进入已提交 ledger。
+ */
+export type NarrativeObservedPayload = Readonly<{
+  readonly type: "narrative_observed";
+  readonly observationKey: string;
+  readonly audienceId: string;
+  readonly factId: FactId;
+  readonly certainty: "known" | "suspected";
+  readonly source:
+    | { readonly kind: "witness" }
+    | { readonly kind: "speech"; readonly speakerId: NpcId };
+}>;
+
 /** NPC 关系变化：封闭 signal + from/to，不保存裸数值 delta。 */
 export type NpcRelationshipChangedPayload = Readonly<{
   readonly type: "npc_relationship_changed";
   readonly fromNpcId: NpcId;
   readonly targetId: PlayerEntityId | NpcId;
   readonly signal: RelationshipSignal;
+}>;
+
+/**
+ * 路线分支选择：只记录服务端 decisionId / candidateId 与结构化目标引用，
+ * 不保存玩家文本、不保存任意效果 DSL。分支不能替玩家完成目标，只切换后续目标。
+ */
+export type NarrativeBranchSelectedPayload = Readonly<{
+  readonly type: "narrative_branch_selected";
+  readonly decisionId: string;
+  readonly candidateId: string;
+  readonly questId: QuestId;
+  readonly objectiveIndex: number;
+  readonly target: RouteTarget;
 }>;
 
 /**
@@ -336,7 +367,9 @@ export type NarrativeEventPayload =
   | CandidateEventActivatedPayload
   | NpcInteractionRecordedPayload
   | NpcKnowledgeChangedPayload
-  | NpcRelationshipChangedPayload;
+  | NpcRelationshipChangedPayload
+  | NarrativeBranchSelectedPayload
+  | NarrativeObservedPayload;
 
 // ---------------------------------------------------------------------------
 // Committed Event Envelope 与 Draft
@@ -418,6 +451,8 @@ const PAYLOAD_TYPE_KEYS: ReadonlySet<string> = new Set<NarrativeEventPayload["ty
   "npc_interaction_recorded",
   "npc_knowledge_changed",
   "npc_relationship_changed",
+  "narrative_branch_selected",
+  "narrative_observed",
 ]);
 
 export type ParseCommittedEventLedgerResult =

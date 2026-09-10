@@ -1,5 +1,6 @@
 import type { GameSessionView } from "@/game/application";
 import type { AiFailureKind } from "@/game/application";
+import type { InitializationStatus, InitializationView } from "@/game/application";
 
 // ---------------------------------------------------------------------------
 // POST /api/game/actions 的客户端请求模块。
@@ -173,4 +174,99 @@ export async function ackPrologue(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// 初始化任务（Plan 2026-09-09 / Task 11）。
+//
+// 服务器初始化槽是唯一权威：客户端只读安全状态、只发控制操作。
+// 网络失败必须与「服务器没有任务」区分 —— 否则 UI 会把暂时不可达的
+// 恢复路径误报成「可以重新开局」，从而创建出第二个任务并重复计费。
+// ---------------------------------------------------------------------------
+
+export type InitializationRequestOutcome =
+  | { readonly ok: true; readonly view: InitializationStatus }
+  | { readonly ok: false; readonly message: string };
+
+const INITIALIZATION_ERROR_MESSAGES: Readonly<Record<string, string>> = {
+  JOB_NOT_FOUND: "初始化任务不存在或已失效。",
+  INVALID_INPUT: "请求参数无效。",
+  JOB_CONFLICT: "初始化任务状态已变化，请刷新后重试。",
+  INFRASTRUCTURE_FAILURE: "本地服务暂时不可用，请稍后重试。",
+};
+
+const INITIALIZATION_STATUSES: ReadonlySet<string> = new Set([
+  "pending", "failed", "published", "cancelled",
+]);
+
+/** 只接受服务端投影允许的字段；任何多余或畸形字段都视为不可解析。 */
+function asInitializationView(body: Record<string, unknown>): InitializationView | null {
+  if (typeof body.requestId !== "string" || body.requestId === "") return null;
+  if (typeof body.status !== "string" || !INITIALIZATION_STATUSES.has(body.status)) return null;
+  return {
+    requestId: body.requestId,
+    status: body.status as InitializationView["status"],
+    ...(typeof body.failureKind === "string" ? { failureKind: body.failureKind as AiFailureKind } : {}),
+    ...(typeof body.revision === "number" ? { revision: body.revision } : {}),
+  };
+}
+
+function parseInitializationResponse(body: unknown): InitializationRequestOutcome {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return { ok: false, message: "服务器返回了无法解析的响应。" };
+  }
+  const record = body as Record<string, unknown>;
+  if (record.ok === true) {
+    if (record.status === "none") return { ok: true, view: { status: "none" } };
+    const view = asInitializationView(record);
+    return view === null
+      ? { ok: false, message: "服务器返回了无法解析的响应。" }
+      : { ok: true, view };
+  }
+  const code = typeof record.code === "string" ? record.code : "";
+  return {
+    ok: false,
+    message: INITIALIZATION_ERROR_MESSAGES[code] ?? "初始化任务读取失败，请稍后重试。",
+  };
+}
+
+/** GET /api/game/initialization：无 requestId 读当前槽；有则只读指定任务。 */
+export async function fetchInitialization(requestId?: string): Promise<InitializationRequestOutcome> {
+  const url = requestId === undefined
+    ? "/api/game/initialization"
+    : `/api/game/initialization?requestId=${encodeURIComponent(requestId)}`;
+  try {
+    const response = await fetch(url, { method: "GET" });
+    const body = (await response.json().catch(() => null)) as unknown;
+    return parseInitializationResponse(body);
+  } catch {
+    return { ok: false, message: INITIALIZATION_ERROR_MESSAGES.INFRASTRUCTURE_FAILURE! };
+  }
+}
+
+async function controlInitialization(
+  requestId: string,
+  operation: "retry" | "cancel",
+): Promise<InitializationRequestOutcome> {
+  try {
+    const response = await fetch("/api/game/initialization", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ requestId, operation }),
+    });
+    const body = (await response.json().catch(() => null)) as unknown;
+    return parseInitializationResponse(body);
+  } catch {
+    return { ok: false, message: INITIALIZATION_ERROR_MESSAGES.INFRASTRUCTURE_FAILURE! };
+  }
+}
+
+/** 同任务重开一次有界尝试周期；绝不创建新任务。 */
+export async function retryInitialization(requestId: string): Promise<InitializationRequestOutcome> {
+  return controlInitialization(requestId, "retry");
+}
+
+/** 令在途结果失效；成功后玩家可以用新 requestId 重新提交开局。 */
+export async function cancelInitialization(requestId: string): Promise<InitializationRequestOutcome> {
+  return controlInitialization(requestId, "cancel");
 }

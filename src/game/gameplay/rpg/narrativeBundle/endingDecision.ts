@@ -43,19 +43,25 @@ function endingStanceNpc(worldState: WorldState): WorldState["npcs"][number] | u
 export function endingDecisionStances(
   worldState: WorldState,
   storyState: StoryState,
+  endingLabels?: Readonly<{ readonly trust: string; readonly doubt: string }> | null,
 ): readonly EndingDecisionStance[] {
   if (!isEndingDecisionDue(worldState, storyState)) return [];
   const npc = endingStanceNpc(worldState);
   if (npc === undefined) return [];
+  // 立场语义（support/challenge 的 action 与资格）始终由服务端铸造；只有展示
+  // label 来自已批准的终幕 label map。Task 10 切换后 map 必然存在，此处兜底
+  // 仅服务于切换前的旧存档路径。
+  const trust = endingLabels?.trust ?? "我愿意和你一起把证据摊开，让该承担的人面对真相。";
+  const doubt = endingLabels?.doubt ?? "我会核对每一份证据，在确认之前不会把结论交给任何人。";
   return [
     {
       candidateId: "ending_stance_support",
-      label: "我愿意和你一起把证据摊开，让该承担的人面对真相。",
+      label: trust,
       action: { type: "talk", npcId: npc.id, dialogueAct: "support" },
     },
     {
       candidateId: "ending_stance_challenge",
-      label: "我会核对每一份证据，在确认之前不会把结论交给任何人。",
+      label: doubt,
       action: { type: "talk", npcId: npc.id, dialogueAct: "challenge" },
     },
   ];

@@ -25,6 +25,7 @@ import type { AiFailureKind } from "@/game/domain/narrativeGenerationFailure";
 import { consumeNarrativeBundle } from "./consumeNarrativeBundle";
 import { consumePreparedContinuation } from "./consumePreparedContinuation";
 import { performBattleRound } from "./performBattleRound";
+import type { Decision } from "@/game/domain/narrativeBranch";
 
 export type PerformTurnCommand = {
   readonly gameId: GameId;
@@ -179,7 +180,7 @@ export async function performTurn(
   // choiceRegistry：结局包的契约禁止 provider 提交 currentScene choices。
   const submittedAction = converted.action;
   const endingStance = command.interaction.kind === "fixed_choice" && submittedAction.type === "talk"
-    ? endingDecisionStances(record.worldState, record.storyState)
+    ? endingDecisionStances(record.worldState, record.storyState, record.storyState.narrative.narrativeBundle?.endingLabels)
       .find((stance) => stance.action.dialogueAct === submittedAction.dialogueAct
         && String(stance.action.npcId) === String(submittedAction.npcId))
     : undefined;
@@ -197,6 +198,19 @@ export async function performTurn(
     return { ok: true, revision: battleResult.revision, resolvedEvent: battleResult.resolvedEvent, feedback: "Action performed" };
   }
 
+  // 路线分支只来自服务端 registry：客户端只能提交 opaque token，不能提交 Decision。
+  const branchBinding = fixedChoiceToken === undefined
+    ? undefined
+    : readyNarrative.choiceRegistry.find((entry) => entry.choiceToken === fixedChoiceToken)?.branch;
+  let narrativeBranch: { readonly decision: Decision; readonly candidateId: string } | undefined;
+  if (branchBinding !== undefined) {
+    const decision = record.storyState.branchDecisions[branchBinding.decisionId];
+    if (decision === undefined) {
+      return { ok: false, code: "ACTION_REJECTED", feedback: "这条路线已经失效，请重新选择。" };
+    }
+    narrativeBranch = { decision, candidateId: branchBinding.candidateId };
+  }
+
   const resolved = resolveTurn(
     record.worldState,
     record.storyState,
@@ -205,7 +219,11 @@ export async function performTurn(
     record.revision,
     asTurnId(command.actionId),
     command.interaction.kind,
-    { now: deps.now, turnId: asTurnId(command.actionId) },
+    {
+      now: deps.now,
+      turnId: asTurnId(command.actionId),
+      ...(narrativeBranch === undefined ? {} : { narrativeBranch }),
+    },
   );
 
   if (!resolved.ok) return { ok: false, code: "ACTION_REJECTED", feedback: resolved.feedback };

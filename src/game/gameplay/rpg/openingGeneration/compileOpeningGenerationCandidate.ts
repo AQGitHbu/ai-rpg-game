@@ -12,7 +12,7 @@ import type {
 import type { StoryState } from "@/game/domain/storyState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { rebuildEpisodicMemory } from "@/game/domain/episodicMemory";
-import type { NarrativeRuntimeState } from "@/game/domain/narrative";
+import type { NarrativeEmotion, NarrativeRuntimeState } from "@/game/domain/narrative";
 import { createTownRuntime, townSeedFor, bindNpcToTownSlot } from "@/game/gameplay/rpg/town";
 import { PLAYER_COMBAT_STATS, toStatBlock } from "@/game/domain/combat";
 import { npcGoalId } from "@/game/domain/entity";
@@ -21,6 +21,9 @@ import type {
   NpcRelationshipComponent,
 } from "@/game/domain/entity";
 import { INITIAL_RELATIONSHIP_SEED_POLICY } from "@/game/gameplay/rpg/npcMemory";
+import { asNarrativeJobId, asTurnId, type EventId } from "@/game/domain/events";
+import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
+import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 
 // ---------------------------------------------------------------------------
 // Task 2：把已验证的开局切片编译为单一 World State + Story State。
@@ -42,12 +45,69 @@ export type CompileOpeningGenerationCandidateResult = {
   readonly storyState: StoryState;
 };
 
+/** 结构编译输入：只含开局结构素材；seed 显式传入，几何不读 generation.seed。 */
+export type CompileOpeningStructureInput = {
+  readonly candidate: OpeningGenerationCandidate;
+  readonly generation: GenerationMetadata;
+  readonly gameLength: GameLength;
+  readonly seed: string;
+  /**
+   * NPC 起播情绪：结构编译默认中性；旧包装从已安装的 ready 叙事里取值，
+   * Task 10 切换后由表达阶段的角色单元正式给出。
+   */
+  readonly initialEmotion?: NarrativeEmotion;
+};
+
+export type CompileOpeningStructureResult = {
+  readonly worldState: WorldState;
+  readonly storyState: StoryState;
+  /** 结构编译铸造的稳定实体 ID；表达阶段不得再次分配。 */
+  readonly stableIds: { readonly locationId: string; readonly npcId: string; readonly questId: string };
+};
+
 export const OPENING_NPC_ID = asNpcId("npc_0");
 
-export function compileOpeningGenerationCandidate(
-  input: CompileOpeningGenerationCandidateInput,
-): CompileOpeningGenerationCandidateResult {
-  const { candidate, generation, gameLength } = input;
+/**
+ * 初始化合成 job：结构 preview 的叙事使用正式 provider_pending 状态，
+ * 而非伪造 ready 台词。发布时由初始化任务写入真实 jobId 后替换。
+ */
+function syntheticInitializationJob(
+  generation: GenerationMetadata,
+  domainEventIds: readonly EventId[],
+): PendingNarrativeJob {
+  const job = createPendingNarrativeJob({
+    jobId: asNarrativeJobId(`job_init_${String(generation.generationId)}`),
+    turnId: asTurnId("turn:init"),
+    actionId: "initialization",
+    expectedRevision: 0,
+    turnNumber: 0,
+    actionSummary: { kind: "ack_prologue" },
+    resolvedEvent: {
+      actionId: "initialization",
+      status: "success",
+      eventKind: "observe",
+      facts: [],
+      stateChanges: [],
+      costs: [],
+      rewards: [],
+      triggeredEvents: [],
+      rejectedEffects: [],
+    },
+    domainEventIds,
+    requestedAt: "1970-01-01T00:00:00Z",
+    objectiveTransition: { mode: "unchanged", before: null, after: null, completed: [] },
+    mandatoryBeats: [],
+    generationKind: "opening",
+    sceneRequestKind: "opening",
+  });
+  if (!job.ok) throw new Error("Failed to build synthetic initialization job");
+  return job.job;
+}
+
+export function compileOpeningStructure(
+  input: CompileOpeningStructureInput,
+): CompileOpeningStructureResult {
+  const { candidate, generation, gameLength, seed } = input;
 
   const locationId = asLocationId("loc_0");
   const npcId = OPENING_NPC_ID;
@@ -74,9 +134,7 @@ export function compileOpeningGenerationCandidate(
     })),
   };
   const connection = candidate.opening.situation.npcConnection;
-  const initialEmotion = input.initialNarrative.status === "ready"
-    ? input.initialNarrative.currentScene.npcLine?.emotion ?? "neutral"
-    : "neutral";
+  const initialEmotion = input.initialEmotion ?? "neutral";
   const openingDynamicState: NpcDynamicStateComponent = {
     isCompanion: false,
     met: connection.familiarity === "known",
@@ -121,7 +179,7 @@ export function compileOpeningGenerationCandidate(
     ? bindNpcToTownSlot(
         createTownRuntime({
           locationId,
-          seed: townSeedFor(generation.seed, locationId),
+          seed: townSeedFor(seed, locationId),
           ...(candidate.opening.location.buildingName === undefined
             ? {}
             : { openingBuildingName: candidate.opening.location.buildingName }),
@@ -270,10 +328,20 @@ export function compileOpeningGenerationCandidate(
   if (!initCommit.ok) throw new Error("Failed to commit game_initialized event");
   const committedWorldState: WorldState = { ...worldState, eventLedger: initCommit.ledger };
 
+  const initEventIds = committedWorldState.eventLedger.length > 0
+    ? [committedWorldState.eventLedger[committedWorldState.eventLedger.length - 1]!.eventId]
+    : [];
+  const pendingNarrative: NarrativeRuntimeState = {
+    status: "provider_pending",
+    mode: "ai",
+    job: syntheticInitializationJob(generation, initEventIds),
+    lastPresentedScene: null,
+  };
+
   const baseStoryState = createInitialStoryState({
     gameLength,
     initialEntityCounts: { locations: 1, npcs: 1, quests: 1, events: 0 },
-    initialNarrative: input.initialNarrative,
+    initialNarrative: pendingNarrative,
   });
   const storyState: StoryState = {
     ...baseStoryState,
@@ -293,5 +361,37 @@ export function compileOpeningGenerationCandidate(
     },
   };
 
-  return { worldState: committedWorldState, storyState };
+  return {
+    worldState: committedWorldState,
+    storyState,
+    stableIds: {
+      locationId: String(locationId),
+      npcId: String(npcId),
+      questId: String(questId),
+    },
+  };
+}
+
+/**
+ * 旧入口兼容包装 = 纯结构编译 + 叙事安装。Task 10 切换生产链路前保持原语义。
+ */
+export function compileOpeningGenerationCandidate(
+  input: CompileOpeningGenerationCandidateInput,
+): CompileOpeningGenerationCandidateResult {
+  const structure = compileOpeningStructure({
+    candidate: input.candidate,
+    generation: input.generation,
+    gameLength: input.gameLength,
+    seed: input.generation.seed,
+    initialEmotion: input.initialNarrative.status === "ready"
+      ? input.initialNarrative.currentScene.npcLine?.emotion ?? "neutral"
+      : "neutral",
+  });
+  return {
+    worldState: structure.worldState,
+    storyState: {
+      ...structure.storyState,
+      narrative: input.initialNarrative,
+    },
+  };
 }

@@ -11,7 +11,9 @@ import { buildChoiceMap } from "../buildChoiceMap";
 import { generatePendingNarrativeBundle } from "../generatePendingNarrativeBundle";
 import { performTurn } from "../performTurn";
 import { commitState } from "../stateCommit";
-import { createNarrativeBundleSourceFactory } from "../server/ai/sourceFactory";
+import { createStageSource } from "../server/ai/sourceFactory";
+import { createNarrativeBundleSource } from "../server/ai/liveNarrativeBundleSource";
+import { createSqliteNarrativeJobs } from "../server/persistence/sqliteNarrativeJobs";
 import { compileDecisionNarrativeContext } from "../server/ai/narrativeContext";
 import { createServerRpgAiClient } from "../server/ai/rpgAiClient";
 import { createTextAuditRecorder } from "../server/ai/textAuditRecorder";
@@ -66,6 +68,24 @@ function repositoryAt(dbPath: string) {
   return createSqliteGameRepository({ clientFactory: () => createSqliteClient(dbPath) });
 }
 
+/**
+ * 打开一个共享 SQLite 连接的仓储对：GameRepository 与 NarrativeJobRepository
+ * 必须共用一个 client（与 composition root 相同），否则分阶段发布无法在同一
+ * 事务内写游戏状态。
+ */
+function repositoriesAt(dbPath: string): {
+  repository: GameRepository;
+  jobs: ReturnType<typeof createSqliteNarrativeJobs>;
+  close: () => Promise<void>;
+} {
+  const client = createSqliteClient(dbPath);
+  return {
+    repository: createSqliteGameRepository({ clientFactory: () => client }),
+    jobs: createSqliteNarrativeJobs({ client }),
+    close: async () => { await client.close(); },
+  };
+}
+
 function approvedSnapshot(record: GameRecord) {
   const narrative = record.storyState.narrative;
   return {
@@ -99,7 +119,10 @@ describe("opening quality live evaluation", () => {
         { rootDir: resolve(runDir, "audit") },
       );
       const aiClient = createServerRpgAiClient(env, undefined, audit);
-      const source = createNarrativeBundleSourceFactory(env, undefined, aiClient);
+      // 开局仍走整包源（createGame 用例端口未迁移，仅测试使用）；决策续写走
+      // 分阶段源（Task 10 生产路径）。整包工厂已退出 sourceFactory，测试直接组装。
+      const source = createNarrativeBundleSource({ aiClient });
+      const stageSource = createStageSource(env, undefined, aiClient);
       const creations: unknown[] = [];
       const continuations: unknown[] = [];
       const approvedForFork = new Map<number, { seed: string; record: GameRecord }>();
@@ -169,8 +192,9 @@ describe("opening quality live evaluation", () => {
             ? approved.storyState.narrative.currentScene.choices
             : [];
           for (let choiceIndex = 0; choiceIndex < 2; choiceIndex += 1) {
-            const repository = repositoryAt(resolve(runDir, `continuation-${sample.group}-${choiceIndex + 1}.sqlite`));
+            const { repository, jobs, close } = repositoriesAt(resolve(runDir, `continuation-${sample.group}-${choiceIndex + 1}.sqlite`));
             try {
+              await jobs.initializeSchema();
               const installed = await repository.createInitialGame({
                 gameId: approved.gameId,
                 worldState: structuredClone(approved.worldState),
@@ -210,7 +234,8 @@ describe("opening quality live evaluation", () => {
               });
               const generated = await generatePendingNarrativeBundle({
                 repository,
-                source,
+                jobs,
+                source: stageSource,
                 now: () => new Date().toISOString(),
                 auditLink: { traceId: `continuation-${sample.group}-${choiceIndex + 1}`, retry: { origin: "normal", mechanism: "initial", attempt: 0 } },
               });
@@ -235,7 +260,7 @@ describe("opening quality live evaluation", () => {
               failures.push(failure);
               continuations.push(failure);
             } finally {
-              await repository.close();
+              await close();
               await persistProgress();
             }
           }

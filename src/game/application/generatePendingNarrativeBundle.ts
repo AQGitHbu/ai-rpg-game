@@ -1,30 +1,27 @@
-import { repairFromSourceFailure, aiRepairAuditContext, persistedAiRepairReason } from "./aiGenerationRetry";
+// 决策整包生成的对外编排（Plan 2026-09-09 / Task 10 Step 3）。
+//
+// 本模块是「后台 ensure 的执行体」，不再自己跑 provider 循环：它把已提交的
+// provider_pending 任务委托给 staged 决策编排（decisionJob）的完整租约作用域
+// 一次完成 —— startDecisionJob（幂等补建 durable 任务）→ runDecision
+// （claim → runJob 有界 DAG → 装配审批 → publishJob 原子发布 → release）。
+//
+// 与旧实现的区别（防重试乘法）：
+//   - 旧：「单个 provider 请求 × 四次完整包循环」——每次修复都重跑整包。
+//   - 新：规划 1 次 + 每表达单元各有界修复，重试不再成倍放大调用。
+//   - 旧：本函数在内存里拼装 world/story 后 applyState；新：由仓储的原子
+//     publish 在同一 write transaction 内写游戏状态并标记任务已发布。
+//
+// decision start 与 provider_pending 的关联不会「一个提交成功而另一个永久
+// 丢失」：startDecisionJob 从已提交的 pending job 幂等补建任务，不提前调用 provider。
+
 import type { GameRepository } from "./server/persistence/gameRepository";
-import type { NarrativeBundleSource, NarrativeBundleRepair } from "./narrativeBundleSource";
-import { approveNarrativeBundle, type ApprovedNarrativeBundle } from "./approveNarrativeBundle";
+import type { NarrativeJobRepository } from "./server/persistence/narrativeJobRepository";
 import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
 import type { GameLogger } from "@/game/logging";
-import type { StoryState } from "@/game/domain/storyState";
-import type { EvolutionNeed } from "@/game/domain/worldDelta";
-import type { ObjectiveTransition } from "@/game/domain/narrativeBeat";
-import type { NarrativeRuntimeState } from "@/game/domain/narrative";
-import { runBoundedAttempts } from "@/game/core/retry";
 import type { AiFailureKind } from "@/game/domain/narrativeGenerationFailure";
-import { buildWorldDeltaEntityContextClosure } from "./entityContextProjection";
-import { commitEventDrafts } from "@/game/domain/eventLedger";
-import { reconcileCommittedMemory } from "./reconcileCommittedMemory";
-
-// A next-act package contains five independently unique world entities. A
-// provider repair may correct one named collision at a time, so leave room for
-// the complete bounded repair chain before exposing a manual retry to players.
-const MAX_NARRATIVE_BUNDLE_ATTEMPTS = 4;
-
-// ---------------------------------------------------------------------------
-// Task 7: Atomic pending-job generation orchestrator.
-// Calls NarrativeBundleSource once, calls approveNarrativeBundle once,
-// commits world+scene+choiceRegistry+bundle in one CAS.
-// When approval fails, performs no partial world/scene write.
-// ---------------------------------------------------------------------------
+import { startDecisionJob, runDecision } from "./narrativeGeneration/decisionJob";
+import type { StageSource } from "./narrativeGeneration/stageSource";
+import { markNarrativeGenerationFailed } from "./markNarrativeGenerationFailed";
 
 export type GeneratePendingNarrativeBundleResult =
   | { readonly ok: true; readonly revision: number }
@@ -36,20 +33,23 @@ export type GeneratePendingNarrativeBundleResult =
 
 export type GeneratePendingNarrativeBundleDeps = {
   readonly repository: GameRepository;
-  readonly source: NarrativeBundleSource;
+  readonly jobs: NarrativeJobRepository;
+  readonly source: StageSource;
   readonly now: () => string;
   readonly logger?: GameLogger;
   readonly auditLink?: AiTextAuditLink;
 };
 
-function deriveEvolutionNeed(storyState: StoryState): EvolutionNeed {
-  if (storyState.evolution.status === "needs_next_act") {
-    return { kind: "next_act", act: storyState.currentAct };
+/**
+ * 失败码 → 对外稳定码的收敛：staged 编排返回的规则/单元失败码统一映射到
+ * AI_GENERATION_FAILED 语义（AI_RESPONSE_INVALID），基础设施码原样保留。
+ */
+function mapFailureCode(code: string): { code: GeneratePendingNarrativeBundleResult extends { ok: false; code: infer C } ? C : never; failureKind?: AiFailureKind } {
+  if (code === "JOB_NOT_FOUND" || code === "JOB_CONFLICT" || code === "UNSUPPORTED_JOB" || code === "JOB_ABORTED") {
+    return { code: "INFRASTRUCTURE_FAILURE" as never };
   }
-  if (storyState.evolution.status === "needs_ending_pair") {
-    return { kind: "ending_pair", finalAct: storyState.targetActs };
-  }
-  return { kind: "none" };
+  // 租约/并发冲突：任务仍在 pending，下一次 ensure 会重试。
+  return { code: "AI_RESPONSE_INVALID" as never, failureKind: "AI_RESPONSE_INVALID" };
 }
 
 export async function generatePendingNarrativeBundle(
@@ -59,215 +59,48 @@ export async function generatePendingNarrativeBundle(
   if (!current.ok) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
   if (current.status !== "active") return { ok: false, code: "NO_ACTIVE_GAME" };
 
-  const { record } = current;
-  const narrative = record.storyState.narrative;
-  if (narrative.status !== "provider_pending") {
-    return { ok: false, code: "NOT_PENDING" };
+  const narrative = current.record.storyState.narrative;
+  if (narrative.status !== "provider_pending") return { ok: false, code: "NOT_PENDING" };
+
+  // 从已提交的 pending job 幂等补建 durable 决策任务（同 jobId 复用）。
+  const started = await startDecisionJob({ record: current.record, now: deps.now }, deps.jobs);
+  if (!started.ok) {
+    if (started.code === "NOT_PENDING") return { ok: false, code: "NOT_PENDING" };
+    const mapped = mapFailureCode(started.code);
+    return { ok: false, code: mapped.code, ...(mapped.failureKind === undefined ? {} : { failureKind: mapped.failureKind }) };
   }
 
-  const job = narrative.job;
-  const lastPresentedScene = narrative.lastPresentedScene;
-  const worldState = record.worldState;
-  const storyState = record.storyState;
+  // 已发布（重复 ensure / 幂等补建命中已发布任务）：直接返回成功。
+  if (started.job.status === "published") {
+    return { ok: true, revision: current.record.revision };
+  }
 
-  const transition: ObjectiveTransition = job.objectiveTransition;
-  const evolutionNeed = deriveEvolutionNeed(storyState);
-
-  const retryOrigin = deps.auditLink?.retry ?? (narrative.retryContext === undefined
-    ? undefined
-    : { origin: "manual_failed_job" as const, mechanism: "initial" as const, attempt: 0 });
-  let lastFailureKind: AiFailureKind = "AI_RESPONSE_INVALID";
-  let lastRepair: NarrativeBundleRepair | undefined;
-  const bounded = await runBoundedAttempts<ApprovedNarrativeBundle, NarrativeBundleRepair>({
-    maxAttempts: MAX_NARRATIVE_BUNDLE_ATTEMPTS,
-    runAttempt: async (attempt, priorRepair) => {
-      // 自动修复从 1 开始；本次循环若由手动重试启动，则以 retryContext
-      // 的首次修复序号为偏移。该偏移不代表之前多次手动重试的累计次数。
-      const repairHint: NarrativeBundleRepair | undefined = attempt > 1 && priorRepair !== undefined
-        ? { ...priorRepair, attempt: attempt - 1 + (narrative.retryContext?.attempt ?? 0) }
-        : narrative.retryContext;
-
-      let sourceResult;
-      try {
-        sourceResult = await deps.source.generate({
-          kind: "decision",
-          worldState,
-          storyState,
-          job,
-          auditLink: {
-            ...(deps.auditLink ?? {}),
-            gameId: String(record.gameId),
-            jobId: String(job.jobId),
-            turnNumber: job.turnNumber,
-            retry: repairHint === undefined
-              ? (retryOrigin ?? { origin: "normal", mechanism: "initial", attempt: 0 })
-              : aiRepairAuditContext(repairHint, retryOrigin),
-          },
-          ...(repairHint === undefined ? {} : { contentRepair: repairHint }),
-        });
-      } catch {
-        lastFailureKind = "AI_CALL_FAILED";
-        lastRepair = { attempt, reason: "provider_failure", detail: "source_exception" };
-        return { ok: false, retryable: true, reason: lastRepair };
-      }
-
-      if (!sourceResult.ok) {
-        lastFailureKind = sourceResult.failure.kind;
-        lastRepair = repairFromSourceFailure(sourceResult, attempt);
-        return {
-          ok: false,
-          retryable: true,
-          reason: lastRepair,
-        };
-      }
-
-      lastFailureKind = "AI_RESPONSE_INVALID";
-      if (sourceResult.kind !== "decision") {
-        lastRepair = { attempt, reason: "invalid_schema", detail: "unexpected_source_kind" };
-        return { ok: false, retryable: true, reason: lastRepair };
-      }
-      const approvalResult = approveNarrativeBundle({
-        proposal: sourceResult.proposal,
-        worldState,
-        storyState,
-        transition,
-        evolutionNeed,
-        jobId: job.jobId,
-        mandatoryBeats: job.mandatoryBeats,
-        entityContextClosure: buildWorldDeltaEntityContextClosure({ worldState, storyState, job }),
-        // applyState commits the approved scene in the next record revision.
-        // Choice tokens must be forged against that revision, otherwise the
-        // read model correctly treats every newly-generated choice as stale.
-        basedOnRevision: record.revision + 1,
-        eventContext: {
-          turnId: job.turnId,
-          turnNumber: job.turnNumber,
-          actionId: job.actionId,
-          domainEventIds: job.domainEventIds,
-          episodeKey: String(job.turnId),
-          eventKey: `blueprint_expanded:${job.jobId}:bundle`,
-        },
-        now: deps.now,
-        ...(deps.auditLink === undefined ? {} : { auditLink: deps.auditLink }),
-      });
-
-      if (!approvalResult.ok) {
-        lastRepair = { attempt, reason: "approval_rejected", rejectionCode: approvalResult.code, ...(approvalResult.detail === undefined ? {} : { detail: approvalResult.detail }) };
-        return {
-          ok: false,
-          retryable: true,
-          reason: lastRepair,
-        };
-      }
-
-      return { ok: true, value: approvalResult.approved };
-    },
+  const ran = await runDecision(started.job.id, "decision-worker", {
+    jobs: deps.jobs,
+    source: deps.source,
+    now: deps.now,
+    signal: new AbortController().signal,
+    createdAt: deps.now(),
   });
-
-  async function failPendingJob(): Promise<GeneratePendingNarrativeBundleResult> {
-    // Record provider_failed with same jobId
-    const failedNarrative: NarrativeRuntimeState = {
-      status: "provider_failed",
-      mode: narrative.mode,
-      job,
-      failure: {
-        kind: lastFailureKind,
-        reason: persistedAiRepairReason(lastRepair ?? { attempt: 1, reason: "invalid_schema" }),
-        phase: "scene",
-        failedAt: deps.now(),
-      },
-      lastPresentedScene,
-      ...(narrative.dialogueSession === undefined ? {} : { dialogueSession: narrative.dialogueSession }),
-    };
-
-    const failedStoryState: StoryState = {
-      ...storyState,
-      narrative: failedNarrative,
-    };
-
-    const savedFailure = await deps.repository.applyState({
-      gameId: record.gameId,
-      expectedRevision: record.revision,
-      nextWorldState: worldState,
-      nextStoryState: failedStoryState,
-    });
-    if (!savedFailure.ok) {
-      return {
-        ok: false,
-        code: savedFailure.code === "STALE_GAME_REVISION" ? "STALE_GAME_REVISION" : "INFRASTRUCTURE_FAILURE",
-      };
-    }
-
-    return {
-      ok: false,
-      code: lastFailureKind,
-      failureKind: lastFailureKind,
-    };
+  if (!ran.ok) {
+    deps.logger?.warn("narrative_bundle_generation_failed", { code: ran.code });
+    const mapped = mapFailureCode(ran.code);
+    // 失败必须落成 game 状态的 provider_failed：否则手动重试读不到失败原因，
+    // ensure 轮询也永远停在 provider_pending。CAS 不递增 revision，任务身份
+    // 与已铸造 token 保持不变，可经 retryNarrativeGeneration 重新入队。
+    await markNarrativeGenerationFailed(deps.repository, current.record, {
+      kind: mapped.failureKind ?? "AI_RESPONSE_INVALID",
+      reason: "provider_failure",
+      phase: "scene",
+      failedAt: deps.now(),
+    }).catch(() => undefined);
+    return { ok: false, code: mapped.code, ...(mapped.failureKind === undefined ? {} : { failureKind: mapped.failureKind }) };
   }
 
-  if (!bounded.ok) return failPendingJob();
-
-  const approved = bounded.value;
-
-  // Build the ready narrative with the approved bundle
-  const readyNarrative: NarrativeRuntimeState = {
-    status: "ready",
-    mode: narrative.mode,
-    currentScene: approved.currentScene,
-    choiceRegistry: approved.choiceRegistry,
-    narrativeBundle: approved.bundle,
-    ...(narrative.dialogueSession === undefined
-      ? {}
-      : { dialogueSession: narrative.dialogueSession }),
-  };
-
-  const eventCommit = commitEventDrafts({
-    ledger: record.worldState.eventLedger,
-    drafts: approved.eventDrafts,
-    source: {
-      turnId: job.turnId,
-      actionId: job.actionId,
-      turnNumber: job.turnNumber,
-      committedAt: deps.now(),
-    },
-    entityStore: approved.nextWorldState.entityStore,
-  });
-  if (!eventCommit.ok) {
-    // 审批已通过：事件账本提交失败是内容/基础设施契约问题，不是审批拒绝。
-    // 持久化独立稳定码，避免手动重试被"拒绝码"误导去修复已通过的内容；
-    // 同时覆盖 lastRepair，防止残留上一轮失败原因被错误归因。
-    deps.logger?.warn("narrative_bundle_event_commit_rejected", { code: eventCommit.code });
-    lastRepair = { attempt: 1, reason: "invalid_schema", detail: "event_commit_failed" };
-    return failPendingJob();
+  // publish 已把游戏状态写入并递增 revision；返回发布后的权威 revision。
+  const published = await deps.repository.getCurrentGame();
+  if (!published.ok || published.status !== "active") {
+    return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
   }
-  const nextWorldState = { ...approved.nextWorldState, eventLedger: eventCommit.ledger };
-
-  // The next story state includes the new world state from the bundle,
-  // plus the ready narrative with the current scene and choice registry.
-  // The scene event is committed in this same CAS, so memory must be rebuilt
-  // from that final ledger before persistence validation.
-  const nextStoryState: StoryState = {
-    ...approved.nextStoryStatePreview,
-    narrative: readyNarrative,
-    memory: reconcileCommittedMemory({
-      previous: approved.nextStoryStatePreview.memory,
-      ledger: eventCommit.ledger,
-    }),
-  };
-
-  const commitResult = await deps.repository.applyState({
-    gameId: record.gameId,
-    expectedRevision: record.revision,
-    nextWorldState,
-    nextStoryState,
-  });
-
-  if (!commitResult.ok) {
-    return {
-      ok: false,
-      code: commitResult.code === "STALE_GAME_REVISION" ? "STALE_GAME_REVISION" : "INFRASTRUCTURE_FAILURE",
-    };
-  }
-
-  return { ok: true, revision: commitResult.record.revision };
+  return { ok: true, revision: published.record.revision };
 }

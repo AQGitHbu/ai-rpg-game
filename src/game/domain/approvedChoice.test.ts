@@ -187,3 +187,42 @@ describe("registry 持久化往返", () => {
     expect(revived[0].action).toEqual({ type: "attack", enemyId: "wolf_alpha" });
   });
 });
+
+describe("branch 绑定纳入 token 与 semanticSummary", () => {
+  const action = { type: "talk" as const, npcId: asNpcId("npc_1"), dialogueAct: "support" as const };
+  const build = (branch: { decisionId: string; candidateId: string } | undefined) =>
+    createApprovedChoice({ sceneId: "scene-abc", basedOnRevision: 5, label: "走左路", action, ...(branch === undefined ? {} : { branch }) });
+
+  it("两个分支 ID 进入 token：同 act/topic 的两条候选不会被折叠", () => {
+    const left = build({ decisionId: "dec_1", candidateId: "left" });
+    const right = build({ decisionId: "dec_1", candidateId: "right" });
+    expect(left.ok && right.ok).toBe(true);
+    if (!left.ok || !right.ok) return;
+    expect(left.choice.choiceToken).not.toBe(right.choice.choiceToken);
+    expect(left.choice.semanticSummary).not.toBe(right.choice.semanticSummary);
+    expect(left.choice.semanticSummary).toContain("branch:dec_1:left");
+    expect(right.choice.semanticSummary).toContain("branch:dec_1:right");
+  });
+
+  it("token 是确定性的：重铸同一输入得到同一 token", () => {
+    const first = build({ decisionId: "dec_1", candidateId: "left" });
+    const second = build({ decisionId: "dec_1", candidateId: "left" });
+    expect(first.ok && second.ok).toBe(true);
+    if (!first.ok || !second.ok) return;
+    expect(first.choice.choiceToken).toBe(second.choice.choiceToken);
+  });
+
+  it("拒绝空 decisionId / candidateId", () => {
+    expect(build({ decisionId: "", candidateId: "left" })).toEqual({ ok: false, reason: "invalid_branch" });
+    expect(build({ decisionId: "dec_1", candidateId: "  " })).toEqual({ ok: false, reason: "invalid_branch" });
+  });
+
+  it("registry 往返保留 branch 绑定", () => {
+    const built = build({ decisionId: "dec_1", candidateId: "left" });
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    const revived = JSON.parse(JSON.stringify([built.choice])) as readonly ApprovedChoice[];
+    expect(revived).toEqual([built.choice]);
+    expect(revived[0]?.branch).toEqual({ decisionId: "dec_1", candidateId: "left" });
+  });
+});

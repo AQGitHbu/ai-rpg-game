@@ -451,7 +451,7 @@ describe("createOpeningGenerationSource", () => {
     const productionSources = [
       "src/game/application/createGame.ts",
       "src/game/application/server/ai/openingGenerationSource.ts",
-      "src/game/application/server/ai/liveNarrativeBundleSource.ts",
+      "src/game/application/server/ai/staged/planningPrompt.ts",
       "src/game/application/server/ai/liveWorldEvolutionSource.ts",
     ].map((file) => readFileSync(resolve(process.cwd(), file), "utf8"));
 
@@ -459,6 +459,7 @@ describe("createOpeningGenerationSource", () => {
       expect(source).not.toContain("legacy_import");
       expect(source).not.toMatch(/goals\s*:\s*(?:readonly\s+)?string\[\]/u);
     }
-    expect(productionSources[2]).toContain("parseWorldDeltaProposal");
+    // 决策链路的世界增量提案仍由 liveWorldEvolutionSource 的解析器统一负责。
+    expect(productionSources[3]).toContain("parseWorldDeltaProposal");
   });
 });

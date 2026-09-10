@@ -163,7 +163,7 @@ function makeWorldContext(need: EvolutionNeed) {
   return {
     worldState: createWorldStateFixture({ generation, projection }),
     storyState: {
-      version: 8,
+      version: 9,
       turnNumber: 7,
       currentAct: 2,
       targetActs: 3,
@@ -213,6 +213,8 @@ function makeWorldContext(need: EvolutionNeed) {
         status: "needs_next_act",
       },
       reveal: { questId, visibleObjectiveIndex: 0 },
+      branchDecisions: {},
+      selectedBranches: {},
     },
     need,
     reason: "scene_evolution",

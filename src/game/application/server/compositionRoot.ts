@@ -5,12 +5,17 @@ import {
   type RequestLogContext,
 } from "@/game/logging/serverConsoleLogger";
 import { asGameId, type GameId, type GameRepository } from "./persistence/gameRepository";
-import { createServerSqliteClientFactory } from "./persistence/sqliteClient";
+import { createServerSqliteClientFactory, type SqliteClient } from "./persistence/sqliteClient";
 import { createSqliteGameRepository } from "./persistence/sqliteGameRepository";
-import { createGame } from "../createGame";
+import { createSqliteNarrativeJobs } from "./persistence/sqliteNarrativeJobs";
+import type {
+  NarrativeJobRepository,
+  StoredJob,
+} from "./persistence/narrativeJobRepository";
+import { createGame as createGameUseCase } from "../createGame";
 import { performTurn } from "../performTurn";
 import { projectGameSessionView } from "../gameSessionView";
-import { createNarrativeBundleSourceFactory } from "../server/ai/sourceFactory";
+import { createStageSource } from "../server/ai/sourceFactory";
 import { createServerRpgAiClient } from "../server/ai/rpgAiClient";
 import { parseAiRuntimeConfig } from "../server/ai/aiRuntimeConfig";
 import { createTextAuditRecorder } from "../server/ai/textAuditRecorder";
@@ -20,13 +25,26 @@ import type {
   GameApiAuditMode,
 } from "../server/ai/textAuditTypes";
 import { generatePendingNarrativeBundle } from "../generatePendingNarrativeBundle";
+import {
+  projectInitializationView,
+  type InitializationStatus,
+  type InitializationView,
+} from "../initializationStatus";
+import {
+  startInitialization,
+  runInitialization,
+  queryInitialization,
+  controlInitialization,
+} from "../narrativeGeneration/initializationJob";
+import type { StageSource } from "../narrativeGeneration/stageSource";
 import { commitState } from "../stateCommit";
 import { buildChoiceMap } from "../buildChoiceMap";
 import type { StoryState } from "@/game/domain/storyState";
 import type { AiFailureKind } from "@/game/domain/narrativeGenerationFailure";
 import type { Interaction } from "@/game/domain/action";
 import type { GameSessionView } from "../gameSessionView";
-import type { GameTypeId, GameLength, GameSetup } from "@/game/domain/newGame";
+import type { GameTypeId, GameLength, GameSetup, NewGameInput } from "@/game/domain/newGame";
+import { asGenerationId } from "@/game/domain/worldEntity";
 import { deriveEndingSessionIdentity, matchesEndingSessionIdentity } from "./endingSessionIdentity";
 import { BackgroundEnsureCoordinator } from "./ai/_shared/ensureCoordinator";
 import { retryNarrativeGeneration } from "../retryNarrativeGeneration";
@@ -39,9 +57,11 @@ export type { RequestLogContext };
 // ---------------------------------------------------------------------------
 
 /** HTTP 开局输入：核心收 gameType/gameLength，gameId 与 seed 由服务端装配。
+ *  requestId 必填——它是持久初始化任务的幂等键，路由层已做形状校验。
  *  setup 为路由层已经通过 validateNewGameInput 的开局配置，
  *  世界生成源必须消费它（角色名/身份/世界观/故事开端）。 */
 export type CreateGameHttpInput = {
+  readonly requestId: string;
   readonly gameType: GameTypeId;
   readonly gameLength: GameLength;
   readonly restart?: { readonly identity: string; readonly expectedRevision: number };
@@ -61,13 +81,26 @@ export type EnsureNarrativeEntryPointResult =
       readonly failureKind?: AiFailureKind;
     };
 
+/** 创建开局入口结果：202 语义由路由层映射（保留 view 供 200/409 复用判断）。 */
+export type CreateGameEntryPointResult =
+  | { readonly ok: true; readonly httpStatus: 200 | 202; readonly view: InitializationView }
+  | { readonly ok: false; readonly code: string; readonly failureKind?: AiFailureKind };
+
+export type InitializationEntryPointResult =
+  | { readonly ok: true; readonly view: InitializationStatus }
+  | { readonly ok: false; readonly code: string };
+
+export type ControlInitializationEntryPointResult =
+  | { readonly ok: true; readonly view: InitializationView }
+  | { readonly ok: false; readonly code: string };
+
 export type ServerGameEntryPoints = {
-  createGame(input: CreateGameHttpInput, traceId?: string): Promise<{
-    ok: boolean;
-    revision?: number;
-    code?: string;
-    failureKind?: AiFailureKind;
-  }>;
+  createGame(input: CreateGameHttpInput, traceId?: string): Promise<CreateGameEntryPointResult>;
+  getInitialization(requestId?: string, traceId?: string): Promise<InitializationEntryPointResult>;
+  controlInitialization(
+    input: { readonly requestId: string; readonly operation: "retry" | "cancel" },
+    traceId?: string,
+  ): Promise<ControlInitializationEntryPointResult>;
   performTurn(command: {
     actionId: string;
     interaction: Interaction;
@@ -92,6 +125,7 @@ const ROUTE_TRIGGERS: Readonly<Record<string, string>> = {
   "/api/game": "create_game",
   "/api/game/actions": "perform_turn",
   "/api/game/current": "get_current_game",
+  "/api/game/initialization": "initialization_task",
   "/api/game/narrative/ensure": "ensure_narrative_scene",
   "/api/game/prologue/ack": "ack_prologue",
   "/api/game/dev/current": "dev_current",
@@ -99,6 +133,7 @@ const ROUTE_TRIGGERS: Readonly<Record<string, string>> = {
 
 const POLLING_AUDIT_ROUTES = new Set([
   "/api/game/current",
+  "/api/game/initialization",
   "/api/game/narrative/ensure",
 ]);
 
@@ -227,9 +262,24 @@ export function createServerGameEntryPoints(
   });
   // 测试缝隙：外部调用方可注入内存/桩 repository，便于在组合层直接锁定
   // "retry body → failed→pending CAS → 恰好一次 coordinator" 的组合断言。
+  //
+  // 共享 SQLite 连接：GameRepository 与 NarrativeJobRepository 必须共享同一
+  // client——publish 要在同一 write transaction 内写游戏状态并标记任务已发布。
+  // 记忆化工厂保证两者拿到同一连接实例。
+  const baseClientFactory = createServerSqliteClientFactory(env);
+  let sharedClient: SqliteClient | null = null;
+  const sharedClientFactory = (): SqliteClient => {
+    if (sharedClient === null) sharedClient = baseClientFactory();
+    return sharedClient;
+  };
   const repository = externalRepository ?? createSqliteGameRepository({
-    clientFactory: createServerSqliteClientFactory(env),
+    clientFactory: sharedClientFactory,
     logError: (operation) => logger.error("sqlite_repository_failure", { operation }),
+  });
+  // 分阶段生成是唯一生产链路的任务仓储：初始化与决策共享同一张 narrative_jobs 表。
+  const jobs = createSqliteNarrativeJobs({
+    client: sharedClientFactory(),
+    logError: (context, error) => logger.error("sqlite_narrative_jobs_failure", { context, error: String(error) }),
   });
   const now = () => new Date().toISOString();
   const aiConfig = parseAiRuntimeConfig(env);
@@ -237,8 +287,39 @@ export function createServerGameEntryPoints(
   // One provider transport/client per server composition root. Role policy,
   // thinking mode, budgets, and transient retries are centralized there.
   const aiClient = createServerRpgAiClient(env, logger, auditRecorder);
-  // Unified source is the only runtime AI entry point for opening and decisions.
-  const narrativeBundleSource = createNarrativeBundleSourceFactory(env, logger, aiClient);
+  // Unified source is the only runtime AI entry point for opening and decisions:
+  // staged StageSource（每 stage 恰好一次 provider 调用）。旧整包源不再参与生产装配。
+  const stageSource = createStageSource(env, logger, aiClient);
+
+  // 初始化任务的后台执行：与决策共用 coordinator 去重，key 是 job id。
+  const initializationCoordinator = new BackgroundEnsureCoordinator({
+    loadPending: async () => {
+      const slot = await jobs.getInitialization();
+      if (!slot.ok) return { ok: false, result: "unavailable" };
+      if (slot.value === null) return { ok: false, result: "not_pending" };
+      if (slot.value.status !== "pending") return { ok: false, result: "not_pending" };
+      return { ok: true, key: `init:${slot.value.id}` };
+    },
+    run: async (traceId?: string) => {
+      const slot = await jobs.getInitialization();
+      if (!slot.ok || slot.value === null) return "not_pending";
+      const result = await runInitialization(slot.value.id, "init-worker", {
+        jobs,
+        source: stageSource,
+        now,
+        signal: new AbortController().signal,
+        createdAt: now(),
+      });
+      if (!result.ok) {
+        logger.warn("initialization_run_failed", { code: result.code, traceId });
+        return "failed";
+      }
+      return "completed";
+    },
+    logKey: "runtime_initialization_task",
+    logger,
+  });
+
   const narrativeCoordinator = new BackgroundEnsureCoordinator({
     loadPending: async () => {
       const current = await repository.getCurrentGame();
@@ -254,7 +335,8 @@ export function createServerGameEntryPoints(
     },
     run: (traceId?: string, origin: AiRetryOrigin = "normal") => generatePendingNarrativeBundle({
       repository,
-      source: narrativeBundleSource,
+      jobs,
+      source: stageSource,
       now,
       logger,
       auditLink: {
@@ -415,10 +497,26 @@ export function createServerGameEntryPoints(
     }
   };
 
+  /**
+   * 触发一次后台初始化执行：经 coordinator 去重（同一 job 只跑一次），
+   * 不等待 provider。返回 queued/already_running 视为已受理；failed/unavailable
+   * 不算提交失败（任务已持久化，可经 GET 恢复），但把 durable 失败如实上报。
+   */
+  const scheduleInitializationRun = async (
+    job: StoredJob,
+    traceId?: string,
+  ): Promise<{ ok: true } | { ok: false; code: string }> => {
+    const result = await initializationCoordinator.ensure(
+      traceId,
+      job.initialization === null ? undefined : { origin: "normal" },
+    );
+    if (result === "unavailable") return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+    return { ok: true };
+  };
+
   return {
     createGame: async (input, traceId) => {
-      const gameId = asGameId(randomUUID());
-      const generationSeed = randomUUID();
+      // restart 合法性先行校验：不通过就不创建任何持久任务。
       let replaceCurrent: { readonly expectedGameId: GameId; readonly expectedRevision: number } | undefined;
       if (input.restart !== undefined) {
         const current = await repository.getCurrentGame();
@@ -438,31 +536,101 @@ export function createServerGameEntryPoints(
           expectedRevision: input.restart.expectedRevision,
         };
       }
-      const result = await createGame(
+
+      // requestId 必填已由路由层校验；requestId 相同即同一任务（幂等），
+      // 服务器单槽 CAS 防止多 tab 并发覆写。
+      const gameId = asGameId(randomUUID());
+      const generationSeed = randomUUID();
+      const started = await startInitialization(
         {
+          requestId: input.requestId,
           gameId,
           gameType: input.gameType,
           gameLength: input.gameLength,
           seed: generationSeed,
+          generation: {
+            generationId: asGenerationId(`gen_${generationSeed}`),
+            seed: generationSeed,
+            templateVersion: "v2",
+            inputDigest: "",
+            gameType: input.gameType,
+            ...(input.setup === undefined ? {} : { setup: input.setup }),
+          },
           ...(input.setup === undefined ? {} : { setup: input.setup }),
-          ...(replaceCurrent === undefined ? {} : { replaceCurrent }),
-        },
-        {
-          repository,
-          source: narrativeBundleSource,
+          target: replaceCurrent === undefined
+            ? { kind: "create" }
+            : {
+                kind: "replace",
+                expectedGameId: String(replaceCurrent.expectedGameId),
+                expectedRevision: replaceCurrent.expectedRevision,
+                endingIdentity: input.restart?.identity ?? "",
+              },
           now,
-          aiEnabled,
-          ...(traceId === undefined ? {} : { auditLink: { traceId } }),
         },
+        jobs,
       );
-      if (result.ok) {
-        // Task 6: 开局存档已包含 ready 叙事 bundle，不再需要 ensure 排队。
+      if (!started.ok) {
+        return { ok: false, code: started.code };
+      }
+
+      // 已发布：直接返回 200 视图，不重复调度。
+      if (started.job.status === "published") {
         return {
           ok: true,
-          revision: result.revision,
+          httpStatus: 200,
+          view: projectInitializationView(started.job, started.job.initialization!.requestId),
         };
       }
-      return { ok: false, code: result.code, ...(result.failureKind === undefined ? {} : { failureKind: result.failureKind }) };
+
+      // 未发布：返回 202 视图，并异步启动（或刷新）后台执行。
+      // replace 目标必须原样进入发布载荷的 CAS，因此随 run 一起注入。
+      const scheduled = await scheduleInitializationRun(started.job, traceId);
+      if (!scheduled.ok) return { ok: false, code: scheduled.code };
+      return {
+        ok: true,
+        httpStatus: 202,
+        view: projectInitializationView(started.job, started.job.initialization!.requestId),
+      };
+    },
+    getInitialization: async (requestId, _traceId) => {
+      const slot = await queryInitialization(jobs);
+      if (!slot.ok) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+      if (slot.value === null) {
+        return { ok: true, view: { status: "none" } satisfies InitializationStatus };
+      }
+      // requestId query 只读指定任务；不匹配时按 none 处理，不泄露其他任务状态。
+      const job = slot.value;
+      const storedRequestId = job.initialization?.requestId;
+      if (storedRequestId === undefined) return { ok: true, view: { status: "none" } };
+      if (requestId !== undefined && requestId !== storedRequestId) {
+        return { ok: true, view: { status: "none" } };
+      }
+      return { ok: true, view: projectInitializationView(job, storedRequestId) };
+    },
+    controlInitialization: async (command, traceId) => {
+      const slot = await queryInitialization(jobs);
+      if (!slot.ok) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+      if (slot.value === null) return { ok: false, code: "JOB_NOT_FOUND" };
+      const job = slot.value;
+      const storedRequestId = job.initialization?.requestId;
+      if (storedRequestId === undefined || storedRequestId !== command.requestId) {
+        return { ok: false, code: "JOB_NOT_FOUND" };
+      }
+      const controlled = await controlInitialization({
+        jobId: job.id,
+        operation: command.operation,
+        expectedVersion: job.version,
+        expectedCycle: job.cycle,
+        now: now(),
+      }, jobs);
+      if (!controlled.ok) {
+        return { ok: false, code: controlled.code === "JOB_CONFLICT" ? "JOB_CONFLICT" : "INFRASTRUCTURE_FAILURE" };
+      }
+      if (command.operation === "retry" && controlled.value.status === "pending") {
+        const scheduled = await scheduleInitializationRun(controlled.value, traceId);
+        if (!scheduled.ok) return { ok: false, code: scheduled.code };
+      }
+      return { ok: true, view: projectInitializationView(controlled.value, storedRequestId) };
     },
     performTurn: async (command, traceId) => {
       const current = await repository.getCurrentGame();
@@ -593,6 +761,7 @@ export function createServerGameEntryPoints(
       // Stop accepting the runtime's remaining background work before closing
       // repository/log resources or the audit ledger.
       await narrativeCoordinator.waitForIdle();
+      await initializationCoordinator.waitForIdle();
       try {
         await repository.close();
       } finally {

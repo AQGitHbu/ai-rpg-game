@@ -1,13 +1,14 @@
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, it, expect, vi } from "vitest";
 import {
-  parseWorldDeltaProposal,
   filterProposalRefs,
   createLiveWorldEvolutionSource,
   buildWorldEvolutionPrompt,
   LIVE_WORLD_EVOLUTION_MAX_TOKENS,
   LIVE_WORLD_EVOLUTION_TIMEOUT_MS,
 } from "./liveWorldEvolutionSource";
+// parser 归属 domain；live source 只 re-export 同一实现。
+import { parseWorldDeltaProposal } from "@/game/domain/worldDeltaProposal";
 import { createInitialWorldState } from "@/game/domain/worldState";
 import { projectEntityStore, type EntityCompatibilityProjection } from "@/game/domain/entity";
 import { asFactId, asLocationId, asGenerationId, asNpcId, asQuestId } from "@/game/domain/worldEntity";

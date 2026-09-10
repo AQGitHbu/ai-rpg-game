@@ -10,7 +10,17 @@ import { parseAiRuntimeConfig } from "./aiRuntimeConfig";
 import { createProviderRequestOptions, type ProviderJsonMode, type ProviderThinking } from "./providerRequestOptions";
 import type { AiRetryContext, AiTextAuditContext, AiTextAuditRecorder, AiTextAuditRequestOptions, AiTextAuditRole } from "./textAuditTypes";
 
-export const RPG_AI_ROLES = ["intent", "opening", "scene", "world", "narrative_bundle"] as const;
+/**
+ * 分阶段生成（Spec 2026-09-09）新增四个 stage role：planning 产骨架，
+ * narration/character/choices 产表达。旧 role 仅保留既有 fixture/审计兼容，
+ * 生产切换（Task 10）后 staged 链路断言不再包含旧 role。
+ */
+export const STAGED_NARRATIVE_ROLES = ["planning", "narration", "character", "choices"] as const;
+
+export const RPG_AI_ROLES = [
+  "intent", "opening", "scene", "world", "narrative_bundle",
+  ...STAGED_NARRATIVE_ROLES,
+] as const;
 /** Reuses the AiTextAuditRole union from textAuditTypes.ts; textAuditTypes never imports rpgAiClient, eliminating a type-cycle. */
 export type RpgAiRole = AiTextAuditRole;
 export type RpgAiThinking = ProviderThinking;
@@ -72,11 +82,56 @@ export const RPG_AI_DEFAULT_POLICIES: Readonly<Record<RpgAiRole, RpgAiRolePolicy
     jsonMode: "prompt_only",
     maxAttempts: 2,
   },
+  // 分阶段生成的固定决策表预算（Plan Task 5 Step 4）：planning 一次产整个
+  // 骨架，预算高于单表达 stage；表达 stage 每次只产一个小型 JSON。
+  planning: {
+    thinking: "off",
+    timeoutMs: 90_000,
+    maxTokens: 6_000,
+    jsonMode: "prompt_only",
+    maxAttempts: 2,
+  },
+  narration: {
+    thinking: "off",
+    timeoutMs: 45_000,
+    maxTokens: 2_000,
+    jsonMode: "prompt_only",
+    maxAttempts: 2,
+  },
+  character: {
+    thinking: "off",
+    timeoutMs: 45_000,
+    maxTokens: 2_000,
+    jsonMode: "prompt_only",
+    maxAttempts: 2,
+  },
+  choices: {
+    thinking: "off",
+    timeoutMs: 30_000,
+    maxTokens: 600,
+    jsonMode: "prompt_only",
+    maxAttempts: 2,
+  },
 };
 
 export type RpgAiClient = Readonly<{
-  complete(role: RpgAiRole, messages: readonly AiMessage[], context?: AiTextAuditContext): Promise<AiCompletionResult>;
+  complete(
+    role: RpgAiRole,
+    messages: readonly AiMessage[],
+    context?: AiTextAuditContext,
+    overrides?: RpgAiCompleteOverrides,
+  ): Promise<AiCompletionResult>;
   policy(role: RpgAiRole): RpgAiRolePolicy;
+}>;
+
+/**
+ * 单次调用的执行覆盖：staged 编排传入 AbortSignal 与剩余预算
+ * （Plan Task 5）。这里只透传既有的公共 AiRequestOptions 字段，
+ * 不复制 HTTP/取消逻辑。
+ */
+export type RpgAiCompleteOverrides = Readonly<{
+  readonly signal?: AbortSignal;
+  readonly timeoutMs?: number;
 }>;
 
 export type CreateRpgAiClientOptions = Readonly<{
@@ -149,13 +204,16 @@ export function createRpgAiClient(options: CreateRpgAiClientOptions): RpgAiClien
   const audit = options.auditRecorder;
 
   function defaultAuditContext(role: RpgAiRole): AiTextAuditContext {
-    const purpose = role === "opening"
-      ? "opening_generation"
-      : role === "intent"
-        ? "intent_parsing"
-        : role === "world"
-          ? "world_evolution"
-          : "scene_performance";
+    const staged = (STAGED_NARRATIVE_ROLES as readonly string[]).includes(role);
+    const purpose = staged
+      ? "staged_narrative_generation"
+      : role === "opening"
+        ? "opening_generation"
+        : role === "intent"
+          ? "intent_parsing"
+          : role === "world"
+            ? "world_evolution"
+            : "scene_performance";
     return { purpose, trigger: "unspecified" };
   }
 
@@ -164,30 +222,37 @@ export function createRpgAiClient(options: CreateRpgAiClientOptions): RpgAiClien
       return policies[role];
     },
 
-    async complete(role, messages, auditContext) {
-      const policy = policies[role];
-      const maxAttempts = Math.max(1, Math.floor(policy.maxAttempts));
-      const callId = typeof crypto !== "undefined" && crypto.randomUUID
-        ? crypto.randomUUID()
-        : `call-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      const auditContextToUse = auditContext ?? defaultAuditContext(role);
-      const callerRetry = auditContextToUse.retry;
-      // transport retry 只在此层识别：attempt>1 时为 provider 重试，
-      // 保留来源（origin），机制覆盖为 transport，reason 为上一失败的稳定码。
-      let lastFailureCode: string | undefined;
+  async complete(role, messages, auditContext, overrides) {
+    const policy = policies[role];
+    const maxAttempts = Math.max(1, Math.floor(policy.maxAttempts));
+    const callId = typeof crypto !== "undefined" && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `call-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const auditContextToUse = auditContext ?? defaultAuditContext(role);
+    const callerRetry = auditContextToUse.retry;
+    // transport retry 只在此层识别：attempt>1 时为 provider 重试，
+    // 保留来源（origin），机制覆盖为 transport，reason 为上一失败的稳定码。
+    let lastFailureCode: string | undefined;
 
-      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-        const providerOptions = createProviderRequestOptions(
-          policy.timeoutMs,
-          policy.maxTokens,
-          policy.jsonMode,
-          policy.thinking,
-        );
-        const result = await options.transport.complete(
-          options.config,
-          messages,
-          providerOptions,
-        );
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const providerOptions = createProviderRequestOptions(
+        policy.timeoutMs,
+        policy.maxTokens,
+        policy.jsonMode,
+        policy.thinking,
+      );
+      // staged 编排的剩余预算覆盖 role 默认 timeout；AbortSignal 原样交给
+      // transport（取消/超时机制仍由 transport 独占）。
+      const transportOptions = {
+        ...providerOptions,
+        ...(overrides?.timeoutMs === undefined ? {} : { timeoutMs: overrides.timeoutMs }),
+        ...(overrides?.signal === undefined ? {} : { signal: overrides.signal }),
+      };
+      const result = await options.transport.complete(
+        options.config,
+        messages,
+        transportOptions,
+      );
 
         // Record the audit entry for this attempt. Best-effort: never throws.
         if (audit?.enabled) {

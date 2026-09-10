@@ -4,7 +4,7 @@ import type {
   BundleDescriptorGraph,
   BundleStepDescriptor,
 } from "./descriptors";
-import { validateNarrativeBundleCoverage } from "./coverage";
+import { validateNarrativeBundleCoverage, validateStagedReadyCoverage } from "./coverage";
 import type { PreparedChoiceCandidate } from "@/game/gameplay/rpg/preparedContinuation/candidates";
 
 function step(overrides: Partial<BundleStepDescriptor> & { stepKey: string }): BundleStepDescriptor {
@@ -172,5 +172,63 @@ describe("validateNarrativeBundleCoverage", () => {
       { kind: "next_decision", target: { kind: "continuation_step", stepKey: "nonexistent" } },
     );
     expect(validateNarrativeBundleCoverage(g)).toEqual({ ok: false, code: "missing_terminal" });
+  });
+});
+
+describe("validateStagedReadyCoverage", () => {
+  const narration = {
+    key: "narration_current", stage: "narration" as const, speakerId: null,
+    dependencies: [], taskFactIds: [], requiredObservationKeys: [], requiredBeats: [],
+    point: { stepKey: "current", order: 1 },
+  };
+  const choices = {
+    ...narration, key: "choices_current", stage: "choices" as const,
+    point: { stepKey: "current", order: 2 },
+  };
+
+  it("全部单元已批准时通过", () => {
+    expect(validateStagedReadyCoverage({
+      units: [narration, choices],
+      approvedKeys: new Set(["narration_current", "choices_current"]),
+      terminalKind: "next_decision",
+    })).toEqual({ ok: true });
+  });
+
+  it("有单元未批准时拒绝", () => {
+    expect(validateStagedReadyCoverage({
+      units: [narration, choices],
+      approvedKeys: new Set(["narration_current"]),
+      terminalKind: "next_decision",
+    })).toEqual({ ok: false, code: "ready_unit_not_approved" });
+  });
+
+  it("空计划拒绝", () => {
+    expect(validateStagedReadyCoverage({
+      units: [], approvedKeys: new Set(), terminalKind: "next_decision",
+    })).toEqual({ ok: false, code: "ready_unit_missing" });
+  });
+
+  it("终幕包缺 choices 单元时拒绝——终幕立场失败阻止整个终幕包发布", () => {
+    expect(validateStagedReadyCoverage({
+      units: [narration],
+      approvedKeys: new Set(["narration_current"]),
+      terminalKind: "ending",
+    })).toEqual({ ok: false, code: "ending_choices_missing" });
+  });
+
+  it("终幕包 choices 单元未批准时拒绝", () => {
+    expect(validateStagedReadyCoverage({
+      units: [narration, choices],
+      approvedKeys: new Set(["narration_current"]),
+      terminalKind: "ending",
+    })).toEqual({ ok: false, code: "ending_choices_not_approved" });
+  });
+
+  it("场景缺旁白单元时拒绝", () => {
+    expect(validateStagedReadyCoverage({
+      units: [{ ...choices, key: "character_only", stage: "character" as const, speakerId: "npc_0" }],
+      approvedKeys: new Set(["character_only"]),
+      terminalKind: "next_decision",
+    })).toEqual({ ok: false, code: "scene_narration_missing" });
   });
 });

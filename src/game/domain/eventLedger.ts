@@ -184,6 +184,8 @@ export function commitEventDrafts(input: {
       "npc_interaction_recorded",
       "npc_knowledge_changed",
       "npc_relationship_changed",
+      "narrative_branch_selected",
+      "narrative_observed",
     ]);
     if (
       typeof draft.payload !== "object" ||

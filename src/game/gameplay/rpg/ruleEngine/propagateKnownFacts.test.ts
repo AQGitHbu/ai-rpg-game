@@ -120,6 +120,19 @@ function npcRecord(ws: WorldState, npcId: string) {
 }
 
 describe("propagateKnownFacts", () => {
+  it("stagedNarrative：跳过自动传播，披露由 collectDisclosures 证据消费时提交", () => {
+    const ws = makeWs();
+    const changes: readonly FactChange[] = [
+      { factId: asFactId("f_1"), change: "discovered", source: "player_told", audience: [asNpcId("npc_1")] },
+    ];
+    const result = propagateKnownFactsWithDrafts(ws, changes, { ...EVIDENCE, stagedNarrative: true });
+    expect(result.worldState).toBe(ws);
+    expect(result.drafts).toEqual([]);
+    const record = entitiesOfKind(result.worldState.entityStore, "npc")
+      .find((candidate) => String(candidate.core.id) === "npc_1")!;
+    expect(record.knowledge.entries.map((entry) => String(entry.factId))).not.toContain("f_1");
+  });
+
   it("returns a matching knowledge event draft for every newly written entry", () => {
     const result = propagateKnownFactsWithDrafts(makeWs(), [{
       factId: asFactId("f_1"),

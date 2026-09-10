@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, type CSSProperties, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { InlineButton, Panel, Tag } from "@ai-game/ui";
 import {
   validateNewGameInput,
   PERSONALITY_TRAIT_OPTIONS,
+  type InitializationStatus,
   type NewGameInput,
   type NewGameInputError,
 } from "@/game/application";
@@ -12,6 +13,7 @@ import { AdventureVisual, ADVENTURE_THEMES } from "./adventureVisuals";
 import { ContentAssetImage } from "./ContentAssetImage";
 import { assetPresentationKey } from "./contentAssets";
 import { GenerationStatusModal } from "./GenerationStatusModal";
+import { cancelInitialization, fetchInitialization, retryInitialization } from "./gameActionRequest";
 
 // ---------------------------------------------------------------------------
 // 新开局表单（单页双栏）：受控表单，提交时真实调用 POST /api/game（canonical）。
@@ -189,7 +191,64 @@ type CreateGameApiBody = {
   revision?: number;
   code?: string;
   failureKind?: "AI_CALL_FAILED" | "AI_RESPONSE_INVALID";
+  /** 202：durable 初始化任务已启动，尚未创建 GameRecord。 */
+  requestId?: string;
+  status?: "pending" | "failed" | "published" | "cancelled";
 };
+
+// ---------------------------------------------------------------------------
+// 初始化任务的本浏览器会话标记。storage 只存 requestId：输入、单元与任何
+// 任务产物都留在服务端，浏览器只是记住「本会话发起过哪一个任务」。
+// storage 不可用时标记读写全部降级为 no-op，服务器 slot 仍是唯一权威。
+// ---------------------------------------------------------------------------
+
+const INITIALIZATION_STORAGE_KEY = "ai-rpg-game:initialization";
+
+/** 创建前生成一次幂等身份；不使用 Date.now() 作为唯一来源。 */
+function generateRequestId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `req_${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+}
+
+function readInitializationRequestId(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(INITIALIZATION_STORAGE_KEY);
+    return raw !== null && raw.trim() !== "" ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeInitializationRequestId(requestId: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(INITIALIZATION_STORAGE_KEY, requestId);
+  } catch {
+    // 隐私模式等场景：仅本次渲染内可用，之后靠服务器 slot 恢复。
+  }
+}
+
+function clearInitializationRequestId(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(INITIALIZATION_STORAGE_KEY);
+  } catch {
+    // 忽略 storage 限制；它不能阻塞开局流程。
+  }
+}
+
+/** 挂载时把服务器 slot 投影成界面状态。 */
+type InitializationState =
+  | { readonly kind: "idle" }
+  | { readonly kind: "pending"; readonly requestId: string }
+  | { readonly kind: "failed"; readonly requestId: string; readonly failureKind?: "AI_CALL_FAILED" | "AI_RESPONSE_INVALID" }
+  | { readonly kind: "check-failed"; readonly message: string };
+
+const INITIALIZATION_POLL_INTERVAL_MS = 500;
+const INITIALIZATION_POLL_MAX_INTERVAL_MS = 5000;
 
 export type NewGameSetupFormProps = {
   /** 创建成功回调：父级用当前会话重载（canonical API 不返回 view）。 */
@@ -217,6 +276,115 @@ export function NewGameSetupForm({ onCreated, restart }: NewGameSetupFormProps) 
   const [errorMessage, setErrorMessage] = useState("");
   const [retryableGeneration, setRetryableGeneration] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<FieldErrorMap>({});
+  const [initialization, setInitialization] = useState<InitializationState>({ kind: "idle" });
+  const initializationControlInFlight = useRef(false);
+  const onCreatedRef = useRef(onCreated);
+  useEffect(() => {
+    onCreatedRef.current = onCreated;
+  });
+
+  /** 把服务器安全投影写入界面状态；published 只在此时进入正式流程。 */
+  const applyInitializationStatus = useCallback((view: InitializationStatus) => {
+    if (view.status === "pending") {
+      writeInitializationRequestId(view.requestId);
+      setInitialization({ kind: "pending", requestId: view.requestId });
+      return;
+    }
+    if (view.status === "failed") {
+      writeInitializationRequestId(view.requestId);
+      setInitialization({
+        kind: "failed",
+        requestId: view.requestId,
+        ...(view.failureKind === undefined ? {} : { failureKind: view.failureKind }),
+      });
+      return;
+    }
+    // none / cancelled：没有可恢复的任务，标记一并作废，允许重新提交。
+    clearInitializationRequestId();
+    setInitialization({ kind: "idle" });
+    if (view.status === "published") onCreatedRef.current();
+  }, []);
+
+  /**
+   * 刷新恢复：服务器 initialization_slot 是权威。本地标记只是一个提示，
+   * 因此即使 storage 不可用（拿不到标记）也要走同一次查询。
+   */
+  const resumeInitialization = useCallback(async () => {
+    const known = readInitializationRequestId();
+    if (known !== null) setInitialization({ kind: "pending", requestId: known });
+    const outcome = await fetchInitialization(known ?? undefined);
+    if (!outcome.ok) {
+      // 网络不可达不是「没有任务」：本会话发起过就必须让玩家能重试读取，
+      // 否则会退化成「重新开局」而创建出第二个任务。
+      if (known !== null) setInitialization({ kind: "check-failed", message: outcome.message });
+      return;
+    }
+    applyInitializationStatus(outcome.view);
+  }, [applyInitializationStatus]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      if (cancelled) return;
+      await resumeInitialization();
+    })();
+    return () => { cancelled = true; };
+  }, [resumeInitialization]);
+
+  // pending 期间只做 GET 轮询；控制操作（retry/cancel）是玩家显式动作。
+  useEffect(() => {
+    if (initialization.kind !== "pending") return;
+    const requestId = initialization.requestId;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let failures = 0;
+
+    async function poll() {
+      const outcome = await fetchInitialization(requestId);
+      if (cancelled) return;
+      if (outcome.ok && outcome.view.status !== "pending") {
+        applyInitializationStatus(outcome.view);
+        return;
+      }
+      failures = outcome.ok ? 0 : failures + 1;
+      const delay = failures === 0
+        ? INITIALIZATION_POLL_INTERVAL_MS
+        : Math.min(INITIALIZATION_POLL_MAX_INTERVAL_MS, failures * 1000);
+      timer = setTimeout(() => void poll(), delay);
+    }
+
+    timer = setTimeout(() => void poll(), INITIALIZATION_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) clearTimeout(timer);
+    };
+  }, [initialization, applyInitializationStatus]);
+
+  // 重试沿用同一 requestId；双击由 ref 门禁挡住，不产生第二次控制请求。
+  async function handleInitializationRetry(): Promise<void> {
+    if (initialization.kind !== "failed" || initializationControlInFlight.current) return;
+    initializationControlInFlight.current = true;
+    try {
+      const outcome = await retryInitialization(initialization.requestId);
+      if (outcome.ok) applyInitializationStatus(outcome.view);
+      else setInitialization({ kind: "check-failed", message: outcome.message });
+    } finally {
+      initializationControlInFlight.current = false;
+    }
+  }
+
+  async function handleInitializationCancel(): Promise<void> {
+    if (initialization.kind !== "failed" || initializationControlInFlight.current) return;
+    initializationControlInFlight.current = true;
+    try {
+      const outcome = await cancelInitialization(initialization.requestId);
+      if (outcome.ok) applyInitializationStatus(outcome.view);
+      else setInitialization({ kind: "check-failed", message: outcome.message });
+    } finally {
+      initializationControlInFlight.current = false;
+    }
+  }
+
   const selectedType = GAME_TYPES.find((type) => type.id === gameType)!;
   // 当前题材的主题色，用于整套页面的配色切换。
   const theme = ADVENTURE_THEMES[gameType];
@@ -297,20 +465,44 @@ export function NewGameSetupForm({ onCreated, restart }: NewGameSetupFormProps) 
     setRetryableGeneration(false);
     setSubmitting(true);
     setStatusMessage("正在生成世界，请稍候……");
+    // 创建前铸造一次幂等身份：失败重试、刷新恢复都沿用同一个 durable 任务。
+    const requestId = generateRequestId();
     try {
       const response = await fetch("/api/game", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           ...input,
+          requestId,
           ...(restart === undefined ? {} : { restart }),
         }),
       });
       const body = (await response.json().catch(() => null)) as CreateGameApiBody | null;
       // canonical API：成功判定要求 ok === true。
       if (response.ok && body?.ok === true) {
-        setStatusMessage("开局已生成。");
-        onCreated();
+        const status = body.status;
+        if (status === undefined || status === "published") {
+          clearInitializationRequestId();
+          setStatusMessage("开局已生成。");
+          onCreated();
+          return;
+        }
+        if (status === "pending") {
+          // 202：任务已 durable 启动但尚未发布，只显示笼统进度并轮询同一任务。
+          applyInitializationStatus({ requestId: body.requestId ?? requestId, status: "pending" });
+          return;
+        }
+        if (status === "failed") {
+          applyInitializationStatus({
+            requestId: body.requestId ?? requestId,
+            status: "failed",
+            ...(body.failureKind === undefined ? {} : { failureKind: body.failureKind }),
+          });
+          return;
+        }
+        clearInitializationRequestId();
+        setStatusMessage("");
+        setErrorMessage("本次开局生成已取消，请重新提交。");
         return;
       }
       setStatusMessage("");
@@ -342,6 +534,32 @@ export function NewGameSetupForm({ onCreated, restart }: NewGameSetupFormProps) 
     } finally {
       setSubmitting(false);
     }
+  }
+
+  // 初始化任务在途/失败时，表单不是可用入口：重复提交只会产生第二个任务。
+  if (initialization.kind === "pending") {
+    return <GenerationStatusModal kind="creation" />;
+  }
+
+  if (initialization.kind === "failed") {
+    return (
+      <GenerationStatusModal
+        kind="creation-failure"
+        failureKind={initialization.failureKind ?? "AI_CALL_FAILED"}
+        onRetry={handleInitializationRetry}
+        onCancel={handleInitializationCancel}
+      />
+    );
+  }
+
+  if (initialization.kind === "check-failed") {
+    return (
+      <Panel className="error-panel">
+        <Tag variant="warning">读取失败</Tag>
+        <p role="alert">{initialization.message}</p>
+        <InlineButton onClick={() => void resumeInitialization()}>重新读取生成状态</InlineButton>
+      </Panel>
+    );
   }
 
   return (

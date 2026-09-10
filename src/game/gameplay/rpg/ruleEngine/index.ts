@@ -22,6 +22,8 @@ import { approveCandidateEvents, compileCandidateEvent } from "@/game/gameplay/r
 import { advanceStoryReveal } from "@/game/gameplay/rpg/worldEvolution";
 import { validateEntityStoreProvenance } from "@/game/domain/entity";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
+import { applyNarrativeBranch } from "@/game/gameplay/rpg/narrativePlanning";
+import type { Decision } from "@/game/domain/narrativeBranch";
 
 const DIALOGUE_REQUIRED_TURNS = 2;
 
@@ -90,7 +92,15 @@ export type RuleEngineResult =
   | { readonly ok: true; readonly nextWorldState: WorldState; readonly nextStoryState: StoryState; readonly resolvedEvent: ResolvedEvent }
   | { readonly ok: false; readonly code: ValidationCode; readonly feedback: string };
 
-export type RuleEngineDeps = { readonly now: () => string; readonly turnId: TurnId };
+export type RuleEngineDeps = {
+  readonly now: () => string;
+  readonly turnId: TurnId;
+  /**
+   * 本回合要应用的获批路线分支。只能由服务端从 StoryState.branchDecisions 取得，
+   * 客户端永不提交 Decision。分支在「对白效果之后 / reconcileQuests 之前」生效。
+   */
+  readonly narrativeBranch?: { readonly decision: Decision; readonly candidateId: string };
+};
 
 /** resolveTurn 的返回值：拒绝路径返回稳定 code + feedback，不携带任何写入。 */
 export type ResolveTurnResult =
@@ -198,12 +208,37 @@ export function resolveTurn(
   // 当前会话是 talk_to_npc 是否完成的权威游标。即使本回合不是正式回应，
   // 也要持续传入；否则 ask 写入的 met=true 或随后一次移动/探索会让通用
   // objective 判定绕过两轮会话，直接完成当前 NPC 目标。
-  const quests = reconcileQuests(propagatedWs, { now: deps.now }, dialogueSession === undefined
+  // 获批路线分支：顺序固定为「对白效果 → 分支目标变化 → reconcileQuests」。
+  // 顺序反了会让原 talk 目标先被结算完成，分支访问目标就变成多余的一步。
+  let branchWorldState = propagatedWs;
+  let branchStoryState = dialogueStoryState;
+  const branchDrafts: NarrativeEventDraft[] = [];
+  if (deps.narrativeBranch !== undefined) {
+    const appliedBranch = applyNarrativeBranch({
+      world: propagatedWs,
+      story: dialogueStoryState,
+      decision: deps.narrativeBranch.decision,
+      candidateId: deps.narrativeBranch.candidateId,
+    });
+    if (!appliedBranch.ok) {
+      return {
+        ok: false,
+        code: "INTENT_NOT_ROUTED",
+        feedback: `branch rejected: ${appliedBranch.code}`,
+      };
+    }
+    branchWorldState = appliedBranch.value.world;
+    branchStoryState = appliedBranch.value.story;
+    branchDrafts.push(...appliedBranch.value.drafts);
+  }
+  const branchDialogueSession = branchStoryState.narrative.dialogueSession;
+
+  const quests = reconcileQuests(branchWorldState, { now: deps.now }, branchDialogueSession === undefined
     ? undefined
     : {
         talkToNpcSession: {
-          npcId: String(dialogueSession.npcId),
-          completed: dialogueSession.completed,
+          npcId: String(branchDialogueSession.npcId),
+          completed: branchDialogueSession.completed,
         },
         ...(action.type === "talk" ? {
           actionContext: {
@@ -220,6 +255,7 @@ export function resolveTurn(
     ...resolved.drafts,
     ...propagated.drafts,
     ...dialogueEvents,
+    ...branchDrafts,
     ...quests.drafts,
   ];
 
@@ -231,7 +267,7 @@ export function resolveTurn(
   // 自动事件、目标推进、张力和 eventLedger 仍属于同一个规则回合/CAS。
   const revealedAtBoundary = advanceStoryReveal({
     worldState: quests.nextWorldState,
-    storyState: dialogueStoryState,
+    storyState: branchStoryState,
   });
   let ruleWorldState = revealedAtBoundary.worldState;
   let ruleStoryState = revealedAtBoundary.storyState;
@@ -241,8 +277,8 @@ export function resolveTurn(
     : { ok: true as const, nextWorldState: ruleWorldState, drafts: [], stateChanges: [] };
   if (!gift.ok) return { ok: false, code: "INVALID_RESOLUTION", feedback: "NPC 赠物状态无效。" };
   if (gift.drafts.length > 0) {
-    const afterGift = reconcileQuests(gift.nextWorldState, { now: deps.now }, dialogueSession === undefined ? undefined : {
-      talkToNpcSession: { npcId: String(dialogueSession.npcId), completed: dialogueSession.completed },
+    const afterGift = reconcileQuests(gift.nextWorldState, { now: deps.now }, branchDialogueSession === undefined ? undefined : {
+      talkToNpcSession: { npcId: String(branchDialogueSession.npcId), completed: branchDialogueSession.completed },
     });
     const giftReveal = advanceStoryReveal({ worldState: afterGift.nextWorldState, storyState: ruleStoryState });
     ruleWorldState = giftReveal.worldState;
@@ -256,8 +292,8 @@ export function resolveTurn(
   for (let remaining = canDiscover ? ruleWorldState.worldFacts.length : 0; remaining > 0; remaining -= 1) {
     const automatic = autoResolveCurrentInvestigation(ruleWorldState, ruleStoryState);
     if (automatic.drafts.length === 0) break;
-    const after = reconcileQuests(automatic.nextWorldState, { now: deps.now }, dialogueSession === undefined ? undefined : {
-      talkToNpcSession: { npcId: String(dialogueSession.npcId), completed: dialogueSession.completed },
+    const after = reconcileQuests(automatic.nextWorldState, { now: deps.now }, branchDialogueSession === undefined ? undefined : {
+      talkToNpcSession: { npcId: String(branchDialogueSession.npcId), completed: branchDialogueSession.completed },
     });
     const revealed = advanceStoryReveal({ worldState: after.nextWorldState, storyState: ruleStoryState });
     ruleWorldState = revealed.worldState;
@@ -265,7 +301,7 @@ export function resolveTurn(
     questEvents = [...questEvents, ...automatic.drafts, ...after.drafts];
   }
   const allQuestEvents = questEvents;
-  domainEvents.splice(0, domainEvents.length, ...resolved.drafts, ...propagated.drafts, ...dialogueEvents, ...allQuestEvents);
+  domainEvents.splice(0, domainEvents.length, ...resolved.drafts, ...propagated.drafts, ...dialogueEvents, ...branchDrafts, ...allQuestEvents);
 
   // Step 2: 幕推进 + storyProgress + endingAllowed 推导（§13.1 在 resolveEnding 之前）
   const progression = advanceStoryProgression(

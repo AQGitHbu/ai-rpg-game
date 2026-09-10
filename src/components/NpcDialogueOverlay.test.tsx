@@ -665,3 +665,63 @@ describe("reduceDialogueUiState 等待快照契约", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Task 11：纯对白显示（Spec §8.2）。玩家对白选择只显示玩家准备说出的原话；
+// 界面不加工标签，也不合成小说式前置说明来掩盖审批失败。
+// ---------------------------------------------------------------------------
+
+describe("NpcDialogueOverlay 纯对白显示", () => {
+  it("已批准的对白选项原样渲染，不添加外层引号或小说化前置说明", () => {
+    renderOverlay({
+      dialogue: makeDialogue({
+        speechPages: ["她把那封信推到我面前，没有抬头。"],
+        choices: [
+          { choiceToken: "token_a", label: "我不替你送信，我要当面问清楚。", presentation: "dialogue" },
+          { choiceToken: "token_b", label: "我先把信收好，再陪你查清楚。", presentation: "dialogue" },
+        ],
+      }),
+    });
+
+    const option = screen.getByRole("button", { name: "我不替你送信，我要当面问清楚。" });
+    expect(option).toBeVisible();
+    expect(option.textContent).not.toMatch(/^[“"「『]/);
+    expect(option.textContent).not.toMatch(/[”"」』]$/);
+    // 说话标签式前缀属于被审批拒绝的候选形态，界面不得自行合成。
+    expect(screen.queryByText(/盯着她问|顺着她的话头/)).toBeNull();
+  });
+
+  it("选项依赖的旁白与对白先展示完，才允许选择", async () => {
+    const user = userEvent.setup();
+    renderOverlay({
+      dialogue: makeDialogue({
+        speechPages: ["第一页旁白。", "第二页对白。"],
+        choices: [
+          { choiceToken: "token_a", label: "我不替你送信，我要当面问清楚。", presentation: "dialogue" },
+          { choiceToken: "token_b", label: "我先把信收好，再陪你查清楚。", presentation: "dialogue" },
+        ],
+      }),
+    });
+
+    expect(screen.queryByRole("group", { name: "对话选项" })).toBeNull();
+    await user.click(screen.getByText("第一页旁白。"));
+    expect(screen.getByRole("group", { name: "对话选项" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "我不替你送信，我要当面问清楚。" })).toBeVisible();
+  });
+
+  it("台词保留已批准的原句标点，界面不做二次清洗", () => {
+    renderOverlay({
+      dialogue: makeDialogue({
+        speechPages: ["第一页。", "第二页。"],
+        choices: [
+          { choiceToken: "token_a", label: "你先告诉我委托人是谁，我再决定接不接。", presentation: "dialogue" },
+          { choiceToken: "token_b", label: "这件事我还需要核对，今晚之前给你答复。", presentation: "dialogue" },
+        ],
+      }),
+    });
+
+    fireEvent.keyDown(screen.getByRole("dialog", { name: "与薇拉对话" }).querySelector(".npc-dialogue-overlay-box")!, { key: "Enter" });
+    const option = screen.getByRole("button", { name: "你先告诉我委托人是谁，我再决定接不接。" });
+    expect(option.textContent).toBe("> 你先告诉我委托人是谁，我再决定接不接。");
+  });
+});

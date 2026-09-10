@@ -14,11 +14,12 @@ function collectRoutes(directory: string): string[] {
 }
 
 describe("canonical game route tree", () => {
-  it("contains exactly the six neutral routes and no compatibility endpoints", () => {
+  it("contains exactly the seven neutral routes and no compatibility endpoints", () => {
     expect(collectRoutes(API_ROOT).sort()).toEqual([
       "game/actions/route.ts",
       "game/current/route.ts",
       "game/dev/current/route.ts",
+      "game/initialization/route.ts",
       "game/narrative/ensure/route.ts",
       "game/prologue/ack/route.ts",
       "game/route.ts",

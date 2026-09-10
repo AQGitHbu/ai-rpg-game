@@ -5,6 +5,7 @@ import {
   createServerRpgAiClient,
   RPG_AI_DEFAULT_POLICIES,
   RPG_AI_ROLES,
+  STAGED_NARRATIVE_ROLES,
   resolveRpgAiThinkingRoles,
 } from "./rpgAiClient";
 import type { AiTextAuditRecorder, AiTextAuditPayload } from "./textAuditTypes";
@@ -31,6 +32,48 @@ function fakeRecorder(): AiTextAuditRecorder & { records: AiTextAuditPayload[] }
     close: vi.fn(async () => {}),
   } as unknown as AiTextAuditRecorder & { records: AiTextAuditPayload[] };
 }
+
+describe("staged narrative roles", () => {
+  it("defines fixed decision-table budgets for the four staged roles", () => {
+    expect(RPG_AI_DEFAULT_POLICIES.planning).toMatchObject({ thinking: "off", timeoutMs: 90_000, maxTokens: 6_000, maxAttempts: 2 });
+    expect(RPG_AI_DEFAULT_POLICIES.narration).toMatchObject({ thinking: "off", timeoutMs: 45_000, maxTokens: 2_000, maxAttempts: 2 });
+    expect(RPG_AI_DEFAULT_POLICIES.character).toMatchObject({ thinking: "off", timeoutMs: 45_000, maxTokens: 2_000, maxAttempts: 2 });
+    expect(RPG_AI_DEFAULT_POLICIES.choices).toMatchObject({ thinking: "off", timeoutMs: 30_000, maxTokens: 600, maxAttempts: 2 });
+    for (const role of STAGED_NARRATIVE_ROLES) {
+      expect(RPG_AI_ROLES).toContain(role);
+    }
+  });
+
+  it("passes the staged AbortSignal and remaining timeoutMs through to the transport", async () => {
+    const controller = new AbortController();
+    const complete = vi.fn(async (_config: unknown, _messages: unknown, options?: { signal?: AbortSignal; timeoutMs?: number }) => {
+      expect(options?.signal).toBe(controller.signal);
+      expect(options?.timeoutMs).toBe(1234);
+      return { ok: true as const, content: "{}", latencyMs: 1 };
+    });
+    const client = createRpgAiClient({ transport: transportFor(complete), config });
+    const result = await client.complete("choices", messages, undefined, {
+      signal: controller.signal,
+      timeoutMs: 1234,
+    });
+    expect(result.ok).toBe(true);
+    expect(complete).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry an aborted staged call", async () => {
+    const complete = vi.fn(async () => ({
+      ok: false as const,
+      code: "aborted" as const,
+      retryable: false,
+      latencyMs: 1,
+    }));
+    const client = createRpgAiClient({ transport: transportFor(complete), config });
+    const controller = new AbortController();
+    const result = await client.complete("narration", messages, undefined, { signal: controller.signal });
+    expect(result).toMatchObject({ ok: false, code: "aborted" });
+    expect(complete).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("createRpgAiClient", () => {
   it.each(RPG_AI_ROLES)("records the previous transport cause for %s without altering messages", async (role) => {

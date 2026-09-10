@@ -15,6 +15,9 @@ export { PERSONALITY_TRAIT_OPTIONS, buildStylePolicy, type StylePolicy } from ".
 // UI 可用的 NPC 直接台词兜底；不暴露场景生成、规则或持久化实现。
 export { composeDirectNpcGreeting } from "@/game/domain/npcSpeech";
 
+// 初始化任务安全视图：只含 requestId/状态/失败分类/revision，不含输入或单元。
+export type { InitializationView, InitializationStatus } from "./initializationStatus";
+
 // 纯持久化端口经 facade 暴露给 application contract tests；不加载 server adapter。
 export {
   asGameId,

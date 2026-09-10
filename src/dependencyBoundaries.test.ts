@@ -73,7 +73,8 @@ const FACADES: readonly FacadeSpec[] = [
   { name: "entityWorld", path: "@/game/gameplay/rpg/entityWorld", anchors: ["entityMutation", "proposedEntityCommand"] },
   { name: "npcMemory", path: "@/game/gameplay/rpg/npcMemory", anchors: ["relationshipSignalPolicy"] },
   { name: "narrativeMemory", path: "@/game/gameplay/rpg/narrativeMemory", anchors: ["eventPolicy", "retrieveNarrativeMemory"] },
-  { name: "narrativeContext", path: "@/game/gameplay/rpg/narrativeContext", anchors: ["objectiveRules", "deriveObjectiveTransition"] }
+  { name: "narrativeContext", path: "@/game/gameplay/rpg/narrativeContext", anchors: ["objectiveRules", "deriveObjectiveTransition"] },
+  { name: "narrativePlanning", path: "@/game/gameplay/rpg/narrativePlanning", anchors: ["branches"] }
 ] as const satisfies readonly FacadeSpec[];
 
 /** 由 facade 清单生成 deep-import 规则：只许门面本体，禁止任何内部文件。 */
@@ -590,7 +591,7 @@ describe("core layer stays free of product semantics", () => {
 });
 
 describe("canonical client surfaces stay behind the application facade", () => {
-  it("canonical components and exactly six game routes are inside the scanned rule scopes", () => {
+  it("canonical components and exactly seven game routes are inside the scanned rule scopes", () => {
     const componentFiles = exists(resolve(sourceRoot, "components"), false).map(toPosixRelative);
     for (const relative of [
       "components/AdventureGameShell.tsx",
@@ -608,6 +609,7 @@ describe("canonical client surfaces stay behind the application facade", () => {
       "app/api/game/actions/route.ts",
       "app/api/game/current/route.ts",
       "app/api/game/dev/current/route.ts",
+      "app/api/game/initialization/route.ts",
       "app/api/game/narrative/ensure/route.ts",
       "app/api/game/prologue/ack/route.ts",
       "app/api/game/route.ts"
@@ -679,12 +681,32 @@ describe("canonical AI sources stay server-only and layered", () => {
       readFileSync(resolve(sourceRoot, "game/application/server/ai/sourceFactory.ts"), "utf8")
     );
     expect(factorySpecifiers).toContain("./rpgAiClient");
-    expect(factorySpecifiers).toContain("./liveNarrativeBundleSource");
+    // Task 10：生产装配只经分阶段源；旧整包源已退出生产装配。
+    expect(factorySpecifiers).toContain("./staged/liveStageSource");
+    expect(factorySpecifiers).not.toContain("./liveNarrativeBundleSource");
+    expect(factorySpecifiers).not.toContain("../../narrativeBundleSource");
 
     const clientSpecifiers = extractSpecifiers(
       readFileSync(resolve(sourceRoot, "game/application/server/ai/rpgAiClient.ts"), "utf8")
     );
     expect(clientSpecifiers).toContain("@ai-game/ai-transport");
+  });
+
+  it("旧整包源已退出生产装配（只允许测试导入）", () => {
+    // Task 10：liveNarrativeBundleSource（整包 live 实现）不再是生产回退路径。
+    // 注意：narrativeBundleSource 端口本身仍承载 domain 契约类型（提案/终端/
+    // 场景结构），approveNarrativeBundle / assembleBundle 等合法消费其类型；
+    // 因此守卫只禁止生产代码导入 live 实现，不禁止导入纯类型端口。
+    const liveImplementation = "game/application/server/ai/liveNarrativeBundleSource.ts";
+    const offenders = walk(sourceRoot, false).flatMap((file) => {
+      const relative = toPosixRelative(file);
+      if (relative === liveImplementation) return [];
+      const importsLive = extractSpecifiers(readFileSync(file, "utf8")).some((specifier) =>
+        specifier.endsWith("/liveNarrativeBundleSource"),
+      );
+      return importsLive ? [relative] : [];
+    });
+    expect(offenders).toEqual([]);
   });
 });
 
@@ -769,7 +791,19 @@ function walk(dir: string, includeTestFiles: boolean): string[] {
 
 const SERVER_DIR = "game/application/server/";
 /** 纯端口文件：只有类型与 asGameId/asGenerationId 等。application 本体合法的 server 纯端口清单。 */
-const PURE_PORT_SPECIFIERS = ["./server/persistence/gameRepository", "./server/ai/textAuditTypes"] as const;
+const PURE_PORT_SPECIFIERS = [
+  "./server/persistence/gameRepository",
+  "./server/ai/textAuditTypes",
+  // staged 叙事端口（Task 5）位于 application/narrativeGeneration/ 子目录，
+  // 相对说明符多一层 "../"：同样是纯类型导入。
+  "../server/ai/textAuditTypes",
+  // 叙事 job 持久化端口（Task 8）：同样只有类型，实现由 composition root 注入。
+  "../server/persistence/narrativeJobRepository",
+  "../server/persistence/gameRepository",
+  // notification/initialization 等 application 直系模块（Task 10）以
+  // "./server/..." 形式消费同一组纯端口。
+  "./server/persistence/narrativeJobRepository",
+] as const;
 /** API route 层唯一许可的 server 入口。 */
 const COMPOSITION_ROOT_SPECIFIER = "@/game/application/server/compositionRoot";
 const SERVER_LOGGER_SPECIFIER = "@/game/logging/serverConsoleLogger";
@@ -972,7 +1006,7 @@ describe("one canonical executable chain remains", () => {
     (file) => toPosixRelative(file) !== "dependencyBoundaries.test.ts",
   );
 
-  it("has one repository, composition root, read model, request client, and six routes", () => {
+  it("has one repository, composition root, read model, request client, and seven routes", () => {
     const relativeFiles = productionFiles.map(toPosixRelative);
     expect(relativeFiles.filter((file) => file.endsWith("/gameRepository.ts"))).toEqual([
       "game/application/server/persistence/gameRepository.ts",
@@ -990,6 +1024,7 @@ describe("one canonical executable chain remains", () => {
       "app/api/game/actions/route.ts",
       "app/api/game/current/route.ts",
       "app/api/game/dev/current/route.ts",
+      "app/api/game/initialization/route.ts",
       "app/api/game/narrative/ensure/route.ts",
       "app/api/game/prologue/ack/route.ts",
       "app/api/game/route.ts",

@@ -489,7 +489,7 @@ expect(afterDuplicateConsume).toEqual(afterMove);
 
 重新生成：先显式 cancel 当前任务，再以新 requestId 提交；服务器单槽 CAS 防多 tab 并发覆写。修改同 requestId 输入返回409而非重新计费。decision start 和 provider_pending 关联不得出现一个提交成功而另一个永久丢失：ensure 可从已提交 pending job 幂等补建 task，不提前调用 provider。
 
-- [ ] **Step 1:** API 测试无存档创建失败后查询恢复，重复 POST 只一次 start，新输入同 ID 409、未知 key400；生产决策只有 four-stage source。核心断言：
+- [x] **Step 1:** API 测试无存档创建失败后查询恢复，重复 POST 只一次 start，新输入同 ID 409、未知 key400；生产决策只有 four-stage source。核心断言：
 
 ```ts
 expect(first.status).toBe(202);
@@ -499,10 +499,10 @@ expect(currentGameBeforePublish.status).toBe("none");
 expect(initializationStatus.status).toBe("failed");
 ```
 
-- [ ] **Step 2:** `npx vitest run src/app/api/game src/game/application/server/compositionRoot.test.ts src/game/application/server/providerTriggerBoundary.test.ts`；预期新 route/返回码不匹配失败。
-- [ ] **Step 3:** createGame 改为 durable start + 查询语义，调用 Task 3 结构编译/表达安装；保留初始历史、novelty、speech 与 setup 校验。generatePendingNarrativeBundle 委托协调器的完整 runJob+publishJob 租约作用域，删除旧完整包四次循环，防重试乘法。retry 经 control 对旧 version/cycle CAS 成功、创建新 cycle 后才重新调度；cancel 同样经 control，不等待 worker 释放锁；current 游戏读取保持只读。
-- [ ] **Step 4:** sourceFactory 唯一生产装配 StageSource；移除 liveNarrativeBundleSource 的生产调用，仍被 fixture 需要的纯 parser 移至 domain/application 正式归属，不能让旧源成为 fallback。新增 initialization route 审计映射并更新六 route 固定数量断言为实际集合。初始化重开发布复核 ended identity/revision，失败不删旧游戏。跑全 application、app、最低门禁。
-- [ ] **Step 5:** 提交 `feat: switch production to staged narrative jobs`。
+- [x] **Step 2:** `npx vitest run src/app/api/game src/game/application/server/compositionRoot.test.ts src/game/application/server/providerTriggerBoundary.test.ts`；预期新 route/返回码不匹配失败。
+- [x] **Step 3:** createGame 改为 durable start + 查询语义，调用 Task 3 结构编译/表达安装；保留初始历史、novelty、speech 与 setup 校验。generatePendingNarrativeBundle 委托协调器的完整 runJob+publishJob 租约作用域，删除旧完整包四次循环，防重试乘法。retry 经 control 对旧 version/cycle CAS 成功、创建新 cycle 后才重新调度；cancel 同样经 control，不等待 worker 释放锁；current 游戏读取保持只读。
+- [x] **Step 4:** sourceFactory 唯一生产装配 StageSource；移除 liveNarrativeBundleSource 的生产调用，仍被 fixture 需要的纯 parser 移至 domain/application 正式归属，不能让旧源成为 fallback。新增 initialization route 审计映射并更新六 route 固定数量断言为实际集合。初始化重开发布复核 ended identity/revision，失败不删旧游戏。跑全 application、app、最低门禁。
+- [x] **Step 5:** 提交 `feat: switch production to staged narrative jobs`。
 
 ### Task 11: 初始化恢复与纯对白显示
 
@@ -513,7 +513,7 @@ expect(initializationStatus.status).toBe("failed");
 
 **Interfaces:** gameActionRequest 增加 `fetchInitialization(requestId?: string): Promise<InitializationView | {status:"none"}>`、`retryInitialization(requestId: string): Promise<InitializationView>`、`cancelInitialization(requestId: string): Promise<InitializationView>`。错误统一转现有错误展示，不能把网络失败当 none。
 
-- [ ] **Step 1:** RTL 模拟202→刷新→failed→retry→published，断言 requestId 不变、无半游戏和重复创建；显示选项原样：
+- [x] **Step 1:** RTL 模拟202→刷新→failed→retry→published，断言 requestId 不变、无半游戏和重复创建；显示选项原样：
 
 ```ts
 expect(screen.getByRole("button", { name: "我不替你送信，我要当面问清楚。" })).toBeVisible();
@@ -521,10 +521,10 @@ expect(screen.queryByText(/盯着她问|顺着她的话头/)).toBeNull();
 expect(retryBody).toEqual({ requestId: initialRequestId, operation: "retry" });
 ```
 
-- [ ] **Step 2:** `npx vitest run src/components/CurrentGameScreen.test.tsx src/components/NewGameSetupForm.test.tsx src/components/NpcDialogueOverlay.test.tsx src/components/gameActionRequest.test.ts`；预期202尚未处理失败。
-- [ ] **Step 3:** 创建前生成一次 requestId，sessionStorage 仅存 marker/id，不存隐藏输入或任务产物。刷新服务器 slot 恢复；重试禁用双击，网络未知重查同 ID。已有重开 marker 与结束游戏并存时显示初始化进度，失败可回旧结局；取消后允许新请求。storage 不可用仍用服务器状态恢复。
-- [ ] **Step 4:** view 只投影获批 label 和按场景顺序的内容。对话分页/旁白页遵守 ScenePoint，必须先展示选项依赖的旁白和对白再允许选择；后台完成不跳页，不改当前 displayedDialogue。UI 不清洗模型文本来掩盖审批失败；手动操作按钮保留原用途。运行本组测试、components、最低门禁。
-- [ ] **Step 5:** 提交 `feat: restore initialization jobs and render dialogue-only choices`。
+- [x] **Step 2:** `npx vitest run src/components/CurrentGameScreen.test.tsx src/components/NewGameSetupForm.test.tsx src/components/NpcDialogueOverlay.test.tsx src/components/gameActionRequest.test.ts`；预期202尚未处理失败。
+- [x] **Step 3:** 创建前生成一次 requestId，sessionStorage 仅存 marker/id，不存隐藏输入或任务产物。刷新服务器 slot 恢复；重试禁用双击，网络未知重查同 ID。已有重开 marker 与结束游戏并存时显示初始化进度，失败可回旧结局；取消后允许新请求。storage 不可用仍用服务器状态恢复。
+- [x] **Step 4:** view 只投影获批 label 和按场景顺序的内容。对话分页/旁白页遵守 ScenePoint，必须先展示选项依赖的旁白和对白再允许选择；后台完成不跳页，不改当前 displayedDialogue。UI 不清洗模型文本来掩盖审批失败；手动操作按钮保留原用途。运行本组测试、components、最低门禁。
+- [x] **Step 5:** 提交 `feat: restore initialization jobs and render dialogue-only choices`。
 
 ### Task 12: 完整旅程、真实质量验收与文档归位
 
@@ -537,7 +537,7 @@ expect(retryBody).toEqual({ requestId: initialRequestId, operation: "retry" });
 
 **Interfaces:** package scripts `test:staged-smoke = node --test scripts/stagedNarrativeSmoke.node-test.mjs`、`smoke:ai:staged = node scripts/stagedNarrativeSmoke.mjs`。smoke 复用现有 phase4bAiSmoke 的 TS loader 与 env 门禁方式，用独立临时 GAME_DB_PATH；require `RUN_REAL_AI_SMOKE=1`，默认零 provider 调用。
 
-- [ ] **Step 1:** node:test 验证无门禁失败退出、独立临时库、不读写用户 current slot、超总请求预算停止；离线 journey 覆盖 Spec 全表，每个 branch 从同一获批状态分叉而非手写 selectedBranches。核心断言：
+- [x] **Step 1:** node:test 验证无门禁失败退出、独立临时库、不读写用户 current slot、超总请求预算停止；离线 journey 覆盖 Spec 全表，每个 branch 从同一获批状态分叉而非手写 selectedBranches。核心断言：
 
 ```ts
 expect(journey.providerCallsOnMove).toBe(0);
@@ -547,8 +547,11 @@ expect(journey.publishedPartialPackages).toBe(0);
 expect(journey.futureKnowledgeBeforeTrigger).toEqual([]);
 ```
 
-- [ ] **Step 2:** `npx vitest run src/game/application/testing/stagedNarrativeJourney.test.ts src/game/application/testing/stagedBranchJourney.test.ts`，`node --test scripts/stagedNarrativeSmoke.node-test.mjs`；预期未覆盖的新场景失败，不接受 skip 代替实现。
-- [ ] **Step 3:** 实现有界 real smoke：3 个开局，每局同一批准决策各执行两个分支，共6次续接；至少包含疑似证据、跨 NPC 认知差异、未来抵达/战斗条件。其中至少一条短篇从开局运行至合法结局；续接单独成功不能称通关。全 run 最多160次 provider transport 请求、45分钟，任一上限达到后停止并记录未完成。不因失败重复采样直到成功。保存完整审计与脱敏报告，不提交凭据、临时存档或原始玩家隐私输入。
+实现说明：`normalDecisionStages` 按骨架实际单元断言（夹具为双 NPC，故 character 两次），单 NPC 骨架下即为上表四次；`publishedPartialPackages` 由 `harness.publishedCount()` 承载（未批准完为零）；无 GameRecord 时可查询/重试同一初始化任务由 `startInitialization`/`runInitializationJob` 覆盖；`futureKnowledgeBeforeTrigger` 的跨 NPC/未来认知场景在真实 smoke 中逐条人工判断（离线夹具不含跨地点认知差）。
+- [x] **Step 2:** `npx vitest run src/game/application/testing/stagedNarrativeJourney.test.ts src/game/application/testing/stagedBranchJourney.test.ts`，`node --test scripts/stagedNarrativeSmoke.node-test.mjs`；预期未覆盖的新场景失败，不接受 skip 代替实现。已确认：先写测试时 `stagedNarrativeSmoke.mjs` 缺失导致 `ERR_MODULE_NOT_FOUND`（非 skip），实现后 20 + 21 全绿。
+- [x] **Step 3:** 实现有界 real smoke：3 个开局，每局同一批准决策各执行两个分支，共6次续接；至少包含疑似证据、跨 NPC 认知差异、未来抵达/战斗条件。其中至少一条短篇从开局运行至合法结局；续接单独成功不能称通关。全 run 最多160次 provider transport 请求、45分钟，任一上限达到后停止并记录未完成。不因失败重复采样直到成功。保存完整审计与脱敏报告，不提交凭据、临时存档或原始玩家隐私输入。
+
+脚本能力完整：`SMOKE_LIMITS` = 160 请求 / 45 分钟 / 单局 40 回合；达限记 `SMOKE_BUDGET_STOP` 并停止后续局；首局（`playToEnding`）在分支后继续推进至 `world.ending`，未到结局报 `PLAYTHROUGH_ENDING_NOT_REACHED`（续接成功明确不算通关）；独立临时 `GAME_DB_PATH`，不碰用户存档槽。**真实 AI 执行属 Step 4**：需在具备配置的环境显式 `npm run smoke:ai:staged`，未执行前不得声称验收完成。
 - [ ] **Step 4:** 执行 `npm run typecheck`、`npm run test:boundaries`、`npm test`、`npm run test:fast`、`npm run build`；然后在有真实 AI 配置的实施环境显式门禁运行 `npm run smoke:ai:staged`。人工逐条检查旁白/台词秘密泄露、纯对白、事实来源和两条策略分化。通过标准：所有离线门禁通过，所有已发布样本无已发现越权泄漏/假分支/格式违规，3/3开局及6/6续接在预算内成功，至少1局完整短篇通关；失败样本全部留存，未满足不得声称验收完成。
 - [ ] **Step 5:** 浏览器验证202开局刷新恢复、失败同任务重试、NPC/旁白阅读顺序、两个 label 无小说前缀、选择导致不同目标；不能以静态截图代替实际交互。报告记录实际延迟、请求数、transport重试、质量拒绝与剩余限制；不声称自然语言绝对安全。
 - [ ] **Step 6:** 原位更新事实归属文档：运行时链/预算归 runtime，知识归 NPC/记忆，API恢复与配置归 operations/AI环境，玩家纯对白和分支归策划；不重复维护详细契约。文档新增入口依赖才改索引，不写阶段成绩。`npm run check:docs`、`git diff --check`；只提交本任务文件，`docs: document staged narrative contracts and acceptance`。

@@ -78,6 +78,15 @@ export type BundleSceneProposal = {
   readonly objectiveLink: ScenePerformanceObjectiveLink | null;
   readonly choices: readonly { readonly candidateId: string; readonly label: string }[];
   readonly handoffAcknowledgement?: string;
+  /**
+   * 分阶段生成的条件证据元数据（Task 6）：句段索引、observationKey、受众。
+   * partIndex 指向 segments 的下标；npcLine 的观察用 -1 标记。
+   */
+  readonly conditionalEvidence?: readonly {
+    readonly partIndex: number;
+    readonly observationKey: string;
+    readonly audienceId: string;
+  }[];
 };
 
 export type BundleStepProposal = {
@@ -90,6 +99,11 @@ export type NarrativeBundleProposal = {
   readonly currentScene: BundleSceneProposal;
   readonly continuationScenes: readonly BundleStepProposal[];
   readonly terminal: NarrativeBundleTerminal;
+  /**
+   * 终幕立场的纯对白 label map（Task 9）：ending 包没有普通 choices，
+   * 两个立场 label 只能存在这里；ordinary 包为 null。
+   */
+  readonly endingLabels?: BundleEndingLabelMap | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -133,6 +147,31 @@ export type NarrativeBundleTerminalState =
   | { readonly kind: "next_decision"; readonly target: { readonly kind: "continuation_step"; readonly stepId: string } }
   | { readonly kind: "ending" };
 
+/** 终幕立场的纯对白 label map：ordinary 包必须 null，ending 包必须恰好两条。 */
+export type BundleEndingLabelMap = Readonly<{
+  readonly trust: string;
+  readonly doubt: string;
+}>;
+
+/**
+ * 一步内被实际披露的观察（contract 2）。只存结构化引用：key、factId、
+ * certainty 与来源；不保存模型原文。消费时按 key 与条件证据对齐，铸造
+ * narrative_observed 事件，条件引用在消费前绝不进入已提交 ledger。
+ */
+export type BundleStepObservation = Readonly<{
+  readonly key: string;
+  readonly factId: string;
+  readonly certainty: "known" | "suspected";
+  readonly source:
+    | { readonly kind: "witness" }
+    | { readonly kind: "speech"; readonly speakerId: string };
+}>;
+
+/**
+ * contract 2 的步：在 v1 之上补「依赖 + 表达顺序 + 观察清单」。
+ * 依赖仍由 nextStepIds 表达（有向无环，parse 已校验）；expressionOrder 是
+ * 该步表达单元 key 的确定顺序，消费时按此复核前提而非比较 baseRevision。
+ */
 export type NarrativeBundleStepState = {
   readonly stepId: string;
   readonly objectiveKey: string;
@@ -140,14 +179,17 @@ export type NarrativeBundleStepState = {
   readonly trigger: NarrativeBundleTrigger;
   readonly scene: PreparedSceneSeedState;
   readonly nextStepIds: readonly string[];
+  readonly observations?: readonly BundleStepObservation[];
+  readonly expressionOrder?: readonly string[];
 };
 
 export type NarrativeBundleState = {
-  readonly contractVersion: 1;
+  readonly contractVersion: 1 | 2;
   readonly originJobId: NarrativeJobId;
   readonly steps: readonly NarrativeBundleStepState[];
   readonly activeStepIds: readonly string[];
   readonly terminal: NarrativeBundleTerminalState;
+  readonly endingLabels?: BundleEndingLabelMap | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -175,6 +217,8 @@ export const NARRATIVE_BUNDLE_PROPOSAL_REJECTION_REASONS = [
   "ending_terminal_requires_empty_bundle",
   "too_many_steps",
   "duplicate_step_keys",
+  "ending_labels_missing",
+  "ending_labels_invalid",
 ] as const;
 
 export type NarrativeBundleProposalRejectionReason = typeof NARRATIVE_BUNDLE_PROPOSAL_REJECTION_REASONS[number];
@@ -285,14 +329,23 @@ function isChoiceCandidate(value: unknown): boolean {
   return isNonEmptyString(value.candidateId) && isNonEmptyString(value.label);
 }
 
+function isConditionalEvidence(value: unknown): boolean {
+  if (!isRecord(value) || !hasOnlyKeys(value, ["partIndex", "observationKey", "audienceId"])) return false;
+  return typeof value.partIndex === "number" && Number.isInteger(value.partIndex)
+    && isNonEmptyString(value.observationKey)
+    && isNonEmptyString(value.audienceId);
+}
+
 function isBundleSceneProposal(value: unknown): value is BundleSceneProposal {
   if (!isRecord(value)) return false;
-  if (!hasOnlyKeys(value, ["segments", "npcLine", "npcDialogues", "objectiveLink", "choices", "handoffAcknowledgement"])) return false;
+  if (!hasOnlyKeys(value, ["segments", "npcLine", "npcDialogues", "objectiveLink", "choices", "handoffAcknowledgement", "conditionalEvidence"])) return false;
   if (!Array.isArray(value.segments) || !value.segments.every(isScenePerformanceSegment)) return false;
   if (value.npcLine !== null && !isScenePerformanceNpcLine(value.npcLine)) return false;
   if (value.npcDialogues !== undefined && (!Array.isArray(value.npcDialogues) || !value.npcDialogues.every(isScenePerformanceNpcDialogue))) return false;
   if (value.objectiveLink !== null && !isScenePerformanceObjectiveLink(value.objectiveLink)) return false;
   if (!Array.isArray(value.choices) || !value.choices.every(isChoiceCandidate)) return false;
+  if (value.conditionalEvidence !== undefined
+    && (!Array.isArray(value.conditionalEvidence) || !value.conditionalEvidence.every(isConditionalEvidence))) return false;
   return value.handoffAcknowledgement === undefined || isNonEmptyString(value.handoffAcknowledgement);
 }
 
@@ -328,7 +381,7 @@ function isBundleStepProposal(value: unknown): value is BundleStepProposal {
 
 export function parseNarrativeBundleProposal(value: unknown): ParseNarrativeBundleProposalResult {
   if (!isRecord(value)) return invalidProposal("not_object");
-  if (!hasOnlyKeys(value, ["worldDelta", "currentScene", "continuationScenes", "terminal"])) return invalidProposal("unknown_keys");
+  if (!hasOnlyKeys(value, ["worldDelta", "currentScene", "continuationScenes", "terminal", "endingLabels"])) return invalidProposal("unknown_keys");
   // worldDelta can be null or any object (approval validates it separately)
   if (!isBundleSceneProposal(value.currentScene)) return invalidProposal("current_scene_invalid");
   if (!Array.isArray(value.continuationScenes) || !value.continuationScenes.every(isBundleStepProposal)) return invalidProposal("continuation_scenes_invalid");
@@ -360,11 +413,15 @@ export function parseNarrativeBundleProposal(value: unknown): ParseNarrativeBund
     }
   }
 
-  // ending terminal must have empty continuation
+  // ending terminal must have empty continuation，且两个立场 label 只能来自 endingLabels
   if (terminal.kind === "ending") {
     if (continuationScenes.length > 0 || value.currentScene.choices.length !== 0) {
       return invalidProposal("ending_terminal_requires_empty_bundle");
     }
+    if (value.endingLabels === undefined) return invalidProposal("ending_labels_missing");
+    if (!isEndingLabelMap(value.endingLabels)) return invalidProposal("ending_labels_invalid");
+  } else if (value.endingLabels !== undefined && value.endingLabels !== null) {
+    return invalidProposal("ending_labels_invalid");
   }
 
   // step limit
@@ -445,7 +502,7 @@ function isTerminalState(value: unknown): value is NarrativeBundleTerminalState 
 // validate the scene shape inline.
 function isPreparedSceneSeedState(value: unknown): boolean {
   if (!isRecord(value)) return false;
-  if (!hasOnlyKeys(value, ["segments", "event", "npcLine", "npcDialogues", "objectiveLink", "choiceSeeds", "source"])) return false;
+  if (!hasOnlyKeys(value, ["segments", "event", "npcLine", "npcDialogues", "objectiveLink", "choiceSeeds", "source", "conditionalEvidence"])) return false;
   if (!Array.isArray(value.segments) || !value.segments.every((seg) => (
     isRecord(seg)
     && hasOnlyKeys(seg, ["beatId", "text", "referencedEntityIds"])
@@ -518,15 +575,51 @@ function isPreparedSceneSeedState(value: unknown): boolean {
   return value.source === "generated" || value.source === "fixture";
 }
 
-function isBundleStepState(value: unknown): value is NarrativeBundleStepState {
+function isBundleStepObservation(value: unknown): boolean {
   if (!isRecord(value)) return false;
-  if (!hasOnlyKeys(value, ["stepId", "objectiveKey", "consumptionGroupKey", "trigger", "scene", "nextStepIds"])) return false;
-  return isNonEmptyString(value.stepId)
-    && isNonEmptyString(value.objectiveKey)
-    && isNonEmptyString(value.consumptionGroupKey)
-    && isBundleTrigger(value.trigger)
-    && isPreparedSceneSeedState(value.scene)
-    && isStringArray(value.nextStepIds);
+  if (!hasOnlyKeys(value, ["key", "factId", "certainty", "source"])) return false;
+  if (!isNonEmptyString(value.key) || !isNonEmptyString(value.factId)) return false;
+  if (value.certainty !== "known" && value.certainty !== "suspected") return false;
+  const source = value.source as unknown;
+  if (!isRecord(source)) return false;
+  return source.kind === "witness"
+    ? hasOnlyKeys(source, ["kind"])
+    : hasOnlyKeys(source, ["kind", "speakerId"]) && isNonEmptyString(source.speakerId);
+}
+
+function isEndingLabelMap(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return hasOnlyKeys(value, ["trust", "doubt"])
+    && isNonEmptyString(value.trust)
+    && isNonEmptyString(value.doubt);
+}
+
+/** contract 2 的步必须有 observations 与 expressionOrder；contract 1 两者都不得出现。 */
+function hasContractTwoStepFields(value: Record<string, unknown>): boolean {
+  return Object.hasOwn(value, "observations") || Object.hasOwn(value, "expressionOrder");
+}
+
+function isBundleStepState(value: unknown, contractVersion: 1 | 2): value is NarrativeBundleStepState {
+  if (!isRecord(value)) return false;
+  if (!hasOnlyKeys(value, [
+    "stepId", "objectiveKey", "consumptionGroupKey", "trigger", "scene", "nextStepIds",
+    "observations", "expressionOrder",
+  ])) return false;
+  if (!isNonEmptyString(value.stepId)
+    || !isNonEmptyString(value.objectiveKey)
+    || !isNonEmptyString(value.consumptionGroupKey)
+    || !isBundleTrigger(value.trigger)
+    || !isPreparedSceneSeedState(value.scene)
+    || !isStringArray(value.nextStepIds)) return false;
+  if (contractVersion === 2) {
+    if (!hasContractTwoStepFields(value)) return false;
+    if (!Array.isArray(value.observations) || !value.observations.every(isBundleStepObservation)) return false;
+    if (!isStringArray(value.expressionOrder) || !hasUniqueStrings(value.expressionOrder)) return false;
+    const keys = new Set((value.observations as readonly BundleStepObservation[]).map((o) => o.key));
+    if (keys.size !== (value.observations as readonly BundleStepObservation[]).length) return false;
+    return true;
+  }
+  return !hasContractTwoStepFields(value);
 }
 
 function isAcyclic(steps: readonly NarrativeBundleStepState[]): boolean {
@@ -550,12 +643,26 @@ function isAcyclic(steps: readonly NarrativeBundleStepState[]): boolean {
 
 export function parseNarrativeBundleState(value: unknown): ParseNarrativeBundleStateResult {
   if (!isRecord(value)) return INVALID_STATE;
-  if (!hasOnlyKeys(value, ["contractVersion", "originJobId", "steps", "activeStepIds", "terminal"])) return INVALID_STATE;
-  if (value.contractVersion !== 1) return INVALID_STATE;
+  if (!hasOnlyKeys(value, ["contractVersion", "originJobId", "steps", "activeStepIds", "terminal", "endingLabels"])) return INVALID_STATE;
+  const contractVersion = value.contractVersion;
+  if (contractVersion !== 1 && contractVersion !== 2) return INVALID_STATE;
   if (!isNonEmptyString(value.originJobId)) return INVALID_STATE;
-  if (!Array.isArray(value.steps) || !value.steps.every(isBundleStepState)) return INVALID_STATE;
+  if (!Array.isArray(value.steps) || !value.steps.every((step) => isBundleStepState(step, contractVersion))) return INVALID_STATE;
   if (!isStringArray(value.activeStepIds) || !hasUniqueStrings(value.activeStepIds)) return INVALID_STATE;
   if (!isTerminalState(value.terminal)) return INVALID_STATE;
+
+  // contract 2 的终幕 label map：ordinary 包必须 null，ending 包必须恰好两条。
+  const terminal = value.terminal as NarrativeBundleTerminalState;
+  if (contractVersion === 2) {
+    if (!Object.hasOwn(value, "endingLabels")) return INVALID_STATE;
+    if (terminal.kind === "ending") {
+      if (!isEndingLabelMap(value.endingLabels)) return INVALID_STATE;
+    } else if (value.endingLabels !== null) {
+      return INVALID_STATE;
+    }
+  } else if (Object.hasOwn(value, "endingLabels")) {
+    return INVALID_STATE;
+  }
 
   const steps = value.steps as readonly NarrativeBundleStepState[];
   const stepIds = steps.map((s) => s.stepId);
@@ -584,8 +691,6 @@ export function parseNarrativeBundleState(value: unknown): ParseNarrativeBundleS
     if (siblingTriggerKeys.has(key)) return INVALID_STATE;
     siblingTriggerKeys.add(key);
   }
-
-  const terminal = value.terminal as NarrativeBundleTerminalState;
 
   // continuation_step terminal: stepId must exist
   if (terminal.kind === "next_decision" && terminal.target.kind === "continuation_step") {

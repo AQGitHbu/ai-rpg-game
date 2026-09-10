@@ -31,11 +31,11 @@ const initialInput = {
 } as const;
 
 describe("StoryState", () => {
-  it("initializes the v8 schema at turn zero with the supplied runtime and empty memory", () => {
+  it("initializes the v9 schema at turn zero with the supplied runtime and empty memory", () => {
     const ss = createInitialStoryState(initialInput);
 
-    expect(STORY_STATE_SCHEMA_VERSION).toBe(8);
-    expect(ss.version).toBe(8);
+    expect(STORY_STATE_SCHEMA_VERSION).toBe(9);
+    expect(ss.version).toBe(9);
     expect(ss.turnNumber).toBe(0);
     expect(ss.narrative).toBe(initialNarrative);
     expect(ss.memory).toEqual(createEmptyEpisodicMemory());
@@ -64,7 +64,9 @@ describe("StoryState", () => {
       code: "UNSUPPORTED_RECORD",
     });
     expect(classifyStoryStateSchemaVersion(7)).toEqual({ ok: false, code: "UNSUPPORTED_RECORD" });
-    expect(classifyStoryStateSchemaVersion(8)).toEqual({ ok: true, version: 8 });
+    // v8 缺少 branchDecisions/selectedBranches，v9 起同样不迁移。
+    expect(classifyStoryStateSchemaVersion(8)).toEqual({ ok: false, code: "UNSUPPORTED_RECORD" });
+    expect(classifyStoryStateSchemaVersion(9)).toEqual({ ok: true, version: 9 });
   });
 
   it("createInitialStoryState sets act=1, tension=30, reveal", () => {

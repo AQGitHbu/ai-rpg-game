@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { compileOpeningGenerationCandidate } from "./compileOpeningGenerationCandidate";
+import { compileOpeningGenerationCandidate, compileOpeningStructure } from "./compileOpeningGenerationCandidate";
 import { validateOpeningGenerationCandidate } from "./validateOpeningGenerationCandidate";
 import type { OpeningGenerationCandidate } from "@/game/domain/openingGenerationCandidate";
 import type { StoryState } from "@/game/domain/storyState";
@@ -418,5 +418,59 @@ describe("compileOpeningGenerationCandidate", () => {
     expect(worldState.worldFacts.every((fact) => fact.investigationApproaches === undefined)).toBe(true);
     const serialized = JSON.stringify(worldState);
     expect(serialized).not.toContain("investigationApproaches");
+  });
+});
+
+describe("compileOpeningStructure", () => {
+  it("不依赖 initialNarrative：产出正式 provider_pending 结构状态", () => {
+    const structure = compileOpeningStructure({
+      candidate: validCandidate(),
+      generation: {
+        generationId: asGenerationId("gen_seed"),
+        seed: "seed",
+        templateVersion: "v2",
+        inputDigest: "",
+        gameType: "wuxia",
+      },
+      gameLength: "short",
+      seed: "seed",
+    });
+    expect(structure.storyState.narrative.status).toBe("provider_pending");
+    expect(structure.worldState.quests).toHaveLength(1);
+    expect(String(structure.worldState.currentLocationId)).toBe("loc_0");
+  });
+
+  it("seed 显式传入：town 几何只由显式 seed 决定且确定性可复现", () => {
+    const generation = {
+      generationId: asGenerationId("gen_seed"),
+      seed: "ignored-generation-seed",
+      templateVersion: "v2",
+      inputDigest: "",
+      gameType: "wuxia",
+    } as const;
+    const a = compileOpeningStructure({ candidate: validCandidate(), generation, gameLength: "short", seed: "seed-a" });
+    const b = compileOpeningStructure({ candidate: validCandidate(), generation, gameLength: "short", seed: "seed-b" });
+    const aTown = JSON.stringify(a.worldState.entityStore);
+    const bTown = JSON.stringify(b.worldState.entityStore);
+    // generation.seed 不再参与结构几何：显式 seed 不同 → town 几何不同
+    expect(aTown).not.toBe(bTown);
+    expect(a).toEqual(compileOpeningStructure({ candidate: validCandidate(), generation, gameLength: "short", seed: "seed-a" }));
+  });
+
+  it("旧入口仍是结构编译 + 叙事安装的兼容包装", () => {
+    const narrative = createFixtureNarrativeRuntimeState();
+    const compiled = compileOpeningGenerationCandidate({
+      candidate: validCandidate(),
+      generation: {
+        generationId: asGenerationId("gen_seed"),
+        seed: "seed",
+        templateVersion: "v2",
+        inputDigest: "",
+        gameType: "wuxia",
+      },
+      gameLength: "short",
+      initialNarrative: narrative,
+    });
+    expect(compiled.storyState.narrative).toBe(narrative);
   });
 });

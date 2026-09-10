@@ -6,6 +6,7 @@ import {
   type StoryState,
   type PacingNeed,
 } from "@/game/domain/storyState";
+import { parseDecision } from "@/game/domain/narrativeBranch";
 
 export type PersistableStoryStateValidationResult =
   | { readonly ok: true; readonly value: StoryState }
@@ -17,6 +18,7 @@ const REQUIRED_STORY_KEYS = [
   "version", "turnNumber", "currentAct", "targetActs", "storyProgress", "tension", "nextPacingNeed",
   "budget", "unresolvedThreads", "candidateEventPool", "endingAllowed", "endingProposed", "narrative",
   "prologueShown", "prologueText", "memory", "contract", "evolution",
+  "branchDecisions", "selectedBranches",
 ] as const;
 const ALL_STORY_KEYS = [...REQUIRED_STORY_KEYS, "reveal"] as const;
 const PACING_NEEDS: readonly PacingNeed[] = ["reveal", "develop", "complicate", "escalate", "climax", "resolve"];
@@ -40,6 +42,19 @@ function isStringArray(value: unknown): value is readonly string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === "string");
 }
 
+/** 分支 registry：decisionId → Decision，只接受严格解析通过的完整 Decision。 */
+function isBranchDecisions(value: unknown): boolean {
+  if (!isObject(value)) return false;
+  return Object.values(value).every((entry) => parseDecision(entry).ok);
+}
+
+/** 已选分支：decisionId → candidateId，两个 ID 都必须是非空字符串。 */
+function isSelectedBranches(value: unknown): boolean {
+  if (!isObject(value)) return false;
+  return Object.entries(value).every(([key, candidateId]) =>
+    key.trim().length > 0 && typeof candidateId === "string" && candidateId.trim().length > 0);
+}
+
 function isReveal(value: unknown): boolean {
   if (value === null) return true;
   return isObject(value)
@@ -54,7 +69,7 @@ function isStoryShape(value: JsonObject): value is JsonObject & {
   readonly narrative: unknown;
 } {
   return hasExactStoryKeys(value)
-    && value.version === 8
+    && value.version === 9
     && isNonNegativeInteger(value.turnNumber)
     && isNonNegativeInteger(value.currentAct)
     && isNonNegativeInteger(value.targetActs)
@@ -70,6 +85,8 @@ function isStoryShape(value: JsonObject): value is JsonObject & {
     && typeof value.prologueShown === "boolean"
     && typeof value.prologueText === "string"
     && isObject(value.evolution)
+    && isBranchDecisions(value.branchDecisions)
+    && isSelectedBranches(value.selectedBranches)
     && (!('reveal' in value) || isReveal(value.reveal));
 }
 
@@ -81,7 +98,7 @@ function sameJson(left: unknown, right: unknown): boolean {
   }
 }
 
-/** SQLite boundary parser for v8 StoryState. Memory is accepted only when it
+/** SQLite boundary parser for v9 StoryState. Memory is accepted only when it
  * is byte-for-byte equivalent to the read model rebuilt from the supplied v6 world ledger. */
 export function parsePersistableStoryState(
   value: unknown,

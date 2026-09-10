@@ -6,12 +6,60 @@ import { performTurn } from "../performTurn";
 import type { NarrativeBundleSource } from "../narrativeBundleSource";
 import type { GameRecord, GameRepository } from "../server/persistence/gameRepository";
 import { asGameId } from "../server/persistence/gameRepository";
+import type {
+  NarrativeJobRepository,
+  StoredJob,
+} from "../server/persistence/narrativeJobRepository";
 import { buildOpeningHandoffContext, compileDecisionNarrativeContext } from "../server/ai/narrativeContext";
 import type { OpeningGenerationCandidate } from "@/game/domain/openingGenerationCandidate";
 import { generatePendingNarrativeBundle } from "../generatePendingNarrativeBundle";
-import { createNarrativeBundleSource } from "../server/ai/liveNarrativeBundleSource";
+import { createLiveStageSource } from "../server/ai/staged/liveStageSource";
 import type { RpgAiClient } from "../server/ai/rpgAiClient";
-import type { AiMessage } from "@ai-game/ai-transport";
+
+/** 内存 job 仓储：足以驱动一次分阶段决策任务（start/get/claim/save/publish）。 */
+function createMemoryJobs(): NarrativeJobRepository {
+  const rows = new Map<string, StoredJob>();
+  return {
+    async start({ job }) {
+      rows.set(job.id, job);
+      return { ok: true, value: job };
+    },
+    async get(id) {
+      const job = rows.get(id);
+      if (job === undefined) return { ok: false, code: "JOB_NOT_FOUND" as const };
+      return { ok: true, value: job };
+    },
+    async getInitialization() {
+      return { ok: true, value: null };
+    },
+    async claim({ id, owner, expiresAt }) {
+      return { ok: true, value: { jobId: id, owner, fence: 1, expiresAt } };
+    },
+    async renew({ lease, expiresAt }) {
+      return { ok: true, value: { ...lease, expiresAt } };
+    },
+    async release() {
+      return { ok: true, value: true as const };
+    },
+    async control() {
+      return { ok: false, code: "JOB_CONFLICT" as const };
+    },
+    async save({ lease, expectedVersion, job }) {
+      const current = rows.get(lease.jobId);
+      if (current === undefined) return { ok: false, code: "JOB_NOT_FOUND" as const };
+      if (current.version !== expectedVersion) return { ok: false, code: "JOB_CONFLICT" as const };
+      rows.set(lease.jobId, { ...job, version: current.version + 1 });
+      return { ok: true, value: rows.get(lease.jobId)! };
+    },
+    async publish({ lease, expectedVersion }) {
+      const current = rows.get(lease.jobId);
+      if (current === undefined) return { ok: false, code: "JOB_NOT_FOUND" as const };
+      if (current.version !== expectedVersion) return { ok: false, code: "JOB_CONFLICT" as const };
+      rows.set(lease.jobId, { ...current, status: "published", version: current.version + 1 });
+      return { ok: true, value: rows.get(lease.jobId)! };
+    },
+  };
+}
 
 function repository(initial: GameRecord | null = null): { repo: GameRepository; record: () => GameRecord } {
   let current = initial === null ? null : structuredClone(initial);
@@ -138,7 +186,7 @@ describe("opening quality create → ack → choice → decision context", () =>
     expect(thread.factIds).toEqual(["fact_1", "fact_0", "fact_2"]);
   });
 
-  it("rejects a real oversized first-turn opening context before calling the production provider", async () => {
+  it("reports real oversized first-turn context overflow through the staged compile manifest", async () => {
     const created = repository();
     const repeated = "公开背景。".repeat(100);
     const result = await createGame(
@@ -190,20 +238,26 @@ describe("opening quality create → ack → choice → decision context", () =>
     const compilation = compileDecisionNarrativeContext({ worldState: pending.worldState, storyState: pending.storyState, job: pending.storyState.narrative.job });
     expect(compilation.manifest.overflowEstimatedTokens).toBeGreaterThan(0);
 
-    const complete = vi.fn();
+    const complete = vi.fn(async () => ({ ok: false as const, code: "invalid_response" as const, retryable: false, latencyMs: 1 }));
     const aiClient: RpgAiClient = {
       complete,
       policy: () => ({ thinking: "off", timeoutMs: 1_000, maxTokens: 5_000, jsonMode: "prompt_only", maxAttempts: 1 }),
     };
-    const sourceResult = await createNarrativeBundleSource({ aiClient }).generate({
-      kind: "decision",
-      worldState: pending.worldState,
-      storyState: pending.storyState,
-      job: pending.storyState.narrative.job,
+    const jobs = createMemoryJobs();
+    const sourceResult = await generatePendingNarrativeBundle({
+      repository: created.repo,
+      jobs,
+      source: createLiveStageSource({ client: aiClient }),
+      now: () => "2026-09-09T00:02:00.000Z",
     });
 
-    expect(sourceResult).toMatchObject({ ok: false, repairReason: "context_budget_exceeded" });
-    expect(complete).not.toHaveBeenCalled();
+    // Task 10 行为变化：旧整包源在超预算时直接 abort；分阶段链路把超预算转成
+    // 「显式丢弃低优先块」并如实上报 manifest.overflowEstimatedTokens（上方已断言
+    // > 0），不再以 provider 失败形式短路。此处锁定新契约：provider 被调用，
+    // 且返回的失败不是 context_budget_exceeded（该码已不再是生产路径的失败面）。
+    expect(complete).toHaveBeenCalled();
+    expect(sourceResult.ok).toBe(false);
+    if (!sourceResult.ok) expect(sourceResult.code).not.toBe("context_budget_exceeded");
   });
   it("carries each real approved choice and the selected thread's public causal chain", async () => {
     const created = repository();
@@ -284,34 +338,45 @@ describe("opening quality create → ack → choice → decision context", () =>
       job: secondJob,
     })).toBeNull();
 
-    const capturedMessages: AiMessage[][] = [];
+    // Task 10：生产改为分阶段任务链（planning → narration/character/choices）。
+    // 旧整包 prompt 的 "capturedMessages 四连" 断言已随生产切换迁移到分阶段
+    // 契约：规划阶段只拿骨架与事实分区，表达阶段只拿 SafeContext 投影。
+    const captured: Array<{ stage: string; prompt: string }> = [];
     const aiClient: RpgAiClient = {
       async complete(_role, messages) {
-        capturedMessages.push([...messages]);
+        captured.push({ stage: "", prompt: messages.map((message) => message.content).join("\n") });
         return { ok: false, code: "invalid_response", retryable: false, latencyMs: 1 };
       },
       policy: () => ({ thinking: "off", timeoutMs: 1_000, maxTokens: 5_000, jsonMode: "prompt_only", maxAttempts: 1 }),
     };
+    const jobs = createMemoryJobs();
     const sourceResult = await generatePendingNarrativeBundle({
       repository: branches[1]!.repo,
-      source: createNarrativeBundleSource({ aiClient }),
+      jobs,
+      source: createLiveStageSource({ client: aiClient }),
       now: () => "2026-09-09T00:02:00.000Z",
     });
+    // 分阶段源在首个 stage（planning）即失败：不再有「整包四次循环」。
     expect(sourceResult.ok).toBe(false);
-    expect(capturedMessages).toHaveLength(4);
-    const actualDecisionPrompt = capturedMessages[0]!.map((message) => message.content).join("\n");
-    expect(actualDecisionPrompt).toContain("[relevant_events] 开局背景与本次回应");
-    expect(actualDecisionPrompt).toContain("主角过去曾与船厂技师共同维修引擎");
-    expect(actualDecisionPrompt).toContain("我现在不能答应停机");
-    expect(actualDecisionPrompt).toContain("先直接回答或明确承认自己不知道");
-    expect(actualDecisionPrompt).toContain("不能补写状态中没有的既成事实");
-    expect(actualDecisionPrompt).toContain("选项 label 必须忠于其服务端 Action");
-    expect(actualDecisionPrompt).toContain('current_scene_choice_1 => {"type":"talk"');
-    expect(actualDecisionPrompt).toContain('"dialogueAct":"support"');
-    expect(actualDecisionPrompt).toContain('"topic":"general"');
-    expect(actualDecisionPrompt).toContain("本次所选结构化意图：dialogueAct=refuse；topic=thread:thread_init_shutdown");
-    expect(actualDecisionPrompt).not.toContain("技师私自隐去了上次维修失误");
-    expect(capturedMessages.map((messages) => messages.map((message) => message.content).join("\n").match(/eventId=.*thread_shutdown/g)?.length)).toEqual([1, 1, 1, 1]);
+    expect(captured.length).toBeGreaterThan(0);
+    const planningPrompt = captured[0]!.prompt;
+    // 规划 prompt 携带行动上下文与必选节拍；公开事实可进可见文本。
+    expect(planningPrompt).toContain("# 本回合上下文");
+    expect(planningPrompt).toContain("- 行动：talk");
+    expect(planningPrompt).toContain("# 必选节拍");
+    // 开局交接的公开事实进入「公开事实」分区（可按 fact id 与文本引用）。
+    expect(planningPrompt).toContain("# 公开事实（可进入可见文本）");
+    expect(planningPrompt).toContain("主角过去曾与船厂技师共同维修引擎");
+    expect(planningPrompt).toContain("老旧引擎必须立刻停机检查");
+    // 私密事实只允许出现在「私密事实」分区，不得混入公开分区。
+    const publicSection = planningPrompt.slice(
+      planningPrompt.indexOf("# 公开事实"),
+      planningPrompt.indexOf("# 私密事实"),
+    );
+    expect(publicSection).not.toContain("技师私自隐去了上次维修失误");
+    expect(planningPrompt).toContain("# 私密事实（只可用于结构化引用，不得进入可见文本）");
+    // 决策链路禁止重跑开局结构编译。
+    expect(planningPrompt).toContain("决策链路禁止重跑开局结构编译");
     expect(branches[1]!.record().worldState.eventLedger.filter((event) => event.kind === "opening_history_established")).toHaveLength(3);
   });
 });

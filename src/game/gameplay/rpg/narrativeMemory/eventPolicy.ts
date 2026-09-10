@@ -175,6 +175,16 @@ export const EVENT_POLICY = {
     defaultSalience: 65,
     summaryKeys: ["relationship_changed"],
   },
+  narrative_branch_selected: {
+    defaultOutcome: "neutral" as const,
+    defaultSalience: 60,
+    summaryKeys: ["branch_selected"],
+  },
+  narrative_observed: {
+    defaultOutcome: "neutral" as const,
+    defaultSalience: 50,
+    summaryKeys: ["observed"],
+  },
 } satisfies Record<NarrativeEventPayload["type"], EventPolicyEntry>;
 
 /** 查询某 payload type 的固定 metadata policy。 */

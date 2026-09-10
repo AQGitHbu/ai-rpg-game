@@ -8,11 +8,12 @@ import { createStoryContract } from "./storyContract";
 import type { StoryEvolutionState } from "./worldDelta";
 import type { QuestId } from "./worldEntity";
 import { createEmptyEpisodicMemory, type EpisodicMemoryState } from "./episodicMemory";
+import type { Decision } from "./narrativeBranch";
 
 // 结构化候选事件契约由 candidateEvent.ts 定义并在此再导出，保持既有调用点兼容。
 export type { EventCandidate, EventCandidateKind, ProposedEffect } from "./candidateEvent";
 
-export const STORY_STATE_SCHEMA_VERSION = 8 as const;
+export const STORY_STATE_SCHEMA_VERSION = 9 as const;
 
 export type StoryStateSchemaVersionErrorCode =
   | "UNSUPPORTED_RECORD"
@@ -32,7 +33,7 @@ export function classifyStoryStateSchemaVersion(
   if (version === STORY_STATE_SCHEMA_VERSION) {
     return { ok: true, version: STORY_STATE_SCHEMA_VERSION };
   }
-  if (version === 1 || version === 2 || version === 3 || version === 4 || version === 5 || version === 6 || version === 7) {
+  if (version === 1 || version === 2 || version === 3 || version === 4 || version === 5 || version === 6 || version === 7 || version === 8) {
     return { ok: false, code: "UNSUPPORTED_RECORD" };
   }
   return { ok: false, code: "UNSUPPORTED_STORY_STATE_VERSION" };
@@ -78,6 +79,14 @@ export type StoryState = {
   readonly evolution: StoryEvolutionState;
   /** 动态主线的分阶段释放游标；旧存档缺失时保持既有可见性。 */
   readonly reveal?: StoryRevealState | null;
+  /**
+   * 已审批的路线分支 registry：decisionId → Decision。
+   * 只存在于服务端权威状态，不进客户端 DTO；分支只能由服务端从此处取值，
+   * 不接受客户端提交 Decision。
+   */
+  readonly branchDecisions: Readonly<Record<string, Decision>>;
+  /** 已选择的分支：decisionId → candidateId。每个 decisionId 只写一次。 */
+  readonly selectedBranches: Readonly<Record<string, string>>;
 };
 
 export type CreateInitialStoryStateInput = {
@@ -129,6 +138,8 @@ export function createInitialStoryState(input: CreateInitialStoryStateInput): St
       status: "stable",
     },
     reveal: null,
+    branchDecisions: {},
+    selectedBranches: {},
   };
 }
 

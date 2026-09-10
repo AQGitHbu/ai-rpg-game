@@ -13,6 +13,7 @@ describe("eventPolicy", () => {
       "player_intent_expressed", "candidate_event_approved", "candidate_event_rejected",
       "candidate_event_expired", "candidate_event_activated",
       "npc_interaction_recorded", "npc_knowledge_changed", "npc_relationship_changed",
+      "narrative_observed",
     ];
     for (const kind of allTypes) {
       const policy = getEventPolicy(kind);

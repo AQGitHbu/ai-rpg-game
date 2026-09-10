@@ -32,7 +32,7 @@ import { knowledgeWritesFromFactChange } from "@/game/gameplay/rpg/npcMemory";
 export function propagateKnownFacts(
   ws: WorldState,
   factChanges: readonly FactChange[],
-  deps: Readonly<{ actionId: string; turnNumber: number; eventId: EventId; turnId?: TurnId; speakerNpcId?: NpcId }>,
+  deps: Readonly<{ actionId: string; turnNumber: number; eventId: EventId; turnId?: TurnId; speakerNpcId?: NpcId; stagedNarrative?: boolean }>,
 ): WorldState {
   return propagateKnownFactsWithDrafts(ws, factChanges, deps).worldState;
 }
@@ -46,9 +46,13 @@ export type PropagateKnownFactsResult = Readonly<{
 export function propagateKnownFactsWithDrafts(
   ws: WorldState,
   factChanges: readonly FactChange[],
-  deps: Readonly<{ actionId: string; turnNumber: number; eventId: EventId; turnId?: TurnId; speakerNpcId?: NpcId }>,
+  deps: Readonly<{ actionId: string; turnNumber: number; eventId: EventId; turnId?: TurnId; speakerNpcId?: NpcId; stagedNarrative?: boolean }>,
 ): PropagateKnownFactsResult {
   if (factChanges.length === 0) return { worldState: ws, drafts: [] };
+  // staged 叙事模式（Plan Task 4 Step 4）：计划披露的认知不在这里自动写入——
+  // collectDisclosures 核对过的观察在整包发布消费时（Task 9）才转成真实事件提交，
+  // 避免 talk 规则阶段抢先把尚未发布的剧情披露写进权威知识组件。
+  if (deps.stagedNarrative === true) return { worldState: ws, drafts: [] };
 
   const references = knowledgeReferences(ws.entityStore.records);
   const mutations: EntityMutation[] = [];

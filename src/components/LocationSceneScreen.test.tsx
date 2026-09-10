@@ -281,4 +281,44 @@ describe("LocationSceneScreen：对话覆盖层集成", () => {
     // 提交链路不变：只消费服务端 opaque choiceToken，经地点页唯一 onSubmit 出口。
     expect(onSubmit).toHaveBeenCalledWith({ kind: "fixed_choice", choiceToken: "token_give" }, "npc-dialogue");
   });
+
+  // Task 11 / Spec §10：生成完成不得自动跳过玩家当前阅读内容。
+  // 等待态显示提交前捕获的快照，后台写回的新场景不能把它顶掉。
+  it("后台生成完成时不改写玩家正在阅读的对话快照", () => {
+    const onSubmit = vi.fn();
+    const { rerender } = render(
+      <LocationSceneScreen
+        view={viewWithVeraDialogue(veraFocus)}
+        busy={false}
+        onSubmit={onSubmit}
+        onReturnMap={vi.fn()}
+      />,
+    );
+
+    const dialogue = screen.getByRole("dialog", { name: "与薇拉对话" });
+    fireEvent.click(within(dialogue).getByText("井边那晚我也听见了动静。"));
+    fireEvent.click(within(dialogue).getByRole("button", { name: "你看见谁了？" }));
+    expect(onSubmit).toHaveBeenCalledWith({ kind: "fixed_choice", choiceToken: "token_a" }, "npc-dialogue");
+    // 等待态仍保留玩家刚读过的那一页对白。
+    expect(screen.getByText("之后灯就灭了，没人肯说看见什么。")).toBeInTheDocument();
+
+    const nextScene = viewWithVeraDialogue({
+      ...veraFocus,
+      speechPages: ["下一幕的第一页", "下一幕的第二页"],
+      choices: [],
+      freeInputEnabled: false,
+      giveChoices: [],
+    });
+    rerender(
+      <LocationSceneScreen
+        view={{ ...nextScene, revision: nextScene.revision + 1 }}
+        busy={false}
+        onSubmit={onSubmit}
+        onReturnMap={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("之后灯就灭了，没人肯说看见什么。")).toBeInTheDocument();
+    expect(screen.queryByText("下一幕的第一页")).toBeNull();
+  });
 });

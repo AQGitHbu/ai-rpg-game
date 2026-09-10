@@ -137,7 +137,8 @@ export function buildChoiceMap(
       }
     }
 
-    for (const stance of endingDecisionStances(worldState, storyState)) addRuntimeAction(stance.action);
+    const readyState = storyState.narrative.status === "ready" ? storyState.narrative.narrativeBundle : undefined;
+    for (const stance of endingDecisionStances(worldState, storyState, readyState?.endingLabels)) addRuntimeAction(stance.action);
     // Internal explore exists only as an approved, concrete building arrival.
     if (townBuildingInvestigationTargetNpcId(worldState, storyState) !== null) {
       addRuntimeAction({ type: "explore" });

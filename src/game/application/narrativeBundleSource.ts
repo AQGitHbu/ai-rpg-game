@@ -16,8 +16,12 @@ import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
 
 // ---------------------------------------------------------------------------
-// Task 4：统一叙事生成包源端口。一次 generate 调用返回完整原子包提案。
-// 生产注入 liveNarrativeBundleSource（Task 5），离线注入确定性 fixture。
+// 统一叙事生成包源端口（历史整包契约）。
+//
+// Task 10 起生产装配只走分阶段源（narrativeGeneration/stageSource +
+// liveStageSource）；本端口保留给尚未迁移的离线/质量测试，不再是生产
+// 回退路径。依赖守卫（dependencyBoundaries）钉死生产代码不再导入
+// server/ai/liveNarrativeBundleSource。
 // 不含 IO 编排、审批或状态写回——那些由 approveNarrativeBundle 和上层协调。
 // ---------------------------------------------------------------------------
 
@@ -45,6 +49,8 @@ export type NarrativeBundleRejection =
   | "player_utterance_unanswered"
   | "dialogue_focus_line_missing"
   | "objective_link_mismatch"
+  | "staged_dependency_unmet"
+  | "bundle_ending_labels_missing"
   | BundleCoverageErrorCode;
 
 export type NarrativeBundleRepair = AiContentRepair<NarrativeBundleRepairReason, NarrativeBundleRejection>;

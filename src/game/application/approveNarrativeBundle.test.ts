@@ -550,6 +550,7 @@ describe("approveNarrativeBundle", () => {
         ...proposal,
         currentScene: { ...proposal.currentScene, choices: [] },
         terminal: { kind: "ending" },
+        endingLabels: { trust: "我们一起把证据摊开。", doubt: "我要先核对每一份证据。" },
       },
       worldState: directTalkWorld(),
     }));

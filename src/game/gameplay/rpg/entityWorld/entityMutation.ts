@@ -17,6 +17,9 @@ import {
   type RelationshipSource,
 } from "@/game/domain/entity";
 import type { NpcInteraction, WorldState } from "@/game/domain/worldState";
+import type { StoryState } from "@/game/domain/storyState";
+import type { QuestObjective } from "@/game/domain/worldEntries";
+import { isObjectiveSatisfied, isObjectiveSatisfiedInStory } from "@/game/gameplay/rpg/narrativeContext";
 import { PLAYER_ENTITY_ID, type EnemyId, type FactId, type ItemId, type LocationId, type NpcId, type QuestId } from "@/game/domain/worldEntity";
 import type { EventId } from "@/game/domain/events";
 import {
@@ -85,6 +88,12 @@ export type EntityMutation =
   /** 披露改动：唯一的 disclosure 写入通道，evidence 逐字段声明（不给 initial_world 留后门）。 */
   | { readonly kind: "set_npc_knowledge_disclosure"; readonly npcId: NpcId; readonly factId: FactId; readonly disclosure: NpcKnowledgeDisclosure; readonly actionId: string; readonly turnNumber: number }
   | { readonly kind: "set_quest_status"; readonly questId: QuestId; readonly status: "locked" | "active" | "completed" | "failed" | "closed" }
+  /**
+   * 获批路线分支的目标替换：只替换当前未完成目标这一个槽位，长度最多 2。
+   * 这不是任意任务重写通道——replacement 只能来自审批通过的分支模板，
+   * 且 expectedOld 必须与当前值逐字段精确匹配（CAS 语义）。
+   */
+  | { readonly kind: "replace_quest_objective"; readonly questId: QuestId; readonly objectiveIndex: number; readonly expectedOld: QuestObjective; readonly replacement: readonly QuestObjective[] }
   | { readonly kind: "set_enemy_defeated"; readonly enemyId: EnemyId; readonly defeated: boolean }
   | { readonly kind: "set_npc_lifecycle"; readonly npcId: NpcId; readonly lifecycle: "active" | "inactive" }
   /**
@@ -114,6 +123,35 @@ export type EntityMutation =
  * 而不是让兼容载荷悄悄漂到组件形状之外。
  */
 export type NpcInteractionPayload = Omit<NpcInteraction, "relationshipDelta" | "summary">;
+
+/** 目标逐字段精确匹配：分支替换是 CAS，不接受「差不多」的旧值。 */
+function sameObjective(left: QuestObjective, right: QuestObjective): boolean {
+  if (left.kind !== right.kind) return false;
+  switch (left.kind) {
+    case "talk_to_npc":
+      return String(left.npcId) === String((right as { readonly npcId: NpcId }).npcId);
+    case "visit_location":
+      return String(left.locationId) === String((right as { readonly locationId: LocationId }).locationId);
+    case "obtain_item":
+      return String(left.itemId) === String((right as { readonly itemId: ItemId }).itemId)
+        && String(left.giftFromNpcId ?? "") === String((right as { readonly giftFromNpcId?: NpcId }).giftFromNpcId ?? "");
+    case "discover_fact":
+      return String(left.factId) === String((right as { readonly factId: FactId }).factId);
+    case "defeat_enemy":
+      return String(left.enemyId) === String((right as { readonly enemyId: EnemyId }).enemyId);
+  }
+}
+
+/** 替换目标引用的实体必须已经存在（延迟地点在同一次 CAS 中先材质化）。 */
+function objectiveRefExists(ws: WorldState, objective: QuestObjective): boolean {
+  switch (objective.kind) {
+    case "talk_to_npc": return ws.npcs.some((npc) => String(npc.id) === String(objective.npcId));
+    case "visit_location": return ws.locations.some((loc) => String(loc.id) === String(objective.locationId));
+    case "obtain_item": return ws.items.some((item) => String(item.id) === String(objective.itemId));
+    case "discover_fact": return ws.worldFacts.some((fact) => String(fact.factId) === String(objective.factId));
+    case "defeat_enemy": return ws.enemies.some((enemy) => String(enemy.id) === String(objective.enemyId));
+  }
+}
 
 type Expect<T extends true> = T;
 type IsExactly<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
@@ -567,7 +605,13 @@ function appendNpcInteraction(
   return { interactions: [...interactions, entry].slice(-NPC_HISTORY_CAP) };
 }
 
-function applyOne(records: readonly EntityRecord[], mutation: EntityMutation, batch: MutationBatch): MutationResult {
+function applyOne(
+  records: readonly EntityRecord[],
+  mutation: EntityMutation,
+  batch: MutationBatch,
+  worldState: WorldState,
+  storyState: StoryState | undefined,
+): MutationResult {
   switch (mutation.kind) {
     case "move_player": {
       const player = recordOfKind(records, PLAYER_ENTITY_ID, "player_character");
@@ -753,6 +797,50 @@ function applyOne(records: readonly EntityRecord[], mutation: EntityMutation, ba
         }),
       };
     }
+    case "replace_quest_objective": {
+      const quest = recordOfKind(records, mutation.questId, "quest");
+      if (!quest.ok) return quest;
+      const objectives = quest.record.quest.objectives;
+      const current = objectives[mutation.objectiveIndex];
+      if (!Number.isInteger(mutation.objectiveIndex)
+        || mutation.objectiveIndex < 0
+        || current === undefined) {
+        return failure("invalid_reference", mutation.questId);
+      }
+      // 替换长度上限 2：只够表达「出发—返回」这一条有限模板，不是任务重写通道。
+      if (mutation.replacement.length < 1 || mutation.replacement.length > 2) {
+        return failure("structure_invalid", mutation.questId);
+      }
+      if (!sameObjective(current, mutation.expectedOld)) {
+        return failure("invalid_reference", mutation.questId);
+      }
+      // 只能替换当前未完成目标：已完成的目标属于既有历史，不允许改写。
+      // 会话感知：本回合刚被标记为 met 的 NPC 目标在两轮对白结束前仍算未完成。
+      const settled = storyState === undefined
+        ? isObjectiveSatisfied(worldState, current)
+        : isObjectiveSatisfiedInStory(worldState, storyState, current);
+      if (settled) {
+        return failure("invalid_reference", mutation.questId);
+      }
+      // 新引用必须已经存在且已获批（延迟地点在本次 CAS 中先材质化）。
+      for (const objective of mutation.replacement) {
+        if (!objectiveRefExists(worldState, objective)) {
+          return failure("invalid_reference", mutation.questId);
+        }
+      }
+      const nextObjectives = [
+        ...objectives.slice(0, mutation.objectiveIndex),
+        ...mutation.replacement,
+        ...objectives.slice(mutation.objectiveIndex + 1),
+      ];
+      return {
+        ok: true,
+        records: replaceRecord(records, mutation.questId, {
+          ...quest.record,
+          quest: { ...quest.record.quest, objectives: nextObjectives },
+        }),
+      };
+    }
     case "set_enemy_defeated": {
       const enemy = recordOfKind(records, mutation.enemyId, "enemy");
       if (!enemy.ok) return enemy;
@@ -884,6 +972,7 @@ function applyOne(records: readonly EntityRecord[], mutation: EntityMutation, ba
 export function applyEntityMutations(
   worldState: WorldState,
   mutations: readonly EntityMutation[],
+  storyState?: StoryState,
 ): ApplyEntityMutationsResult {
   if (mutations.length === 0) return { ok: true, worldState };
 
@@ -892,7 +981,7 @@ export function applyEntityMutations(
   const batch: MutationBatch = { baselines: new Map() };
   let records = worldState.entityStore.records;
   for (const mutation of mutations) {
-    const applied = applyOne(records, mutation, batch);
+    const applied = applyOne(records, mutation, batch, worldState, storyState);
     if (applied.ok === false) {
       return {
         ok: false,

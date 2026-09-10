@@ -1,4 +1,5 @@
 import type { NarrativeBundleSourceContext } from "../../narrativeBundleSource";
+import type { OpeningGenerationInput } from "../../createGame";
 import { renderAiRepairFeedback } from "../../aiGenerationRetry";
 import { buildStylePolicy } from "../../stylePolicy";
 
@@ -19,12 +20,35 @@ function valueOrGenerated(value: string | undefined): string {
   return value === undefined || value.trim() === "" ? "由你生成" : value;
 }
 
+/**
+ * 玩家开局设定与呈现风格的唯一渲染面：opening 叙事 prompt 与 staged planning
+ * prompt 共用，确保 characterProfile/personalityTags/故事开端不因分阶段改造
+ * 而从任何一条链路中丢失（Plan Task 5 Step 3）。
+ */
+export function renderOpeningSetupSection(input: OpeningGenerationInput): string {
+  const setup = input.setup;
+  const style = buildStylePolicy(setup);
+  return `# 玩家开局输入（最高优先级）
+- 题材：${input.gameType}
+- 长度：${input.gameLength}
+- 玩家名：${valueOrGenerated(setup?.characterName)}
+- 玩家身份：${valueOrGenerated(setup?.characterIdentity)}
+- 玩家经历：${valueOrGenerated(setup?.characterProfile)}
+- 性格标签：${setup?.personalityTags.length ? setup.personalityTags.join("、") : "由你自然呈现"}
+- 世界前提：${valueOrGenerated(setup?.worldPremise)}
+- 故事开端：${valueOrGenerated(setup?.storyOpening)}
+- 叙事风格：${style.narration}
+- 内容强度：${style.intensity}
+- 风格指令：${style.narrationInstruction}
+- 强度指令：${style.intensityInstruction}`;
+}
+
 /** Builds the sole production prompt for the initialization provider call. */
 export function buildOpeningNarrativePrompt(context: OpeningContext): string {
   const { input } = context;
   const setup = input.setup;
   const targetActs = input.gameLength === "medium" ? 5 : 3;
-  const style = buildStylePolicy(setup);
+  const setupSection = renderOpeningSetupSection(input);
   const novelty = latestNoveltySummaries(context);
   const noveltyLines = novelty.length === 0
     ? "- 无近期候选；直接忠于本次玩家输入。"
@@ -37,19 +61,7 @@ ${renderAiRepairFeedback(context.contentRepair)}
 请依据下面的精确契约修复并重新输出完整 JSON。opening_INVALID_FACT 时检查 publicFacts 和 investigationApproaches 对象字段；invalid_response_reference 时检查 situation 引用、公开权限和 npcConnection：stranger 必须 neutral 且 basisHistoryKeys=[]，不能因为初见时的戒备表情改成 wary；情绪可由 npcLine.emotion=guarded 表达。
 `}
 
-# 玩家开局输入（最高优先级）
-- 题材：${input.gameType}
-- 长度：${input.gameLength}
-- 玩家名：${valueOrGenerated(setup?.characterName)}
-- 玩家身份：${valueOrGenerated(setup?.characterIdentity)}
-- 玩家经历：${valueOrGenerated(setup?.characterProfile)}
-- 性格标签：${setup?.personalityTags.length ? setup.personalityTags.join("、") : "由你自然呈现"}
-- 世界前提：${valueOrGenerated(setup?.worldPremise)}
-- 故事开端：${valueOrGenerated(setup?.storyOpening)}
-- 叙事风格：${style.narration}
-- 内容强度：${style.intensity}
-- 风格指令：${style.narrationInstruction}
-- 强度指令：${style.intensityInstruction}
+${setupSection}
 
 # 有界新颖性上下文
 - attempt=${input.novelty?.attempt ?? input.attempt ?? 0}

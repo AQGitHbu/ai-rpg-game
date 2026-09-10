@@ -420,7 +420,11 @@ export function projectGameSessionView(
   // objective。仍需向 HUD 投影一个权威目标，避免玩家看到“暂无线索”后
   // 只能靠点击 NPC 试探性地触发下一段对白。
   const endingDecisionReady = isEndingDecisionDue(worldState, storyState);
-  const endingStances = endingDecisionStances(worldState, storyState);
+  const endingStances = endingDecisionStances(
+    worldState,
+    storyState,
+    storyState.narrative.status === "ready" ? storyState.narrative.narrativeBundle?.endingLabels : undefined,
+  );
   // 任务链空窗（上一任务已结算、后继任务未铸造）时投影桥接目标，避免
   // HUD 指引断档；战斗中被战斗面板接管，结局抉择有专属标签，任务链尚未
   // 开启（零任务）时也没有可衔接的前驱，均不桥接。

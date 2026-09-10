@@ -13,6 +13,16 @@ import { dialogueTopicKey, type Action } from "./action";
 //   的 token/semanticSummary 全部由它派生，杜绝手工伪造。
 // ---------------------------------------------------------------------------
 
+/**
+ * 路线分支绑定：选项被选中时在此回合应用的服务端 decision。
+ * decisionId 指向 StoryState.branchDecisions，candidateId 指向其中一条候选。
+ * 客户端只提交 token，不能提交 Decision 本身。
+ */
+export type ApprovedChoiceBranch = {
+  readonly decisionId: string;
+  readonly candidateId: string;
+};
+
 /** 服务端持久化的已审批选项（Spec §8.2，verbatim）。 */
 export type ApprovedChoice = {
   readonly choiceToken: string;
@@ -21,6 +31,7 @@ export type ApprovedChoice = {
   readonly label: string;
   readonly action: Action;
   readonly semanticSummary: string;
+  readonly branch?: ApprovedChoiceBranch;
 };
 
 /**
@@ -40,11 +51,12 @@ export type CreateApprovedChoiceInput = {
   readonly basedOnRevision: number;
   readonly label: string;
   readonly action: Action;
+  readonly branch?: ApprovedChoiceBranch;
 };
 
 export type CreateApprovedChoiceResult =
   | { readonly ok: true; readonly choice: ApprovedChoice }
-  | { readonly ok: false; readonly reason: "empty_label" | "invalid_revision" | "empty_scene" };
+  | { readonly ok: false; readonly reason: "empty_label" | "invalid_revision" | "empty_scene" | "invalid_branch" };
 
 /** 逐字段重建批准选项：禁止原引用直达注册表。 */
 export function createApprovedChoice(input: CreateApprovedChoiceInput): CreateApprovedChoiceResult {
@@ -54,6 +66,8 @@ export function createApprovedChoice(input: CreateApprovedChoiceInput): CreateAp
   if (!Number.isInteger(input.basedOnRevision) || input.basedOnRevision < 0) {
     return { ok: false, reason: "invalid_revision" };
   }
+  const branch = input.branch === undefined ? null : rebuildBranch(input.branch);
+  if (input.branch !== undefined && branch === null) return { ok: false, reason: "invalid_branch" };
   return {
     ok: true,
     choice: {
@@ -61,14 +75,23 @@ export function createApprovedChoice(input: CreateApprovedChoiceInput): CreateAp
         sceneId: input.sceneId,
         basedOnRevision: input.basedOnRevision,
         action: input.action,
+        ...(branch === null ? {} : { branch }),
       }),
       sceneId: input.sceneId,
       basedOnRevision: input.basedOnRevision,
       label,
       action: rebuildAction(input.action),
-      semanticSummary: semanticSummaryOf(input.action),
+      semanticSummary: semanticSummaryOf(input.action, branch),
+      ...(branch === null ? {} : { branch }),
     },
   };
+}
+
+function rebuildBranch(branch: ApprovedChoiceBranch): ApprovedChoiceBranch | null {
+  const decisionId = branch.decisionId.trim();
+  const candidateId = branch.candidateId.trim();
+  if (decisionId === "" || candidateId === "") return null;
+  return { decisionId, candidateId };
 }
 
 /** action 逐字段重建（去掉 utterance 等表现性字段的引用关系不需要，但保持新对象）。 */
@@ -119,7 +142,15 @@ function rebuildAction(action: Action): Action {
  * 稳定语义摘要：从 action + act/npc 等推导。
  * 语义相同 → 摘要相同（供去重）；语义不同 → 摘要不同。
  */
-export function semanticSummaryOf(action: Action): string {
+export function semanticSummaryOf(action: Action, branch?: ApprovedChoiceBranch | null): string {
+  // 分支两个 ID 纳入摘要：同 act/topic 但不同分支的两条候选不能被去重折叠。
+  const suffix = branch === undefined || branch === null
+    ? ""
+    : `:branch:${escapeSummaryPart(branch.decisionId)}:${escapeSummaryPart(branch.candidateId)}`;
+  return `${semanticSummaryOfAction(action)}${suffix}`;
+}
+
+function semanticSummaryOfAction(action: Action): string {
   switch (action.type) {
     case "talk": return `talk:${escapeSummaryPart(action.npcId)}:${escapeSummaryPart(action.dialogueAct)}:${escapeSummaryPart(dialogueTopicKey(action.topic))}`;
     case "move": return `move:${escapeSummaryPart(action.locationId)}`;
@@ -156,9 +187,13 @@ function fnv1a(data: string): number {
   return hash >>> 0;
 }
 
+/** 序列化分隔符转义：| 与 \ 先转义，避免业务 ID 伪造字段边界。 */
+function part(value: string): string {
+  return String(value).replaceAll("\\", "\\\\").replaceAll("|", "\\|");
+}
+
 /** 确定性规范序列化：字段次序固定，跨引擎稳定。 */
 function serializeAction(action: Action): string {
-  const part = (value: string): string => String(value).replaceAll("\\", "\\\\").replaceAll("|", "\\|");
   switch (action.type) {
     case "talk": return `talk|${part(action.npcId)}|${part(action.dialogueAct)}|${part(dialogueTopicKey(action.topic))}`;
     case "move": return `move|${part(action.locationId)}`;
@@ -181,8 +216,12 @@ export function deriveChoiceToken(input: {
   readonly sceneId: string;
   readonly basedOnRevision: number;
   readonly action: Action;
+  readonly branch?: ApprovedChoiceBranch;
 }): string {
-  const material = `scene:${input.sceneId}|rev:${input.basedOnRevision}|${serializeAction(input.action)}`;
+  const branchPart = input.branch === undefined
+    ? ""
+    : `|branch:${part(input.branch.decisionId)}:${part(input.branch.candidateId)}`;
+  const material = `scene:${input.sceneId}|rev:${input.basedOnRevision}|${serializeAction(input.action)}${branchPart}`;
   const partA = fnv1a(material).toString(16).padStart(8, "0");
   const partB = fnv1a(`${material}|salt:2`).toString(16).padStart(8, "0");
   return `c_${partA}${partB}`;

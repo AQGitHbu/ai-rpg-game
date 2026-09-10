@@ -1,0 +1,397 @@
+// SQLite NarrativeJobRepository（Plan 2026-09-09 / Task 7）。
+//
+// 同一 SQLite 实例实现 job 持久化与游戏发布：publish 在同一 write
+// transaction 内写游戏状态并把 job 标记 published。lease 30 秒 TTL 由调用方
+// 给定；renew 验证相同 owner/fence 且未过期；接管递增 fence。worker 写入
+// 同时验证未过期 lease、version、status 与当前周期。
+
+/** @vitest-environment node */
+import { describe, it, expect, afterAll } from "vitest";
+import { join } from "node:path";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { createSqliteNarrativeJobs } from "./sqliteNarrativeJobs";
+import { createSqliteGameRepository } from "./sqliteGameRepository";
+import { createSqliteClient, type SqliteClient } from "./sqliteClient";
+import { asGameId } from "./gameRepository";
+import type { StoredJob, NarrativeJobRepository } from "./narrativeJobRepository";
+import {
+  createWorldStateFixtureWith,
+  emptyProjection,
+} from "@/game/domain/testing/worldStateFixture.testutil";
+import { createInitialStoryState } from "@/game/domain/storyState";
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
+import { asGenerationId, asLocationId, asNpcId, type GenerationMetadata } from "@/game/domain/worldEntity";
+import { asEventId, asNarrativeJobId, asTurnId } from "@/game/domain/events";
+import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
+import { makeStagedPlan, makeNarrationOutput, FIXTURE_NARRATION_UNIT } from "@/game/domain/testing/stagedNarrativeFixture.testutil";
+import type { WorldState } from "@/game/domain/worldState";
+import type { StoryState } from "@/game/domain/storyState";
+import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
+import type { PlanningContext } from "@/game/application/narrativeGeneration/stageSource";
+import { parsePlanProposal } from "@/game/domain/narrativePlan";
+
+const RUN_ROOT = mkdtempSync(join(tmpdir(), "ai-rpg-game-narrative-jobs-"));
+
+const GENERATION: GenerationMetadata = {
+  generationId: asGenerationId("gen_jobs"), seed: "jobs-seed", templateVersion: "v2",
+  inputDigest: "", gameType: "wuxia",
+};
+
+const PROJECTION: EntityCompatibilityProjection = emptyProjection({
+  player: { name: "p", identity: "i", stats: { hp: 100, attack: 10, defense: 5 } },
+  locations: [{
+    id: asLocationId("loc_1"), name: "t", description: "t", kind: "main",
+    connectedLocationIds: [], npcIds: [], availableItemIds: [], tags: [],
+  }],
+  currentLocationId: asLocationId("loc_1"),
+});
+
+function fixtureWorld(): WorldState {
+  return createWorldStateFixtureWith({ generation: GENERATION, base: PROJECTION });
+}
+
+function fixtureStory(): StoryState {
+  return createInitialStoryState({
+    initialNarrative: createFixtureNarrativeRuntimeState(),
+    gameLength: "short",
+    initialEntityCounts: { locations: 1, npcs: 1, quests: 0, events: 0 },
+  });
+}
+
+function fixturePendingJob(jobId = "job-1") {
+  const result = createPendingNarrativeJob({
+    jobId: asNarrativeJobId(jobId),
+    turnId: asTurnId("turn-1"),
+    actionId: "action-1",
+    expectedRevision: 0,
+    turnNumber: 1,
+    actionSummary: { kind: "talk", npcId: asNpcId("npc_1") },
+    resolvedEvent: {
+      actionId: "action-1",
+      status: "success",
+      eventKind: "observe",
+      facts: [],
+      stateChanges: [],
+      costs: [],
+      rewards: [],
+      triggeredEvents: [],
+      rejectedEffects: [],
+    },
+    domainEventIds: [asEventId("turn-1:event-1")],
+    focusNpcId: asNpcId("npc_1"),
+    requestedAt: "2026-09-09T08:00:00.000Z",
+    objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
+    mandatoryBeats: [],
+    generationKind: "npc_fixed_choice",
+    sceneRequestKind: "npc_response",
+  });
+  if (!result.ok) throw new Error("fixture pending job 构造失败");
+  return result.job;
+}
+
+let jobCounter = 0;
+function decisionJob(overrides: Partial<StoredJob> = {}): StoredJob {
+  jobCounter += 1;
+  const planningInput: PlanningContext = {
+    kind: "decision",
+    world: fixtureWorld(),
+    story: fixtureStory(),
+    job: fixturePendingJob(`pending-${jobCounter}`),
+  };
+  return {
+    schemaVersion: 1,
+    id: `job-${jobCounter}`,
+    scope: "decision",
+    version: 0,
+    cycle: 0,
+    status: "pending",
+    input: planningInput,
+    inputDigest: `digest-${jobCounter}`,
+    baseRevision: 0,
+    gameId: "game-1",
+    units: [],
+    usedRequests: 0,
+    baselineRequests: 1,
+    deadline: "2026-09-09T08:10:00.000Z",
+    failureCode: null,
+    initialization: null,
+    ...overrides,
+  };
+}
+
+let fileCounter = 0;
+function nextDbPath(): string {
+  fileCounter += 1;
+  return join(RUN_ROOT, `case-${fileCounter}.sqlite`);
+}
+
+const openedJobs: (NarrativeJobRepository & { close(): Promise<void> })[] = [];
+const openedGames: ReturnType<typeof createSqliteGameRepository>[] = [];
+const rawClients: SqliteClient[] = [];
+
+function openStores(databasePath: string): {
+  jobs: ReturnType<typeof createSqliteNarrativeJobs>;
+  games: ReturnType<typeof createSqliteGameRepository>;
+} {
+  const client = createSqliteClient(databasePath);
+  rawClients.push(client);
+  const jobs = createSqliteNarrativeJobs({ client, logError: () => {} });
+  const games = createSqliteGameRepository({ clientFactory: () => client, logError: () => {} });
+  openedJobs.push(jobs);
+  openedGames.push(games);
+  return { jobs, games };
+}
+
+afterAll(async () => {
+  for (const repo of openedJobs) {
+    try { await repo.close(); } catch { /* ignore */ }
+  }
+  for (const repo of openedGames) {
+    try { await repo.close(); } catch { /* ignore */ }
+  }
+  for (const client of rawClients) {
+    try { await client.close(); } catch { /* ignore */ }
+  }
+  try { rmSync(RUN_ROOT, { recursive: true, force: true }); } catch { /* ignore */ }
+});
+
+const OWNER_A = "worker-a";
+const OWNER_B = "worker-b";
+const NOW = "2026-09-09T08:00:00.000Z";
+const EXPIRES = "2026-09-09T08:00:30.000Z";
+
+async function startDecisionJob(jobs: NarrativeJobRepository, job?: StoredJob) {
+  const stored = job ?? decisionJob();
+  const started = await jobs.start({ requestId: `req-${stored.id}`, digest: stored.inputDigest, job: stored });
+  expect(started.ok).toBe(true);
+  return stored;
+}
+
+describe("sqliteNarrativeJobs", () => {
+  it("start/get 往返；同 requestId 同 digest 返回现有 job；不同 digest 冲突", async () => {
+    const { jobs } = openStores(nextDbPath());
+    const stored = decisionJob();
+    const started = await jobs.start({ requestId: "req-1", digest: stored.inputDigest, job: stored });
+    expect(started.ok).toBe(true);
+    const again = await jobs.start({ requestId: "req-1", digest: stored.inputDigest, job: stored });
+    expect(again.ok).toBe(true);
+    if (again.ok) expect(again.value.id).toBe(stored.id);
+    const conflict = await jobs.start({ requestId: "req-1", digest: "other-digest", job: stored });
+    expect(conflict.ok).toBe(false);
+    if (!conflict.ok) expect(conflict.code).toBe("JOB_CONFLICT");
+    const fetched = await jobs.get(stored.id);
+    expect(fetched.ok).toBe(true);
+    if (fetched.ok) {
+      expect(fetched.value.id).toBe(stored.id);
+      expect(fetched.value.scope).toBe("decision");
+      expect(fetched.value.units).toEqual([]);
+    }
+  });
+
+  it("initialization job 必须带 envelope；decision job 的 initialization 必须为 null", async () => {
+    const { jobs } = openStores(nextDbPath());
+    const withoutEnvelope = decisionJob({ scope: "initialization", gameId: null, baseRevision: null });
+    const rejected = await jobs.start({ requestId: "req-init-1", digest: withoutEnvelope.inputDigest, job: withoutEnvelope });
+    expect(rejected.ok).toBe(false);
+    if (!rejected.ok) expect(rejected.code).toBe("JOB_CONFLICT");
+
+    const withEnvelope = decisionJob({
+      scope: "initialization",
+      gameId: null,
+      baseRevision: null,
+      initialization: {
+        requestId: "req-init-2",
+        newGameId: "game-new",
+        seed: "seed-1",
+        generation: GENERATION,
+        target: { kind: "create" },
+      },
+    });
+    const okStarted = await jobs.start({ requestId: "req-init-2", digest: withEnvelope.inputDigest, job: withEnvelope });
+    expect(okStarted.ok).toBe(true);
+
+    const decisionWithEnvelope = decisionJob({
+      initialization: {
+        requestId: "req-init-3", newGameId: "game-x", seed: "s", generation: GENERATION,
+        target: { kind: "create" },
+      },
+    });
+    const rejectedDecision = await jobs.start({ requestId: "req-d-1", digest: decisionWithEnvelope.inputDigest, job: decisionWithEnvelope });
+    expect(rejectedDecision.ok).toBe(false);
+  });
+
+  it("第二个 claimant 失败；lease 过期后接管递增 fence", async () => {
+    const { jobs } = openStores(nextDbPath());
+    const stored = await startDecisionJob(jobs);
+    const first = await jobs.claim({ id: stored.id, owner: OWNER_A, now: NOW, expiresAt: EXPIRES });
+    expect(first.ok).toBe(true);
+    if (first.ok) expect(first.value.fence).toBe(1);
+    const second = await jobs.claim({ id: stored.id, owner: OWNER_B, now: NOW, expiresAt: EXPIRES });
+    expect(second.ok).toBe(false);
+    // 过期后接管：fence 递增
+    const takeover = await jobs.claim({
+      id: stored.id, owner: OWNER_B, now: "2026-09-09T08:01:00.000Z", expiresAt: "2026-09-09T08:01:30.000Z",
+    });
+    expect(takeover.ok).toBe(true);
+    if (takeover.ok) expect(takeover.value.fence).toBe(2);
+  });
+
+  it("renew 验证相同 owner/fence 且未过期；stale worker save 返回 LEASE_LOST", async () => {
+    const { jobs } = openStores(nextDbPath());
+    const stored = await startDecisionJob(jobs);
+    const lease = await jobs.claim({ id: stored.id, owner: OWNER_A, now: NOW, expiresAt: EXPIRES });
+    if (!lease.ok) throw new Error("claim failed");
+    const renewed = await jobs.renew({ lease: lease.value, now: NOW, expiresAt: "2026-09-09T08:00:40.000Z" });
+    expect(renewed.ok).toBe(true);
+    if (renewed.ok) expect(renewed.value.fence).toBe(lease.value.fence);
+    // 其他 fence 的 renew 失败
+    const wrongFence = await jobs.renew({
+      lease: { ...lease.value, fence: 99 }, now: NOW, expiresAt: "2026-09-09T08:00:40.000Z",
+    });
+    expect(wrongFence.ok).toBe(false);
+    if (!wrongFence.ok) expect(wrongFence.code).toBe("LEASE_LOST");
+    // 接管后旧 owner 保存失败
+    await jobs.claim({ id: stored.id, owner: OWNER_B, now: "2026-09-09T08:01:00.000Z", expiresAt: "2026-09-09T08:01:30.000Z" });
+    const staleSave = await jobs.save({
+      lease: lease.value, expectedVersion: stored.version,
+      job: { ...stored, units: [{ unit: null, key: FIXTURE_NARRATION_UNIT, inputDigest: "d1", attempts: 1, status: "running", value: null }] },
+    });
+    expect(staleSave.ok).toBe(false);
+    if (!staleSave.ok) expect(staleSave.code).toBe("LEASE_LOST");
+  });
+
+  it("临时库 reopen 后 approved 单元保留；版本随 save 递增", async () => {
+    const path = nextDbPath();
+    const first = openStores(path);
+    const stored = await startDecisionJob(first.jobs);
+    const lease = await first.jobs.claim({ id: stored.id, owner: OWNER_A, now: NOW, expiresAt: EXPIRES });
+    if (!lease.ok) throw new Error("claim failed");
+    const parsedPlan = parsePlanProposal(makeStagedPlan());
+    if (!parsedPlan.ok) throw new Error("fixture plan parse failed");
+    const approvedOutput = makeNarrationOutput();
+    const saved = await first.jobs.save({
+      lease: lease.value, expectedVersion: stored.version,
+      job: {
+        ...stored,
+        units: [
+          { unit: parsedPlan.value.units[0] ?? null, key: FIXTURE_NARRATION_UNIT, inputDigest: "d1", attempts: 1, status: "approved", value: approvedOutput },
+        ],
+      },
+    });
+    expect(saved.ok).toBe(true);
+    if (saved.ok) expect(saved.value.version).toBe(stored.version + 1);
+    await first.games.close();
+    await first.jobs.close();
+    // reopen：新实例同一文件
+    const second = openStores(path);
+    const afterReopen = await second.jobs.get(stored.id);
+    expect(afterReopen.ok).toBe(true);
+    if (afterReopen.ok) {
+      const approved = afterReopen.value.units.filter((unit) => unit.status === "approved");
+      expect(approved).toHaveLength(1);
+      expect(JSON.stringify(approved[0]?.value)).toContain("风从门缝");
+    }
+  });
+
+  it("decision publish：CAS 成功原子更新游戏并标记 published；CAS 失败游戏不变且 job 未发布", async () => {
+    const path = nextDbPath();
+    const { jobs, games } = openStores(path);
+    // 先建当前存档 revision 0
+    const created = await games.createInitialGame({
+      gameId: asGameId("game-1"),
+      worldState: fixtureWorld(),
+      storyState: fixtureStory(),
+      createdAt: NOW,
+    });
+    expect(created.ok).toBe(true);
+    const stored = await startDecisionJob(jobs);
+    const lease = await jobs.claim({ id: stored.id, owner: OWNER_A, now: NOW, expiresAt: EXPIRES });
+    if (!lease.ok) throw new Error("claim failed");
+    // 把两个单元标记 approved 以满足 ready coverage
+    const withUnits: StoredJob = {
+      ...stored,
+      units: [
+        { unit: null, key: "narration_current", inputDigest: "d1", attempts: 1, status: "approved", value: makeNarrationOutput() },
+      ],
+    };
+    await jobs.save({ lease: lease.value, expectedVersion: stored.version, job: withUnits });
+
+    const world = fixtureWorld();
+    const story = fixtureStory();
+    const stalePublish = await jobs.publish({
+      lease: lease.value,
+      expectedVersion: stored.version,
+      publication: {
+        kind: "decision",
+        input: { gameId: asGameId("game-1"), expectedRevision: 0, nextWorldState: world, nextStoryState: story },
+      },
+    });
+    // expectedVersion 已被 save 递增 → 冲突，游戏保持不变
+    expect(stalePublish.ok).toBe(false);
+    const currentBefore = await games.getCurrentGame();
+    if (currentBefore.ok && currentBefore.status === "active") {
+      expect(currentBefore.record.revision).toBe(0);
+    }
+    const notPublished = await jobs.get(stored.id);
+    if (notPublished.ok) expect(notPublished.value.status).not.toBe("published");
+
+    const publish = await jobs.publish({
+      lease: lease.value,
+      expectedVersion: stored.version + 1,
+      publication: {
+        kind: "decision",
+        input: { gameId: asGameId("game-1"), expectedRevision: 0, nextWorldState: world, nextStoryState: story },
+      },
+    });
+    expect(publish.ok).toBe(true);
+    const current = await games.getCurrentGame();
+    if (current.ok && current.status === "active") {
+      expect(current.record.revision).toBe(1);
+    }
+    const publishedJob = await jobs.get(stored.id);
+    if (publishedJob.ok) expect(publishedJob.value.status).toBe("published");
+  });
+
+  it("control：cancel 只接受 pending/failed；retry 只接受 failed 且递增周期", async () => {
+    const { jobs } = openStores(nextDbPath());
+    const stored = await startDecisionJob(jobs);
+    const cancelled = await jobs.control({
+      id: stored.id, expectedVersion: stored.version, expectedCycle: stored.cycle, operation: "cancel", now: NOW,
+    });
+    expect(cancelled.ok).toBe(true);
+    if (!cancelled.ok) throw new Error("cancel failed");
+    expect(cancelled.value.status).toBe("cancelled");
+    // published/cancelled 不可 retry
+    const retryCancelled = await jobs.control({
+      id: stored.id, expectedVersion: cancelled.value.version, expectedCycle: 0, operation: "retry", now: NOW,
+    });
+    expect(retryCancelled.ok).toBe(false);
+
+    const failedJob = decisionJob();
+    await jobs.start({ requestId: `req-${failedJob.id}`, digest: failedJob.inputDigest, job: { ...failedJob, status: "failed", failureCode: "unit_output_invalid" } });
+    const retried = await jobs.control({
+      id: failedJob.id, expectedVersion: 0, expectedCycle: 0, operation: "retry", now: NOW,
+    });
+    expect(retried.ok).toBe(true);
+    if (retried.ok) {
+      expect(retried.value.status).toBe("pending");
+      expect(retried.value.cycle).toBe(1);
+    }
+    // 版本 CAS 不匹配返回冲突
+    const conflict = await jobs.control({
+      id: failedJob.id, expectedVersion: 0, expectedCycle: 1, operation: "cancel", now: NOW,
+    });
+    expect(conflict.ok).toBe(false);
+    if (!conflict.ok) expect(conflict.code).toBe("JOB_CONFLICT");
+  });
+
+  it("同 gameId 的 pending decision job 唯一", async () => {
+    const { jobs } = openStores(nextDbPath());
+    await startDecisionJob(jobs, decisionJob({ gameId: "game-dup" }));
+    const duplicate = decisionJob({ gameId: "game-dup" });
+    const rejected = await jobs.start({ requestId: `req-${duplicate.id}`, digest: duplicate.inputDigest, job: duplicate });
+    expect(rejected.ok).toBe(false);
+    if (!rejected.ok) expect(rejected.code).toBe("JOB_CONFLICT");
+  });
+});

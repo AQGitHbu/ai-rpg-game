@@ -209,13 +209,31 @@ describe("NarrativeBundleProposal parser", () => {
     expect(parseNarrativeBundleProposal(bundle).ok).toBe(false);
   });
 
-  it("accepts ending terminal with no continuation and no choices", () => {
+  it("accepts ending terminal with no continuation and two stance labels", () => {
+    const bundle: NarrativeBundleProposal = {
+      ...makeValidBundle(),
+      terminal: { kind: "ending" },
+      currentScene: { ...makeValidScene(), choices: [] },
+      endingLabels: { trust: "我们一起把证据摊开。", doubt: "我要先核对每一份证据。" },
+    };
+    expect(parseNarrativeBundleProposal(bundle).ok).toBe(true);
+  });
+
+  it("rejects ending terminal without stance labels", () => {
     const bundle: NarrativeBundleProposal = {
       ...makeValidBundle(),
       terminal: { kind: "ending" },
       currentScene: { ...makeValidScene(), choices: [] },
     };
-    expect(parseNarrativeBundleProposal(bundle).ok).toBe(true);
+    expect(parseNarrativeBundleProposal(bundle)).toMatchObject({ ok: false, reason: "ending_labels_missing" });
+  });
+
+  it("rejects ending labels on a non-ending terminal", () => {
+    const bundle: NarrativeBundleProposal = {
+      ...makeValidBundle(),
+      endingLabels: { trust: "我们一起把证据摊开。", doubt: "我要先核对每一份证据。" },
+    };
+    expect(parseNarrativeBundleProposal(bundle)).toMatchObject({ ok: false, reason: "ending_labels_invalid" });
   });
 
   it("rejects ending terminal with continuation scenes", () => {
@@ -224,6 +242,7 @@ describe("NarrativeBundleProposal parser", () => {
       continuationScenes: [makeStep("move:loc_2")],
       terminal: { kind: "ending" },
       currentScene: { ...makeValidScene(), choices: [] },
+      endingLabels: { trust: "我们一起把证据摊开。", doubt: "我要先核对每一份证据。" },
     };
     expect(parseNarrativeBundleProposal(bundle).ok).toBe(false);
   });

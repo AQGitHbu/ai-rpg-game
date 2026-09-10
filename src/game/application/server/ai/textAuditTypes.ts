@@ -8,6 +8,7 @@
 
 import type { AiMessage, AiCompletionResult } from "@ai-game/ai-transport";
 import type { NarrativeContextManifest } from "./narrativeContext/contextBlock";
+import type { Stage } from "@/game/domain/narrativeUnit";
 
 /**
  * 审计模式：缺省、空白或非 "off" 值均按 "full" 处理，只有 trim 后等于 "off" 才关闭。
@@ -21,8 +22,12 @@ export type GameApiAuditMode = "off" | "compact" | "full";
 
 /**
  * role 的唯一契约来源。textAuditTypes 不导入 rpgAiClient，rpgAiClient 复用此类型。
+ * planning/narration/character/choices 是分阶段剧情生成的四个 stage role
+ * （Spec 2026-09-09）；旧 role 仅保留 fixture/审计兼容。
  */
-export type AiTextAuditRole = "intent" | "opening" | "scene" | "world" | "narrative_bundle";
+export type AiTextAuditRole =
+  | "intent" | "opening" | "scene" | "world" | "narrative_bundle"
+  | "planning" | "narration" | "character" | "choices";
 
 /**
  * 重试来源：初始化于首次普通调用或手动失败 job 重试。legacy_unknown 只作为
@@ -67,6 +72,7 @@ export type AiTextAuditContext = {
     | "world_evolution"
     | "scene_performance"
     | "narrative_bundle_generation"
+    | "staged_narrative_generation"
     | "final_story_text"
     | "game_api";
   readonly trigger: string;
@@ -77,6 +83,15 @@ export type AiTextAuditContext = {
   readonly turnNumber?: number;
   readonly revision?: number;
   readonly action?: unknown;
+  /**
+   * 分阶段生成（Spec 2026-09-09）的关联字段：只含稳定 ID/枚举与摘要值，
+   * 不含 prompt 正文、模型输出或玩家原文。
+   */
+  readonly stage?: Stage;
+  readonly unitKey?: string;
+  readonly inputDigest?: string;
+  readonly cycle?: number;
+  readonly dependencyVersion?: string;
   /**
    * 编译后的叙事上下文清单：只含 block 元数据、预算与裁剪结果，不含 Prompt 正文。
    */

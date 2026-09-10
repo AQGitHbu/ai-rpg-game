@@ -243,12 +243,12 @@ function dimensionOf(kind: "location" | "npc" | "quest" | "ending" | "item" | "e
   }
 }
 
-function validName(name: string): boolean {
+export function validName(name: string): boolean {
   const t = name.trim();
   return t.length >= MIN_ENTITY_NAME_LENGTH && t.length <= MAX_ENTITY_NAME_LENGTH;
 }
 
-function validText(text: string): boolean {
+export function validText(text: string): boolean {
   const t = text.trim();
   return t.length > 0 && t.length <= MAX_ENTITY_TEXT_LENGTH;
 }

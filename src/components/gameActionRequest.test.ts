@@ -1,5 +1,8 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { getActionIdGenerator, setActionIdGenerator, postAction, ensureNarrative, retryNarrative, type ActionPayload } from "./gameActionRequest";
+import {
+  getActionIdGenerator, setActionIdGenerator, postAction, ensureNarrative, retryNarrative,
+  fetchInitialization, retryInitialization, cancelInitialization, type ActionPayload,
+} from "./gameActionRequest";
 
 // ---------------------------------------------------------------------------
 // Task 10：客户端 actionId 改用 UUID，提供测试环境可注入 fallback；
@@ -176,5 +179,71 @@ describe("postAction 使用注入的 actionId", () => {
       { kind: "free_text", text: "我相信你", targetNpcId: "npc_1" },
       { kind: "free_text", text: "你在撒谎", targetNpcId: "npc_1" },
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 11：初始化任务恢复。服务器 slot 是权威，客户端只做安全状态读取与控制；
+// 网络失败必须与「服务器没有任务」区分，否则 UI 会把无法恢复误报成可重新开局。
+// ---------------------------------------------------------------------------
+
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+
+describe("初始化任务恢复请求", () => {
+  it("fetchInitialization() 读取当前初始化槽，不携带 requestId query", async () => {
+    const seen: string[] = [];
+    globalThis.fetch = (async (url: string) => {
+      seen.push(String(url));
+      return json({ ok: true, requestId: "req_current", status: "pending" });
+    }) as unknown as typeof fetch;
+
+    const outcome = await fetchInitialization();
+    expect(seen).toEqual(["/api/game/initialization"]);
+    expect(outcome).toEqual({ ok: true, view: { requestId: "req_current", status: "pending" } });
+  });
+
+  it("fetchInitialization(requestId) 只读指定任务并做 URL 编码", async () => {
+    const seen: string[] = [];
+    globalThis.fetch = (async (url: string) => {
+      seen.push(String(url));
+      return json({ ok: true, status: "none" });
+    }) as unknown as typeof fetch;
+
+    const outcome = await fetchInitialization("req with space");
+    expect(seen).toEqual(["/api/game/initialization?requestId=req%20with%20space"]);
+    expect(outcome).toEqual({ ok: true, view: { status: "none" } });
+  });
+
+  it("网络失败不当作 none，而是可展示的错误", async () => {
+    globalThis.fetch = (async () => { throw new Error("offline"); }) as unknown as typeof fetch;
+
+    const outcome = await fetchInitialization();
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) expect(outcome.message).toContain("本地服务");
+  });
+
+  it("retry/cancel 只发送 requestId 与 operation 两个字段", async () => {
+    const bodies: string[] = [];
+    globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+      bodies.push(String(init?.body));
+      return json({ ok: true, requestId: "req-1", status: "pending" });
+    }) as unknown as typeof fetch;
+
+    await retryInitialization("req-1");
+    await cancelInitialization("req-1");
+
+    expect(bodies).toEqual([
+      '{"requestId":"req-1","operation":"retry"}',
+      '{"requestId":"req-1","operation":"cancel"}',
+    ]);
+  });
+
+  it("retry 的服务端失败码转成可展示文案，不伪装成已恢复", async () => {
+    globalThis.fetch = (async () => json({ ok: false, code: "JOB_CONFLICT" }, 409)) as unknown as typeof fetch;
+
+    const outcome = await retryInitialization("req-1");
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) expect(outcome.message).toContain("状态已变化");
   });
 });

@@ -14,6 +14,7 @@ import type { WorldState } from "@/game/domain/worldState";
 import type { EnemyId, FactId, ItemId, LocationId, NpcId } from "@/game/domain/worldEntity";
 import { commitEventDrafts } from "@/game/domain/eventLedger";
 import { buildNarrativeScenePresentedDraft } from "./approveAndWriteScene";
+import { realizeObservations } from "./narrativeGeneration/realizeObservations";
 
 export type ConsumeNarrativeBundleResult =
   | { readonly ok: true; readonly nextWorldState: WorldState; readonly nextStoryState: StoryState }
@@ -129,6 +130,22 @@ export function consumeNarrativeBundle(input: {
   if (selected.nextStepIds.some(id => !bundle.steps.some(step => step.stepId === id))) {
     return { ok: false, code: "NARRATIVE_CONTINUATION_MISSING" };
   }
+  // 消费时复核实际前提：条件证据必须能对上本步的观察清单，且观察的来源
+  // 与该步真正持有的表达顺序一致。这里比较的是内容而不是 baseRevision——
+  // 版本相等从来不是「前提仍成立」的证明。
+  const stepObservations = selected.observations ?? [];
+  if (selected.scene.conditionalEvidence !== undefined) {
+    const knownKeys = new Set(stepObservations.map((observation) => observation.key));
+    for (const entry of selected.scene.conditionalEvidence) {
+      if (!knownKeys.has(entry.observationKey)) {
+        return { ok: false, code: "NARRATIVE_CONTINUATION_INVALID" };
+      }
+    }
+  }
+  const expressionOrder = selected.expressionOrder ?? [];
+  if (new Set(expressionOrder).size !== expressionOrder.length) {
+    return { ok: false, code: "NARRATIVE_CONTINUATION_INVALID" };
+  }
   const materialized = materializeScene(selected, input.actionId, input.postCommitRevision);
   if (materialized === null) return { ok: false, code: "NARRATIVE_CONTINUATION_INVALID" };
   const remainder = bundle.steps.filter((step) => step.consumptionGroupKey !== selected.consumptionGroupKey);
@@ -157,16 +174,40 @@ export function consumeNarrativeBundle(input: {
     objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
     scene: materialized.scene,
   });
+
+  // 条件证据兑现（Task 9）：本步被真实消费的此刻才铸造 narrative_observed
+  // 并写入受众认知；此前它们只是条件，从未进入已提交 ledger。
+  const realized = realizeObservations({
+    worldState: input.resolvedWorldState,
+    stepId: selected.stepId,
+    observations: selected.observations ?? [],
+    conditionalEvidence: selected.scene.conditionalEvidence ?? [],
+    turnId: source.turnId,
+    actionId: input.actionId,
+    turnNumber: source.turnNumber,
+    episodeKey: String(source.episodeId).slice("episode:".length),
+    locationId: input.resolvedWorldState.currentLocationId,
+    causeKeys: [],
+  });
+  if (!realized.ok) return { ok: false, code: "NARRATIVE_CONTINUATION_INVALID" };
+
   const committed = commitEventDrafts({
-    ledger: input.resolvedWorldState.eventLedger,
-    drafts: [{
-      ...sceneDraft,
-      episodeKey: String(source.episodeId).slice("episode:".length),
-      questIds: [...new Set(input.domainEvents.flatMap((event) => event.questIds))],
-    }],
+    ledger: realized.worldState.eventLedger,
+    drafts: [
+      {
+        ...sceneDraft,
+        episodeKey: String(source.episodeId).slice("episode:".length),
+        questIds: [...new Set(input.domainEvents.flatMap((event) => event.questIds))],
+      },
+      ...realized.drafts,
+    ],
     source,
-    entityStore: input.resolvedWorldState.entityStore,
+    entityStore: realized.worldState.entityStore,
   });
   if (!committed.ok) return { ok: false, code: "NARRATIVE_CONTINUATION_INVALID" };
-  return { ok: true, nextWorldState: { ...input.resolvedWorldState, eventLedger: committed.ledger }, nextStoryState: { ...input.resolvedStoryState, narrative: nextNarrative } };
+  return {
+    ok: true,
+    nextWorldState: { ...realized.worldState, eventLedger: committed.ledger },
+    nextStoryState: { ...input.resolvedStoryState, narrative: nextNarrative },
+  };
 }
