@@ -7,10 +7,10 @@
 ## 当前契约
 
 - `AI_API_BASE_URL`、`AI_MODEL`、`AI_API_KEY` 和 `AI_OUTPUT_FORMAT` 由 `application/server/ai/aiRuntimeConfig.ts` 解析；`GAME_DB_PATH` 只由 `src/game/application/server/persistence/sqliteClient.ts` 读取，缺省为 `db/rpg.sqlite`。
-- `AI_RUNTIME_THINKING_ROLES` 控制角色 thinking，未配置时关闭；可用角色及语义以环境示例和 runtime policy 为准。生产生成统一使用 `NarrativeBundleSource`，不能把角色枚举当作独立调用链。
-- composition root 在 `src/game/application/server/compositionRoot.ts` 装配 repository、`RpgAiClient`、audit recorder、logger、background ensure coordinator 和 narrative bundle source。AI transport 只在 `application/server/ai/` 使用。
+- `AI_RUNTIME_THINKING_ROLES` 控制角色 thinking，未配置时关闭；可用角色及语义以环境示例和 runtime policy 为准。生产叙事生成走分阶段链路（planning → narration / character / choices），统一由 `createStageSource` 装配；不能把角色枚举当作独立调用链，也不能把旧 `NarrativeBundleSource` 描述为生产路径。
+- composition root 在 `src/game/application/server/compositionRoot.ts` 装配 repository、`RpgAiClient`、audit recorder、logger、background ensure coordinator 和 stage source。AI transport 只在 `application/server/ai/` 使用。
 - provider 传输失败、空响应、JSON/schema/reference 失败和审批拒绝都返回稳定 failure。生产 source 不切换 deterministic、fixture 或默认文本；无可用 AI 配置时注入 unavailable source，创建/叙事任务进入明确失败态。
-- 传输由 `RpgAiClient` 按角色策略重试；生成包完整尝试与手动重试由 [运行时 AI](运行时AI导演与场景表演.md) 维护，普通轮询不重跑 failed job。
+- 传输由 `RpgAiClient` 按角色策略重试；逐单元生成尝试与手动重试由 [运行时 AI](运行时AI导演与场景表演.md) 维护，普通轮询不重跑 failed job。
 - 确定性 source 只在显式 offline fixture composition 使用，不能标记生产 `generated`。
 
 ## 环境变量
@@ -24,10 +24,10 @@
 ## 运行与测试入口
 
 - 本地离线回归：`npm run journey:foundation`
-- 真实 AI smoke：`RUN_REAL_AI_SMOKE=1 npm run smoke:ai:phase4b`；该命令是受门禁的 smoke，不是完整旅程。
+- 真实 AI smoke：`RUN_REAL_AI_SMOKE=1 npm run smoke:ai:staged`（分阶段叙事链路）；`RUN_REAL_AI_SMOKE=1 npm run smoke:ai:phase4b`（旧链路对照）。两者都是受门禁的 smoke，不是完整旅程。
 - provider：`src/game/application/server/ai/rpgAiClient.ts`、`src/game/application/server/ai/sourceFactory.ts`、`src/game/application/server/ai/aiRuntimeConfig.ts`
 - 装配：`src/game/application/server/compositionRoot.ts`
-- 测试：`src/game/application/server/ai/rpgAiClient.test.ts`、`src/game/application/server/ai/worldEvolutionSource.test.ts`、`src/game/application/server/compositionRoot.test.ts`
+- 测试：`src/game/application/server/ai/rpgAiClient.test.ts`、`src/game/application/server/ai/sourceFactory.test.ts`、`src/game/application/server/compositionRoot.test.ts`
 
 ## 条件关联阅读
 

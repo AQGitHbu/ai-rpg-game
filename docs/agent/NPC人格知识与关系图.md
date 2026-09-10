@@ -20,20 +20,26 @@ NPC 的人格锚点、动态目标、知识、关系、承诺与结构化交互�
 ```
 EntityStore components + committed events
   → NpcSpeechAuthority
-  → prompt authority / proposal references
+  → SafeContext 投影（人格公开面 + 可说事实）
+  → character prompt proposals
   → validateNpcSpeechReferences
-  → approveNarrativeBundle
+  → approveUnit + collectDisclosures
   → dialogue resolution writes structured interaction and evidence
 ```
 
 NPC history 只保存结构化交互、主题和事件引用。玩家原话若需影响回应，作为当前 job 输入并受审计策略约束，不写成长期 NPC 私密历史。
 
+分阶段链路下，角色单元还有一条**观察披露**约束：单元通过 `SafeContext.requiredObservations` 收到本单元必须披露的观察（`key` / `factId` / `certainty` 安全投影），必须写进某个 part 的 `facts`——写进 `beatIds` 或 `evidence` 不算披露。输出 certainty 不得高于观察声明的 certainty（标 `known` 可降级为 `suspected`，标 `suspected` 绝不可写成 `known`）。观察与单元的归属必须同 `stepKey` 且观察 `order ≤` 单元 `order`，跨 step 引用一律被拒。
+
 ## 代码与测试入口
 
 - 组件与校验：`src/game/domain/entity/npcComponents.ts`、`src/game/domain/entity/entityStore.ts`、`src/game/domain/entity/npcProjection.ts`
-- 权限与审批：`src/game/application/npcSpeechAuthority.ts`、`src/game/domain/npcSpeechReferences.ts`、`src/game/application/approveNarrativeBundle.ts`
+- 权限与审批：`src/game/application/npcSpeechAuthority.ts`、`src/game/domain/npcSpeechReferences.ts`、`src/game/application/narrativeGeneration/approveUnit.ts`
+- 观察归属与披露：`src/game/gameplay/rpg/narrativePlanning/observations.ts`、`src/game/application/narrativeGeneration/perspectiveContext.ts`（`requiredObservations`）
 - 规则：`src/game/gameplay/rpg/npcMemory/`、`src/game/gameplay/rpg/dialogue/`
-- 测试：`src/game/application/npcSpeechAuthority.test.ts`、`src/game/domain/entity/*test.ts`、`src/game/domain/npcSpeech.test.ts`、`src/game/application/approveNarrativeBundle.test.ts`
+- 测试：`src/game/application/npcSpeechAuthority.test.ts`、`src/game/domain/entity/*test.ts`、`src/game/domain/npcSpeech.test.ts`、`src/game/gameplay/rpg/narrativePlanning/observations.test.ts`、`src/game/application/narrativeGeneration/approveUnit.test.ts`
+
+旧完整包审批入口 `approveNarrativeBundle.ts` 已不再是生产路径。
 
 ## 条件关联阅读
 

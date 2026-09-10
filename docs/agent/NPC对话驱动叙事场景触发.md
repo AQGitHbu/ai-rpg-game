@@ -2,7 +2,7 @@
 
 ## 职责
 
-焦点 NPC 对话是正式叙事决策入口。系统负责把服务端批准的选择或自定义输入提交为规则回合，并让生产 `narrativeBundle` 原子提供当前场景与后续已批准步骤；AI 只负责提案和表达。
+焦点 NPC 对话是正式叙事决策入口。系统负责把服务端批准的选择或自定义输入提交为规则回合，并让生产分阶段链路整包提供当前场景与后续已批准步骤；AI 只负责提案和表达。
 
 ## 当前契约
 
@@ -25,11 +25,11 @@
 ## 主要源码和验证
 
 - `src/components/NpcDialogueOverlay.tsx`、`src/components/AdventureGameShell.tsx`、`src/components/gameActionRequest.ts`
-- `src/game/application/performTurn.ts`、`src/game/application/generatePendingNarrativeBundle.ts`、`src/game/application/approveNarrativeBundle.ts`、`src/game/application/npcSpeechAuthority.ts`
-- `src/game/domain/narrativeBundle.ts`、`src/game/domain/npcSpeech.ts`、`src/game/domain/approvedChoice.ts`
+- `src/game/application/performTurn.ts`、`src/game/application/narrativeGeneration/runJob.ts`、`src/game/application/narrativeGeneration/approveUnit.ts`、`src/game/application/npcSpeechAuthority.ts`
+- `src/game/domain/narrative.ts`、`src/game/domain/npcSpeech.ts`、`src/game/domain/approvedChoice.ts`
 - `src/game/application/gameSessionView.ts`、`src/game/application/buildChoiceMap.ts`
-- `src/game/gameplay/rpg/narrativeBundle/index.ts`、`src/game/gameplay/rpg/dialogue/index.ts`、`src/game/gameplay/rpg/narrativeContext/index.ts`
-- `src/game/application/testing/narrativeGroundingJourney.test.ts`、`src/game/application/testing/npcContinuityJourney.test.ts`、`src/game/application/testing/storyDivergenceJourney.test.ts`、`src/game/application/generatePendingNarrativeBundle.test.ts`
+- `src/game/gameplay/rpg/narrativePlanning/index.ts`、`src/game/gameplay/rpg/dialogue/index.ts`、`src/game/gameplay/rpg/narrativeContext/index.ts`
+- `src/game/application/testing/narrativeGroundingJourney.test.ts`、`src/game/application/testing/npcContinuityJourney.test.ts`、`src/game/application/testing/storyDivergenceJourney.test.ts`、`src/game/application/narrativeGeneration/runJob.test.ts`
 - `src/components/NpcDialogueOverlay.test.tsx`、`src/game/application/npcSpeechAuthority.test.ts`、`src/game/application/approveAndWriteScene.test.ts`、`src/game/application/performTurn.test.ts`
 
 ## 按条件关联文档
