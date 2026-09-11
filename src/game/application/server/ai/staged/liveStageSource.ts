@@ -22,6 +22,7 @@ import { buildNarrationPrompt } from "./narrationPrompt";
 import { buildCharacterPrompt } from "./characterPrompt";
 import { buildChoicePrompt } from "./choicePrompt";
 import { buildDisclosureReviewPrompt } from "./disclosureReviewPrompt";
+import { plannedReplyRejection } from "@/game/application/narrativeGeneration/dialogueContinuity";
 
 const STAGE_ROLES: Readonly<Record<StageRequest["stage"], RpgAiRole>> = {
   planning: "planning",
@@ -91,6 +92,13 @@ export function createLiveStageSource(options: CreateLiveStageSourceOptions): St
         if (proposal.value.units.some(unit => unit.stage !== "choices" && unit.task === undefined)
           || (proposal.value.decision?.kind === "ordinary" && proposal.value.decision.options.some(option => option.task === undefined))) {
           return invalidContent("plan_task_missing", "每个 narration/character 单元及每个普通候选必须提供 task={intent,focusFactIds,prerequisiteFactIds}，不能只给笼统 instruction。");
+        }
+        if (request.context.kind === "decision") {
+          const rejection = plannedReplyRejection(request.context.job, proposal.value);
+          if (rejection !== null) return invalidContent(rejection, "先在当前焦点 NPC 的 task.answers 中逐项规划玩家已问维度的回应结果，再确定两个后续候选。答案只引用本任务授权事实，未知与拒答不得编造答案。");
+        } else if (proposal.value.units.some(unit => (unit.task?.answers?.length ?? 0) > 0)
+          || proposal.value.decision?.options.some(option => "task" in option && (option.task?.answers?.length ?? 0) > 0)) {
+          return invalidContent("plan_reply_question_mismatch", "开局没有已选择的问题，answers 应省略；NPC 开场内容用 task.intent 和授权 focusFactIds 规划。");
         }
         return { ok: true, stage: "planning", value: proposal.value };
       }

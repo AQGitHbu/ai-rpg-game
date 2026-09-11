@@ -81,9 +81,11 @@ ${facts}
 ${contestedNote}
 # 前文（已批准的可见表达，不得复述）
 ${prior}
+${context.previousReply === undefined ? "" : `上一轮你实际说过的话（只用于衔接，不新增事实）：${JSON.stringify(context.previousReply)}`}
 
 # 规划批准的具体表达任务
 ${context.taskInstruction ?? "只表达以下批准节拍和本场内容，不新增剧情。"}
+回答内容与 answer/unknown/refuse 结果由规划器确定，只调整口吻和句式；不能自行决定消息来源、是否知道、是否拒答或新的承诺。不替旁白、其他 NPC 或玩家拟写内容。
 ${context.unit.task === undefined ? "" : `任务引用必须在正文及对应 part.facts 覆盖：${JSON.stringify([...context.unit.task.focusFactIds, ...context.unit.task.prerequisiteFactIds])}。保持其确定程度；不能仅回填 ID 而不表达内容。`}
 
 # 必选节拍（必须在台词中自然承接，beatIds 原样回填）

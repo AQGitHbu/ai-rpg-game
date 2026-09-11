@@ -1,3 +1,4 @@
+import { parseExpressionTask, type ExpressionTask } from "./expressionTask";
 import { dialogueTopicKey, type Action } from "./action";
 
 // ---------------------------------------------------------------------------
@@ -32,6 +33,7 @@ export type ApprovedChoice = {
   readonly action: Action;
   readonly semanticSummary: string;
   readonly branch?: ApprovedChoiceBranch;
+  readonly task?: ExpressionTask;
 };
 
 /**
@@ -52,11 +54,12 @@ export type CreateApprovedChoiceInput = {
   readonly label: string;
   readonly action: Action;
   readonly branch?: ApprovedChoiceBranch;
+  readonly task?: ExpressionTask;
 };
 
 export type CreateApprovedChoiceResult =
   | { readonly ok: true; readonly choice: ApprovedChoice }
-  | { readonly ok: false; readonly reason: "empty_label" | "invalid_revision" | "empty_scene" | "invalid_branch" };
+  | { readonly ok: false; readonly reason: "empty_label" | "invalid_revision" | "empty_scene" | "invalid_branch" | "invalid_task" };
 
 /** 逐字段重建批准选项：禁止原引用直达注册表。 */
 export function createApprovedChoice(input: CreateApprovedChoiceInput): CreateApprovedChoiceResult {
@@ -66,6 +69,8 @@ export function createApprovedChoice(input: CreateApprovedChoiceInput): CreateAp
   if (!Number.isInteger(input.basedOnRevision) || input.basedOnRevision < 0) {
     return { ok: false, reason: "invalid_revision" };
   }
+  const task = input.task === undefined ? undefined : parseExpressionTask(input.task);
+  if (task === null) return { ok: false, reason: "invalid_task" };
   const branch = input.branch === undefined ? null : rebuildBranch(input.branch);
   if (input.branch !== undefined && branch === null) return { ok: false, reason: "invalid_branch" };
   return {
@@ -80,6 +85,7 @@ export function createApprovedChoice(input: CreateApprovedChoiceInput): CreateAp
       sceneId: input.sceneId,
       basedOnRevision: input.basedOnRevision,
       label,
+      ...(task === undefined ? {} : { task }),
       action: rebuildAction(input.action),
       semanticSummary: semanticSummaryOf(input.action, branch),
       ...(branch === null ? {} : { branch }),

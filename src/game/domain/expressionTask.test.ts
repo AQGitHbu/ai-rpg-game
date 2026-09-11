@@ -5,6 +5,19 @@ import { parseBranchOption } from "./narrativeBranch";
 import { makeStagedPlan } from "./testing/stagedNarrativeFixture.testutil";
 
 const task = { intent: "offer", focusFactIds: ["fact_0"], prerequisiteFactIds: ["fact_1"] };
+it("回应结果随任务解析保存，答案事实必须属于任务，未知/拒答不能夹带答案", () => {
+  const answer = { factId: "fact_question", aspect: "source", outcome: "answer", answerFactIds: ["fact_0"] };
+  const reply = { ...task, intent: "inform", answers: [answer] };
+  expect(parseExpressionTask(reply)).toEqual(reply);
+  expect(parseUnit({ ...makeStagedPlan().units[1], task: reply })?.task).toEqual(reply);
+  for (const invalid of [
+    { ...answer, answerFactIds: ["fact_secret"] }, { ...answer, answerFactIds: [] },
+    { ...answer, outcome: "unknown" }, { ...answer, outcome: "refuse" },
+    { ...answer, text: "隐藏答案" }, { ...answer, aspect: "invented" }, { ...answer, outcome: "maybe" },
+  ]) expect(parseExpressionTask({ ...reply, answers: [invalid] })).toBeNull();
+  expect(parseExpressionTask({ ...reply, answers: [answer, answer] })).toBeNull();
+  expect(parseExpressionTask({ ...reply, focusFactIds: [], answers: [{ ...answer, outcome: "unknown", answerFactIds: [] }] })).not.toBeNull();
+});
 it("具体询问维度通过 Unit 和候选解析后不丢失", () => {
   const detailed = { intent: "ask", focusFactIds: ["fact_0"], prerequisiteFactIds: [],
     inquiries: [{ factId: "fact_0", aspects: ["direction", "depth"] }] };

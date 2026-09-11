@@ -208,8 +208,8 @@ describe("stagedNarrativeJourney", () => {
     const choices = expressionContexts(harness, "choices");
     const choiceContext = choices[0];
     if (choiceContext === undefined) throw new Error("missing choices context");
-    // 依赖的旁白与两个角色单元正文都进入 priorText（顺序由 DAG 拓扑决定）。
-    expect(choiceContext.priorText.length).toBeGreaterThanOrEqual(3);
+    // 按场景与对话对象裁剪，只保留本场旁白和当前 NPC 的正文。
+    expect(choiceContext.priorText).toHaveLength(2);
     expect(choiceContext.choiceKind).toBe("ordinary");
     expect(choiceContext.playerUtterance).toBeNull();
   });

@@ -1,3 +1,4 @@
+import { parseExpressionTask, type ExpressionTask } from "./expressionTask";
 import { isApprovedChoiceBranch } from "./approvedChoice";
 import type { Action, DialogueTopic } from "./action";
 import type { NarrativeJobId } from "./events";
@@ -27,6 +28,7 @@ export type PreparedContinuationTrigger =
     };
 
 export type PreparedChoiceSeedState = {
+  readonly task?: ExpressionTask;
   readonly branch?: import("./approvedChoice").ApprovedChoiceBranch;
   readonly label: string;
   readonly action: Action;
@@ -245,7 +247,8 @@ function isNpcDialogue(value: unknown): value is NpcDialogueInScene {
 }
 
 export function isPreparedChoiceSeed(value: unknown): value is PreparedChoiceSeedState {
-  return isRecord(value) && hasOnlyKeys(value, ["label", "action", "branch"])
+  return isRecord(value) && hasOnlyKeys(value, ["label", "action", "branch", "task"])
+    && (value.task === undefined || parseExpressionTask(value.task) !== null)
     && (value.branch === undefined || isApprovedChoiceBranch(value.branch))
     && isNonEmptyString(value.label) && isAction(value.action);
 }

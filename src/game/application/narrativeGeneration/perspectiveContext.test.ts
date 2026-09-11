@@ -16,7 +16,7 @@ import {
   FIXTURE_CANDIDATE_ROUTE,
   FIXTURE_CANDIDATE_ALT,
 } from "@/game/domain/testing/stagedNarrativeFixture.testutil";
-import { asQuestId, asNpcId, asFactId } from "@/game/domain/worldEntity";
+import { asQuestId, asNpcId, asFactId, asLocationId } from "@/game/domain/worldEntity";
 import type { PlanProposal } from "@/game/domain/narrativePlan";
 import type { Unit, UnitOutput } from "@/game/domain/narrativeUnit";
 import type { NpcEntityRecord } from "@/game/domain/entity";
@@ -145,6 +145,46 @@ function contextOf(plan: ReturnType<typeof approvedPlanOf>, key: string) {
 }
 
 describe("projectUnitContext", () => {
+  it("当前 NPC 只拿自己的回应结果，其他 NPC 不继承原话或上一轮选项", () => {
+    const base = makeStagedPlan();
+    const plan = { ...approvedPlanOf(personaWorld(), { ...base, units: base.units.map(unit => unit.speakerId === FIXTURE_NPC_A
+      ? { ...unit, task: { intent: "admit_unknown", focusFactIds: [], prerequisiteFactIds: [], answers: [
+        { factId: FACT_PUB, aspect: "source", outcome: "unknown", answerFactIds: [] },
+      ] } } : unit) }), currentUtterance: { npcId: FIXTURE_NPC_A, text: "PLAYER_QUESTION",
+      inquiries: [{ factId: FACT_PUB, aspects: ["source"] as const }],
+      previousReply: { text: "MY_PREVIOUS_REPLY", factIds: [] }, previousChoices: ["OLD_A", "OLD_B"] } };
+    const npc = contextOf(plan, FIXTURE_NPC_A_UNIT);
+    expect(npc.ok).toBe(true);
+    if (npc.ok) {
+      expect(npc.value.taskInstruction).toContain("明确表示不知道");
+      expect(npc.value.previousReply).toBe("MY_PREVIOUS_REPLY");
+      expect(npc.value.options).toEqual([]);
+      expect(npc.value.previousChoices).toBeUndefined();
+      expect(npc.value.visibleFacts).toEqual([]);
+    }
+    const other = contextOf(plan, FIXTURE_NPC_B_UNIT);
+    expect(other.ok).toBe(true);
+    expect(JSON.stringify(other)).not.toMatch(/PLAYER_QUESTION|MY_PREVIOUS_REPLY|OLD_A|OLD_B/);
+  });
+
+  it("未来选项不继承旧场景原文、玩家问题或其他 NPC 的内容", () => {
+    const base = makeStagedPlan();
+    const choice = base.units.find(unit => unit.stage === "choices")!;
+    const plan = approvedPlanOf(personaWorld(), { ...base,
+      steps: [{ key: "next", trigger: { kind: "explore", locationId: asLocationId("loc_a") }, next: [] }],
+      terminal: { kind: "next_decision", target: { kind: "continuation_step", stepKey: "next" } },
+      units: [...base.units.filter(unit => unit.stage !== "choices"),
+        { ...choice, point: { stepKey: "next", order: 1 } }],
+      decision: { ...base.decision!, point: { stepKey: "next", order: 1 } },
+    });
+    const result = contextOf({ ...plan, currentUtterance: { npcId: FIXTURE_NPC_A, text: "OLD_QUESTION",
+      previousReply: { text: "OLD_REPLY", factIds: [] }, previousChoices: ["OLD_A", "OLD_B"] } }, FIXTURE_CHOICE_UNIT);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.priorText).toEqual([]);
+    expect(result.value.playerUtterance).toBeNull();
+    expect(JSON.stringify(result.value)).not.toMatch(/OLD_QUESTION|OLD_REPLY|OLD_A|OLD_B/);
+  });
   it.each(["cooperative", "trusted", "bonded", "acquainted"] as const)("条件披露使用玩家关系：%s", stage => {
     const world = personaWorld();
     const npc = world.entityStore.records.find(r => r.core.kind === "npc" && String(r.core.id) === FIXTURE_NPC_A) as NpcEntityRecord;
@@ -281,8 +321,8 @@ describe("projectUnitContext", () => {
     expect(context.options.map((option) => option.candidateId))
       .toEqual([FIXTURE_CANDIDATE_ROUTE, FIXTURE_CANDIDATE_ALT]);
     expect(context.options.every((option) => option.publicIntent.text.length > 0)).toBe(true);
-    // 选项前文 = 前序已批准可见表达（旁白 + 两个 NPC 台词），按 ScenePoint 顺序
-    expect(context.priorText).toHaveLength(3);
+    // 选项前文只含本场旁白与对话对象，排除其他 NPC 防止串台
+    expect(context.priorText).toHaveLength(2);
   });
 
   it("未在场的 NPC 拿不到玩家私聊：priorText 为空且不含他人台词", () => {

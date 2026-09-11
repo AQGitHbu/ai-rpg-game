@@ -12,10 +12,10 @@
 
 - 生产 provider 的叙事触发只有 `initialization`（开局）和 `narrative_choice`（正式选择）两类；`npc_free_text` 仍走既有焦点 NPC 输入路径。两者共用同一套四阶段 source。
 - 生产装配点是 `createStageSource`（`src/game/application/server/ai/sourceFactory.ts`）。旧完整包源 `liveNarrativeBundleSource.ts` **已无任何生产调用**，仅保留给显式离线 fixture；不得把它描述为生产路径。
-- 一次逻辑任务（job）分为四类职责，并非固定四次 API 调用：`planning` 决定事件、世界变化提案、NPC 表达内容与玩家回应语义，再由 `narration`、`character`、`choices` 三类表达单元按 DAG 依赖顺序产展示文本。规划素材（尤其 `opening.prologue`）**不是最终展示文本**，必须经旁白单元覆盖后才发布。
+- 一次逻辑任务（job）分为四类职责，并非固定四次 API 调用：`planning` 决定事件、世界变化提案、NPC 回答内容与两个最终玩家回应意图，再由 `narration`、`character`、`choices` 三类表达单元按 DAG 依赖顺序产展示文本。正常路径只有一次整轮规划，三个表达阶段只润色获批内容；没有额外选项规划或正文复核调用。规划素材（尤其 `opening.prologue`）**不是最终展示文本**，必须经旁白单元覆盖后才发布。
 - 骨架先经 `approvePlanningContext` 预览世界增量、核对服务端场景图，再经 `approvePlan` 与 `approvePlanDecision` 检查图结构和候选语义；表达逐单元经过 `approveUnit` 与 `collectDisclosures`，发布时再次通过同一 `approvePlanningContext` 预览并重放审批，不能退回增量前世界审批终幕。任一步失败不部分写入。
 - 当前规则要求的必选节拍（除可选 atmosphere）须按原 beatId/kind 各分配给唯一的 current 旁白单元；当前旁白不得增加服务端未要求的节拍（额外氛围只用固定键 atmosphere）。NPC 可另行回答，但不能替代旁白覆盖，也不能用未来场景提前代偿。分配不符以 `plan_mandatory_beat_mismatch` 在表达请求前退回规划，反馈携带所需节拍与场景契约；不复制 NPC 正文、不扩大知识权限。恢复旧缓存时，若骨架违反此契约，撤销该骨架及全部依赖表达后有界重新规划；已用请求和尝试次数保留，成功后移除新骨架不再引用的旧表达缓存。
-- 普通对话候选允许 `target/deferredLocation=null`，只绑定已批准的 `dialogueAct/topic`，两个候选不能是同一语义。不为选项创建地点或改写任务；不同走向不等于不同地点。实际选择及当回合已提交结果进入下一次规划。
+- 普通对话候选允许 `target/deferredLocation=null`，只绑定已批准的 `dialogueAct/topic`，两个候选不能是同一语义。不为选项创建地点或改写任务；不同走向不等于不同地点。实际选择及当回合已提交结果进入下一次规划。普通选项的已批准 `task` 随服务端 registry/后续场景种子保存，固定选择时进入 `selectedDialogue.task`；规划器在同一次规划内先确定 NPC 回答含义，再确定后续选项意图，见 [NPC 对话](NPC对话驱动叙事场景触发.md)。
 - 当前场景不能被未来场景替代。已有存档中的非空路线目标继续按旧规则审批、持久化和消费，返程仍遵守在场性；这只是兼容能力，不是每个新决策的必需结构。
 - 下一幕需要世界增量时，首次规划不把增量前的临时终点当作下一幕图；规则预览增量后核对 steps/terminal。场景契约 `sceneContract` 明确当前回应 NPC、各场景是否允许 choices、下一决策的 stepKey/NPC/候选 ID；有已批准图的重试以该图替换原待生成图，完整反馈放在提示末尾，沿用已批准增量重新规划意图，不静默搬移选项或更换 NPC。`graphStatus=approved` 仅表示图已编译，不表示整包已获批；所有审批仍执行，仍失败则显式重试。终幕提案 `decision=null`，规则从已具象化结局对派生 trust/support、doubt/challenge，choices 表达只写立场对白，装配为 `endingLabels`，不放进普通 choices。
 - `sceneSnapshot` 仅沿当前节点的唯一祖先路径预览触发结果。`approvePlanningContext` 核对提案后附加规则 `ruleSceneGraph`；快照按各步 `absorbedObjectiveIndexes` 预览规则会自动确认的连续事实目标，限对应地点，城镇容器移动不等于进入建筑。它不来自模型声明，不授予无关事实或 NPC 私密知识，也不写入真实 ledger。获批上游实际披露与受众范围仍单独决定条件认知。
@@ -48,9 +48,9 @@
   → ready scene + opaque choices
 ```
 
-Prompt 只接收编译后的公开事实、当前位置、焦点 NPC 的有限结构化交互、强制节拍、实体索引、持有状态、上一场景和有界 memory cards。不向表达 prompt 传完整 `GameRecord`、event ledger、其他 NPC 历史、secret fact 正文、玩家长期原文或隐藏 registry。全局 planning prompt 接收预算、公开与私密分区、已选 branch、当前 job 的 `selectedDialogue` 与 `domainEventIds` 对应的已提交结果，以及开局 situation/history/novelty；表达 prompt 只接收 `SafeContext`。审计中的 `narrativeContext` 只是 block 元数据与预算，不是 prompt 正文副本。
+Prompt 只接收编译后的公开事实、当前位置、焦点 NPC 的有限结构化交互、强制节拍、实体索引、持有状态、上一场景和有界 memory cards。不向表达 prompt 传完整 `GameRecord`、event ledger、其他 NPC 历史、secret fact 正文、玩家长期原文或隐藏 registry。全局 planning prompt 接收预算、公开与私密分区、已选 branch、当前 job 的 `selectedDialogue` 与 `domainEventIds` 对应的已提交结果，以及开局 situation/history/novelty；表达 prompt 只接收 `SafeContext`。统一规划器还接收同一焦点 NPC 上一轮实际展示的旁白、对白及两个选项，不包含 token 或其他 NPC 对话历史。审计中的 `narrativeContext` 只是 block 元数据与预算，不是 prompt 正文副本。
 
-各 stage 使用独立 messages，不共享会话。本场公开定位由步骤快照投影地点 ID/名称、玩家名称与本场参与说话人名称，不携带地点背景或 NPC 隐藏动机。当前任务的实际选择 label（自由输入则为本次 utterance）作为待回应话语绑定到 current 旁白、选项和当前焦点 NPC；不转发给未来场景或其他 NPC。话语单独标记为非指令、非已核实事实，不扩大事实引用权限。
+各 stage 使用独立 messages，不共享会话。跨场景依赖仅表示执行顺序，旧场景的对白原文不进入下一场景表达；跨场景认知仍由事实和观察回执投影。选项前文标记旁白/说话人，只保留本场旁白与当前对话对象；NPC 不接收玩家候选，也不继承其他 NPC 的私聊。本场公开定位由步骤快照投影地点 ID/名称、玩家名称与本场参与说话人名称，不携带地点背景或 NPC 隐藏动机。当前任务的实际选择 label（自由输入则为本次 utterance）作为待回应话语绑定到 current 旁白、选项和当前焦点 NPC；不转发给未来场景或其他 NPC。话语单独标记为非指令、非已核实事实，不扩大事实引用权限。
 
 各 stage 的展示职责保持分离。开局规划里 `opening.prologue` 与描述是内容素材，最终序幕由 narration 单元覆盖后才发布；不能直接展示 planner 的 `prologue`。旁白 prompt 不含 NPC 台词输出字段；choice prompt 只返回两条 id/label，禁止前缀、效果与 Action。
 
@@ -58,7 +58,7 @@ Prompt 只接收编译后的公开事实、当前位置、焦点 NPC 的有限�
 
 规划器的 `publicIntent.text` 与 `requiredBeats.instruction` 是规划备注，不直接传给表达器，也不能作为未编码内容的隐式指令。新 live 规划必须给 narration/character 单元及两个普通候选提供 `ExpressionTask`：`intent` 指定受控目的，`focusFactIds` 指定具体内容，`prerequisiteFactIds` 指定先求证再回应的已知说法；缺失以 `plan_task_missing` 拒绝。条件仅表达先后与不无条件承诺，不是交易、调查成功或新增规则动作。旧缓存/离线 fixture 的可选字段保留兼容。
 
-安全编译将任务里的每个事实引用与该时点的可知、可披露事实求交核验；缺一即退回规划，不静默删除条件或转发全局原文。新任务的旁白/NPC 事实范围收窄到任务、必选节拍与本单元观察的引用；动作只投影同 step 且不晚于本单元的获批动作。编译后的 `taskInstruction` 保留目的、具体事实及先求证顺序。旁白/NPC 输出必须覆盖任务事实引用，否则以 `unit_output_task_missing` 拒绝；选项只能返回忠于获批意图的两条纯对白。任意自然语言条件不在这份小契约的表达能力内，不能靠备注交给表达器补写；事实引用覆盖也不等于自然语言语义证明。三个表达 prompt 明确禁止补造玩家经历、往日对白、目击细节和现场证据；旁白不能把口述改成脚印等物证，NPC 不知道时不能编理由或改成失忆，两个候选的条件与承诺不能互相复制。
+安全编译将任务里的每个事实引用与该时点的可知、可披露事实求交核验；缺一即退回规划，不静默删除条件或转发全局原文。新任务的旁白/NPC 事实范围收窄到任务、必选节拍与本单元观察的引用；普通选项的事实范围收窄到两个获批任务；动作只投影同 step 且不晚于本单元的获批动作。编译后的 `taskInstruction` 保留目的、具体事实及先求证顺序。旁白/NPC 输出必须覆盖任务事实引用，否则以 `unit_output_task_missing` 拒绝；选项只能返回忠于获批意图的两条纯对白。任意自然语言条件不在这份小契约的表达能力内，不能靠备注交给表达器补写；事实引用覆盖也不等于自然语言语义证明。三个表达 prompt 明确禁止补造玩家经历、往日对白、目击细节和现场证据；旁白不能把口述改成脚印等物证，NPC 不知道时不能编理由或改成失忆，两个候选的条件与承诺不能互相复制。
 
 节拍证据通常只允许本视角知识条目的实际来源。唯一规则结果例外是 current 旁白的强制 `quest_progress/quest_advanced`：服务端确认事件已提交、属于当前 job 且对应本次完成目标后，允许引用该 `quest_completed` 证明任务完成；它不授予事实知识，不适用于 NPC 或未来旁白。拒绝反馈逐节拍列出非法与允许的事件 ID，无需要时可用空证据。合法 ID 不证明任意原文安全，仍需检查真实文本是否编造或隐含泄漏。
 
@@ -70,7 +70,9 @@ Prompt 只接收编译后的公开事实、当前位置、焦点 NPC 的有限�
 
 `ExpressionTask.inquiries` 为可选 `{factId,aspects}[]`：仅 ask/challenge 可非空，最多 4 个不同 focusFactIds，各含 1–4 个不重复维度。枚举以 `src/game/domain/expressionTask.ts` 为准，不接受答案或自由正文。投影保留全部维度，拒绝未知字段和越权事实，不转发原始 publicIntent。旧任务兼容但不恢复未编码意图。
 
-三个表达 prompt 使用同一 `expressionBoundary` 约束区分修辞和实质信息，覆盖目击细节、历史比较、设备状态、玩家动作、线索和未来承诺；没有素材不自行补现场。有限 ID/格式审批不等于通用语义校验，正文是否遵守仍由真实样本验收，未增加新的在线审核角色。
+当前焦点 NPC 对 `selectedDialogue.task.inquiries` 的回应由 `task.answers` 逐项确定：`{factId, aspect, outcome, answerFactIds}`，最多 16 项。每个已问维度恰好安排一次，outcome 为 answer/unknown/refuse；answer 的非空答案引用必须属于本任务 focusFactIds 并通过 NPC 可知/可披露审批，unknown/refuse 不携带答案。问题引用只绑定实际提问，不授予 NPC 知识。缺失或错配分别以 `plan_reply_missing`、`plan_reply_question_mismatch` 退回同一规划阶段；旧缓存同样撤销依赖表达后有界重规划，预算不重置。开局与无结构化提问的旧任务/自由输入沿用 intent 和授权事实安排回应，不额外解析意图或调用模型。
+
+三个表达 prompt 使用同一 `expressionBoundary` 约束区分修辞和实质信息，覆盖目击细节、历史比较、设备状态、玩家动作、线索和未来承诺；没有素材不自行补现场。有限 ID/格式审批不等于通用语义校验，正文仍需真实样本验收。
 
 初始化 requestId 的摘要只绑定用户配置与替换目标，不绑定服务端随机 gameId、seed 或 generationId；同请求复用首次 envelope。pending/failed 初始化槽不能由新请求覆盖，需先显式取消；发布事务再次验证槽归属。查询 pending 任务通过现有 coordinator 恢复调度，不刷新预算；客户端不将无本次请求标记的历史 published 任务视为本次开局完成。
 

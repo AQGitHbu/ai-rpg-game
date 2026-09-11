@@ -18,6 +18,7 @@ import type {
 import { preparedContinuationTriggerKey as domainPreparedTriggerKey } from "@/game/domain/preparedContinuation";
 
 export type PreparedChoiceCandidate = {
+  readonly task?: import("@/game/domain/expressionTask").ExpressionTask;
   readonly branch?: import("@/game/domain/approvedChoice").ApprovedChoiceBranch;
   readonly candidateId: string;
   readonly action: Action;

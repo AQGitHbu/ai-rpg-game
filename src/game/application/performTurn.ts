@@ -319,6 +319,7 @@ export async function performTurn(
       objectiveTransition: narrative.objectiveTransition,
       mandatoryBeats: narrative.mandatoryBeats,
       dialogueChoiceLabel: dialogueChoiceLabel ?? endingStance?.label,
+      dialogueChoiceTask: readyNarrative.choiceRegistry.find(choice => choice.choiceToken === fixedChoiceToken)?.task,
       generationKind: command.interaction.kind === "free_text" ? "npc_free_text" : "npc_fixed_choice",
       sceneRequestKind: "npc_response",
     });
@@ -453,6 +454,7 @@ type CommitResolutionInput = {
   readonly objectiveTransition: ObjectiveTransition;
   readonly mandatoryBeats: readonly MandatoryNarrativeBeat[];
   readonly dialogueChoiceLabel?: string;
+  readonly dialogueChoiceTask?: import("@/game/domain/expressionTask").ExpressionTask;
   readonly generationKind: ProviderGenerationKind | null;
   readonly sceneRequestKind: NarrativeSceneRequestKind | null;
 };
@@ -509,6 +511,7 @@ async function commitResolution(input: CommitResolutionInput): Promise<PerformTu
       ? {
           selectedDialogue: {
             dialogueAct: input.action.dialogueAct,
+            ...(input.dialogueChoiceTask === undefined ? {} : { task: input.dialogueChoiceTask }),
             ...(input.action.topic === undefined ? {} : { topic: input.action.topic }),
             ...((input.dialogueChoiceLabel ?? input.action.utterance) === undefined
               ? {}

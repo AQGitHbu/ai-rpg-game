@@ -236,6 +236,7 @@ export function installOpeningNarrative(input: Readonly<{
       basedOnRevision: 0,
       label: choice.label,
       action: responseById.get(choice.candidateId)!,
+      task: decision.options.find(option => option.candidateId === choice.candidateId)?.task,
       ...(decision.options.every(option => option.target !== null)
         ? { branch: { decisionId, candidateId: choice.candidateId } } : {}),
     });

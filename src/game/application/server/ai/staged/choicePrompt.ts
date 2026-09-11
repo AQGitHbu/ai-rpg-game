@@ -32,9 +32,17 @@ speakerName 是正在说这句话的玩家，addresseeName 才是听者。label 
 
 # 已批准的候选意图（candidateId 原样回填，label 忠于各自意图）
 ${options.join("\n")}
+这是最终意图，不是供你重新选题的草案。你只润色，不重新规划；不要把候选 A 的问题或条件混入候选 B。
+
+# 本轮已经问过的维度（禁止重问，也不因换成质疑或加新问题而豁免）
+${JSON.stringify(context.askedInquiries ?? [])}
+上一组实际展示的选项（仅用于避免重复，不是候选模板）：${JSON.stringify(context.previousChoices ?? [])}
+NPC 已明确不知道、没有依据或拒绝回答时，不能再次让玩家原样或换措辞询问同一内容。
+只询问获批任务明确列出的维度，不额外添加来源、时间或可信度问题；非询问任务只表达态度，不擅自附带问题。
 
 # 前文（已批准的可见表达，保持衔接，不得复述）
 ${prior}
+前文已标记旁白与说话人。只有该 NPC 的实际台词才能表述为“你刚才说”；玩家已知事实或旁白提及不等于 NPC 说过。
 
 # 本场公开定位（只能在此场景表达，不回到旧地点或代写其他角色）
 ${context.scene === undefined ? "（未提供）" : JSON.stringify(context.scene)}

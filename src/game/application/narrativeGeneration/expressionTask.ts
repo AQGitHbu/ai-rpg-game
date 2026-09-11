@@ -15,8 +15,11 @@ const inquiryLabels: Record<InquiryAspect, string> = {
 };
 
 /** 只编译表达职责；不验证或执行任何世界效果、承诺或知识写入。 */
-export function projectExpressionTask(task: ExpressionTask, facts: readonly SafeFact[]): Check<string> & { detail?: string } {
+export function projectExpressionTask(task: ExpressionTask, facts: readonly SafeFact[],
+  questions: NonNullable<ExpressionTask["inquiries"]> = []): Check<string> & { detail?: string } {
   if (parseExpressionTask(task) === null) return { ok: false, code: "plan_task_invalid" };
+  if (task.answers?.some(answer => !questions.some(question => question.factId === answer.factId
+    && question.aspects.includes(answer.aspect)))) return { ok: false, code: "plan_reply_question_mismatch" };
   const ids = [...task.focusFactIds, ...task.prerequisiteFactIds];
   const unavailableFactIds = ids.filter(id => !facts.some(fact => fact.id === id));
   if (unavailableFactIds.length) return { ok: false, code: "beat_authority_conflict",
@@ -31,6 +34,10 @@ export function projectExpressionTask(task: ExpressionTask, facts: readonly Safe
     `任务：${purposes[task.intent]}。`,
     task.focusFactIds.length ? `具体内容：${topic(task.focusFactIds)}。` : "只承接本场已批准节拍、现场或当前话语，不另编关键事实。",
     ...(task.inquiries ?? []).map(inquiry => `必须针对事实 ${inquiry.factId} 具体询问：${inquiry.aspects.map(aspect => inquiryLabels[aspect]).join("、")}。这些是待问的维度，未知答案不能当作已知事实；每个维度都须保留，不能替换成笼统的“怎么解释”。`),
+    ...(task.answers ?? []).map(answer => `对玩家关于 ${answer.factId} 的「${inquiryLabels[answer.aspect]}」问题：${answer.outcome === "answer"
+      ? `只用以下授权内容回答，保留 certainty：${topic(answer.answerFactIds)}`
+      : answer.outcome === "unknown" ? "明确表示不知道，不能改成失忆、拒绝透露或编造答案"
+        : "明确拒绝回答，不暗示知道任何未授权答案，也不编造拒绝原因"}。这是已规划的回应结果，不得自行改变。`),
     "保留以上目的、具体内容与先后条件，只调整措辞；不得自行增加交易条件、线索、任务、路线或行动结果。",
   ].filter(Boolean).join("\n") };
 }

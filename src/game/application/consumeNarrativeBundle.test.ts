@@ -6,7 +6,7 @@ import { parseNarrativeBundleState, type BundleScenePremises, type NarrativeBund
 import { PLAYER_ENTITY_ID, asFactId } from "@/game/domain/worldEntity";
 
 const required = { observationKey: "heard", audienceId: String(PLAYER_ENTITY_ID), factId: "fact_routes", certainty: "known" as const };
-function consume(premises: BundleScenePremises, receipt?: { sequence: number; certainty: "known" | "suspected" }) {
+function consume(premises: BundleScenePremises, receipt?: { sequence: number; certainty: "known" | "suspected" }, withTask = false) {
   const base = createDecisionWorldFixture();
   const world = receipt === undefined ? base : { ...base, eventLedger: [...base.eventLedger, {
     ...base.eventLedger.at(-1)!, kind: "narrative_observed", sequence: receipt.sequence,
@@ -17,7 +17,10 @@ function consume(premises: BundleScenePremises, receipt?: { sequence: number; ce
     steps: [{ stepId: "arrival", objectiveKey: "quest:0", consumptionGroupKey: "arrival",
       trigger: { kind: "move", locationId: world.currentLocationId }, nextStepIds: [], observations: [], expressionOrder: [], premises,
       scene: { segments: [{ beatId: "atmosphere", text: "风吹过门前。" }], event: { kind: "travel", locationId: world.currentLocationId },
-        npcLine: null, objectiveLink: null, choiceSeeds: [], source: "generated" } }],
+        npcLine: null, objectiveLink: null, choiceSeeds: withTask ? ["ask", "challenge"].map(act => ({
+          label: act === "ask" ? "谁说的？" : "我不相信。", action: { type: "talk" as const, npcId: world.npcs[0]!.id, dialogueAct: act as "ask" | "challenge" },
+          task: { intent: act as "ask" | "challenge", focusFactIds: ["fact_routes"], prerequisiteFactIds: [], inquiries: [{ factId: "fact_routes", aspects: ["source" as const] }] },
+        })) : [], source: "generated" } }],
   };
   expect(parseNarrativeBundleState(bundle).ok).toBe(true);
   const baseStory = createDecisionStoryFixture();
@@ -62,4 +65,12 @@ it.each([null, "fact_routes", [""], ["fact_routes", "fact_routes"], [1]])("存�
   const { bundle } = consume({ locationId: String(createDecisionWorldFixture().currentLocationId), afterSequence: 0, observations: [] });
   const invalid = { ...bundle, steps: bundle.steps.map(step => ({ ...step, premises: { ...step.premises, discoveredFactIds } })) };
   expect(parseNarrativeBundleState(invalid).ok).toBe(false);
+});
+
+
+it("后续场景种子的问询任务在消费重铸 token 后保留", () => {
+  const { result } = consume({ locationId: String(createDecisionWorldFixture().currentLocationId), afterSequence: 0, observations: [] }, undefined, true);
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.nextStoryState.narrative.status !== "ready") throw Error("ready");
+  expect(result.nextStoryState.narrative.choiceRegistry[0]?.task?.inquiries).toEqual([{ factId: "fact_routes", aspects: ["source"] }]);
 });

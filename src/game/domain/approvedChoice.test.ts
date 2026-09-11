@@ -226,3 +226,18 @@ describe("branch 绑定纳入 token 与 semanticSummary", () => {
     expect(revived[0]?.branch).toEqual({ decisionId: "dec_1", candidateId: "left" });
   });
 });
+
+
+it("问询任务逐字段重建，非法维度不能进入选项注册表", () => {
+  const task = { intent: "ask" as const, focusFactIds: ["fact_0"], prerequisiteFactIds: [],
+    inquiries: [{ factId: "fact_0", aspects: ["source" as const] }] };
+  const input = { sceneId: "dialogue", basedOnRevision: 1, label: "谁说的？", action: TALK_ACTION, task };
+  const result = createApprovedChoice(input);
+  expect(result.ok).toBe(true);
+  if (result.ok) {
+    expect(result.choice.task).toEqual(task);
+    expect(result.choice.task).not.toBe(task);
+  }
+  expect(createApprovedChoice({ ...input, task: { ...task, inquiries: [{ factId: "unknown", aspects: ["source"] }] } }))
+    .toEqual({ ok: false, reason: "invalid_task" });
+});

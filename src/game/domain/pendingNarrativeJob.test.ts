@@ -537,3 +537,13 @@ describe("decision boundary classification", () => {
     expect(result).toBeNull();
   });
 });
+
+
+it("已选问询任务可重载，非法任务拒绝且兼容旧 job", () => {
+  const task = { intent: "ask" as const, focusFactIds: ["fact_0"], prerequisiteFactIds: [],
+    inquiries: [{ factId: "fact_0", aspects: ["source" as const] }] };
+  const job = createValidJob({ selectedDialogue: { dialogueAct: "ask", task } });
+  expect(parsePendingNarrativeJob(JSON.parse(JSON.stringify(job)))).toMatchObject({ ok: true, job: { selectedDialogue: { task } } });
+  expect(parsePendingNarrativeJob({ ...job, selectedDialogue: { dialogueAct: "ask", task: { ...task, inquiries: "invalid" } } }).ok).toBe(false);
+  expect(parsePendingNarrativeJob(createValidJob()).ok).toBe(true);
+});

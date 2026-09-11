@@ -1,3 +1,4 @@
+import { parseExpressionTask, type ExpressionTask } from "./expressionTask";
 import { isWellFormedEventId, type EventId, type NarrativeJobId, type TurnId } from "./events";
 import type { ResolvedEvent } from "./resolvedEvent";
 import type {
@@ -148,6 +149,7 @@ export type PendingNarrativeJob = {
     readonly dialogueAct: import("./action").DialogueAct;
     readonly topic?: import("./action").DialogueTopic;
     readonly label?: string;
+    readonly task?: ExpressionTask;
   };
   readonly requestedAt: string;
   readonly objectiveTransition: ObjectiveTransition;
@@ -174,6 +176,7 @@ export type CreatePendingNarrativeJobInput = {
     readonly dialogueAct: import("./action").DialogueAct;
     readonly topic?: import("./action").DialogueTopic;
     readonly label?: string;
+    readonly task?: ExpressionTask;
   };
   readonly requestedAt: string;
   readonly objectiveTransition: ObjectiveTransition;
@@ -185,6 +188,7 @@ export type CreatePendingNarrativeJobInput = {
 };
 
 export type PendingNarrativeJobErrorCode =
+  | "INVALID_DIALOGUE_TASK"
   | "EMPTY_ACTION_ID"
   | "INVALID_EXPECTED_REVISION"
   | "INVALID_EVENT_IDS"
@@ -258,6 +262,9 @@ export function createPendingNarrativeJob(
 ): CreatePendingNarrativeJobResult {
   const errors: PendingNarrativeJobError[] = [];
 
+  if (input.selectedDialogue?.task !== undefined && parseExpressionTask(input.selectedDialogue.task) === null) {
+    errors.push({ code: "INVALID_DIALOGUE_TASK" });
+  }
   if (input.actionId.trim() === "") {
     errors.push({ code: "EMPTY_ACTION_ID" });
   }
@@ -346,6 +353,7 @@ export function parsePendingNarrativeJob(value: unknown): ParsePendingNarrativeJ
       readonly dialogueAct: import("./action").DialogueAct;
       readonly topic?: import("./action").DialogueTopic;
       readonly label?: string;
+      readonly task?: ExpressionTask;
     } | undefined,
     requestedAt: v.requestedAt as string,
     objectiveTransition: v.objectiveTransition as ObjectiveTransition,

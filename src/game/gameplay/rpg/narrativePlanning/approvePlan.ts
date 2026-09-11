@@ -29,7 +29,13 @@ export type ApprovedPlan = {
   /** 应用层绑定本回合真实提问，属于待回应话语，不是知识事实。 */
   /** 服务端绑定当前任务完成节拍的规则事件；不授予任何 NPC 知识。 */
   readonly currentBeatEvidence?: Readonly<Record<string, readonly string[]>>;
-  readonly currentUtterance?: Readonly<{ npcId: string | null; text: string }>;
+  readonly currentUtterance?: Readonly<{
+    npcId: string | null;
+    text: string;
+    inquiries?: NonNullable<import("@/game/domain/expressionTask").ExpressionTask["inquiries"]>;
+    previousReply?: Readonly<{ text: string; factIds: readonly string[] }>;
+    previousChoices?: readonly string[];
+  }>;
 };
 
 export type PlanApprovalInput =

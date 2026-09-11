@@ -300,7 +300,8 @@ function buildStepState(
   const choiceSeeds = descriptor.choiceCandidates.map((candidate) => {
     const label = proposalChoiceMap.get(candidate.candidateId);
     if (label === undefined) return null;
-    return { label, action: candidate.action, ...(candidate.branch === undefined ? {} : { branch: candidate.branch }) };
+    return { label, action: candidate.action, ...(candidate.task === undefined ? {} : { task: candidate.task }),
+        ...(candidate.branch === undefined ? {} : { branch: candidate.branch }) };
   });
   if (choiceSeeds.some((seed) => seed === null)) {
     return "bundle_invalid_scene";
@@ -674,6 +675,7 @@ export function approveNarrativeBundle(
       const decisionId = decisionIdOf(decision);
       const candidates = decision.options.map(option => ({
         candidateId: option.candidateId,
+        ...(option.task === undefined ? {} : { task: option.task }),
         action: { type: "talk" as const, npcId: asNpcId(decision.npcId), dialogueAct: option.dialogueAct, topic: option.topic },
         ...(decision.options.every(option => option.target !== null)
           ? { branch: { decisionId, candidateId: option.candidateId } } : {}),
@@ -860,6 +862,7 @@ export function approveNarrativeBundle(
         basedOnRevision,
         label,
         action: candidate.action,
+        ...(candidate.task === undefined ? {} : { task: candidate.task }),
         ...(candidate.branch === undefined ? {} : { branch: candidate.branch }),
       });
       if (!approved.ok) {
@@ -881,6 +884,7 @@ export function approveNarrativeBundle(
         basedOnRevision,
         label,
         action: matchingCandidate.action,
+        ...(matchingCandidate.task === undefined ? {} : { task: matchingCandidate.task }),
         ...(matchingCandidate.branch === undefined ? {} : { branch: matchingCandidate.branch }),
       });
       if (!approved.ok) {

@@ -218,7 +218,7 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
     const proposal = planningUnit.value as PlanProposal;
     const planApproval = approvePlanningContext(job.input, proposal);
     if (!planApproval.ok) {
-      if (planApproval.code !== "plan_mandatory_beat_mismatch" && planApproval.code !== "beat_authority_conflict") return failJob(planApproval.code);
+      if (planApproval.code !== "plan_mandatory_beat_mismatch" && planApproval.code !== "beat_authority_conflict" && planApproval.code !== "plan_dialogue_repeated" && !planApproval.code.startsWith("plan_reply_")) return failJob(planApproval.code);
       cachedPlanRepair = { attempt: planningUnit.attempts, reason: "invalid_schema",
         rejectionCode: planApproval.code, detail: planApproval.detail };
       // 旧骨架的表达不可复用。先落盘撤销，保留 attempts 与 usedRequests，

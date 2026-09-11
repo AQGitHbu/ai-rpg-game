@@ -1,3 +1,5 @@
+import { createWorldStateFixtureWith } from "@/game/domain/testing/worldStateFixture.testutil";
+import { asFactId } from "@/game/domain/worldEntity";
 import { expect, it } from "vitest";
 import { projectUnitContext } from "./perspectiveContext";
 import { approveUnit } from "./approveUnit";
@@ -197,4 +199,38 @@ it("真实事件 ID 也不自动成为 NPC 已知事实的出处", () => {
     unitKey: base.units.find(unit => unit.stage === "character")!.key,
     invalidBeats: [{ beatId: "heard", invalidEventIds: [eventId], allowedEventIds: expect.any(Array) }],
   });
+});
+
+
+it("柳三娘回归：重复来源/时间在表达前退回规划，同事实的新维度允许", () => {
+  const input = context();
+  if (input.kind !== "decision") throw Error("decision");
+  const base = makeDecisionPlan();
+  if (base.decision?.kind !== "ordinary") throw Error("ordinary");
+  const task = { intent: "ask" as const, focusFactIds: ["fact_0"], prerequisiteFactIds: [],
+    inquiries: [{ factId: "fact_0", aspects: ["source", "time"] as const }] };
+  const world = createWorldStateFixtureWith({ generation: input.world.generation, base: input.world }, {
+    worldFacts: [{ factId: asFactId("fact_0"), text: "镇口贴有告示。", source: "generated", discovered: true }],
+    eventLedger: input.world.eventLedger,
+  });
+  const scoped = { ...input, world, job: { ...input.job, focusNpcId: input.world.npcs[0]!.id,
+    selectedDialogue: { dialogueAct: "ask" as const, label: "是谁贴的？什么时候贴的？", task } } };
+  const proposal = { ...base, decision: { ...base.decision, npcId: String(input.world.npcs[0]!.id), options: [
+    { ...base.decision.options[0], target: null, deferredLocation: null, dialogueAct: "ask" as const,
+      topic: { kind: "general" as const }, task },
+    { ...base.decision.options[1], target: null, deferredLocation: null, dialogueAct: "challenge" as const },
+  ] as const } };
+  const rejected = approvePlanningContext(scoped, proposal);
+  expect(rejected).toMatchObject({ ok: false, code: "plan_dialogue_repeated" });
+  if (!rejected.ok) expect(JSON.parse(rejected.detail!)).toMatchObject({
+    repeatedCandidates: [proposal.decision.options[0].candidateId], sceneContract: expect.any(Object),
+    repairInstruction: expect.stringContaining("不能只换措辞"),
+  });
+  const repaired = { ...proposal, decision: { ...proposal.decision, options: [
+    { ...proposal.decision.options[0], task: { ...task, inquiries: [{ factId: "fact_0", aspects: ["purpose" as const] }] } },
+    proposal.decision.options[1],
+  ] as const } };
+  expect(approvePlanningContext(scoped, repaired).ok).toBe(true);
+  expect(buildPlanningPrompt(scoped)).toContain('"aspects":["source","time"]');
+  expect(buildPlanningPrompt(scoped)).toContain("不能再把刚问过的问题");
 });

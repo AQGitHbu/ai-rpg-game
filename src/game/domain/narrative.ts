@@ -1,3 +1,4 @@
+import { parseExpressionTask, type ExpressionTask } from "./expressionTask";
 import type { EnemyId, FactId, ItemId, LocationId, NpcId } from "./worldEntity";
 import type { StoryState } from "./storyState";
 import { paginateSpeechText } from "./speechPagination";
@@ -330,8 +331,9 @@ function isBattleCheckpoint(value: unknown): value is BattleNarrativeCheckpointS
 
 function isApprovedChoice(value: unknown): value is ApprovedChoice {
   if (!isRecord(value) || !hasOnlyKeys(value, [
-    "choiceToken", "sceneId", "basedOnRevision", "label", "action", "semanticSummary", "branch",
+    "choiceToken", "sceneId", "basedOnRevision", "label", "action", "semanticSummary", "branch", "task",
   ])) return false;
+  if (value.task !== undefined && parseExpressionTask(value.task) === null) return false;
   if (value.branch !== undefined && !isApprovedChoiceBranch(value.branch)) return false;
   if (!isNonEmptyString(value.choiceToken)
     || !isNonEmptyString(value.sceneId)
@@ -347,6 +349,7 @@ function isApprovedChoice(value: unknown): value is ApprovedChoice {
       basedOnRevision: value.basedOnRevision as number,
       label: value.label,
       action: value.action as ApprovedChoice["action"],
+      ...(value.task === undefined ? {} : { task: value.task as ExpressionTask }),
       ...(value.branch === undefined ? {} : { branch: value.branch }),
     });
     return rebuilt.ok

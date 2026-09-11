@@ -58,7 +58,10 @@ function materializeScene(step: NarrativeBundleStepState, actionId: string, revi
   const sceneId = `scene-bundle-${actionId}-${step.stepId}`;
   const choiceRegistry: ApprovedChoice[] = [];
   for (const seed of step.scene.choiceSeeds) {
-    const created = createApprovedChoice({ sceneId, basedOnRevision: revision, label: seed.label, action: seed.action, ...(seed.branch === undefined ? {} : { branch: seed.branch }) });
+    const created = createApprovedChoice({ sceneId, basedOnRevision: revision, label: seed.label, action: seed.action,
+      ...(seed.task === undefined ? {} : { task: seed.task }),
+      ...(seed.branch === undefined ? {} : { branch: seed.branch }),
+    });
     if (!created.ok) return null;
     choiceRegistry.push(created.choice);
   }

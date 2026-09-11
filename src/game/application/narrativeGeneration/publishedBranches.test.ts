@@ -27,7 +27,8 @@ it.each(["legacy_route", "dialogue"] as const)("真实 SQLite 发布、选择与
   if (basePlan.decision?.kind !== "ordinary") throw Error("ordinary opening expected");
   const plan: PlanProposal = mode === "legacy_route" ? basePlan : { ...basePlan, decision: { ...basePlan.decision!,
     options: [
-      { ...basePlan.decision!.options[0], target: null, deferredLocation: null, dialogueAct: "ask" },
+      { ...basePlan.decision!.options[0], target: null, deferredLocation: null, dialogueAct: "ask",
+        task: { intent: "ask", focusFactIds: ["fact_0"], prerequisiteFactIds: [], inquiries: [{ factId: "fact_0", aspects: ["source", "time"] }] } },
       { ...basePlan.decision!.options[1], target: null, deferredLocation: null, dialogueAct: "challenge", topic: { kind: "thread", threadId: "lead" } },
     ] } };
   const calls: string[] = [];
@@ -37,7 +38,7 @@ it.each(["legacy_route", "dialogue"] as const)("真实 SQLite 发布、选择与
       if (request.context.kind === "opening") return { ok: true, stage: "planning", value: plan };
       const value: PlanProposal = { ...plan, opening: null,
         decision: mode === "legacy_route" || plan.decision?.kind !== "ordinary" ? plan.decision : { ...plan.decision, options: [
-          plan.decision.options[0], { ...plan.decision.options[1], topic: { kind: "thread", threadId: "thread_init_lead" } },
+          { ...plan.decision.options[0], task: { intent: "ask", focusFactIds: ["fact_0"], prerequisiteFactIds: [], inquiries: [{ factId: "fact_0", aspects: ["purpose"] }] } }, { ...plan.decision.options[1], topic: { kind: "thread", threadId: "thread_init_lead" } },
         ] }, units: plan.units.map(unit => unit.stage !== "narration" ? unit : {
         ...unit, requiredBeats: request.context.kind !== "decision" ? [] : request.context.job.mandatoryBeats.map(beat => ({
           beatId: beat.beatId, kind: beat.kind, factIds: [], evidence: [], instruction: beat.instruction,
@@ -109,6 +110,7 @@ it.each(["legacy_route", "dialogue"] as const)("真实 SQLite 发布、选择与
           expect(final.record.worldState.quests[0]?.objectives).toEqual(record.worldState.quests[0]?.objectives);
           const pending = final.record.storyState.narrative;
           if (pending.status !== "provider_pending") throw Error("pending dialogue expected");
+          if (index === 0 && plan.decision?.kind === "ordinary") expect(pending.job.selectedDialogue?.task).toEqual(choice.task);
           expect(pending.job.selectedDialogue?.dialogueAct).toBe(choice.action.type === "talk" ? choice.action.dialogueAct : null);
           const started = await startDecisionJob({ record: final.record, now }, jobs);
           if (!started.ok) throw Error(started.code);
@@ -119,6 +121,7 @@ it.each(["legacy_route", "dialogue"] as const)("真实 SQLite 发布、选择与
           const published = await games.getCurrentGame();
           if (!published.ok || published.status !== "active" || published.record.storyState.narrative.status !== "ready") throw Error("published expected");
           expect(published.record.storyState.narrative.choiceRegistry).toHaveLength(2);
+          expect(published.record.storyState.narrative.choiceRegistry[0]?.task?.inquiries).toEqual([{ factId: "fact_0", aspects: ["purpose"] }]);
           expect(published.record.storyState.narrative.choiceRegistry.every(choice => choice.branch === undefined)).toBe(true);
           expect(published.record.worldState.locations).toEqual(record.worldState.locations);
           outcomes.push(pending.job.selectedDialogue!.dialogueAct);

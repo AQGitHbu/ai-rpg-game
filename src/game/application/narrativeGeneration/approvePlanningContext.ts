@@ -1,3 +1,5 @@
+import { repeatedDialogueCandidates, plannedReplyRejection } from "./dialogueContinuity";
+import { previousDialogue } from "./dialogueContext";
 import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
 import type { PlanProposal } from "@/game/domain/narrativePlan";
 import type { EvolutionNeed } from "@/game/domain/worldDelta";
@@ -116,10 +118,24 @@ export function approvePlanningContext(input: PlanningContext, proposal: PlanPro
   })) return { ok: false, code: "plan_mandatory_beat_mismatch", detail };
   const approved = approvePlan({ kind: "decision", proposal, world, story });
   const utterance = input.job.selectedDialogue?.label ?? input.job.utterance;
+  const previous = previousDialogue(input);
   const result = approved.ok ? approvePlanDecision({ ...approved.value, ruleSceneGraph: graph, currentBeatEvidence,
-    ...(utterance === undefined ? {} : { currentUtterance: { npcId: input.job.focusNpcId ?? null, text: utterance } }),
+    ...(utterance === undefined ? {} : { currentUtterance: { npcId: input.job.focusNpcId ?? null, text: utterance,
+      inquiries: input.job.selectedDialogue?.task?.inquiries,
+      ...(previous === null ? {} : { previousReply: previous.reply, previousChoices: previous.choices }),
+    } }),
   }) : approved;
   if (!result.ok) return { ...result, detail };
+  const replyRejection = plannedReplyRejection(input.job, proposal);
+  if (replyRejection !== null) return { ok: false, code: replyRejection, detail: JSON.stringify({
+    ...JSON.parse(detail), selectedDialogue: input.job.selectedDialogue,
+    repairInstruction: "当前焦点 NPC 的 task.answers 必须逐项决定已问维度的 answer/unknown/refuse；答案引用限本任务可说事实。先确定回答结果，再规划后续选项，不把回答内容留给润色器决定。",
+  }) };
+  const repeatedCandidates = repeatedDialogueCandidates(input.job, proposal);
+  if (repeatedCandidates.length > 0) return { ok: false, code: "plan_dialogue_repeated", detail: JSON.stringify({
+    ...JSON.parse(detail), repeatedCandidates, selectedDialogue: input.job.selectedDialogue,
+    repairInstruction: "这些候选重复了玩家刚向同一 NPC 问过的具体维度。先回应已问内容；不知道时明确不知道，再围绕尚未问过的维度、其他已知事实或不同回应意图重做候选。不能只换措辞、删掉 inquiries 或重复询问；不编造答案，不扩大知识权限。保留已批准的 worldDelta 与 sceneContract。",
+  }) };
   // 无条件观察时，知识权限已可确定；不必先花费表达调用再发现规划分配错误。
   // 有观察依赖的计划仍等待真实上游输出，绝不合成“已经披露”的回执来通过预检。
   if (proposal.observations.length === 0) {

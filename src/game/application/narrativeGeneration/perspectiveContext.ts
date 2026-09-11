@@ -102,6 +102,11 @@ export type SafeContext = Readonly<{
   requiredBeats: readonly SafeBeat[];
   requiredObservations: readonly SafeObservation[];
   choiceKind: "ordinary" | "ending" | null;
+  /** 当前玩家已问过的维度；只作为选项表达的排除边界。 */
+  askedInquiries?: NonNullable<import("@/game/domain/expressionTask").ExpressionTask["inquiries"]>;
+  /** 只投影同 NPC 当前场景的上一轮实际对白；不是新的知识来源。 */
+  previousReply?: string;
+  previousChoices?: readonly string[];
   /** 仅当前决策旁白的排版约束，不包含其他单元的文本或知识。 */
   narrationLayout?: Readonly<{ allowAtmosphere: boolean }>;
 }>;
@@ -212,8 +217,14 @@ function priorTextOf(
     const output = approved.get(dependency.key);
     if (output === undefined) return fail("dependency_output_missing");
     if (output.stage === "choices") continue;
+    // 跨场景依赖只保证执行顺序；认知由 snapshot 的观察回执传播，不能继承整段旧对白。
+    if (dependency.point.stepKey !== unit.point.stepKey) continue;
+    if (unit.stage === "choices" && dependency.stage === "character"
+      && dependency.speakerId !== plan.choiceExpression?.npcId) continue;
     if (unit.stage !== "character" || dependency.speakerId === unit.speakerId) {
-      parts.push(...output.parts);
+      parts.push(...output.parts.filter(part => part.facts.every(fact => visibleFacts.some(visible => visible.id === fact.factId)))
+        .map(part => unit.stage === "character" ? part : { ...part, text: `${dependency.stage === "narration" ? "旁白"
+          : `NPC ${getEntity(plan.world.entityStore, dependency.speakerId ?? "")?.core.name ?? dependency.speakerId}`}：${part.text}` }));
       continue;
     }
     // DAG 依赖仅表示生成顺序，不等于角色听见前文。其他视角的原文没有
@@ -470,7 +481,11 @@ export function projectUnitContext(input: ProjectUnitContextInput): ContextCheck
       certainty: observation.fact.certainty, sources: [{ kind: "conditional", observationKey: observation.key }] }];
   }
 
-  const task = unit.task === undefined ? undefined : projectExpressionTask(unit.task, visibleFacts);
+  const currentDialogue = unit.point.stepKey === "current"
+    && (unit.stage === "character" ? unit.speakerId === plan.currentUtterance?.npcId
+      : unit.stage === "choices" && plan.choiceExpression?.npcId === plan.currentUtterance?.npcId);
+  const task = unit.task === undefined ? undefined : projectExpressionTask(unit.task, visibleFacts,
+    unit.stage === "character" && currentDialogue ? plan.currentUtterance?.inquiries : []);
   if (task?.ok === false) return { ...task, detail: JSON.stringify({
     ...JSON.parse(task.detail ?? "{}"), unitKey: unit.key, stage: unit.stage,
     stepKey: unit.point.stepKey, speakerId: unit.speakerId,
@@ -494,6 +509,14 @@ export function projectUnitContext(input: ProjectUnitContextInput): ContextCheck
   const options = unit.stage === "choices" ? optionsOf(plan, priorText.value, visibleFacts)
     : { ok: true as const, value: [] };
   if (!options.ok) return options;
+  // 选项润色只读取各自规划任务的事实；不提供整份玩家知识库供它重新选题。
+  if (unit.stage === "choices" && plan.choiceExpression?.kind === "ordinary"
+    && plan.choiceExpression.options.every(option => option.task !== undefined)) {
+    const selected = new Set(plan.choiceExpression.options.flatMap(option => [
+      ...option.task!.focusFactIds, ...option.task!.prerequisiteFactIds,
+    ]));
+    visibleFacts = visibleFacts.filter(fact => selected.has(fact.id));
+  }
   const choiceNpc = unit.stage === "choices"
     ? ws.npcs.find(npc => String(npc.id) === plan.choiceExpression?.npcId && npc.locationId === ws.currentLocationId)
     : undefined;
@@ -508,6 +531,13 @@ export function projectUnitContext(input: ProjectUnitContextInput): ContextCheck
       priorText: priorText.value,
       allowedActions: allowedActionsOf(plan, unit),
       options: options.value,
+      ...(currentDialogue ? {
+        ...(plan.currentUtterance?.previousReply !== undefined
+          && plan.currentUtterance.previousReply.factIds.every(id => visibleFacts.some(fact => fact.id === id))
+          ? { previousReply: plan.currentUtterance.previousReply.text } : {}),
+        ...(unit.stage === "choices" ? { askedInquiries: plan.currentUtterance?.inquiries ?? [],
+          previousChoices: plan.currentUtterance?.previousChoices ?? [] } : {}),
+      } : {}),
       ...(choiceNpc === undefined ? {} : { dialogue: {
         speakerId: String(PLAYER_ENTITY_ID), speakerName: ws.player.name,
         addresseeId: String(choiceNpc.id), addresseeName: choiceNpc.name,
