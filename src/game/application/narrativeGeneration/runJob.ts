@@ -37,6 +37,7 @@ import type { StageExecution, StageRequest, StageSource } from "./stageSource";
 import type { StageSuccess } from "./stageSource";
 import type { DialogueHistoryEntry } from "./stageSource";
 import { loadDialogueHistory } from "./dialogueHistory";
+import { createHash } from "node:crypto";
 
 const PLANNING_UNIT_KEY = "planning";
 /** 每 job 最多同时在途的 provider 请求；批调度按此上限派发。 */
@@ -108,6 +109,11 @@ function approvedOutputOf(unit: StoredUnit): UnitOutput | null {
   return unit.status === "approved" && unit.value !== null && !("steps" in (unit.value as object))
     ? unit.value as UnitOutput
     : null;
+}
+
+/** 绑定表达器实际可见的安全投影；版本升级会使旧 approved 缓存失效。 */
+export function expressionProjectionDigest(context: Exclude<StageRequest, { stage: "planning" }>["context"]): string {
+  return createHash("sha256").update(JSON.stringify({ version: 2, context })).digest("hex");
 }
 
 function unitOfKey(job: StoredJob, key: string): StoredUnit | undefined {
@@ -369,6 +375,17 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
         || narrationLayoutRejection(output, narrationLayoutOf(approved, unitByKey.get(stored.key)!)) !== null);
   }).map(stored => stored.key));
   for (const stored of job.units) {
+    if (approvedOutputOf(stored) === null) continue;
+    const unit = unitByKey.get(stored.key);
+    if (unit === undefined) continue;
+    const prior = new Map(approvedOutputs(job));
+    prior.delete(unit.key);
+    const projected = projectUnitContext({ plan: approved, unit, approved: prior });
+    if (!projected.ok || stored.inputDigest !== expressionProjectionDigest(projected.value)) {
+      invalidated.add(unit.key);
+    }
+  }
+  for (const stored of job.units) {
     const output = approvedOutputOf(stored);
     const unit = unitByKey.get(stored.key);
     if (output?.stage !== "character" || unit === undefined) continue;
@@ -449,17 +466,18 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
         failures.push(context.code);
         continue;
       }
+      const projectionDigest = expressionProjectionDigest(context.value);
       // charge/save running 先于请求；新单元在此首次写入存储。
       const charged = await persist((current) => ({
         ...current,
         usedRequests: current.usedRequests + 1,
         units: current.units.some((candidate) => candidate.key === unit.key)
           ? current.units.map((candidate) => candidate.key === unit.key
-            ? { ...candidate, attempts: attempts + 1, status: "running" as const, unit }
+            ? { ...candidate, inputDigest: projectionDigest, attempts: attempts + 1, status: "running" as const, unit }
             : candidate)
           : [
             ...current.units,
-            { unit, key: unit.key, inputDigest: current.inputDigest, attempts: attempts + 1, status: "running" as const, value: null },
+            { unit, key: unit.key, inputDigest: projectionDigest, attempts: attempts + 1, status: "running" as const, value: null },
           ],
       }));
       if (charged !== true) {

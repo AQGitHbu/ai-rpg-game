@@ -13,7 +13,7 @@ import type { UnitOutput } from "@/game/domain/narrativeUnit";
 import type { PlanProposal } from "@/game/domain/narrativePlan";
 import { approvePlanningContext } from "./approvePlanningContext";
 import { assembleBundle } from "./assembleBundle";
-import { runJob } from "./runJob";
+import { expressionProjectionDigest, runJob } from "./runJob";
 
 function twoBeatHarness(ambiguousAttempts = 1) {
   const h = createStagedHarness();
@@ -61,6 +61,27 @@ function twoBeatHarness(ambiguousAttempts = 1) {
 }
 
 describe("runJob", () => {
+  it("同投影版本下风格变化仍改变表达缓存摘要", async () => {
+    const h = createStagedHarness();
+    await h.startDecision();
+    if (!(await h.run()).ok) throw new Error("fixture run failed");
+    const request = h.requests.find((candidate) => candidate.stage === "choices");
+    if (request?.stage !== "choices") throw new Error("choice request missing");
+    const concise = { ...request.context, stylePolicy: { ...request.context.stylePolicy!, narration: "concise" as const } };
+    const cinematic = { ...request.context, stylePolicy: { ...request.context.stylePolicy!, narration: "cinematic" as const } };
+    expect(expressionProjectionDigest(concise)).not.toBe(expressionProjectionDigest(cinematic));
+  });
+  it("完整兼容的 approved 投影恢复时不重复调用 source", async () => {
+    const h = createStagedHarness();
+    await h.startDecision();
+    const initial = await h.run();
+    if (!initial.ok) throw new Error(initial.code);
+    const callsBefore = h.calls.length;
+    const resumed = await h.run();
+    expect(resumed.ok).toBe(true);
+    expect(h.calls).toHaveLength(callsBefore);
+    if (resumed.ok) expect(resumed.value.usedRequests).toBe(initial.value.usedRequests);
+  });
   it("晚到的最终选项不批准、不发布，并持久记录截止失败", async () => {
     const h = createStagedHarness();
     const generate = h.source.generate.bind(h.source);
@@ -175,6 +196,28 @@ describe("runJob", () => {
       .toMatchObject({ attempts: 4, status: "pending", value: null });
     expect(stored.value.units.find(unit => unit.key === "choices_current")?.value).toBeNull();
     expect(h.publications()).toHaveLength(0);
+  });
+
+  it("旧 approved 表达摘要失效后重算真实安全投影，保留已扣预算与 attempts", async () => {
+    const h = createStagedHarness();
+    await h.startDecision();
+    const initial = await h.run();
+    if (!initial.ok) throw new Error(initial.code);
+    const choice = initial.value.units.find(unit => unit.key === "choices_current");
+    if (choice === undefined) throw new Error("choice fixture missing");
+    const saved = await h.jobs.save({ lease: h.lease(), expectedVersion: initial.value.version,
+      job: { ...initial.value, status: "pending", failureCode: null,
+        units: initial.value.units.map(unit => unit.key === choice.key
+          ? { ...unit, inputDigest: initial.value.inputDigest } : unit) },
+    });
+    if (!saved.ok) throw new Error(saved.code);
+    const callsBefore = h.calls.length;
+    const result = await h.run();
+    if (!result.ok) throw new Error(result.code);
+    expect(h.calls.slice(callsBefore).map(call => call.stage)).toEqual(["choices"]);
+    expect(result.value.usedRequests).toBe(initial.value.usedRequests + 1);
+    expect(result.value.units.find(unit => unit.key === choice.key)).toMatchObject({ attempts: choice.attempts + 1, status: "approved" });
+    expect(result.value.units.find(unit => unit.key === choice.key)?.inputDigest).not.toBe(initial.value.inputDigest);
   });
 
   it("失败单元重试：planning 一次、choices 两次、narration 一次", async () => {

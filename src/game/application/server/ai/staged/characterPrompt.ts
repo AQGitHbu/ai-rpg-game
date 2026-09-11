@@ -7,6 +7,7 @@ import { requiredExpressionFactIds } from "@/game/domain/expressionTask";
 import { renderAiRepairFeedback, type AiContentRepair } from "@/game/application/aiGenerationRetry";
 import type { SafeContext } from "@/game/application/narrativeGeneration/perspectiveContext";
 import { expressionBoundary } from "./expressionBoundary";
+import { buildStylePolicy } from "@/game/application/stylePolicy";
 
 /**
  * 同一事实在「可说事实」与「必须披露的观察」两侧 certainty 不一致时列出该事实键。
@@ -24,6 +25,7 @@ function contestedFactIds(context: SafeContext): readonly string[] {
 
 /** Builds the single-speaker character prompt from a SafeContext. */
 export function buildCharacterPrompt(context: SafeContext, repair?: AiContentRepair): string {
+  const stylePolicy = context.stylePolicy ?? buildStylePolicy();
   const persona = context.persona;
   if (persona === null) {
     throw new Error("character prompt requires a persona; narration/choices use other prompts");
@@ -71,6 +73,7 @@ ${repair === undefined ? "" : `\n# 上次生成的校验反馈\n${renderAiRepair
 - 当前情绪：${persona.emotion}
 - 与玩家关系档位：${persona.relationshipTier}
 - 受控行为：${behaviors}
+- 受控说话方式：sentenceLength=${persona.delivery?.sentenceLength ?? "neutral"}，register=${persona.delivery?.register ?? "neutral"}，tone=${persona.delivery?.tone ?? "neutral"}
 ${anchors ? `\n# 可公开的人格锚点\n${anchors}` : ""}
 ${goals ? `\n# 可公开的当前目标\n${goals}` : ""}
 
@@ -101,6 +104,9 @@ ${context.scene === undefined ? "（未提供）" : JSON.stringify(context.scene
 
 # 场景风格
 - 题材风格：${context.style}
+- 全局叙事风格：${stylePolicy.narration}（只影响句式与节奏）
+- 内容强度：${stylePolicy.intensityInstruction}
+主角性格标签只用于玩家刻画，不得据此改变当前 NPC 的人格或说话方式；NPC 只遵循上方受控说话方式。风格和强度不许可新增暴力情节、人物目标、事实、证据或规则结果。
 - 玩家原话：${context.playerUtterance ?? "（无）"}
 
 # 输出契约

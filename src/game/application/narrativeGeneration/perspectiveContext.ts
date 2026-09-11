@@ -34,6 +34,8 @@ import {
   buildNpcSpeechAuthority,
   type NpcSpeechAuthority,
 } from "@/game/application/npcSpeechAuthority";
+import { buildStylePolicy, PERSONALITY_TRAIT_OPTIONS, type StylePolicy } from "@/game/application/stylePolicy";
+import type { ExpressionTask } from "@/game/domain/expressionTask";
 
 function isFactRecord(record: EntityRecord | undefined): record is FactEntityRecord {
   return record !== undefined && record.core.kind === "fact";
@@ -60,6 +62,11 @@ export type SafePersona = Readonly<{
   emotion: NarrativeEmotion;
   relationshipTier: string;
   behavior: readonly ("answer_directly" | "withhold_source" | "express_uncertainty")[];
+  delivery?: Readonly<{
+    sentenceLength: "short" | "neutral" | "long";
+    register: "conversational" | "neutral" | "formal";
+    tone: "restrained" | "neutral" | "humorous";
+  }>;
 }>;
 
 export type SafeFact = Readonly<{
@@ -73,6 +80,7 @@ export type SafeOption = Readonly<{
   candidateId: string;
   dialogueAct: DialogueAct;
   publicIntent: TextPart;
+  inquiries?: NonNullable<ExpressionTask["inquiries"]>;
 }>;
 
 /**
@@ -98,6 +106,7 @@ export type SafeContext = Readonly<{
   dialogue?: Readonly<{ speakerId: string; speakerName: string; addresseeId: string; addresseeName: string; addresseeRole?: string }>;
   scene?: Readonly<{ locationId: string; locationName: string; playerName: string; speakers: readonly { id: string; name: string }[] }>;
   style: string;
+  stylePolicy?: StylePolicy;
   taskInstruction?: string;
   requiredBeats: readonly SafeBeat[];
   requiredObservations: readonly SafeObservation[];
@@ -179,6 +188,14 @@ export function committedBeatEvidenceIds(world: WorldState, unit: Unit): Readonl
  * 可被篡改成任意值，不能作为放行凭据），因此 fail-closed：不回传目标正文，
  * 敏感动机由受控 behavior（withhold_source 等）表达。
  */
+function controlledMatch<T extends string>(text: string, choices: readonly { value: T; phrases: readonly string[] }[], neutral: T): T {
+  const hasNegatedPhrase = choices.some(choice => choice.phrases.some(phrase =>
+    new RegExp(`(?:不|勿|别|避免|拒绝|不要)[^，。；]{0,4}${phrase}`).test(text)));
+  if (hasNegatedPhrase) return neutral;
+  const matched = choices.filter(choice => choice.phrases.some(phrase => text.includes(phrase))).map(choice => choice.value);
+  return new Set(matched).size === 1 ? matched[0]! : neutral;
+}
+
 function personaOf(speaker: NpcEntityRecord, authority: NpcSpeechAuthority): SafePersona {
   const behavior: ("answer_directly" | "withhold_source" | "express_uncertainty")[] = ["answer_directly"];
   if (speaker.knowledge.entries.some((entry) => entry.disclosure === "secret")) {
@@ -195,6 +212,20 @@ function personaOf(speaker: NpcEntityRecord, authority: NpcSpeechAuthority): Saf
     emotion: speaker.dynamicState.emotion,
     relationshipTier: authority.responseTier,
     behavior,
+    delivery: {
+      sentenceLength: controlledMatch(speaker.identity.anchors.speechStyle, [
+        { value: "short", phrases: ["短句", "简短", "简洁"] },
+        { value: "long", phrases: ["长句", "铺陈", "详尽"] },
+      ], "neutral"),
+      register: controlledMatch(speaker.identity.anchors.speechStyle, [
+        { value: "conversational", phrases: ["口语", "随和", "自然交谈"] },
+        { value: "formal", phrases: ["正式", "郑重", "书面"] },
+      ], "neutral"),
+      tone: controlledMatch(speaker.identity.anchors.speechStyle, [
+        { value: "restrained", phrases: ["克制", "沉稳", "严肃"] },
+        { value: "humorous", phrases: ["幽默", "风趣", "诙谐"] },
+      ], "neutral"),
+    },
   };
 }
 
@@ -300,6 +331,9 @@ function optionsOf(plan: ApprovedPlan, prior: readonly TextPart[], facts: readon
       text: `${task?.ok ? task.value : intentByAct[option.dialogueAct]}${subject === "" ? "" : `；讨论目标：${subject}`}${topicText}`,
       facts: [], evidence: [], beatIds: [],
     },
+    inquiries: task?.ok && "task" in option && option.task?.inquiries !== undefined
+      ? option.task.inquiries.map((inquiry) => ({ factId: inquiry.factId, aspects: [...inquiry.aspects] }))
+      : [],
     });
   }
   return { ok: true, value: options };
@@ -525,6 +559,14 @@ export function projectUnitContext(input: ProjectUnitContextInput): ContextCheck
     ? ws.npcs.find(npc => String(npc.id) === plan.choiceExpression?.npcId && npc.locationId === ws.currentLocationId)
     : undefined;
   if (unit.stage === "choices" && choiceNpc === undefined) return fail("choice_addressee_missing");
+  const setup = ws.generation.setup;
+  const allowedTraits = new Set<string>(PERSONALITY_TRAIT_OPTIONS);
+  const stylePolicy = buildStylePolicy({
+    personalityTags: setup?.personalityTags.filter(tag => allowedTraits.has(tag)) ?? [],
+    narrativeStyle: setup?.narrativeStyle === "novel" || setup?.narrativeStyle === "cinematic"
+      ? setup.narrativeStyle : "concise",
+    contentIntensity: setup?.contentIntensity === "dark" ? "dark" : "normal",
+  });
 
   return {
     ok: true,
@@ -558,6 +600,7 @@ export function projectUnitContext(input: ProjectUnitContextInput): ContextCheck
           .map(npc => ({ id: String(npc.id), name: npc.name })),
       },
       style: ws.generation.gameType,
+      stylePolicy,
       ...(task?.ok ? { taskInstruction: task.value } : {}),
       requiredBeats: beats.value,
       requiredObservations: requiredObservations.value,

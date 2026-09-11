@@ -4,6 +4,7 @@ import { approvePlan, approvePlanDecision } from "@/game/gameplay/rpg/narrativeP
 import { branchWorld, branchStory } from "@/game/gameplay/rpg/narrativePlanning/branchFixture.testutil";
 import {
   makeStagedPlan,
+  makeOpeningStagedPlan,
   makeCharacterOutput,
   makeChoiceOutput,
   makeNarrationOutput,
@@ -16,6 +17,9 @@ import {
   FIXTURE_CANDIDATE_ROUTE,
   FIXTURE_CANDIDATE_ALT,
 } from "@/game/domain/testing/stagedNarrativeFixture.testutil";
+import { createFixtureOpeningCandidateSource } from "@/game/application/createGame";
+import { approvePlanningContext } from "./approvePlanningContext";
+import { asGenerationId } from "@/game/domain/worldEntity";
 import { asQuestId, asNpcId, asFactId, asLocationId } from "@/game/domain/worldEntity";
 import type { PlanProposal } from "@/game/domain/narrativePlan";
 import type { Unit, UnitOutput } from "@/game/domain/narrativeUnit";
@@ -145,6 +149,60 @@ function contextOf(plan: ReturnType<typeof approvedPlanOf>, key: string) {
 }
 
 describe("projectUnitContext", () => {
+  it("真实 opening 审批后的 projectUnitContext 保留 setup 风格", async () => {
+    const setup = { characterName: "旅人", characterIdentity: "调查者", personalityTags: ["寡言"],
+      worldPremise: "边镇疑云", storyOpening: "抵达边镇", narrativeStyle: "novel" as const, contentIntensity: "dark" as const };
+    const opening = await createFixtureOpeningCandidateSource().generate({ gameType: "wuxia", seed: "style-opening", gameLength: "short", setup });
+    const proposal = makeOpeningStagedPlan(opening);
+    const approved = approvePlanningContext({ kind: "opening", input: { gameType: "wuxia", seed: "style-opening", gameLength: "short", setup },
+      generation: { generationId: asGenerationId("style-opening"), seed: "style-opening", templateVersion: "v2", inputDigest: "", gameType: "wuxia", setup } }, proposal);
+    if (!approved.ok) throw new Error(approved.code);
+    const unit = approved.value.units.find(candidate => candidate.stage === "narration")!;
+    const projected = projectUnitContext({ plan: approved.value, unit, approved: new Map() });
+    expect(projected.ok && projected.value.stylePolicy).toMatchObject({ protagonistTraits: ["寡言"], narration: "novel", intensity: "dark" });
+  });
+  it("投影开场/后续风格、白名单主角特质与每个 NPC 独立 delivery", () => {
+    const world = personaWorld();
+    Object.assign(world.generation, { setup: {
+      characterName: "旅人", characterIdentity: "调查者", personalityTags: ["冷静", SENTINEL],
+      worldPremise: "", storyOpening: "", narrativeStyle: "cinematic", contentIntensity: "dark",
+    } });
+    const records = world.entityStore.records.filter((record): record is NpcEntityRecord => record.core.kind === "npc");
+    Object.assign(records.find(record => String(record.core.id) === FIXTURE_NPC_A)!.identity.anchors,
+      { speechStyle: `简短克制 ${SENTINEL}` });
+    Object.assign(records.find(record => String(record.core.id) === FIXTURE_NPC_B)!.identity.anchors,
+      { speechStyle: "正式长句且不要幽默" });
+    const plan = approvedPlanOf(world);
+    for (const key of [FIXTURE_NARRATION_UNIT, FIXTURE_CHOICE_UNIT]) {
+      const projected = contextOf(plan, key);
+      expect(projected.ok && projected.value.stylePolicy).toMatchObject({
+        protagonistTraits: ["冷静"], narration: "cinematic", intensity: "dark",
+      });
+      expect(JSON.stringify(projected)).not.toContain(SENTINEL);
+    }
+    const first = contextOf(plan, FIXTURE_NPC_A_UNIT);
+    const second = contextOf(plan, FIXTURE_NPC_B_UNIT);
+    expect(first.ok && first.value.persona?.delivery).toEqual({ sentenceLength: "short", register: "neutral", tone: "restrained" });
+    expect(second.ok && second.value.persona?.delivery).toEqual({ sentenceLength: "long", register: "formal", tone: "neutral" });
+    expect(JSON.stringify([first, second])).not.toContain(SENTINEL);
+  });
+
+  it("选项只保留已审批 task 的安全询问，不从自由 brief 推导问题", () => {
+    const base = makeStagedPlan();
+    if (base.decision?.kind !== "ordinary") throw new Error("ordinary fixture required");
+    const proposal: PlanProposal = { ...base, decision: { ...base.decision, options: [
+      { ...base.decision.options[0], dialogueAct: "ask", task: { intent: "ask", brief: "问清来源与可信程度",
+        focusFactIds: [FACT_PUB], contentFactIds: [], prerequisiteFactIds: [],
+        inquiries: [{ factId: FACT_PUB, aspects: ["reliability"] }] } },
+      { ...base.decision.options[1], dialogueAct: "ask", task: { intent: "ask", brief: "问清来源",
+        focusFactIds: [FACT_PUB], contentFactIds: [], prerequisiteFactIds: [] } },
+    ] } };
+    const projected = contextOf(approvedPlanOf(personaWorld(), proposal), FIXTURE_CHOICE_UNIT);
+    if (!projected.ok) throw new Error(projected.code);
+    expect(projected.value.options.map(option => option.inquiries)).toEqual([
+      [{ factId: FACT_PUB, aspects: ["reliability"] }], [],
+    ]);
+  });
   it("当前 NPC 只拿自己的回应结果，其他 NPC 不继承原话或上一轮选项", () => {
     const base = makeStagedPlan();
     const plan = { ...approvedPlanOf(personaWorld(), { ...base, units: base.units.map(unit => unit.speakerId === FIXTURE_NPC_A

@@ -784,6 +784,14 @@ describe("buildCharacterPrompt", () => {
 });
 
 describe("buildChoicePrompt", () => {
+  it("明确区分可信程度与消息来源的询问维度", () => {
+    const context = contextFor(approvedPlan(), FIXTURE_CHOICE_UNIT);
+    const prompt = buildChoicePrompt({ ...context, options: context.options.map((option, index) => ({
+      ...option, inquiries: [{ factId: "fact_routes", aspects: index === 0 ? ["reliability"] : ["source", "reliability"] }],
+    })) });
+    expect(prompt).toContain('"aspects":["reliability"]');
+    expect(prompt).toContain('"aspects":["source","reliability"]');
+  });
   it("choice prompt 只返回两条玩家直接说出的对白，携带候选意图", () => {
     const plan = approvedPlan();
     const prompt = buildChoicePrompt(contextFor(plan, FIXTURE_CHOICE_UNIT));

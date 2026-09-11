@@ -11,7 +11,7 @@ const purposes: Record<ExpressionTask["intent"], string> = {
 const inquiryLabels: Record<InquiryAspect, string> = {
   identity: "涉及谁或身份", location: "所在地点", direction: "走向/方向", depth: "深浅",
   time: "发生时间", cause: "原因", method: "具体方式", quantity: "数量/程度",
-  source: "消息来源", reliability: "依据与可信度", purpose: "目的",
+  source: "消息来源", reliability: "可信程度（不询问消息来源）", purpose: "目的",
 };
 
 /** 只编译表达职责；不验证或执行任何世界效果、承诺或知识写入。 */

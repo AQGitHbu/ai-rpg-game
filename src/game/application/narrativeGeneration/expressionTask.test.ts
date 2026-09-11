@@ -17,6 +17,15 @@ it("没有权限时退回，不静默简化询问", () => {
   expect(projectExpressionTask(task, [])).toMatchObject({ ok: false, code: "beat_authority_conflict" });
 });
 
+it("可信程度与消息来源保持两个独立询问维度", () => {
+  const facts = [{ id: "fact_0", text: "渡口流传一则消息。", certainty: "known" as const, sources: [] }];
+  const reliability = projectExpressionTask({ ...task, inquiries: [{ factId: "fact_0", aspects: ["reliability"] }] }, facts);
+  const both = projectExpressionTask({ ...task, inquiries: [{ factId: "fact_0", aspects: ["source", "reliability"] }] }, facts);
+  expect(reliability.ok && reliability.value).toContain("可信程度（不询问消息来源）");
+  expect(reliability.ok && reliability.value).not.toContain("具体询问：消息来源、");
+  expect(both.ok && both.value).toContain("消息来源、可信程度");
+});
+
 it("NPC 逐问题回应由规划决定，未知问题不授予知识，已答内容仍需授权", () => {
   const questions = [{ factId: "fact_notice", aspects: ["source", "time"] as const }];
   const reply: ExpressionTask = { intent: "inform", focusFactIds: ["fact_time"], prerequisiteFactIds: [], answers: [

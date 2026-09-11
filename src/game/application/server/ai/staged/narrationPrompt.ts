@@ -7,6 +7,7 @@ import { requiredExpressionFactIds } from "@/game/domain/expressionTask";
 import { renderAiRepairFeedback, type AiContentRepair } from "@/game/application/aiGenerationRetry";
 import type { SafeContext } from "@/game/application/narrativeGeneration/perspectiveContext";
 import { expressionBoundary } from "./expressionBoundary";
+import { buildStylePolicy } from "@/game/application/stylePolicy";
 
 /**
  * 同一事实在「玩家可见事实」与「必须披露的观察」两侧 certainty 不一致时列出该事实键。
@@ -24,6 +25,7 @@ function contestedFactIds(context: SafeContext): readonly string[] {
 
 /** Builds the player-perspective narration prompt from a SafeContext. */
 export function buildNarrationPrompt(context: SafeContext, repair?: AiContentRepair): string {
+  const stylePolicy = context.stylePolicy ?? buildStylePolicy();
   const facts = context.visibleFacts.length > 0
     ? context.visibleFacts.map((fact) => `- ${fact.id}：${fact.text}（certainty=${fact.certainty}）`).join("\n")
     : "- 无";
@@ -60,6 +62,9 @@ ${context.scene === undefined ? "（未提供）" : JSON.stringify(context.scene
 
 # 场景风格
 - 题材风格：${context.style}
+- 叙事呈现：${stylePolicy.narrationInstruction}
+- 内容强度：${stylePolicy.intensityInstruction}
+风格和强度只改变措辞、节奏与允许的意象，不许可新增暴力情节、人物目标、事实、证据或规则结果。
 - 玩家原话：${context.playerUtterance ?? "（无）"}
 
 # 玩家可见事实（facts 里**只能**引用这里列出的 id；**一个都不许自己编**；不得泄露其他信息）

@@ -7,11 +7,13 @@
 import { renderAiRepairFeedback, type AiContentRepair } from "@/game/application/aiGenerationRetry";
 import type { SafeContext } from "@/game/application/narrativeGeneration/perspectiveContext";
 import { expressionBoundary } from "./expressionBoundary";
+import { buildStylePolicy } from "@/game/application/stylePolicy";
 
 /** Builds the choice-label prompt from a SafeContext. */
 export function buildChoicePrompt(context: SafeContext, repair?: AiContentRepair): string {
+  const stylePolicy = context.stylePolicy ?? buildStylePolicy();
   const options = context.options.map((option) =>
-    `- ${option.candidateId}（act=${option.dialogueAct}）：${option.publicIntent.text}`);
+    `- ${option.candidateId}（act=${option.dialogueAct}，inquiries=${JSON.stringify(option.inquiries ?? [])}）：${option.publicIntent.text}`);
   const prior = context.priorText.length > 0
     ? context.priorText.map((part) => part.text).join("\n")
     : "（无）";
@@ -41,6 +43,9 @@ ${context.scene === undefined ? "（未提供）" : JSON.stringify(context.scene
 
 # 场景风格
 - 题材风格：${context.style}
+- 玩家对白呈现：${stylePolicy.narrationInstruction}
+- 内容强度：${stylePolicy.intensityInstruction}
+性格标签只约束玩家这两句对白的措辞，不用于推断 NPC 性格、事实、目标或行动能力。风格和强度不许可新增暴力、线索、承诺或剧情结果。
 
 # 输出契约
 ${expressionBoundary()}
