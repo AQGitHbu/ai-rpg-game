@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { projectUnitContext } from "./perspectiveContext";
-import { approvePlan, approvePlanDecision } from "@/game/gameplay/rpg/narrativePlanning";
+import { approvePlan, approvePlanDecision, collectDisclosures } from "@/game/gameplay/rpg/narrativePlanning";
+import { approveUnit } from "./approveUnit";
+import { buildCharacterPrompt } from "../server/ai/staged/characterPrompt";
 import { branchWorld, branchStory } from "@/game/gameplay/rpg/narrativePlanning/branchFixture.testutil";
 import {
   makeStagedPlan,
@@ -35,6 +37,42 @@ import type { NpcEntry, QuestEntry } from "@/game/domain/worldEntries";
 const SENTINEL = "SECRET_TRACKING_SEAL";
 const FACT_PUB = "fact_pub";
 const FACT_SECRET = "fact_secret";
+
+it("同序未列required键的speech观察上限进入prompt和审批，降级能完成披露且隔离其他观察", () => {
+  const base = approvedPlanOf(personaWorld());
+  const unit = base.units.find(u => u.key === FIXTURE_NPC_A_UNIT)!;
+  expect(unit.requiredObservationKeys).toEqual([]);
+  const observation = { key: "implicit_speech", point: unit.point, audienceIds: ["player_0", FIXTURE_NPC_A],
+    fact: { factId: FACT_PUB, certainty: "suspected" as const },
+    source: { kind: "speech" as const, speakerId: FIXTURE_NPC_A } };
+  const plan = { ...base, proposal: { ...base.proposal, observations: [observation,
+    { ...observation, key: "other_step_secret", point: { ...unit.point, stepKey: "future" },
+      fact: { factId: FACT_SECRET, certainty: "known" as const } },
+    { ...observation, key: "other_npc_secret", source: { kind: "speech" as const, speakerId: FIXTURE_NPC_B },
+      fact: { factId: FACT_SECRET, certainty: "known" as const } },
+  ] } };
+  const projected = projectUnitContext({ plan, unit, approved: approvedOutputs() });
+  if (!projected.ok) throw Error(projected.code);
+  expect(projected.value.requiredObservations).toEqual([{ key: "implicit_speech", factId: FACT_PUB, certainty: "suspected" }]);
+  const prompt = buildCharacterPrompt(projected.value);
+  expect(prompt).toContain("suspected");
+  expect(prompt).toContain("implicit_speech");
+  expect(prompt).not.toContain("other_step_secret");
+  expect(prompt).not.toContain("other_npc_secret");
+  expect(prompt).not.toContain(SENTINEL);
+  const output = { ...makeCharacterOutput(FIXTURE_NPC_A), parts: [{ text: "听说渡口昨夜有灯火。",
+    facts: [{ factId: FACT_PUB, certainty: "suspected" as const }], evidence: [], beatIds: [] }] };
+  expect(approveUnit({ unit, context: projected.value, output: { ...output, parts: [{ ...output.parts[0]!,
+    facts: [{ factId: FACT_PUB, certainty: "known" }] }] } })).toMatchObject({ ok: false, code: "unit_output_fact_unavailable" });
+  expect(approveUnit({ unit, context: projected.value, output }).ok).toBe(true);
+  expect(collectDisclosures({ plan, unit, output }).ok).toBe(true);
+  // Same-speaker implicit observations also cannot grant access to a hidden fact.
+  const secretPlan = { ...base, proposal: { ...base.proposal, observations: [{ ...observation,
+    key: "same_speaker_secret", fact: { factId: FACT_SECRET, certainty: "known" as const } }] } };
+  const refused = projectUnitContext({ plan: secretPlan, unit, approved: approvedOutputs() });
+  expect(refused).toEqual({ ok: false, code: "observation_without_source" });
+  expect(JSON.stringify(refused)).not.toContain(FACT_SECRET);
+});
 
 function npcEntry(id: string, overrides: Partial<NpcEntry> = {}): NpcEntry {
   return {

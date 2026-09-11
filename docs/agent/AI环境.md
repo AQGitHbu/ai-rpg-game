@@ -11,6 +11,7 @@
 - composition root 在 `src/game/application/server/compositionRoot.ts` 装配 repository、`RpgAiClient`、audit recorder、logger、background ensure coordinator 和 stage source。AI transport 只在 `application/server/ai/` 使用。
 - provider 传输失败、空响应、JSON/schema/reference 失败和审批拒绝都返回稳定 failure。生产 source 不切换 deterministic、fixture 或默认文本；无可用 AI 配置时注入 unavailable source，创建/叙事任务进入明确失败态。
 - 传输由 `RpgAiClient` 按角色策略重试；逐单元生成尝试与手动重试由 [运行时 AI](运行时AI导演与场景表演.md) 维护，普通轮询不重跑 failed job。
+- 生产对白发布前按契约触发 `dialogue_consistency_review`；该角色不生成剧情，默认关闭 thinking、temperature=0、最多 800 输出 token、30 秒且无内部 transport 重试。它与新增知识的 `disclosure_review` 分别计费和审计，预算、恢复与拒绝处理见 [运行时 AI](运行时AI导演与场景表演.md)。
 - 确定性 source 只在显式 offline fixture composition 使用，不能标记生产 `generated`。
 
 ## 环境变量

@@ -19,7 +19,9 @@ const execution = { signal: new AbortController().signal, timeoutMs: 1000,
 it("独立审核prompt保留合同和实际文案，明确反例、自由输入与禁止改稿", () => {
   const prompt = buildDialogueConsistencyReviewPrompt(request);
   expect(prompt).toContain(JSON.stringify(request));
-  for (const phrase of ["来源并不重要", "从哪儿听来", "historicalChoice=false", "scope=planning", "不写改稿", "1至8项", "uncertain"])
+  for (const phrase of ["来源并不重要", "从哪儿听来", "historicalChoice=false", "scope=planning", "不写改稿", "1至8项", "uncertain",
+    "暂时忽略实际label/text", "scope=expression、candidateId=", "offer是自己提出协助", "空inquiries不授权任意提问",
+    "prerequisiteFactIds是已批准的先核实条件", "沿着脚印方向一起排查"])
     expect(prompt).toContain(phrase);
 });
 

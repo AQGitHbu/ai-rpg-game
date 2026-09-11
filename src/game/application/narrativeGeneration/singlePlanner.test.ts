@@ -4,6 +4,8 @@ import { createPendingDecisionRecord, makeDecisionPlan } from "@/game/domain/tes
 import { createLiveStageSource } from "../server/ai/staged/liveStageSource";
 import type { RpgAiClient } from "../server/ai/rpgAiClient";
 import { approvePlanningContext } from "./approvePlanningContext";
+import { createWorldStateFixtureWith } from "@/game/domain/testing/worldStateFixture.testutil";
+import { asFactId } from "@/game/domain/worldEntity";
 
 it.each(["none", "answers", "brief", "contentFactIds"] as const)("单规划器决定回答与最终候选，正常四次生成加一次审核，旧不完整规划有界修复：missing=%s", async missing => {
   const cached = missing !== "none";
@@ -39,7 +41,11 @@ it.each(["none", "answers", "brief", "contentFactIds"] as const)("单规划器�
       ...(missing === "brief" ? { brief: undefined } : {}),
       ...(missing === "contentFactIds" ? { contentFactIds: undefined } : {}),
     } } : unit) };
-  const input = { kind: "decision" as const, world: record.worldState, story: record.storyState,
+  const world = createWorldStateFixtureWith({ generation: record.worldState.generation, base: record.worldState }, {
+    worldFacts: [...record.worldState.worldFacts, { factId: asFactId("fact_notice"), text: "告示已经张贴。", source: "generated", discovered: true }],
+    eventLedger: record.worldState.eventLedger,
+  });
+  const input = { kind: "decision" as const, world, story: record.storyState,
     job: { ...narrative.job, selectedDialogue: selected } };
   // answers 与其他规则契约均合法，只有 live 的完整内容要求能拒绝这两类旧缓存。
   if (missing === "brief" || missing === "contentFactIds") {

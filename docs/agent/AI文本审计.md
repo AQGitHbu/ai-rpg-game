@@ -10,7 +10,7 @@ AI 文本审计是独立的 append-only JSONL，服务于 prompt/模型正文/�
 - `AI_TEXT_AUDIT` 缺省、空白或非 `off` 均为 `full`，只有显式 `off` 关闭 AI 文本事件。full 保存 `ai_call` 的完整 messages 和安全请求选项、provider completion，以及 `story_text` 的审批后场景和 visible text。
 - `GAME_API_AUDIT` 独立控制 `game_api`：默认 `compact`，轮询 route 只保留是否有 body；业务 route 在 compact 下保存完整 sanitized body；`full` 保存所有 route body，`off` 不写 API 事件。
 - 唯一安全排除项是 API key、Authorization、cookie 和完整 URL。审计正文不经过普通日志的递归脱敏和 128 KiB 截断，因此开启 full 前必须把目录视为敏感运行产物；客户端不能读取或开启它。
-- `ai_call.role` 为 `planning`、`narration`、`character`、`choices`（分阶段叙事生产路径的四个 stage）、`disclosure_review`（新增知识对白的独立语义审核，非生成 stage），或 `intent`、`opening`、`scene`、`world`、`narrative_bundle`（旧路径，仅 fixture/审计兼容）。每条 ai_call 对应一次 provider transport attempt，逻辑请求可能有传输重试；同一请求用 `callId` 与 `context` 配对，审核请求另记且计入任务额度。
+- `ai_call.role` 为 `planning`、`narration`、`character`、`choices`（四类生成 stage）、`disclosure_review`（新增知识对白审核）、`dialogue_consistency_review`（实际对白与问题/回答合同的一致性审核），或 `intent`、`opening`、`scene`、`world`、`narrative_bundle`（旧路径，仅 fixture/审计兼容）。两种审核均非生成 stage。每条 ai_call 对应一次 provider transport attempt，逻辑请求可能有传输重试；同一请求用 `callId` 与 `context` 配对，审核请求另记且计入任务额度。
 - `context.retry` 区分 `normal`/`manual_failed_job` 与 `initial`/`transport`/`content_repair`；顶层 `ai_call.attempt` 是 transport 序号，`context.retry.attempt` 是形成重试机制内的序号，两者不能混用。历史 `repair` 只由 CLI 只读归一为 `legacy_unknown`，不改写原 JSONL。
 - provider 失败记录调用和稳定错误证据；`story_text.source` 只有审批后的 `generated` 才代表生产 AI 文本，`fixture` 只表示离线，`rule` 只表示规则反馈。
 

@@ -48,6 +48,7 @@ ${context.scene === undefined ? "（未提供）" : JSON.stringify(context.scene
 性格标签只约束玩家这两句对白的措辞，不用于推断 NPC 性格、事实、目标或行动能力。风格和强度不许可新增暴力、线索、承诺或剧情结果。
 
 # 输出契约
+顶层必须严格使用 stage="choices" 和 labels 两个字段；stage不可省略，不得返回type字段。json_object是传输格式设置，不是JSON内容字段，也不是stage的值。
 ${expressionBoundary()}
 
 # 规划器分别给两个候选的完整表达内容（candidateId 原样回填）

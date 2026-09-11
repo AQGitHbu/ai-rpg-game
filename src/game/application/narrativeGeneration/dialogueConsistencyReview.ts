@@ -7,6 +7,8 @@ import { approveUnit } from "./approveUnit";
 import { projectUnitContext, type SafeContext } from "./perspectiveContext";
 
 export const DIALOGUE_REVIEW_VERSION = 1;
+/** Bump whenever review policy/prompt changes; storage schema remains readable. */
+export const DIALOGUE_REVIEW_POLICY_REVISION = 2;
 export const DIALOGUE_REVIEW_MAX_ATTEMPTS = 2;
 export const DIALOGUE_REVIEW_CONTEXT_LIMIT = 16_000;
 export type DialogueViolation = Readonly<{
@@ -20,7 +22,7 @@ export type DialogueConsistencyVerdict = Readonly<{
   verdict: "pass" | "reject" | "uncertain";
   violations: readonly DialogueViolation[];
 }>;
-type Contract = Readonly<{ intent: string; inquiries: NonNullable<ExpressionTask["inquiries"]>; brief?: string | null }>;
+type Contract = Readonly<{ intent: string; inquiries: NonNullable<ExpressionTask["inquiries"]>; brief?: string | null; prerequisiteFactIds?: readonly string[] }>;
 export type DialogueConsistencyReviewRequest = Readonly<{
   version: 1;
   conversations: readonly Readonly<{
@@ -105,7 +107,8 @@ export function dialogueConsistencyReviewInput(job: StoredJob, plan: ApprovedPla
           options: output.stage === "choices" ? output.labels.map(label => {
             const option = context.options.find(o => o.candidateId === label.candidateId)!;
             return { ...label, brief: option.publicIntent.text,
-              contract: { intent: option.dialogueAct, inquiries: option.inquiries ?? [] } };
+              contract: { intent: option.dialogueAct, inquiries: option.inquiries ?? [],
+                prerequisiteFactIds: option.prerequisiteFactIds ?? [] } };
           }) : [],
           selected: selectedLabel === null ? null : { label: selectedLabel,
             historicalChoice: job.input.kind === "decision" && job.input.job.generationKind !== "npc_free_text"
@@ -121,7 +124,7 @@ export function dialogueConsistencyReviewInput(job: StoredJob, plan: ApprovedPla
   const request: DialogueConsistencyReviewRequest = { version: DIALOGUE_REVIEW_VERSION, conversations };
   if ([...JSON.stringify(request)].length > DIALOGUE_REVIEW_CONTEXT_LIMIT) return fail("dialogue_consistency_context_limit");
   // Full input is hashed locally; private plan/world data is never sent to the reviewer.
-  const digest = narrativeInputDigest({ version: DIALOGUE_REVIEW_VERSION,
+  const digest = narrativeInputDigest({ version: DIALOGUE_REVIEW_VERSION, policyRevision: DIALOGUE_REVIEW_POLICY_REVISION,
     cycle: job.cycle, inputDigest: job.inputDigest, proposal: plan.proposal, contexts,
     units: job.units.map(unit => ({ key: unit.key, inputDigest: unit.inputDigest, value: unit.value })), request,
   });

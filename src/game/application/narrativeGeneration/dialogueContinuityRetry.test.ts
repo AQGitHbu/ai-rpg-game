@@ -1,6 +1,8 @@
 import { expect, it } from "vitest";
 import { createStagedHarness } from "../testing/stagedNarrativeHarness.testutil";
 import { makeDecisionPlan, createPendingDecisionRecord } from "@/game/domain/testing/stagedNarrativeFixture.testutil";
+import { createWorldStateFixtureWith } from "@/game/domain/testing/worldStateFixture.testutil";
+import { asFactId } from "@/game/domain/worldEntity";
 
 it.each(["fresh", "cached", "exhausted"])("重复问询有界重规划，旧缓存也撤销且不发布半包：%s", async mode => {
   const h = createStagedHarness();
@@ -25,7 +27,11 @@ it.each(["fresh", "cached", "exhausted"])("重复问询有界重规划，旧缓�
   ] as const } };
   const record = createPendingDecisionRecord();
   if (record.storyState.narrative.status !== "provider_pending") throw Error("pending");
-  const input = { kind: "decision" as const, world: record.worldState, story: record.storyState, job: { ...record.storyState.narrative.job,
+  const world = createWorldStateFixtureWith({ generation: record.worldState.generation, base: record.worldState }, {
+    worldFacts: [...record.worldState.worldFacts, { factId: asFactId("fact_0"), text: "渡口有一则告示。", source: "generated", discovered: true }],
+    eventLedger: record.worldState.eventLedger,
+  });
+  const input = { kind: "decision" as const, world, story: record.storyState, job: { ...record.storyState.narrative.job,
     selectedDialogue: { dialogueAct: "ask" as const, label: "谁说的，什么时候？", task: asked } } };
   const cached = mode === "cached";
   expect((await h.jobs.save({ lease: h.lease(), expectedVersion: stored.value.version,

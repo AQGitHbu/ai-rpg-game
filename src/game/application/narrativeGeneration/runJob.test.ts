@@ -5,7 +5,8 @@
 // 绝不先发请求后扣预算。重启时在途 unknown 请求保留 charge，等待
 // lease 过期后有界重做。
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import * as perspectiveContext from "./perspectiveContext";
 import { createStagedHarness } from "@/game/application/testing/stagedNarrativeHarness.testutil";
 import { createAiSourceFailure } from "@/game/application/aiGenerationRetry";
 
@@ -461,6 +462,36 @@ describe("runJob", () => {
     if (result.ok) {
       expect(result.value.units.every((unit) => unit.status === "approved")).toBe(true);
     }
+  });
+
+  it("certainty升级被拒后真实重试收到正确字段路径和上限，不产生负索引", async () => {
+    const project = perspectiveContext.projectUnitContext;
+    const spy = vi.spyOn(perspectiveContext, "projectUnitContext").mockImplementation(input => {
+      const result = project(input);
+      if (!result.ok || input.unit.stage !== "narration") return result;
+      return { ok: true, value: { ...result.value, visibleFacts: [...result.value.visibleFacts,
+        { id: "fact_suspected", text: "受控传闻。", certainty: "suspected", sources: [] }],
+      } };
+    });
+    try {
+      const h = createStagedHarness();
+      const generate = h.source.generate.bind(h.source);
+      let attempts = 0;
+      h.source.generate = async (request, execution) => {
+        const response = await generate(request, execution);
+        if (!response.ok || response.stage !== "narration" || response.value.stage !== "narration" || ++attempts !== 1) return response;
+        return { ...response, value: { ...response.value, parts: response.value.parts.map(part => ({
+          ...part, facts: [{ factId: "fact_suspected", certainty: "known" as const }],
+        })) } };
+      };
+      await h.startDecision();
+      expect((await h.run()).ok).toBe(true);
+      const calls = h.source.calls.filter(call => call.stage === "narration");
+      expect(calls).toHaveLength(2);
+      expect(calls[1]?.repair).toMatchObject({ rejectionCode: "unit_output_fact_unavailable", attempt: 1,
+        detail: "parts[0].facts[0].certainty: expected suspected; received known" });
+      expect(calls[1]?.repair?.detail).not.toContain("受控传闻");
+    } finally { spy.mockRestore(); }
   });
 
   it("表达审批失败（候选 ID 未知）带修复反馈自动重试后成功", async () => {

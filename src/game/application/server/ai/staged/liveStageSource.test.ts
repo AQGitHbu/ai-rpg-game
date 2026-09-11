@@ -451,4 +451,16 @@ describe("createLiveStageSource", () => {
     expect(result).toMatchObject({ ok: false, repairReason: "unit_output_label_invalid",
       repairDetail: "labels[1]: 106 Unicode code points; maximum 80" });
   });
+
+  it("实际choices请求区分传输json_object与正文stage，type不能替代stage", async () => {
+    const { client, calls } = recordingClient([OK_JSON({ type: "json_object", labels: VALID_CHOICES.labels })]);
+    const source = createLiveStageSource({ client });
+    const result = await source.generate({ stage: "choices", context: contextFor(approvedPlan(), FIXTURE_CHOICE_UNIT) },
+      executionWith(new AbortController().signal));
+    expect(result).toMatchObject({ ok: false, repairReason: "unit_output_stage_invalid" });
+    const prompt = calls[0]!.messages.map(m => m.content).join("\n");
+    expect(prompt).toContain('stage="choices"');
+    expect(prompt).toContain("不得返回type字段");
+    expect(prompt).toContain("json_object是传输格式设置");
+  });
 });

@@ -31,7 +31,7 @@ export type ApproveUnitInput = Readonly<{
  * 要求以 suspected 披露时，模型写 suspected（降级）不被误杀，写 known（升级）仍被拒。
  * 与 collectDisclosures 的「不得升级」同一语义（单一规则，两处共用）。
  */
-function factCertaintyCeiling(context: SafeContext): ReadonlyMap<string, "known" | "suspected"> {
+export function factCertaintyCeiling(context: SafeContext): ReadonlyMap<string, "known" | "suspected"> {
   const ceiling = new Map<string, "known" | "suspected">();
   for (const fact of context.visibleFacts) {
     ceiling.set(fact.id, fact.certainty);

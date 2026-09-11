@@ -12,7 +12,7 @@
 
 - 生产 provider 的叙事触发只有 `initialization`（开局）和 `narrative_choice`（正式选择）两类；`npc_free_text` 仍走既有焦点 NPC 输入路径。两者共用同一套四阶段 source。
 - 生产装配点是 `createStageSource`（`src/game/application/server/ai/sourceFactory.ts`）。旧完整包源 `liveNarrativeBundleSource.ts` **已无任何生产调用**，仅保留给显式离线 fixture；不得把它描述为生产路径。
-- 一次逻辑任务（job）分为四类职责，并非固定四次 API 调用：`planning` 决定事件、世界变化提案、NPC 回答内容与两个最终玩家回应意图，再由 `narration`、`character`、`choices` 三类表达单元按 DAG 依赖顺序产展示文本。正常路径只有一次整轮规划，三个表达阶段只润色获批内容；没有额外选项规划或正文复核调用。规划素材（尤其 `opening.prologue`）**不是最终展示文本**，必须经旁白单元覆盖后才发布。
+- 一次逻辑任务（job）分为四类生成职责，并非固定四次 API 调用：`planning` 决定事件、世界变化提案、NPC 回答内容与两个最终玩家回应意图，再由 `narration`、`character`、`choices` 三类表达单元按 DAG 依赖顺序产展示文本。正常路径只有一次整轮规划，表达阶段只润色获批内容；适用任务在表达获批后另经 `dialogue_consistency_review` 核对对白合同。规划素材（尤其 `opening.prologue`）**不是最终展示文本**，必须经旁白单元覆盖后才发布。
 - 骨架先经 `approvePlanningContext` 预览世界增量、核对服务端场景图，再经 `approvePlan` 与 `approvePlanDecision` 检查图结构和候选语义；表达逐单元经过 `approveUnit` 与 `collectDisclosures`，发布时再次通过同一 `approvePlanningContext` 预览并重放审批，不能退回增量前世界审批终幕。任一步失败不部分写入。
 - 当前规则要求的必选节拍（除可选 atmosphere）须按原 beatId/kind 各分配给唯一的 current 旁白单元；当前旁白不得增加服务端未要求的节拍（额外氛围只用固定键 atmosphere）。NPC 可另行回答，但不能替代旁白覆盖，也不能用未来场景提前代偿。分配不符以 `plan_mandatory_beat_mismatch` 在表达请求前退回规划，反馈携带所需节拍与场景契约；不复制 NPC 正文、不扩大知识权限。恢复旧缓存时，若骨架违反此契约，撤销该骨架及全部依赖表达后有界重新规划；已用请求和尝试次数保留，成功后移除新骨架不再引用的旧表达缓存。
 - 普通对话候选允许 `target/deferredLocation=null`，只绑定已批准的 `dialogueAct/topic`，两个候选不能是同一语义。不为选项创建地点或改写任务；不同走向不等于不同地点。实际选择及当回合已提交结果进入下一次规划。普通选项的已批准 `task` 随服务端 registry/后续场景种子保存，固定选择时进入 `selectedDialogue.task`；规划器在同一次规划内先确定 NPC 回答含义，再确定后续选项意图，见 [NPC 对话](NPC对话驱动叙事场景触发.md)。
@@ -44,6 +44,7 @@
   → approvePlan（checkUnitGraph）
   → approveUnit + collectDisclosures（逐单元，readyUnits 调度）
   → 新知识对白：disclosure_review 通过才批准，下游再读取
+  → 适用对白：dialogue_consistency_review 通过才允许整包发布
   → 整包发布：commit events + rebuild memory + one CAS
   → ready scene + opaque choices
 ```
@@ -53,6 +54,8 @@ Prompt 只接收编译后的公开事实、当前位置、焦点 NPC 的有限�
 各 stage 使用独立 messages，不共享会话。跨场景依赖仅表示执行顺序，旧场景的对白原文不进入下一场景表达；跨场景认知仍由事实和观察回执投影。选项前文标记旁白/说话人，只保留本场旁白与当前对话对象；NPC 不接收玩家候选，也不继承其他 NPC 的私聊。本场公开定位由步骤快照投影地点 ID/名称、玩家名称与本场参与说话人名称，不携带地点背景或 NPC 隐藏动机。当前任务的实际选择 label（自由输入则为本次 utterance）作为待回应话语绑定到 current 旁白、选项和当前焦点 NPC；不转发给未来场景或其他 NPC。话语单独标记为非指令、非已核实事实，不扩大事实引用权限。
 
 各 stage 的展示职责保持分离。开局规划里 `opening.prologue` 与描述是内容素材，最终序幕由 narration 单元覆盖后才发布；不能直接展示 planner 的 `prologue`。旁白 prompt 不含 NPC 台词输出字段；choice prompt 只返回两条 id/label，禁止前缀、效果与 Action。
+
+实际上一轮对白先按焦点 npcId 对齐，再投影到当前场景；未来场景和其他 NPC 不继承。`previousReply` 仅在其事实引用全部属于该视角允许范围时保留；choices 另接上一轮实际选项与已问维度，避免复读和混淆上一句属于谁。这些历史文字不是新知识来源。`SafeContext.stylePolicy` 由已存 setup 的受控人格标签、concise/novel/cinematic 与 normal/dark 构建，进入三类表达 prompt 及缓存摘要，只影响措辞，不扩大事实权限。各类表达角色的内容边界仍优先于风格。
 
 旁白每个 `part` 最多引用一个节拍，无节拍的氛围段使用空数组；全部段落仍须覆盖全部必选节拍，事实和证据保持逐段归属。多节拍合段由 `approveUnit` 以 `unit_output_beat_ambiguous` 拒绝并在该表达单元内有界重试，装配保留防御性校验，不丢弃节拍或复制正文补覆盖。此限制不套用于 NPC 回答。当前决策旁白通过 `narrationLayout` 只接收排版约束：同一节拍只能构成连续段，独立氛围只允许在最后一个当前旁白单元末尾；先前单元须承接必选节拍。违规以 `unit_output_beat_layout` 在表达阶段退回修复，反馈明确允许的节拍 ID 与氛围权限，不重排获批正文。开局与未来场景不套用当前回合布局。恢复旧任务时，若已批准缓存仍含多节拍合段或布局违规旁白，先撤销该单元及其传递依赖的表达缓存，再按原 DAG 重新生成；规划、无关单元、已扣请求和尝试次数保留。
 
@@ -83,6 +86,16 @@ Prompt 只接收编译后的公开事实、当前位置、焦点 NPC 的有限�
 每个执行作用域使用唯一租约 owner，竞争或失租不得把其他 worker 的任务写成 provider_failed。生成作用域按 job 绝对截止时间取消，响应后与发布前复核；传输重试共用剩余 timeout，不重新获得完整时长。截止失败保留为显式重试状态。
 
 新增知识传播的 NPC 对白使用独立审核角色，契约见 [Spec 的角色审批](../superpowers/specs/2026-09-09-staged-narrative-generation-design.md#6-角色表现与认知隔离)。审核只读本次授权事实和实际对白；拒绝、不可判定或服务失败不批准下游认知。服务端保存绑定输出的摘要凭据，恢复时缺失/不匹配会撤销该单元及传递依赖，发布时再验；每次审核先持久扣除额外请求额度。四类生成职责不变。
+
+对白一致性审核独立于披露审核：存在 choices、当前结构化提问，或当前话语需要焦点 NPC 回应时必须执行。审核只读按场景/说话人隔离的实际正文、获批 brief、inquiries、answers、已选 label 与历史合同、有限前文和 SafeContext 允许事实；不接全局世界或隐藏正文，不产生剧情。候选及历史合同保留经安全编译的 prerequisiteFactIds，区分先核实已批准条件与新增开放式提问；旧任务没有 brief 也须核对玩家可见引用，不能借审核扩展权限。输入最多 16,000 Unicode 码点，超限失败而非截断；输出只接受 pass/reject/uncertain 及最多 8 条受控定位。仅 pass 允许发布，不能用空列表、模型自报 facts 或结构通过代替正文审核。
+
+审核把问题分为 expression、planning、legacy。表达遗漏或额外提问撤销对应单元及传递依赖，保留有效上游；骨架合同矛盾撤销规划/表达缓存、结束当前周期，现有显式重试进入新周期重新规划。已选历史 label 与合同不符返回 `legacy_dialogue_contract_mismatch`，不能把旧多余问题补进授权；当前 job 重试不能修复已发布历史 label，本实现不提供历史回滚入口。自由输入不冒充历史固定选项，不补造 inquiries。修复反馈只含 ID、枚举与问题维度，不转发审核自由文本。
+
+基础 source 请求数为 `1 + plan.units.length + 适用时1次对白一致性审核`；单旁白、单 NPC、一处普通决策的无重试路径为 5 次，披露审核仍另计。每 job 在基础额度外最多 12 次额外 source 请求，表达单元每周期最多 4 次尝试，一致性审核每周期最多 2 次且每次最多 30 秒、transport 内部最多 1 次。所有 source 请求在发送前持久扣费，真实 HTTP（含 transport 重试）另由 client 审计计数。审核也受 lease/fence、取消信号和 job 截止时间约束。审核凭据绑定版本、cycle、完整批准投影与实际输出摘要；恢复时缺失/不匹配不得发布，running 恢复为 unknown，保留已用请求及本周期审核尝试数。发布重算摘要；输入、风格、合同或正文变化使旧凭据失效。
+
+在线审核只能降低有限合同错配风险，不保证任意自然语言绝对安全或忠实；串台、隐含补造与风格仍需要保留真实样本的人工验收。
+
+`DIALOGUE_REVIEW_POLICY_REVISION` 独立于存储 schema 版本，审核规则/prompt 变更必须更新该政策版本并纳入凭据摘要；旧 job 保持可读，但旧政策 pass 不可复用为新政策结论，同周期重审保留已用请求和审核次数。同序的隐式 speech/witness 观察与显式 requiredObservationKeys 共用 `observationsForUnit` 归属投影，进入表达前再次验证事实属于该 SafeContext 可见范围；不靠添加隐藏事实补齐观察。表达 prompt、certainty 审批及最终披露据此使用同一上限。
 
 `src/game/application/aiGenerationRetry.ts` 是 RPG 生成层的公共反馈契约，覆盖 opening、intent、scene、world 和叙事生成。各 source 使用 `createAiSourceFailure` 构造失败；scene、world 端口直接复用 `AiSourceFailure`，intent 结果与旧开局异常端口只作既有边界格式转换。业务校验只提供稳定 `repairReason`、`repairDetail`，审批使用统一 `rejectionCode`。`repairFromSourceFailure` 负责缺失原因的统一分类：调用失败为 `provider_failure`，结构失败为 `invalid_schema`，不能把网络失败或空响应冒充 `invalid_json`。
 

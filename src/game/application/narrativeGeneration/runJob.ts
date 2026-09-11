@@ -20,7 +20,7 @@ import {
   collectDisclosures,
 } from "@/game/gameplay/rpg/narrativePlanning";
 import { projectUnitContext, narrationLayoutOf } from "./perspectiveContext";
-import { approveUnit, narrationLayoutRejection } from "./approveUnit";
+import { approveUnit, factCertaintyCeiling, narrationLayoutRejection } from "./approveUnit";
 import { disclosureReviewRequest, disclosureReviewDigest } from "./disclosureReview";
 import { runDialogueConsistencyReview, dialogueRepairForUnit } from "./runDialogueConsistencyReview";
 import { baselineRequestsForPlan, canStartRequest } from "./jobBudget";
@@ -61,9 +61,15 @@ function approvalRepairDetail(response: StageSuccess, rejection: string | null,
   }
   if (rejection === "unit_output_fact_unavailable" && response.stage !== "planning"
     && response.value.stage !== "choices") {
-    const index = response.value.parts.findIndex(part => part.facts.some(fact =>
-      !context.visibleFacts.some(visible => visible.id === fact.factId)));
-    return `parts[${index}].facts: contains unavailable fact`;
+    const ceilings = factCertaintyCeiling(context);
+    for (const [partIndex, part] of response.value.parts.entries()) {
+      for (const [factIndex, fact] of part.facts.entries()) {
+        const ceiling = ceilings.get(fact.factId);
+        if (ceiling === undefined) return `parts[${partIndex}].facts: contains unavailable fact`;
+        if (ceiling === "suspected" && fact.certainty === "known")
+          return `parts[${partIndex}].facts[${factIndex}].certainty: expected suspected; received known`;
+      }
+    }
   }
   return undefined;
 }

@@ -81,6 +81,7 @@ export type SafeOption = Readonly<{
   dialogueAct: DialogueAct;
   publicIntent: TextPart;
   inquiries?: NonNullable<ExpressionTask["inquiries"]>;
+  prerequisiteFactIds?: readonly string[];
 }>;
 
 /**
@@ -103,7 +104,7 @@ export type SafeContext = Readonly<{
   options: readonly SafeOption[];
   playerUtterance: string | null;
   /** Prior player contract, projected only for the current focus reply; it grants no NPC knowledge. */
-  selectedDialogueContract?: Readonly<{ intent: string; inquiries: NonNullable<ExpressionTask["inquiries"]>; brief: string | null }>;
+  selectedDialogueContract?: Readonly<{ intent: string; inquiries: NonNullable<ExpressionTask["inquiries"]>; brief: string | null; prerequisiteFactIds?: readonly string[] }>;
   /** 当前生成对白的身份，不从前文的称呼推断。choices 的 speaker 永远是玩家。 */
   dialogue?: Readonly<{ speakerId: string; speakerName: string; addresseeId: string; addresseeName: string; addresseeRole?: string }>;
   scene?: Readonly<{ locationId: string; locationName: string; playerName: string; speakers: readonly { id: string; name: string }[] }>;
@@ -336,6 +337,7 @@ function optionsOf(plan: ApprovedPlan, prior: readonly TextPart[], facts: readon
     inquiries: task?.ok && "task" in option && option.task?.inquiries !== undefined
       ? option.task.inquiries.map((inquiry) => ({ factId: inquiry.factId, aspects: [...inquiry.aspects] }))
       : [],
+    prerequisiteFactIds: task?.ok && "task" in option ? [...(option.task?.prerequisiteFactIds ?? [])] : [],
     });
   }
   return { ok: true, value: options };
@@ -429,13 +431,14 @@ function rebuildUnit(
 }
 
 /**
- * 本单元必须披露的观察投影：按 rebuildUnit 保留下来的键，取回观察的 fact/certainty。
+ * 本单元必须披露的观察投影：与 collectDisclosures 共用归属规则，包含同序隐式观察。
  * 只输出键与事实键，不含受众与来源细节。missing 时 fail-closed（理论不可达：
  * rebuildUnit 已按同一归属规则过滤）。
  */
 function requiredObservationsOf(
   unit: Unit,
   plan: ApprovedPlan,
+  visibleFacts: readonly SafeFact[],
 ): Check<readonly SafeObservation[]> {
   const authorized = new Map(
     observationsForUnit(unit, plan.proposal.observations).map((observation) => [
@@ -445,8 +448,10 @@ function requiredObservationsOf(
   );
   const out: SafeObservation[] = [];
   for (const key of unit.requiredObservationKeys) {
-    const observation = authorized.get(key);
-    if (observation === undefined) return fail("observation_without_source");
+    if (!authorized.has(key)) return fail("observation_without_source");
+  }
+  for (const observation of authorized.values()) {
+    if (!visibleFacts.some(fact => fact.id === observation.fact.factId)) return fail("observation_without_source");
     out.push({
       key: observation.key,
       factId: observation.fact.factId,
@@ -524,7 +529,7 @@ export function projectUnitContext(input: ProjectUnitContextInput): ContextCheck
       : unit.stage === "choices" && plan.choiceExpression?.npcId === plan.currentUtterance?.npcId);
   const selectedTask = currentDialogue && unit.stage === "character" ? plan.currentUtterance?.selectedTask : undefined;
   // Historical brief was a player option. Validate it against player-visible facts, never the NPC's private knowledge.
-  const selectedBrief = selectedTask?.brief === undefined ? undefined : projectExpressionTask(selectedTask, discoveredFacts(ws));
+  const selectedBrief = selectedTask === undefined ? undefined : projectExpressionTask(selectedTask, discoveredFacts(ws));
   if (selectedBrief?.ok === false) return fail("legacy_dialogue_contract_mismatch");
   const task = unit.task === undefined ? undefined : projectExpressionTask(unit.task, visibleFacts,
     unit.stage === "character" && currentDialogue ? plan.currentUtterance?.inquiries : []);
@@ -548,7 +553,7 @@ export function projectUnitContext(input: ProjectUnitContextInput): ContextCheck
   if (!priorText.ok) return priorText;
 
   const rebuilt = rebuildUnit({ ...unit, requiredBeats: beats.value }, new Set(visibleFacts.map((fact) => fact.id)), plan);
-  const requiredObservations = requiredObservationsOf(rebuilt, plan);
+  const requiredObservations = requiredObservationsOf(rebuilt, plan, visibleFacts);
   if (!requiredObservations.ok) return requiredObservations;
   const options = unit.stage === "choices" ? optionsOf(plan, priorText.value, visibleFacts)
     : { ok: true as const, value: [] };
@@ -595,7 +600,8 @@ export function projectUnitContext(input: ProjectUnitContextInput): ContextCheck
         addresseeId: String(choiceNpc.id), addresseeName: choiceNpc.name, addresseeRole: choiceNpc.role,
       } }),
       ...(selectedTask === undefined ? {} : { selectedDialogueContract: { intent: selectedTask.intent,
-        inquiries: selectedTask.inquiries ?? [], brief: selectedBrief?.ok ? selectedBrief.value : null } }),
+        inquiries: selectedTask.inquiries ?? [], brief: selectedBrief?.ok ? selectedBrief.value : null,
+        prerequisiteFactIds: [...selectedTask.prerequisiteFactIds] } }),
       playerUtterance: unit.point.stepKey === "current"
         && (unit.stage !== "character" || unit.speakerId === plan.currentUtterance?.npcId)
         ? plan.currentUtterance?.text ?? null : null,

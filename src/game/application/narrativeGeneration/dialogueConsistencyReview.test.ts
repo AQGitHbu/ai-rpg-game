@@ -1,4 +1,5 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
+import * as digestModule from "./narrativeInputDigest";
 import { approvePlanningContext } from "./approvePlanningContext";
 import { dialogueConsistencyReviewInput, isStoredDialogueReview, parseDialogueConsistencyVerdict,
   shouldReviewDialogueConsistency, validateJobDialogueConsistencyReview } from "./dialogueConsistencyReview";
@@ -6,6 +7,68 @@ import { dialogueReviewHarness } from "./dialogueConsistencyFixture.testutil";
 import type { PlanProposal } from "@/game/domain/narrativePlan";
 import { createStagedHarness } from "../testing/stagedNarrativeHarness.testutil";
 import { runDialogueConsistencyReview } from "./runDialogueConsistencyReview";
+
+it("旧审核政策凭据恢复会重新审核，保留同周期请求及审核次数", async () => {
+  const { h } = await dialogueReviewHarness();
+  const ready = await h.run();
+  if (!ready.ok) throw Error(ready.code);
+  const approved = approvePlanningContext(ready.value.input, ready.value.units.find(u => u.key === "planning")!.value as PlanProposal);
+  if (!approved.ok) throw Error(approved.code);
+  const digest = digestModule.narrativeInputDigest;
+  const spy = vi.spyOn(digestModule, "narrativeInputDigest");
+  dialogueConsistencyReviewInput(ready.value, approved.value);
+  const payload = spy.mock.calls.at(-1)![0] as Record<string, unknown>;
+  spy.mockRestore();
+  expect(payload.policyRevision).toBeGreaterThan(1);
+  const oldDigest = digest({ ...payload, policyRevision: 1 });
+  const receipt = ready.value.dialogueConsistencyReview!;
+  let job = { ...ready.value, dialogueConsistencyReview: { ...receipt, inputDigest: oldDigest, passDigest: oldDigest } };
+  expect(isStoredDialogueReview(job.dialogueConsistencyReview)).toBe(true);
+  expect(validateJobDialogueConsistencyReview(job, approved.value).ok).toBe(false);
+  let calls = 0;
+  const source = { ...h.source, reviewDialogueConsistency: async () => {
+    calls++; return { ok: true as const, verdict: "pass" as const, violations: [] };
+  } };
+  expect(await runDialogueConsistencyReview({ plan: approved.value, getJob: () => job, source,
+    now: () => h.clock.now(), signal: h.controller.signal,
+    persist: async mutate => { job = mutate(job) as typeof job; return true; },
+  })).toEqual({ ok: true, repair: false });
+  expect(calls).toBe(1);
+  expect(job.cycle).toBe(ready.value.cycle);
+  expect(job.usedRequests).toBe(ready.value.usedRequests + 1);
+  expect(job.dialogueConsistencyReview.attempts).toBe(receipt.attempts + 1);
+  expect(validateJobDialogueConsistencyReview(job, approved.value).ok).toBe(true);
+});
+
+it("审核合同保留已安全编译的候选与历史先核实条件ID，不扩充inquiries", async () => {
+  const { h, plan } = await dialogueReviewHarness(false);
+  if (plan.decision?.kind !== "ordinary") throw Error("fixture");
+  const decision = plan.decision;
+  const generate = h.source.generate;
+  h.source.generate = async (r, e) => {
+    const result = await generate(r, e);
+    if (!result.ok || result.stage !== "planning") return result;
+    return { ...result, value: { ...plan, decision: { ...decision, options: decision.options.map(o => ({ ...o,
+      task: { ...o.task!, prerequisiteFactIds: ["fact_notice"] },
+    })) as unknown as typeof decision.options } } };
+  };
+  const loaded = await h.readJob();
+  if (!loaded.ok || loaded.value.input.kind !== "decision") throw Error("fixture");
+  await h.jobs.save({ lease: h.lease(), expectedVersion: loaded.value.version, job: { ...loaded.value,
+    input: { ...loaded.value.input, job: { ...loaded.value.input.job, selectedDialogue: { dialogueAct: "support",
+      label: "先确认告示上的说法，我再支持你。", task: { intent: "support", brief: "先核实告示再支持。",
+        focusFactIds: [], contentFactIds: [], prerequisiteFactIds: ["fact_notice"], inquiries: [] } } } } } });
+  h.source.reviewDialogueConsistency = async request => {
+    const selected = request.conversations.find(c => c.selected !== null)!.selected!;
+    expect(selected.contract?.prerequisiteFactIds).toEqual(["fact_notice"]);
+    expect(selected.contract?.inquiries).toEqual([]);
+    const options = request.conversations.flatMap(c => c.options);
+    expect(options.every(o => o.contract.prerequisiteFactIds?.[0] === "fact_notice")).toBe(true);
+    expect(JSON.stringify(request)).not.toContain("entityStore");
+    return { ok: true, verdict: "pass", violations: [] };
+  };
+  expect((await h.run()).ok).toBe(true);
+});
 
 it("历史brief经安全投影核对协助条件，只交给当前focus审核，不转发其他NPC或原始task", async () => {
   const h = createStagedHarness();
@@ -37,19 +100,22 @@ it("历史brief经安全投影核对协助条件，只交给当前focus审核，
   expect(JSON.stringify(other)).not.toContain(brief);
 });
 
-it("历史brief引用玩家不可见事实时显式拒绝，不让审核器读取隐藏正文", async () => {
+it.each(["brief", "legacy_prerequisite"])("历史任务引用玩家不可见事实时显式拒绝：%s", async variant => {
   const h = createStagedHarness();
   await h.startDecision();
   const stored = await h.readJob();
   if (!stored.ok || stored.value.input.kind !== "decision") throw Error("fixture");
   await h.jobs.save({ lease: h.lease(), expectedVersion: stored.value.version, job: { ...stored.value,
     input: { ...stored.value.input, job: { ...stored.value.input.job, selectedDialogue: { dialogueAct: "offer", label: "我帮你。",
-      task: { intent: "offer", brief: "PRIVATE_HISTORICAL_BRIEF", focusFactIds: ["fact_private"], prerequisiteFactIds: [] } } } } } });
+      task: { intent: "offer", ...(variant === "brief" ? { brief: "PRIVATE_HISTORICAL_BRIEF" } : {}),
+        focusFactIds: variant === "brief" ? ["fact_private"] : [],
+        prerequisiteFactIds: variant === "legacy_prerequisite" ? ["PRIVATE_PREREQUISITE_ID"] : [] } } } } } });
   let reviews = 0;
   h.source.reviewDialogueConsistency = async () => { reviews++; return { ok: true, verdict: "pass", violations: [] }; };
   expect(await h.run()).toMatchObject({ ok: false, code: "legacy_dialogue_contract_mismatch" });
   expect(reviews).toBe(0);
   expect(JSON.stringify(h.requests.filter(r => r.stage !== "planning"))).not.toContain("PRIVATE_HISTORICAL_BRIEF");
+  expect(JSON.stringify(h.requests.filter(r => r.stage !== "planning"))).not.toContain("PRIVATE_PREREQUISITE_ID");
 });
 
 it("逐场景绑定实际问题与unknown回应，安全投影不含完整世界/私密计划", async () => {

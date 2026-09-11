@@ -45,6 +45,12 @@ npm run logs:retention -- --standard-days 30 --audit-days 365 --vacuum
 
 不要把完整 prompt、请求体、模型输出或异常 message 复制到工单；使用 trace、事件名、稳定分类、状态码、耗时和 game ID。
 
+分阶段请求可在隔离诊断环境设置 `AI_REQUEST_DIAGNOSTICS=1`。`rpg_ai_request_diagnostic` 只记录 stage、请求参数指纹、HTTP 状态、允许列表中的 provider code/param 和本地 correlationId；错误正文最多读取 8 KiB、100 毫秒，不记录 URL、请求头或原始正文。该观察器不更改传输参数及重试策略。分析 choices 失败时分别统计首次 transport attempt 与重试，用参数指纹和实际审计 options 判断格式/额度差异；一次成功或少量零错误不能证明根因已消失。
+
+玩家侧 `AI_CALL_FAILED` 表示调用不可用或失败，`AI_RESPONSE_INVALID` 表示内容未通过验证；使用现有显式重试操作。内部 `dialogue_consistency_review_failed/uncertain/exhausted` 表示审核未能批准，不能跳过审核发布；`legacy_dialogue_contract_mismatch` 表示所选历史文案与合同不符，当前 job 重试不能改写该历史来源，本实现不提供历史回滚入口。内部修复路径和允许事实只交给有权限的生成器，不展示给玩家。
+
+真实验收须先固定样本与 prompt 版本，在 fetch 入口发送前扣除实际 HTTP 额度，重试同样计数；source 的 usedRequests 不能代替此上限。保留失败样本、每次审核 verdict、可见全文与合同，达到预算立即停止，不修改样本重采样。成绩、token、耗时和人工判断保存在报告，不写入本手册。
+
 ## 审计操作
 
 ```
