@@ -1,6 +1,8 @@
-# 分阶段剧情生成 Implementation Plan
+# 分阶段剧情生成 Implementation Plan（已过时，仅保留历史过程）
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **状态：已过时，不再作为当前执行计划或验收标准。** 本文保留早期方案、任务拆分与修复过程，正文中的指令、约束及 checkbox 均为历史记录，不表示当前实现状态，也不应据此继续实施。
+>
+> 当前需求与验收以[最新 Spec](../specs/2026-09-09-staged-narrative-generation-design.md)为准；实现契约见[运行时 AI 导演与场景表演](../../agent/运行时AI导演与场景表演.md)，验证结果与剩余风险见[审查报告](../reports/2026-09-11-staged-narrative-generation-review.md)。下文涉及强制新地点、两个不同未完成目标、任务替换及固定外出返程的旧要求已被取代，不得沿用。正文原位保留以便追溯，不据此修改当前阶段指针。
 
 **Goal:** 实现剧情规划、独立旁白、单 NPC 表现、纯对白选项四类生成职责，按权限与依赖生成一个原子发布、可恢复、有实质分支的叙事包。
 
@@ -9,6 +11,10 @@
 **Tech Stack:** TypeScript、Next.js、React、Vitest、SQLite/@libsql/client、现有 @ai-game/ai-transport、现有 AI 审计与 retry helper；不新增依赖或修改 foundation。
 
 ## Global Constraints
+
+- 规划器不提供下游对白成稿：只提出行为意图、事实引用、披露条件与分支效果；规划自由文本不是表达器的可信指令。
+- 表达任务由程序根据获批结构和授权事实重建；禁止转发 planner 的 publicIntent.text、beat.instruction、未有公开依据的人格锚点。公开表达意图使用独立安全 DTO，绝不携带 BranchOption 的隐藏 target/effect；旧存储文本只供规划/兼容读取，不作为安全凭据。
+- 回归必须向规划意图、节拍和人格字段注入未标注 factId 的秘密，并检查整个下游 DTO 和实际 prompt 均不含原文；引用合法不等于正文安全。无法完成合法投影时拒绝，不扩大权限。
 
 - 唯一需求依据：[Spec](../specs/2026-09-09-staged-narrative-generation-design.md)。本文只规划；checkbox 不代表实现已完成。当前阶段指针不改动。
 - “旁白与角色表现固定分开请求，不设置‘上下文安全时合并’的例外，也不与规划器合并。”
@@ -680,6 +686,38 @@ if (process.env.RUN_REAL_AI_SMOKE !== "1") {
 ```
 
 ## Spec 覆盖矩阵
+
+### 安全边界补强验收
+
+**Files:** `src/game/application/narrativeGeneration/perspectiveContext.ts`、`perspectiveContext.test.ts`、`approveUnit.ts`、`approveUnit.test.ts`；`src/game/application/server/ai/staged/stagedPrompts.test.ts`。
+
+- [x] 在 publicIntent.text、requiredBeats.instruction（包括 unit 内副本）和非 legacy anchors 注入无事实标注秘密，先运行 `npx vitest run src/game/application/narrativeGeneration/perspectiveContext.test.ts` 观察失败。
+- [x] 重建安全意图与节拍：`instruction = instructionByKind[beat.kind]`；事实和证据仅允许来自视角 allowlist。候选正文只使用受控 dialogueAct 与已公开目标名称和授权事实话题，不复用规划文本；私人目标不进入 SafeOption。无公开依据的人格锚点不传。
+- [x] 生成的 CosmeticAction 必须与获批动作完整结构一致，不能只匹配 key；必须回答的 beat 不能仅验证输出 ID 属于集合，还需验证完整覆盖。
+- [ ] 通过投影后的真实 prompt 测试验证 `expect(prompt).not.toContain(secret)`，运行 typecheck、边界、完整离线回归，再用独立临时库执行显式门禁真实 API 测试，保存成功/失败证据，不以请求成功冒充完整旅程通过。
+
+### 发布前必须闭环的生产集成验收
+
+这些是既有 Task 的未完成验收项，不新增玩法范围。审查与测试证据见[审查报告](../reports/2026-09-11-staged-narrative-generation-review.md)。
+
+执行顺序与接口：先复现装配拒绝，再修租约、条件快照、分支发布，最后运行生产组合根旅程。
+
+消费契约：新生成 contract 2 步骤附带服务端推导的 premises（locationId、afterSequence、跨场景 observationKey/audienceId/factId/certainty）；afterSequence 取本包基准账本末序号。消费必须核对真实地点、说话人在场和新于该下界的真实回执，拒绝旧包同名观察。既有无 premises 片段保留兼容，不能据此声称旧存档已具备同等安全保证。
+
+待决设计：延迟路线返程后仍强制生成两个未完成目标，但开局只公布两条路线，且 evolutionNeed=none 禁止新增事实/任务。当前样本不能产生下一组两个合法目标。需明确“有限目标链结束后允许收束/推进幕”或“补充有预算且具公开来源的新目标”规则，再实现与验收；不得靠重复访问、重复创建地点、无限追加返回原 NPC 的路线来冒充闭环。
+
+- [ ] 装配：`assembleBundle.test.ts` 用真实失败的无 current / terminal 不匹配结构复现；`approvePlan.ts` 提前拒绝非法图，`planningPrompt.ts` 显式区分 current 和服务端连续步骤，`runJob.ts` 将审批码加入有界规划修复。断言 `expect(parseNarrativeBundleProposal(assembled.value).ok).toBe(true)`。
+- [x] 保活：`leaseKeeper.ts` 提供定时续租和受同一互斥队列保护的 `jobs.save/publish`；`stop(): Promise<void>` 清理 timer 并等待在途写入。两种 job 用 `keeper.jobs` 写入。假时钟推进 95 秒，断言另一 worker 在每个 30 秒边界均不能接管；续租失败立即 abort，停止后不再续租。
+- [ ] 快照：`sceneSnapshot({plan,point,approved})` 只计算祖先步骤保证的条件状态与已批准观察；`perspectiveContext` 和 `collectDisclosures` 使用该时点。断言基准 world 不变、前序未批准时无新知识、非受众无新知识、未来地点不污染 current。
+- [ ] 分支：骨架审批调用 `approveDecision`；开局和续接发布保存获批 Decision；使用 `createApprovedChoice({sceneId,basedOnRevision,label,action,branch:{decisionId,candidateId}})` 绑定服务端候选。以真实 `performTurn` + SQLite 双快照验证 `selectedBranches` 与不同目标，不手造 registry。
+- [ ] 回归：`npm test`、`npm run test:fast`、`npm run build`，然后 `RUN_REAL_AI_SMOKE=1 npm run smoke:ai:staged`；失败使用审计离线重放，不通过扩大权限或删校验追求绿灯。
+
+- [ ] Task 2/10：生产开局和续接必须调用 `approveDecision`、保存 `branchDecisions` 并为 registry 绑定 `decisionId/candidateId`；从同一 SQLite 快照分别提交两个正式 token，断言不同的可执行后续目标和存档重载，不得仅比较对白或 revision。
+- [ ] Task 3/4/9：`sceneSnapshot` 必须按前置行动和获批观察推导条件状态，不得对所有时点返回同一世界；生成顺序不构成受众权限。条件回执必须来自实际获批披露，不能把计划声明本身当作已发生观察。以远程私聊、未来移动、战斗结果未定测试失败关闭。
+- [x] Task 7/8：覆盖单次 provider 超过 30 秒 TTL 时的双 worker 接管；协调续租与持久化写入，不能以“未被接管的过期租约可续租”替代保活保证。基础请求预算由实际获批 DAG 派生，规划审批失败也必须有界处理。
+- [ ] Task 10/12：三题材全新库开局、同快照双分支、至少一局通关均须通过；不能以某轮随机成功掩盖前轮失败。纯对白、意图保真、秘密不提前披露另做逐文本人工验收。
+
+### 覆盖关系
 
 | Spec | Task |
 | --- | --- |
