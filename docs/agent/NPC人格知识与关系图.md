@@ -39,7 +39,7 @@ NPC history 只保存结构化交互、主题和事件引用。玩家原话若�
 - 规则：`src/game/gameplay/rpg/npcMemory/`、`src/game/gameplay/rpg/dialogue/`
 - 测试：`src/game/application/npcSpeechAuthority.test.ts`、`src/game/domain/entity/*test.ts`、`src/game/domain/npcSpeech.test.ts`、`src/game/gameplay/rpg/narrativePlanning/observations.test.ts`、`src/game/application/narrativeGeneration/approveUnit.test.ts`
 
-旧完整包审批入口 `approveNarrativeBundle.ts` 已不再是生产路径。
+旧完整包 provider 源不再用于生产；`approveNarrativeBundle.ts` 仍承担四模块装配后的整包发布审批。生成与权限冲突的恢复见 [运行时 AI 导演与场景表演](./运行时AI导演与场景表演.md)。
 
 ## 条件关联阅读
 
