@@ -422,9 +422,11 @@ function loadTsModules() {
     installTsHooks();
     const composition = await import("../src/game/application/server/compositionRoot.ts");
     const sqlite = await import("../src/game/application/server/persistence/sqliteClient.ts");
+    const diagnostics = await import("../src/game/application/server/ai/staged/requestDiagnostics.ts");
     return {
       createServerGameEntryPoints: composition.createServerGameEntryPoints,
       createSqliteClient: sqlite.createSqliteClient,
+      drainRequestDiagnostics: diagnostics.drainRequestDiagnostics,
     };
   })();
   return tsModulesPromise;
@@ -565,13 +567,16 @@ async function withTempEntry(overrides, run) {
     eventsSinceBaseline: () => readAuditEventsSince(auditRoot, auditBaseline),
   };
   const databasePath = join(tmpRoot, `${TEMP_DB_PREFIX}${randomUUID()}.sqlite`);
+  const logDatabasePath = `${databasePath}.logs.sqlite`;
   if (overrides.snapshotPath) copyFileSync(overrides.snapshotPath, databasePath);
   const entry = modules.createServerGameEntryPoints({
     AI_API_BASE_URL: aiEnv.AI_API_BASE_URL,
     AI_MODEL: aiEnv.AI_MODEL,
     AI_API_KEY: aiEnv.AI_API_KEY,
     AI_OUTPUT_FORMAT: aiEnv.AI_OUTPUT_FORMAT,
+    AI_REQUEST_DIAGNOSTICS: "1",
     GAME_DB_PATH: databasePath,
+    GAME_LOG_DB_PATH: logDatabasePath,
     AI_TEXT_AUDIT_DIR: auditRoot,
   });
   let entryClosed = false;
@@ -600,6 +605,7 @@ async function withTempEntry(overrides, run) {
     if (overrides.inspect !== undefined) await overrides.inspect({ entry, databasePath, auditRoot });
     return result;
   } finally {
+    await modules.drainRequestDiagnostics();
     if (!entryClosed) {
       try {
         await entry.close();
@@ -608,6 +614,7 @@ async function withTempEntry(overrides, run) {
       }
     }
     await removeTempDatabase(databasePath);
+    await removeTempDatabase(logDatabasePath);
     // 保留本次审计证据供人工质量验收；不自动删除失败样本。
   }
 }

@@ -9,6 +9,7 @@ import type { GameLogger } from "@/game/logging";
 import { parseAiRuntimeConfig } from "./aiRuntimeConfig";
 import { createProviderRequestOptions, type ProviderJsonMode, type ProviderThinking } from "./providerRequestOptions";
 import type { AiRetryContext, AiTextAuditContext, AiTextAuditRecorder, AiTextAuditRequestOptions, AiTextAuditRole } from "./textAuditTypes";
+import { createDiagnosticFetch } from "./staged/requestDiagnostics";
 
 /**
  * 分阶段生成（Spec 2026-09-09）新增四个 stage role：planning 产骨架，
@@ -387,8 +388,12 @@ export function createServerRpgAiClient(
     ]),
   ) as RpgAiRolePolicyOverrides;
 
+  const diagnosticFetch = env.AI_REQUEST_DIAGNOSTICS === "1" && logger !== undefined
+    ? createDiagnosticFetch(fetch, diagnostic => logger.warn("rpg_ai_request_diagnostic", diagnostic))
+    : undefined;
+
   return createRpgAiClient({
-    transport: createOpenAiCompatibleTransport(),
+    transport: createOpenAiCompatibleTransport(diagnosticFetch === undefined ? {} : { fetchImpl: diagnosticFetch }),
     config: runtime.config,
     logger,
     policies,

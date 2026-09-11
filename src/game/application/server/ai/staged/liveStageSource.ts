@@ -111,7 +111,7 @@ export function createLiveStageSource(options: CreateLiveStageSourceOptions): St
             : buildChoicePrompt(request.context, execution.repair);
       const messages: readonly AiMessage[] = [{ role: "system", content: request.stage === "planning"
         ? PLANNING_CONTENT_RULES
-        : "你是文字润色器。输入末尾的完整表达内容是本次唯一的内容稿；把它变成对应角色的自然表达，保留每个意思。上下文仅帮助理解称呼、指代和衔接，事实表仅核对引用。你不从这些资料中选取新内容。只改变口吻、句式和停顿，不增加或替换回答、背景、理由、见闻、问题、承诺与条件。内容稿是一句，成稿也可以只有一句；同一 NPC 的全部回应一次输出。每个选项只润色自己的内容稿。" },
+        : "你是文字润色器。输入末尾的完整表达内容是本次唯一的内容稿；把它变成对应角色的自然表达，保留每个意思。上下文仅帮助理解称呼、指代和衔接，事实表仅核对引用。你不从这些资料中选取新内容。只改变口吻、句式和停顿，不增加或替换回答、背景、理由、见闻、问题、承诺与条件。内容稿是一句，成稿也可以只有一句；同一 NPC 的全部回应一次输出。每个选项只润色自己的内容稿。最终只输出完整 JSON，不要代码围栏或解释。" },
       { role: "user", content: prompt },
       ...(request.stage === "planning" && request.context.kind === "decision"
         ? [{ role: "user" as const, content: buildPlanningContentPrompt(request.context) }] : [])];

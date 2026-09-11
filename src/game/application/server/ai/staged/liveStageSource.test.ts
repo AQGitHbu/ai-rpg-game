@@ -289,6 +289,7 @@ describe("createLiveStageSource", () => {
     expect(calls[0]!.messages[0]).toEqual({ role: "system", content: PLANNING_CONTENT_RULES });
     expect(calls.slice(1).every(call => call.messages[0]?.role === "system"
       && call.messages[0].content.includes("你不从这些资料中选取新内容"))).toBe(true);
+    expect(calls.slice(1).every(call => call.messages.some(message => message.content.includes("JSON")))).toBe(true);
     expect(calls.every((call) => call.auditContext === AUDIT)).toBe(true);
   });
 
