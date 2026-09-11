@@ -21,6 +21,7 @@ import { buildPlanningPrompt } from "./planningPrompt";
 import { buildNarrationPrompt } from "./narrationPrompt";
 import { buildCharacterPrompt } from "./characterPrompt";
 import { buildChoicePrompt } from "./choicePrompt";
+import { buildDisclosureReviewPrompt } from "./disclosureReviewPrompt";
 
 const STAGE_ROLES: Readonly<Record<StageRequest["stage"], RpgAiRole>> = {
   planning: "planning",
@@ -44,6 +45,19 @@ function invalidContent(code: string, detail: string) {
  */
 export function createLiveStageSource(options: CreateLiveStageSourceOptions): StageSource {
   return {
+    async reviewDisclosure(request, execution) {
+      const prompt = buildDisclosureReviewPrompt(request);
+      if (prompt.length > 12_000) return invalidContent("disclosure_review_context_overflow", "审核输入超限，不能截断事实");
+      const response = await options.client.complete("disclosure_review", [{ role: "user", content: prompt }],
+        execution.audit, { signal: execution.signal, timeoutMs: execution.timeoutMs });
+      if (!response.ok) return createAiSourceFailure("scene", transportFailureCodeToCategory(response.code));
+      const parsed = parseStructuredJsonObject(response.content);
+      if (!parsed.ok || Object.keys(parsed.value).length !== 1
+        || typeof parsed.value.verdict !== "string"
+        || !["pass", "reject", "uncertain"].includes(parsed.value.verdict))
+        return invalidContent("disclosure_review_invalid", "审核必须只返回 verdict");
+      return { ok: true, verdict: parsed.value.verdict as "pass" | "reject" | "uncertain" };
+    },
     async generate(
       request: StageRequest,
       execution: StageExecution,

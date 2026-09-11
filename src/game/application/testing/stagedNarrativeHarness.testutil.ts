@@ -531,7 +531,7 @@ export function createStagedHarness() {
     if (currentJobId === null || currentLease === null) throw new Error("harness 未 startDecision");
     const job = await jobs.get(currentJobId);
     if (!job.ok) return job;
-    const result = await publishJob({ job: job.value, lease: currentLease, publication }, jobs);
+    const result = await publishJob({ job: job.value, lease: currentLease, publication, now: () => clock.now() }, jobs);
     if (result.ok) publications.push(publication);
     return result;
   }

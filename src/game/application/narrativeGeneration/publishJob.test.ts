@@ -14,6 +14,14 @@ const DECISION_PUBLICATION: Publication = {
 };
 
 describe("publishJob", () => {
+  it("最终输出批准后到达绝对截止时间也不得发布", async () => {
+    const h = createStagedHarness();
+    await h.startDecision();
+    expect((await h.run()).ok).toBe(true);
+    h.clock.advance(600_000);
+    expect(await h.publish()).toMatchObject({ ok: false, code: "job_deadline_exceeded" });
+    expect(h.publications()).toHaveLength(0);
+  });
   it("全部单元批准后原子发布，版本递增且状态为 published", async () => {
     const harness = createStagedHarness();
     await harness.startDecision();
@@ -38,7 +46,7 @@ describe("publishJob", () => {
 
     const job = ran.value;
     const withPending = { ...job, units: job.units.map((unit, index) => index === 1 ? { ...unit, status: "pending" as const } : unit) };
-    const result = await publishJob({ job: withPending, lease: harness.lease(), publication: DECISION_PUBLICATION }, harness.jobs);
+    const result = await publishJob({ job: withPending, lease: harness.lease(), publication: DECISION_PUBLICATION, now: () => harness.clock.now() }, harness.jobs);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.code).toBe("job_unit_not_approved");
@@ -54,7 +62,7 @@ describe("publishJob", () => {
 
     const stored = await harness.jobs.get(harness.jobId());
     if (!stored.ok) throw new Error("job 应存在");
-    const result = await publishJob({ job: stored.value, lease: harness.lease(), publication: DECISION_PUBLICATION }, harness.jobs);
+    const result = await publishJob({ job: stored.value, lease: harness.lease(), publication: DECISION_PUBLICATION, now: () => harness.clock.now() }, harness.jobs);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.code).toBe("job_not_pending");
@@ -67,7 +75,7 @@ describe("publishJob", () => {
     if (!ran.ok) throw new Error("run 应成功");
 
     const result = await publishJob(
-      { job: ran.value, lease: { ...harness.lease(), jobId: "other-job" }, publication: DECISION_PUBLICATION },
+      { job: ran.value, lease: { ...harness.lease(), jobId: "other-job" }, publication: DECISION_PUBLICATION, now: () => harness.clock.now() },
       harness.jobs,
     );
     expect(result.ok).toBe(false);
@@ -83,7 +91,7 @@ describe("publishJob", () => {
 
     const job = ran.value;
     const withoutPlanning = { ...job, units: job.units.filter((unit) => unit.key !== "planning") };
-    const result = await publishJob({ job: withoutPlanning, lease: harness.lease(), publication: DECISION_PUBLICATION }, harness.jobs);
+    const result = await publishJob({ job: withoutPlanning, lease: harness.lease(), publication: DECISION_PUBLICATION, now: () => harness.clock.now() }, harness.jobs);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.code).toBe("job_planning_missing");
@@ -100,7 +108,7 @@ describe("publishJob", () => {
       ...job,
       units: job.units.filter((unit) => unit.key !== "narration_current"),
     };
-    const result = await publishJob({ job: missingNarration, lease: harness.lease(), publication: DECISION_PUBLICATION }, harness.jobs);
+    const result = await publishJob({ job: missingNarration, lease: harness.lease(), publication: DECISION_PUBLICATION, now: () => harness.clock.now() }, harness.jobs);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.code).toBe("assemble_unit_missing");

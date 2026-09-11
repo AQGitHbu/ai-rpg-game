@@ -29,6 +29,7 @@ export type StoredUnit = {
   readonly attempts: number;
   readonly status: StoredUnitStatus;
   readonly value: PlanProposal | UnitOutput | null;
+  readonly disclosureReviewDigest?: string;
 };
 
 export type StoredJobStatus = "pending" | "failed" | "published" | "cancelled";

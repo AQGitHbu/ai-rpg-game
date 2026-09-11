@@ -101,6 +101,7 @@ export function realizeObservations(input: RealizeObservationsInput): RealizeObs
       const earlier = learned.get(`${speakerId}:${observation.factId}`);
       if (knowledge !== undefined) {
         const authority = buildNpcSpeechAuthority({ store: worldState.entityStore,
+          targetContext: { targetId: PLAYER_ENTITY_ID },
           speakerNpcId: asNpcId(speakerId), sceneVisibleFactIds: [asFactId(observation.factId)],
           eventLedger: worldState.eventLedger });
         if (!authority?.allowedFactIds.some(id => String(id) === observation.factId)

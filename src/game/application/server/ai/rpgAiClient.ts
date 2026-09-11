@@ -20,6 +20,7 @@ export const STAGED_NARRATIVE_ROLES = ["planning", "narration", "character", "ch
 export const RPG_AI_ROLES = [
   "intent", "opening", "scene", "world", "narrative_bundle",
   ...STAGED_NARRATIVE_ROLES,
+  "disclosure_review",
 ] as const;
 /** Reuses the AiTextAuditRole union from textAuditTypes.ts; textAuditTypes never imports rpgAiClient, eliminating a type-cycle. */
 export type RpgAiRole = AiTextAuditRole;
@@ -44,6 +45,9 @@ export type RpgAiRolePolicyOverrides = Partial<{
  * switch.
  */
 export const RPG_AI_DEFAULT_POLICIES: Readonly<Record<RpgAiRole, RpgAiRolePolicy>> = {
+  disclosure_review: {
+    thinking: "off", timeoutMs: 30_000, maxTokens: 100, jsonMode: "prompt_only", maxAttempts: 2,
+  },
   intent: {
     thinking: "off",
     timeoutMs: 30_000,
@@ -204,7 +208,7 @@ export function createRpgAiClient(options: CreateRpgAiClientOptions): RpgAiClien
   const audit = options.auditRecorder;
 
   function defaultAuditContext(role: RpgAiRole): AiTextAuditContext {
-    const staged = (STAGED_NARRATIVE_ROLES as readonly string[]).includes(role);
+    const staged = role === "disclosure_review" || (STAGED_NARRATIVE_ROLES as readonly string[]).includes(role);
     const purpose = staged
       ? "staged_narrative_generation"
       : role === "opening"
@@ -233,8 +237,13 @@ export function createRpgAiClient(options: CreateRpgAiClientOptions): RpgAiClien
     // transport retry 只在此层识别：attempt>1 时为 provider 重试，
     // 保留来源（origin），机制覆盖为 transport，reason 为上一失败的稳定码。
     let lastFailureCode: string | undefined;
+    const deadline = overrides?.timeoutMs === undefined ? undefined : Date.now() + overrides.timeoutMs;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const remaining = deadline === undefined ? undefined : deadline - Date.now();
+      if (remaining !== undefined && remaining <= 0) {
+        return { ok: false, code: "timeout", retryable: false, latencyMs: 0 };
+      }
       const providerOptions = createProviderRequestOptions(
         policy.timeoutMs,
         policy.maxTokens,
@@ -245,7 +254,7 @@ export function createRpgAiClient(options: CreateRpgAiClientOptions): RpgAiClien
       // transport（取消/超时机制仍由 transport 独占）。
       const transportOptions = {
         ...providerOptions,
-        ...(overrides?.timeoutMs === undefined ? {} : { timeoutMs: overrides.timeoutMs }),
+        ...(remaining === undefined ? {} : { timeoutMs: remaining }),
         ...(overrides?.signal === undefined ? {} : { signal: overrides.signal }),
       };
       const result = await options.transport.complete(
@@ -257,7 +266,7 @@ export function createRpgAiClient(options: CreateRpgAiClientOptions): RpgAiClien
         // Record the audit entry for this attempt. Best-effort: never throws.
         if (audit?.enabled) {
           const auditOptions: AiTextAuditRequestOptions = {
-            timeoutMs: policy.timeoutMs,
+            timeoutMs: transportOptions.timeoutMs,
             ...(providerOptions.temperature === undefined ? {} : { temperature: providerOptions.temperature }),
             ...(policy.maxTokens === undefined ? {} : { maxTokens: policy.maxTokens }),
             jsonMode: policy.jsonMode,

@@ -319,6 +319,8 @@ export function NewGameSetupForm({ onCreated, restart }: NewGameSetupFormProps) 
       if (known !== null) setInitialization({ kind: "check-failed", message: outcome.message });
       return;
     }
+    // 历史已发布开局不是本次恢复请求，不能把终局重开表单自动关闭。
+    if (outcome.view.status === "published" && known !== outcome.view.requestId) return;
     applyInitializationStatus(outcome.view);
   }, [applyInitializationStatus]);
 

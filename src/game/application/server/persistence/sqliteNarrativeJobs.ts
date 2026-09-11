@@ -123,6 +123,10 @@ function parsePayloadJob(text: string, expectedId: string): JobCheck<StoredJob> 
         value = parsedOutput.value;
       }
     }
+    if (raw["disclosureReviewDigest"] !== undefined
+      && (typeof raw["disclosureReviewDigest"] !== "string" || !/^[a-f0-9]{64}$/.test(raw["disclosureReviewDigest"]))) {
+      return { ok: false, code: "UNSUPPORTED_JOB" };
+    }
     units.push({
       unit,
       key: raw["key"],
@@ -130,6 +134,7 @@ function parsePayloadJob(text: string, expectedId: string): JobCheck<StoredJob> 
       attempts: raw["attempts"],
       status: raw["status"] as StoredUnit["status"],
       value,
+      ...(typeof raw["disclosureReviewDigest"] === "string" ? { disclosureReviewDigest: raw["disclosureReviewDigest"] } : {}),
     });
   }
 
@@ -248,6 +253,13 @@ export function createSqliteNarrativeJobs(
             }
             const parsed = rowToJob(row);
             return parsed;
+          }
+          if (job.scope === "initialization") {
+            const activeSlot = await tx.execute({
+              sql: "SELECT j.id FROM initialization_slot s JOIN narrative_jobs j ON j.id = s.job_id WHERE s.slot = 1 AND j.status IN ('pending', 'failed')",
+              args: [],
+            });
+            if (activeSlot.rows.length > 0) return { ok: false, code: "JOB_CONFLICT" };
           }
           if (job.scope === "decision" && job.gameId !== null) {
             const pendingSameGame = await tx.execute({
@@ -593,6 +605,8 @@ export function createSqliteNarrativeJobs(
             });
           } else {
             const openingInput: CreateInitialGameInput = input.publication.input;
+            const slot = await tx.execute({ sql: "SELECT job_id FROM initialization_slot WHERE slot = 1", args: [] });
+            if (slot.rows[0]?.["job_id"] !== job.id) return { ok: false, code: "JOB_CONFLICT" };
             const envelope = job.initialization;
             if (envelope === null || openingInput.gameId !== envelope.newGameId) {
               return { ok: false, code: "JOB_CONFLICT" };

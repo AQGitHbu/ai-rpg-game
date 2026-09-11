@@ -12,6 +12,7 @@ import type { TurnResolution } from "@/game/domain/turnResolution";
 import { createTurnResolution } from "@/game/domain/turnResolution";
 import type { ValidationCode } from "./validateAction";
 import { validateAction } from "./validateAction";
+export { validateAction } from "./validateAction";
 import { resolveByType, autoResolveCurrentInvestigation } from "./resolveByType";
 import { npcUsedAction, reconcileQuests } from "./reconcileQuests";
 import { resolveEnding } from "./resolveEnding";

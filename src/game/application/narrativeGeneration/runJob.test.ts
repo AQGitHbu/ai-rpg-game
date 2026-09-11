@@ -60,6 +60,19 @@ function twoBeatHarness(ambiguousAttempts = 1) {
 }
 
 describe("runJob", () => {
+  it("晚到的最终选项不批准、不发布，并持久记录截止失败", async () => {
+    const h = createStagedHarness();
+    const generate = h.source.generate.bind(h.source);
+    h.source.generate = async (request, execution) => {
+      const result = await generate(request, execution);
+      if (request.stage === "choices") h.clock.advance(600_000);
+      return result;
+    };
+    await h.startDecision();
+    expect(await h.run()).toMatchObject({ ok: false, code: "job_deadline_exceeded" });
+    expect(await h.readJob()).toMatchObject({ ok: true, value: { status: "failed", failureCode: "job_deadline_exceeded" } });
+    expect(h.publications()).toHaveLength(0);
+  });
   it("多节拍旁白在单元内带反馈重试，规划不重跑且完整装配保留两个段落", async () => {
     const h = twoBeatHarness();
     await h.startDecision();

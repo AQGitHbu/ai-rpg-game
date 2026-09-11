@@ -22,7 +22,7 @@ export type CanStartRequestInput = Readonly<{
 
 /** 发起 provider 请求前的预算检查：deadline、job 额度、单元尝试额度。 */
 export function canStartRequest(input: CanStartRequestInput): Check<true> {
-  if (input.now > input.job.deadline) return fail("job_deadline_exceeded");
+  if (input.now >= input.job.deadline) return fail("job_deadline_exceeded");
   if (input.job.usedRequests >= input.job.baselineRequests + JOB_BUDGET.extraRequests) {
     return fail("job_budget_exhausted");
   }

@@ -34,6 +34,20 @@ function fakeRecorder(): AiTextAuditRecorder & { records: AiTextAuditPayload[] }
 }
 
 describe("staged narrative roles", () => {
+  it("传输重试共用调用截止时间，不重置剩余预算", async () => {
+    let time = 1000;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => time);
+    const timeouts: number[] = [];
+    try {
+      const client = createRpgAiClient({ config, transport: transportFor(async (_c, _m, opts) => {
+        timeouts.push(opts!.timeoutMs!);
+        time += 700;
+        return { ok: false, code: "network_error", retryable: true, latencyMs: 700 };
+      }) });
+      await client.complete("choices", messages, undefined, { timeoutMs: 1000 });
+      expect(timeouts).toEqual([1000, 300]);
+    } finally { clock.mockRestore(); }
+  });
   it("defines fixed decision-table budgets for the four staged roles", () => {
     expect(RPG_AI_DEFAULT_POLICIES.planning).toMatchObject({ thinking: "off", timeoutMs: 90_000, maxTokens: 6_000, maxAttempts: 2 });
     expect(RPG_AI_DEFAULT_POLICIES.narration).toMatchObject({ thinking: "off", timeoutMs: 45_000, maxTokens: 2_000, maxAttempts: 2 });

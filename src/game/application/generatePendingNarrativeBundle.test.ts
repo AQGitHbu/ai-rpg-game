@@ -264,6 +264,21 @@ function harness(gameId: string): Harness {
 }
 
 describe("generatePendingNarrativeBundle", () => {
+  it("独立执行使用不同 owner，租约竞争不写 provider_failed", async () => {
+    const ctx = harness("lease-contention");
+    const owners: string[] = [];
+    ctx.jobs.claim = async input => {
+      owners.push(input.owner);
+      return { ok: false, code: "JOB_CONFLICT" };
+    };
+    const source = createDecisionSource();
+    const deps = { repository: ctx.repo, jobs: ctx.jobs, source, now: () => NOW };
+    expect(await generatePendingNarrativeBundle(deps)).toMatchObject({ ok: false, code: "NOT_PENDING" });
+    expect(await generatePendingNarrativeBundle(deps)).toMatchObject({ ok: false, code: "NOT_PENDING" });
+    expect(new Set(owners).size).toBe(2);
+    expect(source.stages).toHaveLength(0);
+    expect(ctx.getRecord()?.storyState.narrative.status).toBe("provider_pending");
+  });
   it("显式重试同时恢复 durable failed job，普通 ensure 不自动重置周期", async () => {
     const ctx = harness("manual-durable");
     const failing = createFailingSource();

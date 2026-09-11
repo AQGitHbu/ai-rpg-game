@@ -43,6 +43,7 @@
   → createStageSource（planning → narration / character / choices）
   → approvePlan（checkUnitGraph）
   → approveUnit + collectDisclosures（逐单元，readyUnits 调度）
+  → 新知识对白：disclosure_review 通过才批准，下游再读取
   → 整包发布：commit events + rebuild memory + one CAS
   → ready scene + opaque choices
 ```
@@ -64,6 +65,12 @@ Prompt 只接收编译后的公开事实、当前位置、焦点 NPC 的有限�
 每个逻辑 job 的 provider 请求数受预算约束（`jobBudget` 固定决策表）；表达单元的重试上限为 4 次尝试（含首次）。每次 transport retry 由 `RpgAiClient` 执行；顶层 `ai_call.attempt` 是 transport 序号，`context.retry.attempt` 是重试机制内序号，两者不能混用。空响应不重复发送同一请求。
 
 ## 统一重试反馈
+
+初始化 requestId 的摘要只绑定用户配置与替换目标，不绑定服务端随机 gameId、seed 或 generationId；同请求复用首次 envelope。pending/failed 初始化槽不能由新请求覆盖，需先显式取消；发布事务再次验证槽归属。查询 pending 任务通过现有 coordinator 恢复调度，不刷新预算；客户端不将无本次请求标记的历史 published 任务视为本次开局完成。
+
+每个执行作用域使用唯一租约 owner，竞争或失租不得把其他 worker 的任务写成 provider_failed。生成作用域按 job 绝对截止时间取消，响应后与发布前复核；传输重试共用剩余 timeout，不重新获得完整时长。截止失败保留为显式重试状态。
+
+新增知识传播的 NPC 对白使用独立审核角色，契约见 [Spec 的角色审批](../superpowers/specs/2026-09-09-staged-narrative-generation-design.md#6-角色表现与认知隔离)。审核只读本次授权事实和实际对白；拒绝、不可判定或服务失败不批准下游认知。服务端保存绑定输出的摘要凭据，恢复时缺失/不匹配会撤销该单元及传递依赖，发布时再验；每次审核先持久扣除额外请求额度。四类生成职责不变。
 
 `src/game/application/aiGenerationRetry.ts` 是 RPG 生成层的公共反馈契约，覆盖 opening、intent、scene、world 和叙事生成。各 source 使用 `createAiSourceFailure` 构造失败；scene、world 端口直接复用 `AiSourceFailure`，intent 结果与旧开局异常端口只作既有边界格式转换。业务校验只提供稳定 `repairReason`、`repairDetail`，审批使用统一 `rejectionCode`。`repairFromSourceFailure` 负责缺失原因的统一分类：调用失败为 `provider_failure`，结构失败为 `invalid_schema`，不能把网络失败或空响应冒充 `invalid_json`。
 

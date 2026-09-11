@@ -89,7 +89,7 @@ export async function generatePendingNarrativeBundle(
     }
   }
 
-  const ran = await runDecision(started.job.id, "decision-worker", {
+  const ran = await runDecision(started.job.id, `decision-worker:${crypto.randomUUID()}`, {
     jobs: deps.jobs,
     source: deps.source,
     now: deps.now,
@@ -97,6 +97,9 @@ export async function generatePendingNarrativeBundle(
     createdAt: deps.now(),
   });
   if (!ran.ok) {
+    if (["JOB_CONFLICT", "LEASE_LOST", "JOB_ABORTED"].includes(ran.code)) {
+      return { ok: false, code: "NOT_PENDING" };
+    }
     deps.logger?.warn("narrative_bundle_generation_failed", { code: ran.code });
     const mapped = mapFailureCode(ran.code);
     // 失败必须落成 game 状态的 provider_failed：否则手动重试读不到失败原因，

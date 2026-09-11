@@ -3,6 +3,8 @@ import type { Check } from "@/game/domain/narrativeUnit";
 import { approveDecision } from "./branches";
 import { resolveOpeningResponses } from "@/game/gameplay/rpg/openingGeneration";
 import { sceneSnapshot } from "./sceneSnapshot";
+import { validateAction } from "@/game/gameplay/rpg/ruleEngine";
+import { asNpcId, asQuestId, asFactId } from "@/game/domain/worldEntity";
 
 /** 生产骨架的分支审批闸门；不能把只经过 schema/图检查的候选直接发布。 */
 export function approvePlanDecision(plan: ApprovedPlan): Check<ApprovedPlan> {
@@ -29,6 +31,15 @@ export function approvePlanDecision(plan: ApprovedPlan): Check<ApprovedPlan> {
   }
   const snapshot = sceneSnapshot({ plan, point: decision.point });
   if (!snapshot.ok) return snapshot;
+  for (const option of decision.options) {
+    const topic = option.topic.kind === "quest" ? { kind: "quest" as const, questId: asQuestId(option.topic.questId) }
+      : option.topic.kind === "fact" ? { kind: "fact" as const, factId: asFactId(option.topic.factId) }
+      : { kind: "general" as const };
+    const action = validateAction(snapshot.value.world, {
+      type: "talk", npcId: asNpcId(decision.npcId), dialogueAct: option.dialogueAct, topic,
+    });
+    if (!action.ok) return { ok: false, code: "decision_action_invalid" };
+  }
   if (decision.options.every(option => option.target === null && option.deferredLocation === null)) {
     const npc = snapshot.value.world.npcs.find(npc => String(npc.id) === decision.npcId);
     if (npc === undefined || npc.locationId !== snapshot.value.world.currentLocationId) {

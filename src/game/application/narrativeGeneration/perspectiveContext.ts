@@ -444,6 +444,7 @@ export function projectUnitContext(input: ProjectUnitContextInput): ContextCheck
     const authority = buildNpcSpeechAuthority({
       store: ws.entityStore,
       speakerNpcId: speaker.core.id,
+      targetContext: { targetId: PLAYER_ENTITY_ID },
       sceneVisibleFactIds: [...new Set([...discoveredFacts(ws).map(fact => asFactId(fact.id)),
         ...observationsForUnit(unit, plan.proposal.observations).map(observation => asFactId(observation.fact.factId))])],
     });

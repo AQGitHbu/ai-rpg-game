@@ -54,6 +54,18 @@ const SPEECH_OBSERVATION: BundleStepObservation = {
 };
 
 describe("realizeObservations", () => {
+  it.each(["cooperative", "trusted", "bonded", "acquainted"] as const)("兑现条件披露使用玩家关系：%s", stage => {
+    const ws = worldWithFact();
+    const npc = ws.entityStore.records.find(r => r.core.kind === "npc" && String(r.core.id) === "npc_0") as NpcEntityRecord;
+    Object.assign(npc.knowledge.entries[0]!, { disclosure: "conditional" });
+    Object.assign(npc.relationships.outgoing.find(e => String(e.targetId) === "player_0")!, { stage });
+    const result = realizeObservations({ worldState: ws, stepId: "s1", observations: [SPEECH_OBSERVATION],
+      conditionalEvidence: [{ partIndex: -1, observationKey: "obs_speech", audienceId: "player_0" }],
+      turnId: asTurnId("turn-1"), actionId: "a1", turnNumber: 1,
+      episodeKey: "turn", locationId: asLocationId("loc_0"), causeKeys: [] });
+    expect(result.ok).toBe(stage !== "acquainted");
+  });
+
   it.each(["forgotten", "secret", "suspected"] as const)("消费拒绝来源认知已变化：%s", change => {
     const base = worldWithFact();
     const ws = { ...base, entityStore: { ...base.entityStore, records: base.entityStore.records.map(record =>

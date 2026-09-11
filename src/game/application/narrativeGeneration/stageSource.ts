@@ -14,6 +14,7 @@ import type { AiContentRepair, AiSourceFailure } from "@/game/application/aiGene
 import type { AiTextAuditContext } from "../server/ai/textAuditTypes";
 import type { OpeningGenerationInput } from "@/game/application/createGame";
 import type { SafeContext } from "./perspectiveContext";
+import type { DisclosureReviewRequest } from "./disclosureReview";
 
 /** planning 的两种上下文：开局规划消费开局输入；决策规划消费权威状态与 job。 */
 export type PlanningContext =
@@ -58,6 +59,10 @@ export type StageExecution = Readonly<{
  * 失败一律返回 AiSourceFailure，不抛出传输异常。
  */
 export type StageSource = {
+  /** 不是生成阶段；缺少端口时仅允许无新增披露的单元。 */
+  reviewDisclosure?(
+    request: DisclosureReviewRequest, execution: StageExecution,
+  ): Promise<{ readonly ok: true; readonly verdict: "pass" | "reject" | "uncertain" } | AiSourceFailure>;
   generate(
     request: StageRequest,
     execution: StageExecution,

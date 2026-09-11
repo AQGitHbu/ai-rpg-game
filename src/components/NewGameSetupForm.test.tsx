@@ -32,6 +32,15 @@ afterEach(() => {
 });
 
 describe("NewGameSetupForm canonical contract", () => {
+  it("忽略没有本次请求标记的历史已发布开局", async () => {
+    const onCreated = vi.fn();
+    const fetchMock = vi.fn(async () => json({ ok: true, requestId: "historical", status: "published", revision: 0 }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    render(<NewGameSetupForm onCreated={onCreated} />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "角色名字" })).toBeEnabled());
+    expect(onCreated).not.toHaveBeenCalled();
+  });
   it("keeps player-edited fields when switching the genre preset", async () => {
     mockCreateSuccess();
     render(<NewGameSetupForm onCreated={vi.fn()} />);

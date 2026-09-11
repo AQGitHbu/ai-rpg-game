@@ -21,7 +21,9 @@ import {
 } from "@/game/gameplay/rpg/narrativePlanning";
 import { projectUnitContext, narrationLayoutOf } from "./perspectiveContext";
 import { approveUnit, narrationLayoutRejection } from "./approveUnit";
+import { disclosureReviewRequest, disclosureReviewDigest } from "./disclosureReview";
 import { canStartRequest } from "./jobBudget";
+import { composeSignals } from "./leaseKeeper";
 import { createAiSourceFailure, repairFromSourceFailure } from "../aiGenerationRetry";
 import type {
   Lease,
@@ -92,6 +94,30 @@ function unitOfKey(job: StoredJob, key: string): StoredUnit | undefined {
 }
 
 export async function runJob(input: RunJobInput, deps: RunJobDeps): Promise<RunJobResult> {
+  const loaded = await deps.jobs.get(input.id);
+  if (!loaded.ok) return loaded;
+  const deadline = Date.parse(loaded.value.deadline);
+  const controller = new AbortController();
+  const remaining = deadline - Date.parse(deps.now());
+  const timer = setTimeout(() => controller.abort(), Math.max(0, remaining));
+  if (typeof timer === "object" && "unref" in timer) timer.unref();
+  try {
+    const result = await runJobWithinDeadline(input, { ...deps,
+      signal: composeSignals(deps.signal, controller.signal) });
+    if (controller.signal.aborted || Date.parse(deps.now()) >= deadline) {
+      const latest = await deps.jobs.get(input.id);
+      const lease = deps.renewLease === undefined ? input.lease : await deps.renewLease();
+      if (lease !== null && latest.ok && latest.value.status === "pending") {
+        await deps.jobs.save({ lease, expectedVersion: latest.value.version,
+          job: { ...latest.value, status: "failed", failureCode: "job_deadline_exceeded" } });
+      }
+      return fail("job_deadline_exceeded");
+    }
+    return result;
+  } finally { clearTimeout(timer); }
+}
+
+async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promise<RunJobResult> {
   const generate: StageSource["generate"] = async (request, execution) => {
     try { return await deps.source.generate(request, execution); }
     catch { return createAiSourceFailure("scene", "unavailable"); }
@@ -141,6 +167,10 @@ export async function runJob(input: RunJobInput, deps: RunJobDeps): Promise<RunJ
       const kept = await activeLease();
       if (kept === null) return "JOB_ABORTED";
       const next = mutateJob(job);
+      if (next.usedRequests > job.usedRequests) {
+        const budget = canStartRequest({ job, unitAttempts: 0, now: deps.now() });
+        if (!budget.ok) return budget.code;
+      }
       // next 继承当前持久化版本；save 内部做 version CAS 后递增。
       const saved = await deps.jobs.save({ lease: kept, expectedVersion: next.version, job: next });
       if (!saved.ok) return saved.code;
@@ -173,6 +203,8 @@ export async function runJob(input: RunJobInput, deps: RunJobDeps): Promise<RunJ
     }
     return map;
   }
+
+  if (deps.now() >= job.deadline) return failJob("job_deadline_exceeded");
 
   // -----------------------------------------------------------------------
   // planning：固定逻辑 key，成功后 approvePlan 并铸造表达单元。
@@ -253,6 +285,7 @@ export async function runJob(input: RunJobInput, deps: RunJobDeps): Promise<RunJ
     if (!response.ok) {
       return failJob(response.failure.kind);
     }
+    if (deps.now() >= job.deadline) return failJob("job_deadline_exceeded");
     if (response.stage !== "planning") return failJob("unit_output_stage_mismatch");
 
     const proposal = response.value;
@@ -287,6 +320,17 @@ export async function runJob(input: RunJobInput, deps: RunJobDeps): Promise<RunJ
       && output?.stage === "narration" && (output.parts.some(part => part.beatIds.length > 1)
         || narrationLayoutRejection(output, narrationLayoutOf(approved, unitByKey.get(stored.key)!)) !== null);
   }).map(stored => stored.key));
+  for (const stored of job.units) {
+    const output = approvedOutputOf(stored);
+    const unit = unitByKey.get(stored.key);
+    if (output?.stage !== "character" || unit === undefined) continue;
+    const prior = new Map(approvedOutputs(job)); prior.delete(unit.key);
+    const context = projectUnitContext({ plan: approved, unit, approved: prior });
+    if (!context.ok) { invalidated.add(unit.key); continue; }
+    const request = disclosureReviewRequest({ plan: approved, unit, output, context: context.value, approved: prior });
+    if (!request.ok || (request.value !== null
+      && stored.disclosureReviewDigest !== disclosureReviewDigest(unit, output, request.value))) invalidated.add(unit.key);
+  }
   if (invalidated.size > 0) {
     for (;;) {
       const previousSize = invalidated.size;
@@ -386,8 +430,10 @@ export async function runJob(input: RunJobInput, deps: RunJobDeps): Promise<RunJ
       // collectDisclosures）都在剩余额度内带修复反馈自动重试；只有额度耗尽
       // 才落 failed。确属骨架语义冲突的失败码原样上报，由外层 failJob 失效。
       let approvedOutput: UnitOutput | null = null;
+      let reviewDigest: string | undefined;
       let rejection: string | null = null;
       for (;;) {
+        if (deps.now() >= job.deadline) return failJob("job_deadline_exceeded");
         approvedOutput = null;
         rejection = null;
         if (!response.ok) {
@@ -403,7 +449,37 @@ export async function runJob(input: RunJobInput, deps: RunJobDeps): Promise<RunJ
             if (!disclosures.ok) {
               rejection = disclosures.code;
             } else {
-              approvedOutput = response.value;
+              const review = disclosureReviewRequest({ plan: approved, unit, output: response.value,
+                context: context.value, approved: approvedOutputs(job) });
+              if (!review.ok) rejection = review.code;
+              else if (review.value === null) approvedOutput = response.value;
+              else if (deps.source.reviewDisclosure === undefined) {
+                rejection = "disclosure_review_unavailable";
+                break;
+              } else {
+                // 审核独立计费且先扣预算；不增加内容单元尝试数。
+                const budget = canStartRequest({ job, unitAttempts: 0, now: deps.now() });
+                if (!budget.ok) return failJob(budget.code);
+                if (deps.now() >= job.deadline) return failJob("job_deadline_exceeded");
+                if (deps.signal.aborted) return fail("JOB_ABORTED");
+                const chargedReview = await persist(current => ({ ...current, usedRequests: current.usedRequests + 1 }));
+                if (chargedReview !== true) return fail(chargedReview);
+                let result;
+                try { result = await deps.source.reviewDisclosure(review.value, {
+                  signal: deps.signal, timeoutMs: cappedTimeoutMs(job, 30_000, deps.now()),
+                  audit: { purpose: "staged_narrative_generation", trigger: "disclosure_review",
+                    jobId: job.id, unitKey: unit.key, cycle: job.cycle,
+                    inputDigest: disclosureReviewDigest(unit, response.value, review.value) },
+                }); } catch { result = createAiSourceFailure("scene", "unavailable"); }
+                if (deps.now() >= job.deadline) return failJob("job_deadline_exceeded");
+                if (deps.signal.aborted) return fail("JOB_ABORTED");
+                if (!result.ok) { rejection = "disclosure_review_failed"; break; }
+                if (result.verdict !== "pass") rejection = `disclosure_review_${result.verdict}`;
+                else {
+                  reviewDigest = disclosureReviewDigest(unit, response.value, review.value);
+                  approvedOutput = response.value;
+                }
+              }
             }
           }
         }
@@ -445,6 +521,7 @@ export async function runJob(input: RunJobInput, deps: RunJobDeps): Promise<RunJ
       const approvedSave = await persist((current) => patchedUnit(current, unit.key, {
         status: "approved",
         value: approvedOutput,
+        disclosureReviewDigest: reviewDigest,
       }));
       if (approvedSave !== true) failures.push(approvedSave);
     }
@@ -457,5 +534,6 @@ export async function runJob(input: RunJobInput, deps: RunJobDeps): Promise<RunJ
   if (!job.units.every((unit) => unit.status === "approved")) {
     return failJob("unit_output_missing");
   }
+  if (deps.now() >= job.deadline) return failJob("job_deadline_exceeded");
   return { ok: true, value: job };
 }

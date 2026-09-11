@@ -107,7 +107,7 @@ it("规则已允许结局时，同包生成结局对后派生并原子发布终�
   if (!ran.ok) throw Error(ran.code);
   const built = buildDecisionPublication({ job: ran.value, createdAt: h.clock.now() });
   if (!built.ok) throw Error(built.code);
-  const published = await publishJob({ job: ran.value, lease: h.lease(), publication: built.publication }, h.jobs);
+  const published = await publishJob({ job: ran.value, lease: h.lease(), publication: built.publication, now: () => h.clock.now() }, h.jobs);
   expect(published.ok ? published.value.status : published.code).toBe("published");
 });
 

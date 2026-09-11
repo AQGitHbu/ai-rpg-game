@@ -303,7 +303,7 @@ export function createServerGameEntryPoints(
     run: async (traceId?: string) => {
       const slot = await jobs.getInitialization();
       if (!slot.ok || slot.value === null) return "not_pending";
-      const result = await runInitialization(slot.value.id, "init-worker", {
+      const result = await runInitialization(slot.value.id, `init-worker:${randomUUID()}`, {
         jobs,
         source: stageSource,
         now,
@@ -593,7 +593,7 @@ export function createServerGameEntryPoints(
         view: projectInitializationView(started.job, started.job.initialization!.requestId),
       };
     },
-    getInitialization: async (requestId, _traceId) => {
+    getInitialization: async (requestId, traceId) => {
       const slot = await queryInitialization(jobs);
       if (!slot.ok) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
       if (slot.value === null) {
@@ -605,6 +605,10 @@ export function createServerGameEntryPoints(
       if (storedRequestId === undefined) return { ok: true, view: { status: "none" } };
       if (requestId !== undefined && requestId !== storedRequestId) {
         return { ok: true, view: { status: "none" } };
+      }
+      if (job.status === "pending") {
+        const scheduled = await scheduleInitializationRun(job, traceId);
+        if (!scheduled.ok) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
       }
       return { ok: true, view: projectInitializationView(job, storedRequestId) };
     },

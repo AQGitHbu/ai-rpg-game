@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { approvePlan } from "./approvePlan";
+import { approvePlanDecision } from "./approvePlanDecision";
 import type { PlanProposal } from "@/game/domain/narrativePlan";
 import type { Unit } from "@/game/domain/narrativeUnit";
 import {
@@ -12,7 +13,7 @@ import {
   BRANCH_GENERATION,
 } from "./branchFixture.testutil";
 import { makeOpeningQualityCandidate } from "@/game/domain/openingSituation.testutil";
-import { asGenerationId } from "@/game/domain/worldEntity";
+import { asGenerationId, asQuestId, asFactId } from "@/game/domain/worldEntity";
 import type { GenerationMetadata } from "@/game/domain/worldEntity";
 
 const GENERATION: GenerationMetadata = {
@@ -33,6 +34,30 @@ function unit(overrides: Partial<Unit> & Pick<Unit, "key" | "stage">): Unit {
 }
 
 describe("approvePlan", () => {
+  it.each([3])("choices order=%s 必须晚于同场 NPC 的表达", order => {
+    const base = makeStagedPlan();
+    if (base.decision === null) throw Error("decision");
+    const point = { stepKey: "current", order };
+    const proposal = { ...base, decision: { ...base.decision, point },
+      units: base.units.map(u => u.stage === "choices" ? { ...u, point, dependencies: [] } : u) };
+    expect(approvePlan({ kind: "decision", proposal, world: branchWorld(), story: branchStory() }))
+      .toMatchObject({ ok: false, code: "plan_choices_before_expression" });
+  });
+
+  it.each(["quest", "fact"] as const)("普通选项拒绝不存在的 %s topic", kind => {
+    const base = makeStagedPlan();
+    if (base.decision?.kind !== "ordinary") throw Error("decision");
+    const topic = kind === "quest" ? { kind, questId: asQuestId("quest_missing") } : { kind, factId: asFactId("fact_missing") };
+    const proposal: PlanProposal = { ...base, decision: { ...base.decision,
+      options: [
+        { ...base.decision.options[0], dialogueAct: "support", target: null, deferredLocation: null, topic },
+        { ...base.decision.options[1], dialogueAct: "challenge", target: null, deferredLocation: null, topic },
+      ] } };
+    const plan = approvePlan({ kind: "decision", proposal, world: branchWorld(), story: branchStory() });
+    if (!plan.ok) throw Error(plan.code);
+    expect(approvePlanDecision(plan.value)).toMatchObject({ ok: false, code: "decision_action_invalid" });
+  });
+
   it("decision 输入复用权威世界/剧情状态，choiceExpression 来自提案", () => {
     const world = branchWorld();
     const story = branchStory();

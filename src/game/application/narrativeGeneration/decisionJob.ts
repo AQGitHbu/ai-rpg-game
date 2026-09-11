@@ -32,6 +32,7 @@ import { validateStagedOutputs } from "./validateStagedOutputs";
 import { realizeObservations } from "./realizeObservations";
 import { assembleBundle } from "./assembleBundle";
 import { publishJob } from "./publishJob";
+import { validateJobDisclosureReviews } from "./disclosureReview";
 import { runJob } from "./runJob";
 import { LEASE_TTL_MS, composeSignals, startLeaseKeeper } from "./leaseKeeper";
 import type {
@@ -180,6 +181,8 @@ export function buildDecisionPublication(
   const planApproval = approvePlanningContext(job.input, planProposal);
   if (!planApproval.ok) return { ok: false, code: planApproval.code };
   const approvedPlan = planApproval.value;
+  const reviews = validateJobDisclosureReviews(job, approvedPlan);
+  if (!reviews.ok) return reviews;
 
   const approvedOutputs = new Map<string, UnitOutput>();
   for (const unit of job.units) {
@@ -397,7 +400,7 @@ export async function runDecision(
     if (!built.ok) return await failed(built.code);
 
     const published = await publishJob(
-      { job: pendingJob, lease: activeLease, publication: built.publication },
+      { job: pendingJob, lease: activeLease, publication: built.publication, now: deps.now },
       keeper.jobs,
     );
     if (!published.ok) return await failed(published.code);

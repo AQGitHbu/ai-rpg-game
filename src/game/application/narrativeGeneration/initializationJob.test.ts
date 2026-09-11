@@ -243,11 +243,22 @@ describe("initializationJob", () => {
     expect(conflict.code).toBe("JOB_CONFLICT");
   });
 
-  it("digest 只随输入变化，与 now 无关", () => {
+  it("重发复用第一次的随机身份和种子", async () => {
+    const now = () => "2026-09-09T08:00:00.000Z";
+    const jobs = createMemoryJobs(now);
+    const input = startInput(now);
+    const first = await startInitialization(input, jobs);
+    const second = await startInitialization({ ...input, gameId: "other-game" as typeof input.gameId, seed: "other",
+      generation: { ...input.generation, generationId: "other-generation" as typeof input.generation.generationId } }, jobs);
+    expect(first.ok && second.ok && first.job.id === second.job.id).toBe(true);
+    if (first.ok && second.ok) expect(second.job.initialization).toEqual(first.job.initialization);
+  });
+
+  it("digest 绑定用户输入，不绑定服务端分配的随机种子", () => {
     const base = startInput(() => "2026-09-09T08:00:00.000Z");
     const { now: _now, ...withoutNow } = base;
     expect(initializationDigest(withoutNow)).toBe(initializationDigest({ ...withoutNow }));
-    expect(initializationDigest(withoutNow)).not.toBe(
+    expect(initializationDigest(withoutNow)).toBe(
       initializationDigest({ ...withoutNow, seed: "other" }),
     );
   });

@@ -332,7 +332,7 @@ describe("sqliteNarrativeJobs", () => {
       job: {
         ...stored,
         units: [
-          { unit: parsedPlan.value.units[0] ?? null, key: FIXTURE_NARRATION_UNIT, inputDigest: "d1", attempts: 1, status: "approved", value: approvedOutput },
+          { unit: parsedPlan.value.units[0] ?? null, key: FIXTURE_NARRATION_UNIT, inputDigest: "d1", attempts: 1, status: "approved", value: approvedOutput, disclosureReviewDigest: "a".repeat(64) },
         ],
       },
     });
@@ -347,6 +347,7 @@ describe("sqliteNarrativeJobs", () => {
     if (afterReopen.ok) {
       const approved = afterReopen.value.units.filter((unit) => unit.status === "approved");
       expect(approved).toHaveLength(1);
+      expect(approved[0]?.disclosureReviewDigest).toBe("a".repeat(64));
       expect(JSON.stringify(approved[0]?.value)).toContain("风从门缝");
     }
   });
@@ -450,5 +451,17 @@ describe("sqliteNarrativeJobs", () => {
     const rejected = await jobs.start({ requestId: `req-${duplicate.id}`, digest: duplicate.inputDigest, job: duplicate });
     expect(rejected.ok).toBe(false);
     if (!rejected.ok) expect(rejected.code).toBe("JOB_CONFLICT");
+  });
+
+  it.each(["pending", "failed"] as const)("初始化 %s 槽必须显式取消后才可替换", async status => {
+    const { jobs } = openStores(nextDbPath());
+    const first = decisionJob({ scope: "initialization", status, gameId: null, baseRevision: null,
+      initialization: { requestId: "init-first", newGameId: "g-first", seed: "s", generation: GENERATION, target: { kind: "create" } } });
+    expect((await jobs.start({ requestId: "init-first", digest: first.inputDigest, job: first })).ok).toBe(true);
+    const next = decisionJob({ ...first, id: "init-next", initialization: { ...first.initialization!, requestId: "init-next" } });
+    expect(await jobs.start({ requestId: "init-next", digest: next.inputDigest, job: next })).toMatchObject({ ok: false, code: "JOB_CONFLICT" });
+    expect(await jobs.getInitialization()).toMatchObject({ ok: true, value: { id: first.id } });
+    expect((await jobs.control({ id: first.id, operation: "cancel", expectedVersion: 0, expectedCycle: 0, now: NOW })).ok).toBe(true);
+    expect((await jobs.start({ requestId: "init-next", digest: next.inputDigest, job: next })).ok).toBe(true);
   });
 });

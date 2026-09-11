@@ -101,6 +101,10 @@ export function approvePlan(input: PlanApprovalInput): ApprovePlanResult {
     return fail("plan_unit_step_unknown");
   }
   const choice = proposal.units.find(unit => unit.stage === "choices");
+  if (choice !== undefined && proposal.units.some(unit => unit.stage !== "choices"
+    && unit.point.stepKey === choice.point.stepKey && unit.point.order >= choice.point.order)) {
+    return fail("plan_choices_before_expression");
+  }
   if (decision !== null && (choice?.point.stepKey !== decision.point.stepKey
     || choice.point.order !== decision.point.order)) return fail("plan_decision_point_mismatch");
   if (proposal.terminal.kind === "next_decision") {

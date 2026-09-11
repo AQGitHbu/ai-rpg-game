@@ -36,6 +36,7 @@ import { approvePlanningContext } from "./approvePlanningContext";
 import { assembleBundle } from "./assembleBundle";
 import { realizeObservations } from "./realizeObservations";
 import { publishJob } from "./publishJob";
+import { validateJobDisclosureReviews } from "./disclosureReview";
 import { runJob } from "./runJob";
 import { LEASE_TTL_MS, composeSignals, startLeaseKeeper } from "./leaseKeeper";
 import type {
@@ -88,13 +89,10 @@ function openingPlanningContext(input: StartInitializationInput): PlanningContex
 export function initializationDigest(input: Omit<StartInitializationInput, "now">): string {
   return createHash("sha256")
     .update(JSON.stringify({
-      gameId: String(input.gameId),
       gameType: input.gameType,
       gameLength: input.gameLength,
-      seed: input.seed,
       setup: input.setup ?? null,
       target: input.target,
-      generationId: String(input.generation.generationId),
     }))
     .digest("hex");
 }
@@ -192,6 +190,8 @@ export function installOpeningNarrative(input: Readonly<{
 }>): InstallOpeningResult {
   const { job, approved } = input;
   if (approved.proposal.opening === null) return { ok: false, code: "install_opening_missing" };
+  const reviews = validateJobDisclosureReviews(job, approved);
+  if (!reviews.ok) return reviews;
 
   const approvedOutputs = new Map<string, UnitOutput>();
   for (const unit of job.units) {
@@ -508,7 +508,7 @@ export async function runInitialization(
     if (!publication.ok) return await failed(publication.code);
 
     const published = await publishJob(
-      { job: pendingJob, lease: activeLease, publication: publication.publication },
+      { job: pendingJob, lease: activeLease, publication: publication.publication, now: deps.now },
       keeper.jobs,
     );
     if (!published.ok) return await failed(published.code);

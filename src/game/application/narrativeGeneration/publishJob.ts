@@ -14,6 +14,7 @@ import type { PlanProposal } from "@/game/domain/narrativePlan";
 import { approvePlanningContext } from "./approvePlanningContext";
 import { validateStagedReadyCoverage } from "@/game/gameplay/rpg/narrativeBundle";
 import { assembleBundle } from "./assembleBundle";
+import { validateJobDisclosureReviews } from "./disclosureReview";
 import type {
   Lease,
   NarrativeJobRepository,
@@ -28,6 +29,7 @@ export type PublishJobInput = Readonly<{
   job: StoredJob;
   lease: Lease;
   publication: Publication;
+  now: () => string;
 }>;
 
 /** approved 的表达单元输出；planning 单元不是表达单元，返回 null。 */
@@ -46,6 +48,7 @@ export async function publishJob(
   jobs: NarrativeJobRepository,
 ): Promise<Check<StoredJob>> {
   const { job, lease, publication } = input;
+  if (input.now() >= job.deadline) return fail("job_deadline_exceeded");
   if (job.id !== lease.jobId) return fail("job_lease_mismatch");
   if (job.status !== "pending") return fail("job_not_pending");
 
@@ -72,6 +75,8 @@ export async function publishJob(
   if (job.input.kind === "decision") {
     const planApproval = approvePlanningContext(job.input, proposal);
     if (!planApproval.ok) return fail(planApproval.code);
+    const reviews = validateJobDisclosureReviews(job, planApproval.value);
+    if (!reviews.ok) return reviews;
     units = planApproval.value.units;
     terminalKind = planApproval.value.proposal.terminal.kind === "ending" ? "ending" : "next_decision";
     // 复核产物装配：缺单元 / stage 不符 / secret 泄漏在这里被拒在事务之外。
@@ -84,6 +89,8 @@ export async function publishJob(
     if (job.initialization === null) return fail("job_initialization_missing");
     const planApproval = approvePlanningContext({ ...job.input, generation: job.initialization.generation }, proposal);
     if (!planApproval.ok) return fail(planApproval.code);
+    const reviews = validateJobDisclosureReviews(job, planApproval.value);
+    if (!reviews.ok) return reviews;
     units = planApproval.value.units;
     terminalKind = planApproval.value.proposal.terminal.kind === "ending" ? "ending" : "next_decision";
     const assembled = assembleBundle({ plan: planApproval.value, approved: approvedOutputs });

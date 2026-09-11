@@ -145,6 +145,18 @@ function contextOf(plan: ReturnType<typeof approvedPlanOf>, key: string) {
 }
 
 describe("projectUnitContext", () => {
+  it.each(["cooperative", "trusted", "bonded", "acquainted"] as const)("条件披露使用玩家关系：%s", stage => {
+    const world = personaWorld();
+    const npc = world.entityStore.records.find(r => r.core.kind === "npc" && String(r.core.id) === FIXTURE_NPC_A) as NpcEntityRecord;
+    Object.assign(npc.knowledge.entries.find(e => String(e.factId) === FACT_PUB)!, { disclosure: "conditional" });
+    Object.assign(npc.relationships.outgoing.find(e => String(e.targetId) === "player_0")!, { stage });
+    const base = makeStagedPlan();
+    const plan = approvedPlanOf(world, { ...base, units: base.units.map(u => u.key === FIXTURE_NPC_A_UNIT
+      ? { ...u, task: { intent: "inform", focusFactIds: [FACT_PUB], prerequisiteFactIds: [] } } : u) });
+    const result = contextOf(plan, FIXTURE_NPC_A_UNIT);
+    expect(result.ok).toBe(stage !== "acquainted");
+  });
+
   it("具体意图与先求证条件保真：合法事实不许可任意规划正文", () => {
     const base = makeStagedPlan();
     if (base.decision?.kind !== "ordinary") throw Error("decision");

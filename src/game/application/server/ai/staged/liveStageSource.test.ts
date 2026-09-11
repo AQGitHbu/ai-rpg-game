@@ -46,7 +46,29 @@ it("新 live 规划缺少具体任务时显式退回，不回落到笼统润色"
 });
 
 const SENTINEL = "SECRET_TRACKING_SEAL";
+it.each(["pass", "reject", "uncertain"] as const)("披露审核独立请求并解析 %s", async verdict => {
+  const { client, calls } = recordingClient([OK_JSON({ verdict })]);
+  const source = createLiveStageSource({ client });
+  const request = { speakerId: "npc_0", text: "官差藏身义庄。",
+    claims: [{ factId: "fact_new", text: "官差藏身义庄。", certainty: "known" as const, audienceIds: ["player_0"] }] };
+  const result = await source.reviewDisclosure!(request, { signal: new AbortController().signal,
+    timeoutMs: 1000, audit: { purpose: "game_api", trigger: "disclosure_review" } });
+  expect(result).toEqual({ ok: true, verdict });
+  expect(calls).toHaveLength(1);
+  expect(calls[0]!.role).toBe("disclosure_review");
+  expect(calls[0]!.messages).toHaveLength(1);
+  expect(calls[0]!.messages[0]!.content).toContain(JSON.stringify(request));
+  expect(calls[0]!.messages[0]!.content).not.toContain(SENTINEL);
+});
 const FACT_PUB = "fact_pub";
+it.each([{ verdict: ["pass"] }, { verdict: "pass", extra: "text" }, { verdict: "yes" }])(
+  "非法审核响应不能冒充 pass：%j", async body => {
+    const { client } = recordingClient([OK_JSON(body)]);
+    const source = createLiveStageSource({ client });
+    expect(await source.reviewDisclosure!({ speakerId: "npc_0", text: "对白", claims: [] },
+      { signal: new AbortController().signal, timeoutMs: 1000,
+        audit: { purpose: "game_api", trigger: "disclosure_review" } })).toMatchObject({ ok: false });
+  });
 const FACT_SECRET = "fact_secret";
 
 /** opening planning 的结构编译元数据：prompt 组装只经此读取 generation/seed。 */
