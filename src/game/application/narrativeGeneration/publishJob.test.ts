@@ -14,6 +14,21 @@ const DECISION_PUBLICATION: Publication = {
 };
 
 describe("publishJob", () => {
+  it.each(["missing", "text", "candidate", "stale"])("缺失或篡改对白审核凭据禁止发布：%s", async change => {
+    const h = createStagedHarness();
+    await h.startDecision();
+    const ready = await h.run();
+    if (!ready.ok) throw Error(ready.code);
+    const job = { ...ready.value, dialogueConsistencyReview: change === "missing" ? undefined : {
+      ...ready.value.dialogueConsistencyReview!, ...(change === "stale" ? { cycle: 99 } : {}),
+    }, units: ready.value.units.map(u => u.value !== null && "stage" in u.value && u.value.stage === "choices"
+      ? { ...u, value: { ...u.value, labels: u.value.labels.map((label, i) => i !== 0 ? label : {
+        ...label, ...(change === "text" ? { label: label.label + "啊" } : {}),
+        ...(change === "candidate" ? { candidateId: "tampered" } : {}),
+      }) } } : u) };
+    expect((await publishJob({ job, lease: h.lease(), publication: DECISION_PUBLICATION, now: () => h.clock.now() }, h.jobs)).ok).toBe(false);
+    expect(h.publications()).toHaveLength(0);
+  });
   it("最终输出批准后到达绝对截止时间也不得发布", async () => {
     const h = createStagedHarness();
     await h.startDecision();

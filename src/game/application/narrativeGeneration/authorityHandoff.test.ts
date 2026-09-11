@@ -116,7 +116,7 @@ it.each(["fresh", "cached", "conditional", "exhausted"])("规划修复不授予�
   }
   if (!result.ok) throw Error(result.code + ":" + calls.join(","));
   expect(result.ok).toBe(true);
-  expect(result.value.usedRequests).toBe(mode === "conditional" ? 6 : 5);
+  expect(result.value.usedRequests).toBe(mode === "conditional" ? 7 : 6);
   const publication = buildDecisionPublication({ job: result.value, createdAt: h.clock.now() });
   expect(publication).toMatchObject({ ok: true });
   if (!publication.ok) return;

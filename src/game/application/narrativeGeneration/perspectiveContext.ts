@@ -102,6 +102,8 @@ export type SafeContext = Readonly<{
   allowedActions: readonly CosmeticAction[];
   options: readonly SafeOption[];
   playerUtterance: string | null;
+  /** Prior player contract, projected only for the current focus reply; it grants no NPC knowledge. */
+  selectedDialogueContract?: Readonly<{ intent: string; inquiries: NonNullable<ExpressionTask["inquiries"]>; brief: string | null }>;
   /** 当前生成对白的身份，不从前文的称呼推断。choices 的 speaker 永远是玩家。 */
   dialogue?: Readonly<{ speakerId: string; speakerName: string; addresseeId: string; addresseeName: string; addresseeRole?: string }>;
   scene?: Readonly<{ locationId: string; locationName: string; playerName: string; speakers: readonly { id: string; name: string }[] }>;
@@ -520,6 +522,10 @@ export function projectUnitContext(input: ProjectUnitContextInput): ContextCheck
   const currentDialogue = unit.point.stepKey === "current"
     && (unit.stage === "character" ? unit.speakerId === plan.currentUtterance?.npcId
       : unit.stage === "choices" && plan.choiceExpression?.npcId === plan.currentUtterance?.npcId);
+  const selectedTask = currentDialogue && unit.stage === "character" ? plan.currentUtterance?.selectedTask : undefined;
+  // Historical brief was a player option. Validate it against player-visible facts, never the NPC's private knowledge.
+  const selectedBrief = selectedTask?.brief === undefined ? undefined : projectExpressionTask(selectedTask, discoveredFacts(ws));
+  if (selectedBrief?.ok === false) return fail("legacy_dialogue_contract_mismatch");
   const task = unit.task === undefined ? undefined : projectExpressionTask(unit.task, visibleFacts,
     unit.stage === "character" && currentDialogue ? plan.currentUtterance?.inquiries : []);
   if (task?.ok === false) return { ...task, detail: JSON.stringify({
@@ -588,6 +594,8 @@ export function projectUnitContext(input: ProjectUnitContextInput): ContextCheck
         speakerId: String(PLAYER_ENTITY_ID), speakerName: ws.player.name,
         addresseeId: String(choiceNpc.id), addresseeName: choiceNpc.name, addresseeRole: choiceNpc.role,
       } }),
+      ...(selectedTask === undefined ? {} : { selectedDialogueContract: { intent: selectedTask.intent,
+        inquiries: selectedTask.inquiries ?? [], brief: selectedBrief?.ok ? selectedBrief.value : null } }),
       playerUtterance: unit.point.stepKey === "current"
         && (unit.stage !== "character" || unit.speakerId === plan.currentUtterance?.npcId)
         ? plan.currentUtterance?.text ?? null : null,

@@ -27,7 +27,7 @@ export type GameApiAuditMode = "off" | "compact" | "full";
  */
 export type AiTextAuditRole =
   | "intent" | "opening" | "scene" | "world" | "narrative_bundle"
-  | "planning" | "narration" | "character" | "choices" | "disclosure_review";
+  | "planning" | "narration" | "character" | "choices" | "disclosure_review" | "dialogue_consistency_review";
 
 /**
  * 重试来源：初始化于首次普通调用或手动失败 job 重试。legacy_unknown 只作为

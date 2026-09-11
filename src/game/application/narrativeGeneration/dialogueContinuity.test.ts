@@ -41,6 +41,8 @@ it("统一规划必须回答全部已问维度，不能交给未来场景或其�
       outcome: "unknown" as const, answerFactIds: [] })) };
   const make = (task: typeof reply) => ({ ...base, units: base.units.map(unit => unit.stage === "character" ? { ...unit, task } : unit) });
   expect(plannedReplyRejection(job, make(reply))).toBeNull();
+  expect(plannedReplyRejection(job, { ...base, units: base.units.filter(unit => unit.stage !== "character") })).toBe("plan_reply_missing");
+  expect(plannedReplyRejection(job, base)).toBe("plan_reply_missing");
   expect(plannedReplyRejection(job, make({ ...reply, answers: reply.answers.slice(0, 1) }))).toBe("plan_reply_missing");
   const wrongNpc = make(reply);
   expect(plannedReplyRejection(job, { ...wrongNpc, units: wrongNpc.units.map(unit => unit.stage === "character"

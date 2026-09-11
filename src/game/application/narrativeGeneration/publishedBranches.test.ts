@@ -32,14 +32,18 @@ it.each(["legacy_route", "dialogue"] as const)("真实 SQLite 发布、选择与
       { ...basePlan.decision!.options[1], target: null, deferredLocation: null, dialogueAct: "challenge", topic: { kind: "thread", threadId: "lead" } },
     ] } };
   const calls: string[] = [];
-  const source: StageSource = { async generate(request) {
+  const source: StageSource = { async reviewDialogueConsistency() { return { ok: true, verdict: "pass", violations: [] }; }, async generate(request) {
     calls.push(request.stage);
     if (request.stage === "planning") {
       if (request.context.kind === "opening") return { ok: true, stage: "planning", value: plan };
       const value: PlanProposal = { ...plan, opening: null,
         decision: mode === "legacy_route" || plan.decision?.kind !== "ordinary" ? plan.decision : { ...plan.decision, options: [
           { ...plan.decision.options[0], task: { intent: "ask", focusFactIds: ["fact_0"], prerequisiteFactIds: [], inquiries: [{ factId: "fact_0", aspects: ["purpose"] }] } }, { ...plan.decision.options[1], topic: { kind: "thread", threadId: "thread_init_lead" } },
-        ] }, units: plan.units.map(unit => unit.stage !== "narration" ? unit : {
+        ] }, units: plan.units.map(unit => unit.stage === "character" ? { ...unit,
+          task: { intent: "admit_unknown", focusFactIds: [], contentFactIds: [], prerequisiteFactIds: [],
+            answers: (request.context.kind === "decision" ? request.context.job.selectedDialogue?.task?.inquiries ?? [] : [])
+              .flatMap(question => question.aspects.map(aspect => ({ factId: question.factId, aspect,
+                outcome: "unknown" as const, answerFactIds: [] }))) } } : unit.stage !== "narration" ? unit : {
         ...unit, requiredBeats: request.context.kind !== "decision" ? [] : request.context.job.mandatoryBeats.map(beat => ({
           beatId: beat.beatId, kind: beat.kind, factIds: [], evidence: [], instruction: beat.instruction,
         })),
@@ -50,7 +54,10 @@ it.each(["legacy_route", "dialogue"] as const)("真实 SQLite 发布、选择与
       ...makeNarrationOutput(), parts: request.context.unit.requiredBeats.length === 0 ? makeNarrationOutput().parts
         : request.context.unit.requiredBeats.map(beat => ({ text: "烛火在风中晃动。", facts: [], evidence: [], beatIds: [beat.beatId] })),
     } };
-    if (request.stage === "character") return { ok: true, stage: "character", value: makeCharacterOutput("npc_0") };
+    if (request.stage === "character") return { ok: true, stage: "character", value: {
+      ...makeCharacterOutput("npc_0"), ...((request.context.unit.task?.answers?.length ?? 0) > 0
+        ? { parts: [{ text: "来源和发生时间，我都不知道。", facts: [], evidence: [], beatIds: [] }] } : {}),
+    } };
     return { ok: true, stage: "choices", value: makeOpeningChoiceOutput() };
   } };
   const now = () => "2026-09-11T00:00:00.000Z";

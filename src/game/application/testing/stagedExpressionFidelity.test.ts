@@ -7,7 +7,7 @@ it("固定失败样本保留身份和两个不同询问任务", () => {
   const context = identityInquiryContext();
   expect(context.dialogue).toMatchObject({ speakerName: "凯伦", addresseeName: "林澈" });
   expect(context.options[0]?.publicIntent.text).toContain("深浅");
-  expect(context.options[1]?.publicIntent.text).toContain("可信度");
+  expect(context.options[1]?.publicIntent.text).toContain("可信程度");
   expect(context.options[1]?.publicIntent.text).not.toContain("深浅");
   expect(buildChoicePrompt(context)).toContain("当前说话身份");
 });

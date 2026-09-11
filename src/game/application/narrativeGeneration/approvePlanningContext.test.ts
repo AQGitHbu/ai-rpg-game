@@ -282,7 +282,10 @@ it("柳三娘回归：重复来源/时间在表达前退回规划，同事实的
   });
   const scoped = { ...input, world, job: { ...input.job, focusNpcId: input.world.npcs[0]!.id,
     selectedDialogue: { dialogueAct: "ask" as const, label: "是谁贴的？什么时候贴的？", task } } };
-  const proposal = { ...base, decision: { ...base.decision, npcId: String(input.world.npcs[0]!.id), options: [
+  const proposal = { ...base, units: base.units.map(unit => unit.stage !== "character" ? unit : { ...unit,
+    task: { intent: "admit_unknown" as const, focusFactIds: [], contentFactIds: [], prerequisiteFactIds: [],
+      answers: ["source", "time"].map(aspect => ({ factId: "fact_0", aspect: aspect as "source" | "time",
+        outcome: "unknown" as const, answerFactIds: [] })) } }), decision: { ...base.decision, npcId: String(input.world.npcs[0]!.id), options: [
     { ...base.decision.options[0], target: null, deferredLocation: null, dialogueAct: "ask" as const,
       topic: { kind: "general" as const }, task },
     { ...base.decision.options[1], target: null, deferredLocation: null, dialogueAct: "challenge" as const },

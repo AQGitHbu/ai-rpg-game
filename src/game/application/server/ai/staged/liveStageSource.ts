@@ -21,6 +21,8 @@ import { buildPlanningPrompt, buildPlanningContentPrompt, PLANNING_CONTENT_RULES
 import { buildNarrationPrompt } from "./narrationPrompt";
 import { buildCharacterPrompt } from "./characterPrompt";
 import { buildChoicePrompt } from "./choicePrompt";
+import { buildDialogueConsistencyReviewPrompt } from "./dialogueConsistencyReviewPrompt";
+import { DIALOGUE_REVIEW_CONTEXT_LIMIT, parseDialogueConsistencyVerdict } from "@/game/application/narrativeGeneration/dialogueConsistencyReview";
 import { buildDisclosureReviewPrompt } from "./disclosureReviewPrompt";
 import { plannedReplyRejection, repeatedNpcResponseUnits } from "@/game/application/narrativeGeneration/dialogueContinuity";
 
@@ -84,6 +86,18 @@ function providerFailure(result: ProviderFailureResult) {
 export function createLiveStageSource(options: CreateLiveStageSourceOptions): StageSource {
   return {
     requiresTaskBrief: true,
+    async reviewDialogueConsistency(request, execution) {
+      if ([...JSON.stringify(request)].length > DIALOGUE_REVIEW_CONTEXT_LIMIT)
+        return invalidContent("dialogue_consistency_context_limit");
+      const response = await options.client.complete("dialogue_consistency_review",
+        [{ role: "user", content: buildDialogueConsistencyReviewPrompt(request) }], execution.audit,
+        { signal: execution.signal, timeoutMs: Math.min(30_000, execution.timeoutMs) });
+      if (!response.ok) return providerFailure(response);
+      if ([...response.content].length > 4_000) return invalidContent("dialogue_consistency_review_invalid");
+      const parsed = parseStructuredJsonObject(response.content);
+      const verdict = parsed.ok ? parseDialogueConsistencyVerdict(parsed.value) : null;
+      return verdict === null ? invalidContent("dialogue_consistency_review_invalid") : { ok: true, ...verdict };
+    },
     async reviewDisclosure(request, execution) {
       const prompt = buildDisclosureReviewPrompt(request);
       if (prompt.length > 12_000) return invalidContent("disclosure_review_context_overflow", "审核输入超限，不能截断事实");

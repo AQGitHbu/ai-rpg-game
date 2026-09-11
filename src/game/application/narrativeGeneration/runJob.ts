@@ -22,7 +22,8 @@ import {
 import { projectUnitContext, narrationLayoutOf } from "./perspectiveContext";
 import { approveUnit, narrationLayoutRejection } from "./approveUnit";
 import { disclosureReviewRequest, disclosureReviewDigest } from "./disclosureReview";
-import { canStartRequest } from "./jobBudget";
+import { runDialogueConsistencyReview, dialogueRepairForUnit } from "./runDialogueConsistencyReview";
+import { baselineRequestsForPlan, canStartRequest } from "./jobBudget";
 import { composeSignals } from "./leaseKeeper";
 import { createAiSourceFailure, persistedAiRepairReason, repairFromSourceFailure } from "../aiGenerationRetry";
 import type {
@@ -37,7 +38,7 @@ import type { StageExecution, StageRequest, StageSource } from "./stageSource";
 import type { StageSuccess } from "./stageSource";
 import type { DialogueHistoryEntry } from "./stageSource";
 import { loadDialogueHistory } from "./dialogueHistory";
-import { createHash } from "node:crypto";
+import { narrativeInputDigest } from "./narrativeInputDigest";
 
 const PLANNING_UNIT_KEY = "planning";
 /** 每 job 最多同时在途的 provider 请求；批调度按此上限派发。 */
@@ -113,7 +114,7 @@ function approvedOutputOf(unit: StoredUnit): UnitOutput | null {
 
 /** 绑定表达器实际可见的安全投影；版本升级会使旧 approved 缓存失效。 */
 export function expressionProjectionDigest(context: Exclude<StageRequest, { stage: "planning" }>["context"]): string {
-  return createHash("sha256").update(JSON.stringify({ version: 2, context })).digest("hex");
+  return narrativeInputDigest({ version: 2, context });
 }
 
 function unitOfKey(job: StoredJob, key: string): StoredUnit | undefined {
@@ -209,7 +210,14 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
     return serialized(async () => {
       const kept = await activeLease();
       if (kept === null) return "JOB_ABORTED";
-      const next = mutateJob(job);
+      let next = mutateJob(job);
+      if (next.dialogueConsistencyReview?.status === "approved"
+        && (next.input !== job.input || next.units.length !== job.units.length || next.units.some(unit => {
+          const before = unitOfKey(job, unit.key);
+          return before?.value !== unit.value || before?.inputDigest !== unit.inputDigest;
+        }))) next = { ...next, dialogueConsistencyReview: { ...next.dialogueConsistencyReview,
+          status: "pending", passDigest: undefined } };
+
       if (next.usedRequests > job.usedRequests) {
         const budget = canStartRequest({ job, unitAttempts: 0, now: deps.now() });
         if (!budget.ok) return budget.code;
@@ -248,6 +256,14 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
   }
 
   if (deps.now() >= job.deadline) return failJob("job_deadline_exceeded");
+  if (job.dialogueConsistencyReview?.cycle === job.cycle && job.dialogueConsistencyReview.status === "failed"
+    && job.dialogueConsistencyReview.violations?.some(v => v.scope === "legacy"))
+    return failJob("legacy_dialogue_contract_mismatch");
+  if (job.dialogueConsistencyReview?.cycle === job.cycle && job.dialogueConsistencyReview.status === "failed"
+    && job.dialogueConsistencyReview.violations?.some(v => v.scope === "planning"))
+    return failJob("dialogue_consistency_planning_contract");
+  if (job.dialogueConsistencyReview?.cycle === job.cycle && job.dialogueConsistencyReview.status !== "approved"
+    && job.dialogueConsistencyReview.attempts >= 2) return failJob("dialogue_consistency_review_exhausted");
 
   // -----------------------------------------------------------------------
   // planning：固定逻辑 key，成功后 approvePlan 并铸造表达单元。
@@ -347,7 +363,7 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
     if (!planApproval.ok) return failJob(planApproval.code);
     approved = planApproval.value;
     const savedPlan = await persist((current) =>
-      patchedUnit({ ...current, baselineRequests: 1 + planApproval.value.units.length,
+      patchedUnit({ ...current, baselineRequests: baselineRequestsForPlan(planApproval.value),
         // 新骨架不再引用的旧表达缓存可以移除；已经消耗的 job 请求额度不变。
         units: current.units.filter(unit => unit.key === PLANNING_UNIT_KEY
           || planApproval.value.units.some(planned => planned.key === unit.key)),
@@ -356,6 +372,11 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
   }
 
   if (approved === null) return fail("JOB_CONFLICT");
+  const baseline = baselineRequestsForPlan(approved);
+  if (job.baselineRequests !== baseline) {
+    const saved = await persist(current => ({ ...current, baselineRequests: baseline }));
+    if (saved !== true) return fail(saved);
+  }
 
   // -----------------------------------------------------------------------
   // 表达单元调度：readyUnits 拓扑就绪，每批最多 MAX_IN_FLIGHT 在途。
@@ -486,7 +507,10 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
       }
 
       const request: StageRequest = { stage: unit.stage, context: context.value };
+      const dialogueRepair = dialogueRepairForUnit(job, unit.key, context.value.options.map(option => option.candidateId));
       let response = await generate(request, {
+        ...(dialogueRepair.length === 0 ? {} : { repair: { attempt: attempts, reason: "invalid_schema",
+          rejectionCode: "dialogue_consistency_rejected", detail: JSON.stringify({ violations: dialogueRepair }) } }),
         signal: deps.signal,
         timeoutMs: cappedTimeoutMs(job, EXPRESSION_TIMEOUT_MS, deps.now()),
         audit: { purpose: "game_api", trigger: "staged_expression", jobId: job.id,
@@ -611,5 +635,10 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
     return failJob("unit_output_missing");
   }
   if (deps.now() >= job.deadline) return failJob("job_deadline_exceeded");
+  const review = await runDialogueConsistencyReview({ plan: approved, getJob: () => job, persist,
+    source: deps.source, signal: deps.signal, now: deps.now });
+  if (!review.ok) return review.code === "JOB_ABORTED" || review.code === "LEASE_LOST" || review.code === "JOB_CONFLICT"
+    ? fail(review.code) : failJob(review.code);
+  if (review.repair) return runJob({ ...input, lease, dialogueHistory }, deps);
   return { ok: true, value: job };
 }

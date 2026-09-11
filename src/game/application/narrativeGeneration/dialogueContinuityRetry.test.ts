@@ -13,7 +13,10 @@ it.each(["fresh", "cached", "exhausted"])("重复问询有界重规划，旧缓�
     inquiries: [{ factId: "fact_0", aspects: ["source", "time"] as const }] };
   // Full valid task; duplicate approval precedes expression perspective projection.
   const asked = { ...task, focusFactIds: ["fact_0"] };
-  const bad = { ...base, decision: { ...base.decision, options: [
+  const bad = { ...base, units: base.units.map(unit => unit.stage !== "character" ? unit : { ...unit,
+    task: { intent: "admit_unknown" as const, focusFactIds: [], contentFactIds: [], prerequisiteFactIds: [],
+      answers: ["source", "time"].map(aspect => ({ factId: "fact_0", aspect: aspect as "source" | "time",
+        outcome: "unknown" as const, answerFactIds: [] })) } }), decision: { ...base.decision, options: [
     { ...base.decision.options[0], target: null, deferredLocation: null, dialogueAct: "ask" as const, task: asked },
     { ...base.decision.options[1], target: null, deferredLocation: null },
   ] as const } };
@@ -23,7 +26,7 @@ it.each(["fresh", "cached", "exhausted"])("重复问询有界重规划，旧缓�
   const record = createPendingDecisionRecord();
   if (record.storyState.narrative.status !== "provider_pending") throw Error("pending");
   const input = { kind: "decision" as const, world: record.worldState, story: record.storyState, job: { ...record.storyState.narrative.job,
-    selectedDialogue: { dialogueAct: "ask" as const, task: asked } } };
+    selectedDialogue: { dialogueAct: "ask" as const, label: "谁说的，什么时候？", task: asked } } };
   const cached = mode === "cached";
   expect((await h.jobs.save({ lease: h.lease(), expectedVersion: stored.value.version,
     job: { ...stored.value, input, usedRequests: cached ? 1 : 0,
@@ -49,6 +52,6 @@ it.each(["fresh", "cached", "exhausted"])("重复问询有界重规划，旧缓�
   } else {
     expect(result).toMatchObject({ ok: true });
     expect(plans).toBe(cached ? 1 : 2);
-    if (result.ok) expect(result.value.usedRequests).toBe(5);
+    if (result.ok) expect(result.value.usedRequests).toBe(6);
   }
 });

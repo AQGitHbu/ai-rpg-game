@@ -5,7 +5,7 @@ import { createLiveStageSource } from "../server/ai/staged/liveStageSource";
 import type { RpgAiClient } from "../server/ai/rpgAiClient";
 import { approvePlanningContext } from "./approvePlanningContext";
 
-it.each(["none", "answers", "brief", "contentFactIds"] as const)("单规划器决定回答与最终候选，正常仅四次调用，旧不完整规划有界修复：missing=%s", async missing => {
+it.each(["none", "answers", "brief", "contentFactIds"] as const)("单规划器决定回答与最终候选，正常四次生成加一次审核，旧不完整规划有界修复：missing=%s", async missing => {
   const cached = missing !== "none";
   const h = createStagedHarness();
   await h.startDecision();
@@ -53,7 +53,7 @@ it.each(["none", "answers", "brief", "contentFactIds"] as const)("单规划器�
   const client = { complete: async (role, messages) => {
     const text = messages.map(message => message.content).join("\n");
     calls.push({ role, text });
-    const value = role === "planning" ? plan : role === "narration"
+    const value = role === "dialogue_consistency_review" ? { verdict: "pass", violations: [] } : role === "planning" ? plan : role === "narration"
       ? { stage: "narration", parts: [{ text: "你等她回答。", facts: [], evidence: [], beatIds: [] }], actionKeys: [] }
       : role === "character" ? { stage: "character", speakerId: base.decision!.npcId,
         parts: [{ text: "谁贴的、何时贴的，我都不知道。", facts: [], evidence: [], beatIds: [] }], actions: [], emotion: "neutral", answeredBeatIds: [] }
@@ -65,7 +65,7 @@ it.each(["none", "answers", "brief", "contentFactIds"] as const)("单规划器�
   expect(h.source.requiresTaskBrief).toBe(true);
   const result = await h.run();
   expect(result).toMatchObject({ ok: true });
-  expect(calls.map(call => call.role)).toEqual(["planning", "narration", "character", "choices"]);
+  expect(calls.map(call => call.role)).toEqual(["planning", "narration", "character", "choices", "dialogue_consistency_review"]);
   if (missing === "brief" || missing === "contentFactIds") {
     expect(calls[0]!.text).toContain("plan_task_missing");
   }
@@ -73,7 +73,7 @@ it.each(["none", "answers", "brief", "contentFactIds"] as const)("单规划器�
   expect(calls[2]!.text).not.toContain(plan.decision.options[0].candidateId);
   expect(calls[3]!.text).toContain("谁贴的、何时贴的，我都不知道。");
   if (result.ok) {
-    expect(result.value.usedRequests).toBe(cached ? 5 : 4);
+    expect(result.value.usedRequests).toBe(cached ? 6 : 5);
     expect(result.value.units.find(unit => unit.key === "planning")?.attempts).toBe(cached ? 2 : 1);
     expect(result.value.units.find(unit => unit.key === "planning")?.value).toEqual(plan);
   }

@@ -33,6 +33,7 @@ export type ApprovedPlan = {
     npcId: string | null;
     text: string;
     inquiries?: NonNullable<import("@/game/domain/expressionTask").ExpressionTask["inquiries"]>;
+    selectedTask?: import("@/game/domain/expressionTask").ExpressionTask;
     previousReply?: Readonly<{ text: string; factIds: readonly string[] }>;
     previousChoices?: readonly string[];
   }>;

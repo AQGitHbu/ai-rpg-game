@@ -14,6 +14,7 @@ import type { PlanProposal } from "@/game/domain/narrativePlan";
 import { approvePlanningContext } from "./approvePlanningContext";
 import { validateStagedReadyCoverage } from "@/game/gameplay/rpg/narrativeBundle";
 import { assembleBundle } from "./assembleBundle";
+import { validateJobDialogueConsistencyReview } from "./dialogueConsistencyReview";
 import { validateJobDisclosureReviews } from "./disclosureReview";
 import type {
   Lease,
@@ -77,6 +78,8 @@ export async function publishJob(
     if (!planApproval.ok) return fail(planApproval.code);
     const reviews = validateJobDisclosureReviews(job, planApproval.value);
     if (!reviews.ok) return reviews;
+    const dialogueReview = validateJobDialogueConsistencyReview(job, planApproval.value);
+    if (!dialogueReview.ok) return dialogueReview;
     units = planApproval.value.units;
     terminalKind = planApproval.value.proposal.terminal.kind === "ending" ? "ending" : "next_decision";
     // 复核产物装配：缺单元 / stage 不符 / secret 泄漏在这里被拒在事务之外。
@@ -91,6 +94,8 @@ export async function publishJob(
     if (!planApproval.ok) return fail(planApproval.code);
     const reviews = validateJobDisclosureReviews(job, planApproval.value);
     if (!reviews.ok) return reviews;
+    const dialogueReview = validateJobDialogueConsistencyReview(job, planApproval.value);
+    if (!dialogueReview.ok) return dialogueReview;
     units = planApproval.value.units;
     terminalKind = planApproval.value.proposal.terminal.kind === "ending" ? "ending" : "next_decision";
     const assembled = assembleBundle({ plan: planApproval.value, approved: approvedOutputs });

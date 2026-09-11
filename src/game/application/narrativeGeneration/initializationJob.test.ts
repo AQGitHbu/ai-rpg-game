@@ -173,6 +173,7 @@ function createOpeningSource(plan: StageRequest extends never ? never : ReturnTy
   const stages: string[] = [];
   return {
     stages,
+    async reviewDialogueConsistency() { return { ok: true, verdict: "pass", violations: [] }; },
     async generate(request: StageRequest, _execution: StageExecution): Promise<StageSuccess | AiSourceFailure> {
       stages.push(request.stage);
       if (request.stage === "planning") {
@@ -455,6 +456,7 @@ describe("initializationJob", () => {
     // 每个 provider 调用耗时 8s：四个表达阶段累计 32s，跨过 30s TTL。
     const source: StageSource & { readonly stages: string[] } = {
       stages: inner.stages,
+      reviewDialogueConsistency: inner.reviewDialogueConsistency,
       async generate(request, execution) {
         offsetMs += 8_000;
         return inner.generate(request, execution);

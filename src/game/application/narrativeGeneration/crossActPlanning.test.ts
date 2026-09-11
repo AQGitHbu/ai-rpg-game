@@ -208,7 +208,7 @@ it.each([0, 1, 4])("强制节拍只分配给 NPC：有界规划修复与完整�
   if (!result.ok) return;
   expect(calls.filter(stage => stage === "planning")).toHaveLength(cached ? 1 : 2);
   expect(calls.filter(stage => stage !== "planning")).toHaveLength(5);
-  expect(result.value.usedRequests).toBe(cached ? 8 : 7);
+  expect(result.value.usedRequests).toBe(cached ? 9 : 8);
   expect(result.value.units.some(unit => unit.key === "obsolete_expression")).toBe(false);
   const publication = buildDecisionPublication({ job: result.value, createdAt: h.clock.now() });
   expect(publication).toMatchObject({ ok: true });

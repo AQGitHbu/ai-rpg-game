@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { canStartRequest, JOB_BUDGET } from "./jobBudget";
+import { baselineRequestsForPlan, canStartRequest, JOB_BUDGET } from "./jobBudget";
+import { dialogueReviewHarness } from "./dialogueConsistencyFixture.testutil";
+import { approvePlanningContext } from "./approvePlanningContext";
 import type { StoredJob } from "@/game/application/server/persistence/narrativeJobRepository";
 
 function job(overrides: Partial<StoredJob> = {}): StoredJob {
@@ -27,6 +29,22 @@ function job(overrides: Partial<StoredJob> = {}): StoredJob {
 const NOW = "2026-09-09T08:00:00.000Z";
 
 describe("canStartRequest", () => {
+  it("decision、ending/null待答与无需审核的baseline只多一次；extra与unit上限不变", async () => {
+    const { h, plan } = await dialogueReviewHarness();
+    const stored = await h.readJob();
+    if (!stored.ok) throw Error(stored.code);
+    const checked = approvePlanningContext(stored.value.input, plan);
+    if (!checked.ok) throw Error(checked.code);
+    expect(baselineRequestsForPlan(checked.value)).toBe(1 + plan.units.length + 1);
+    for (const kind of ["ending", "null"] as const) {
+      const withoutCandidates = { ...checked.value, proposal: { ...plan, decision: null,
+        ...(kind === "ending" ? { terminal: { kind: "ending" as const } } : {}) },
+        choiceExpression: null, units: checked.value.units.filter(unit => unit.stage !== "choices") };
+      expect(baselineRequestsForPlan(withoutCandidates)).toBe(1 + withoutCandidates.units.length + 1);
+      expect(baselineRequestsForPlan({ ...withoutCandidates, currentUtterance: undefined })).toBe(1 + withoutCandidates.units.length);
+    }
+    expect(JOB_BUDGET).toEqual({ extraRequests: 12, maxUnitAttempts: 4 });
+  });
   it("新鲜任务放行", () => {
     expect(canStartRequest({ job: job(), unitAttempts: 0, now: NOW }).ok).toBe(true);
   });

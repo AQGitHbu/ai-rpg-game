@@ -1,3 +1,5 @@
+import { isStoredDialogueReview, validateJobDialogueConsistencyReview } from "../../narrativeGeneration/dialogueConsistencyReview";
+import { approvePlanningContext } from "../../narrativeGeneration/approvePlanningContext";
 import type {
   ApplyStateInput,
   CreateInitialGameInput,
@@ -138,6 +140,7 @@ function parsePayloadJob(text: string, expectedId: string): JobCheck<StoredJob> 
     });
   }
 
+  if (!isStoredDialogueReview(parsed["dialogueConsistencyReview"])) return { ok: false, code: "UNSUPPORTED_JOB" };
   const job = { ...(parsed as unknown as StoredJob), units };
   return { ok: true, value: job };
 }
@@ -514,6 +517,7 @@ export function createSqliteNarrativeJobs(
             deadline: nextDeadline,
             usedRequests: input.operation === "retry" ? 0 : parsed.value.usedRequests,
             units: nextUnits,
+            dialogueConsistencyReview: input.operation === "retry" ? undefined : parsed.value.dialogueConsistencyReview,
           };
           await tx.execute({
             sql: `UPDATE narrative_jobs
@@ -603,6 +607,10 @@ export function createSqliteNarrativeJobs(
             return { ok: false, code: "JOB_CONFLICT" };
           }
 
+          const planning = job.units.find(unit => unit.key === "planning")?.value;
+          if (planning === undefined || planning === null || !("steps" in planning)) return { ok: false, code: "JOB_CONFLICT" };
+          const plan = approvePlanningContext(job.input, planning);
+          if (!plan.ok || !validateJobDialogueConsistencyReview(job, plan.value).ok) return { ok: false, code: "JOB_CONFLICT" };
           const nextVersion = Number(row["version"] ?? 0) + 1;
           if (input.publication.kind === "decision") {
             const decisionInput: ApplyStateInput = input.publication.input;

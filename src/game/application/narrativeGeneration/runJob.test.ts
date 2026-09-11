@@ -107,7 +107,7 @@ describe("runJob", () => {
     expect(h.calls.filter(call => call.stage === "planning")).toHaveLength(1);
     expect(h.calls.filter(call => call.stage === "character")).toHaveLength(2);
     expect(h.calls.filter(call => call.stage === "choices")).toHaveLength(1);
-    expect(result.value.usedRequests).toBe(6);
+    expect(result.value.usedRequests).toBe(7);
     const proposal = result.value.units.find(unit => unit.key === "planning")?.value as PlanProposal;
     const plan = approvePlanningContext(result.value.input, proposal);
     if (!plan.ok) throw new Error(plan.code);
@@ -162,7 +162,7 @@ describe("runJob", () => {
     expect(h.calls.slice(callsBefore).map(call => call.stage)).toEqual(["narration", "character", "choices"]);
     expect(h.calls.slice(callsBefore).every(call => call.auditContext.retry?.origin === "manual_failed_job"
       && call.auditContext.retry.mechanism === "initial" && call.auditContext.retry.attempt === 0)).toBe(true);
-    expect(result.value.usedRequests).toBe(3);
+    expect(result.value.usedRequests).toBe(4);
     for (const key of ["narration_current", "character_npc_0", "choices_current"]) {
       expect(result.value.units.find(unit => unit.key === key)?.attempts).toBe(2);
     }
@@ -215,7 +215,7 @@ describe("runJob", () => {
     const result = await h.run();
     if (!result.ok) throw new Error(result.code);
     expect(h.calls.slice(callsBefore).map(call => call.stage)).toEqual(["choices"]);
-    expect(result.value.usedRequests).toBe(initial.value.usedRequests + 1);
+    expect(result.value.usedRequests).toBe(initial.value.usedRequests + 2);
     expect(result.value.units.find(unit => unit.key === choice.key)).toMatchObject({ attempts: choice.attempts + 1, status: "approved" });
     expect(result.value.units.find(unit => unit.key === choice.key)?.inputDigest).not.toBe(initial.value.inputDigest);
   });
@@ -230,7 +230,7 @@ describe("runJob", () => {
     expect(h.source.calls.filter((c) => c.stage === "choices")).toHaveLength(2);
     expect(h.source.calls.filter((c) => c.stage === "narration")).toHaveLength(1);
     expect(h.source.calls.filter((c) => c.stage === "character")).toHaveLength(2);
-    if (result.ok) expect(result.value.usedRequests).toBe(h.source.calls.length);
+    if (result.ok) expect(result.value.usedRequests).toBe(h.source.calls.length + 1);
   });
 
   it("planning schema 失败把稳定 code 和安全 detail 传给下一次请求", async () => {

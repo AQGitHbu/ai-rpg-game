@@ -45,6 +45,11 @@ export type InitializationEnvelope = {
 };
 
 export type StoredJob = {
+  readonly dialogueConsistencyReview?: Readonly<{
+    version: 1; cycle: number; inputDigest: string; attempts: number;
+    status: StoredUnitStatus; passDigest?: string;
+    violations?: readonly import("../../narrativeGeneration/dialogueConsistencyReview").DialogueViolation[];
+  }>;
   readonly schemaVersion: 1;
   readonly id: string;
   readonly scope: "initialization" | "decision";

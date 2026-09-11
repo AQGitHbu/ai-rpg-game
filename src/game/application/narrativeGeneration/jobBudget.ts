@@ -4,8 +4,14 @@
 // （1 次规划 + 必需表达数）之外最多 12 次额外请求；deadline 由任务
 // 持久化字段给定。最坏单元数与关键路径容纳性在规划审批检查。
 
+import type { ApprovedPlan } from "@/game/gameplay/rpg/narrativePlanning";
+import { shouldReviewDialogueConsistency } from "./dialogueConsistencyReview";
 import { fail, type Check } from "@/game/domain/narrativeUnit";
 import type { StoredJob } from "../server/persistence/narrativeJobRepository";
+
+export function baselineRequestsForPlan(plan: ApprovedPlan): number {
+  return 1 + plan.units.length + (shouldReviewDialogueConsistency(plan) ? 1 : 0);
+}
 
 export const JOB_BUDGET = {
   /** 单单元最多 provider 尝试次数（含失败重试）。 */

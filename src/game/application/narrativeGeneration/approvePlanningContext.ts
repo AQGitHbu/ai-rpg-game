@@ -181,6 +181,7 @@ export function approvePlanningContext(input: PlanningContext, proposal: PlanPro
   const result = approved.ok ? approvePlanDecision({ ...approved.value, ruleSceneGraph: graph, currentBeatEvidence,
     ...(utterance === undefined ? {} : { currentUtterance: { npcId: input.job.focusNpcId ?? null, text: utterance,
       inquiries: input.job.selectedDialogue?.task?.inquiries,
+      selectedTask: input.job.selectedDialogue?.task,
       ...(previous === null ? {} : { previousReply: previous.reply, previousChoices: previous.choices }),
     } }),
   }) : approved;

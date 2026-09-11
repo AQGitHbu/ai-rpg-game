@@ -35,6 +35,8 @@ import type { StoryState } from "@/game/domain/storyState";
 import type { PlanningContext, StageRequest, StageExecution, StageSource, StageSuccess } from "@/game/application/narrativeGeneration/stageSource";
 import type { AiSourceFailure } from "@/game/application/aiGenerationRetry";
 import { createAiSourceFailure } from "@/game/application/aiGenerationRetry";
+import { approvePlanningContext } from "@/game/application/narrativeGeneration/approvePlanningContext";
+import { validateJobDialogueConsistencyReview } from "@/game/application/narrativeGeneration/dialogueConsistencyReview";
 import { runJob } from "@/game/application/narrativeGeneration/runJob";
 import { publishJob } from "@/game/application/narrativeGeneration/publishJob";
 import {
@@ -208,6 +210,7 @@ function createMemoryJobRepository(): NarrativeJobRepository & { initializeSchem
           version: row.job.version + 1,
           cycle: row.job.cycle + 1,
           usedRequests: 0,
+          dialogueConsistencyReview: undefined,
           deadline: new Date(Date.parse(now) + 600_000).toISOString(),
           units: row.job.units.map((unit) => unit.status === "approved"
             ? unit
@@ -238,6 +241,10 @@ function createMemoryJobRepository(): NarrativeJobRepository & { initializeSchem
       if (!row.job.units.every((unit) => unit.status === "approved")) {
         return { ok: false, code: "JOB_CONFLICT" };
       }
+      const proposal = row.job.units.find(unit => unit.key === "planning")?.value;
+      if (proposal === undefined || proposal === null || !("steps" in proposal)) return { ok: false, code: "JOB_CONFLICT" };
+      const plan = approvePlanningContext(row.job.input, proposal);
+      if (!plan.ok || !validateJobDialogueConsistencyReview(row.job, plan.value).ok) return { ok: false, code: "JOB_CONFLICT" };
       row.job = { ...row.job, status: "published", version: row.job.version + 1 };
       row.lease = null;
       return { ok: true, value: row.job };
@@ -251,6 +258,7 @@ function createMemoryJobRepository(): NarrativeJobRepository & { initializeSchem
 
 export type HarnessSource = {
   requiresTaskBrief?: boolean;
+  reviewDialogueConsistency: NonNullable<StageSource["reviewDialogueConsistency"]>;
   generate(request: StageRequest, execution: StageExecution): Promise<StageSuccess | AiSourceFailure>;
   calls: readonly {
     readonly stage: StageRequest["stage"];
@@ -333,6 +341,7 @@ function createScriptedSource(): HarnessSource {
   return {
     calls,
     requests,
+    async reviewDialogueConsistency() { return { ok: true, verdict: "pass", violations: [] }; },
     failNext(stage) { failCounts.set(stage, (failCounts.get(stage) ?? 0) + 1); },
     failApprovalNext(stage) { approvalFailCounts.set(stage, (approvalFailCounts.get(stage) ?? 0) + 1); },
     hold(stage) {
@@ -401,6 +410,7 @@ export function createStagedHarness() {
    */
   function scriptedOpeningSource(base: HarnessSource, plan: PlanProposal): StageSource {
     return {
+      reviewDialogueConsistency: (...args) => base.reviewDialogueConsistency(...args),
       async generate(request, execution) {
         if (request.stage === "planning") {
           (base.calls as {

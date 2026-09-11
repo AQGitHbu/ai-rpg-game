@@ -7,6 +7,8 @@
 // 与当前周期。
 
 /** @vitest-environment node */
+import { createStagedHarness } from "../../testing/stagedNarrativeHarness.testutil";
+import { runJob } from "../../narrativeGeneration/runJob";
 import { startLeaseKeeper } from "../../narrativeGeneration/leaseKeeper";
 import { describe, it, expect, afterAll, vi } from "vitest";
 import { join } from "node:path";
@@ -162,6 +164,83 @@ const OWNER_A = "worker-a";
 const OWNER_B = "worker-b";
 const NOW = "2026-09-09T08:00:00.000Z";
 const EXPIRES = "2026-09-09T08:00:30.000Z";
+
+it("一致性审核在途重开SQLite保留charge，有界重审；显式retry清新周期凭据", async () => {
+  const h = createStagedHarness();
+  await h.startDecision();
+  const ready = await h.run();
+  if (!ready.ok) throw Error(ready.code);
+  const path = nextDbPath();
+  const first = openStores(path);
+  const job = { ...ready.value, version: 0, dialogueConsistencyReview: {
+    ...ready.value.dialogueConsistencyReview!, status: "running" as const, passDigest: undefined,
+  } };
+  expect((await first.jobs.start({ job, requestId: "review-running", digest: job.inputDigest })).ok).toBe(true);
+  await first.jobs.close();
+  const second = openStores(path);
+  expect(await second.jobs.get(job.id)).toMatchObject({ ok: true, value: {
+    usedRequests: job.usedRequests, dialogueConsistencyReview: { attempts: 1, status: "running" } } });
+  const claim = await second.jobs.claim({ id: job.id, owner: OWNER_A, now: NOW, expiresAt: EXPIRES });
+  if (!claim.ok) throw Error(claim.code);
+  const review = vi.fn(async () => ({ ok: true as const, verdict: "pass" as const, violations: [] }));
+  h.source.reviewDialogueConsistency = review;
+  const resumed = await runJob({ id: job.id, lease: claim.value }, { jobs: second.jobs, source: h.source,
+    now: () => NOW, signal: new AbortController().signal });
+  expect(resumed).toMatchObject({ ok: true, value: { usedRequests: job.usedRequests + 1,
+    dialogueConsistencyReview: { attempts: 2, status: "approved" } } });
+  expect(review).toHaveBeenCalledTimes(1);
+  if (!resumed.ok) throw Error(resumed.code);
+  // Re-read through SQLite's parsers; object-key normalization must not invalidate either receipt.
+  const beforeExpressions = h.calls.length;
+  const reused = await runJob({ id: job.id, lease: claim.value }, { jobs: second.jobs, source: h.source,
+    now: () => NOW, signal: new AbortController().signal });
+  expect(reused).toMatchObject({ ok: true, value: { usedRequests: resumed.value.usedRequests } });
+  expect(h.calls).toHaveLength(beforeExpressions);
+  expect(review).toHaveBeenCalledTimes(1);
+  const failed = await second.jobs.save({ lease: claim.value, expectedVersion: resumed.value.version,
+    job: { ...resumed.value, status: "failed" } });
+  if (!failed.ok) throw Error(failed.code);
+  const retried = await second.jobs.control({ id: job.id, operation: "retry", expectedVersion: failed.value.version,
+    expectedCycle: 0, now: NOW });
+  expect(retried).toMatchObject({ ok: true, value: { cycle: 1, usedRequests: 0 } });
+  if (retried.ok) expect(retried.value.dialogueConsistencyReview).toBeUndefined();
+});
+
+it.each([undefined, { version: 1, cycle: 0, inputDigest: "a".repeat(64), attempts: 3, status: "running" },
+  { version: 1, cycle: 0, inputDigest: "a".repeat(64), attempts: 1, status: "running", privateText: "hidden" },
+])("旧字段可选，新字段非法时SQLite读取拒绝：%j", async review => {
+  const stores = openStores(nextDbPath());
+  const job = decisionJob();
+  const started = await stores.jobs.start({ job: { ...job, dialogueConsistencyReview: review as never }, requestId: `req-${job.id}`, digest: job.inputDigest });
+  expect(started.ok).toBe(true);
+  const loaded = await stores.jobs.get(job.id);
+  expect(loaded).toMatchObject(review === undefined ? { ok: true } : { ok: false, code: "UNSUPPORTED_JOB" });
+});
+
+it.each(["missing", "text", "stale"])("publish事务根据持久化内容重算审核门禁，拒绝%s且游戏零写入", async change => {
+  const h = createStagedHarness();
+  await h.startDecision();
+  const ready = await h.run();
+  if (!ready.ok) throw Error(ready.code);
+  const { jobs, games } = openStores(nextDbPath());
+  const created = await games.createInitialGame({ gameId: asGameId("game-1"), worldState: fixtureWorld(), storyState: fixtureStory(), createdAt: NOW });
+  expect(created.ok).toBe(true);
+  const job: StoredJob = { ...ready.value, version: 0, gameId: "game-1",
+    dialogueConsistencyReview: change === "missing" ? undefined : { ...ready.value.dialogueConsistencyReview!,
+      ...(change === "stale" ? { cycle: 99 } : {}) },
+    units: ready.value.units.map(u => u.value !== null && "stage" in u.value && u.value.stage === "choices" && change === "text"
+      ? { ...u, value: { ...u.value, labels: u.value.labels.map((l, i) => i === 0 ? { ...l, label: l.label + "啊" } : l) } } : u),
+  };
+  await jobs.start({ job, requestId: "tamper", digest: job.inputDigest });
+  const lease = await jobs.claim({ id: job.id, owner: OWNER_A, now: NOW, expiresAt: EXPIRES });
+  if (!lease.ok) throw Error(lease.code);
+  expect(await jobs.publish({ lease: lease.value, expectedVersion: 0, publication: { kind: "decision", input: {
+    gameId: asGameId("game-1"), expectedRevision: 0, nextWorldState: fixtureWorld(), nextStoryState: fixtureStory(),
+  } } })).toMatchObject({ ok: false, code: "JOB_CONFLICT" });
+  const current = await games.getCurrentGame();
+  expect(current).toMatchObject({ ok: true, status: "active", record: { revision: 0 } });
+  expect(await jobs.get(job.id)).toMatchObject({ ok: true, value: { status: "pending" } });
+});
 
 async function startDecisionJob(jobs: NarrativeJobRepository, job?: StoredJob) {
   const stored = job ?? decisionJob();
@@ -392,13 +471,11 @@ describe("sqliteNarrativeJobs", () => {
     const stored = await startDecisionJob(jobs);
     const lease = await jobs.claim({ id: stored.id, owner: OWNER_A, now: NOW, expiresAt: EXPIRES });
     if (!lease.ok) throw new Error("claim failed");
-    // 把两个单元标记 approved 以满足 ready coverage
-    const withUnits: StoredJob = {
-      ...stored,
-      units: [
-        { unit: null, key: "narration_current", inputDigest: "d1", attempts: 1, status: "approved", value: makeNarrationOutput() },
-      ],
-    };
+    const harness = createStagedHarness();
+    await harness.startDecision();
+    const ready = await harness.run();
+    if (!ready.ok) throw Error(ready.code);
+    const withUnits: StoredJob = { ...ready.value, id: stored.id, gameId: stored.gameId, version: stored.version };
     await jobs.save({ lease: lease.value, expectedVersion: stored.version, job: withUnits });
 
     const world = fixtureWorld();

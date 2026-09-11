@@ -40,7 +40,7 @@ export function plannedReplyRejection(job: PendingNarrativeJob, proposal: PlanPr
     || proposal.decision?.options.some(option => "task" in option && (option.task?.answers?.length ?? 0) > 0)
     || answers.some(answer => !questions.some(question => question.factId === answer.factId
       && question.aspects.includes(answer.aspect)))) return "plan_reply_question_mismatch";
-  if (replies.some(unit => unit.task !== undefined) && questions.some(question => question.aspects.some(aspect =>
+  if (questions.some(question => question.aspects.some(aspect =>
     answers.filter(answer => answer.factId === question.factId && answer.aspect === aspect).length !== 1)))
     return "plan_reply_missing";
   return null;

@@ -21,7 +21,7 @@ export const STAGED_NARRATIVE_ROLES = ["planning", "narration", "character", "ch
 export const RPG_AI_ROLES = [
   "intent", "opening", "scene", "world", "narrative_bundle",
   ...STAGED_NARRATIVE_ROLES,
-  "disclosure_review",
+  "disclosure_review", "dialogue_consistency_review",
 ] as const;
 /** Reuses the AiTextAuditRole union from textAuditTypes.ts; textAuditTypes never imports rpgAiClient, eliminating a type-cycle. */
 export type RpgAiRole = AiTextAuditRole;
@@ -29,6 +29,7 @@ export type RpgAiThinking = ProviderThinking;
 
 export type RpgAiRolePolicy = Readonly<{
   readonly thinking: RpgAiThinking;
+  readonly temperature?: number;
   readonly timeoutMs: number;
   readonly maxTokens?: number;
   readonly jsonMode: ProviderJsonMode;
@@ -46,6 +47,9 @@ export type RpgAiRolePolicyOverrides = Partial<{
  * entire budget before the final planning JSON is emitted.
  */
 export const RPG_AI_DEFAULT_POLICIES: Readonly<Record<RpgAiRole, RpgAiRolePolicy>> = {
+  dialogue_consistency_review: {
+    thinking: "off", temperature: 0, timeoutMs: 30_000, maxTokens: 800, jsonMode: "json_object", maxAttempts: 1,
+  },
   disclosure_review: {
     thinking: "off", timeoutMs: 30_000, maxTokens: 100, jsonMode: "prompt_only", maxAttempts: 2,
   },
@@ -192,7 +196,8 @@ function mergePolicies(overrides: RpgAiRolePolicyOverrides | undefined): Record<
   return Object.fromEntries(
     RPG_AI_ROLES.map((role) => [
       role,
-      { ...RPG_AI_DEFAULT_POLICIES[role], ...(overrides?.[role] ?? {}) },
+      { ...RPG_AI_DEFAULT_POLICIES[role], ...(overrides?.[role] ?? {}),
+        ...(role === "dialogue_consistency_review" ? { maxAttempts: 1, thinking: "off", jsonMode: "json_object" } : {}) },
     ]),
   ) as Record<RpgAiRole, RpgAiRolePolicy>;
 }
@@ -209,7 +214,7 @@ export function createRpgAiClient(options: CreateRpgAiClientOptions): RpgAiClien
   const audit = options.auditRecorder;
 
   function defaultAuditContext(role: RpgAiRole): AiTextAuditContext {
-    const staged = role === "disclosure_review" || (STAGED_NARRATIVE_ROLES as readonly string[]).includes(role);
+    const staged = role === "dialogue_consistency_review" || role === "disclosure_review" || (STAGED_NARRATIVE_ROLES as readonly string[]).includes(role);
     const purpose = staged
       ? "staged_narrative_generation"
       : role === "opening"
@@ -256,6 +261,7 @@ export function createRpgAiClient(options: CreateRpgAiClientOptions): RpgAiClien
       // transport（取消/超时机制仍由 transport 独占）。
       const transportOptions = {
         ...providerOptions,
+        ...(policy.temperature === undefined ? {} : { temperature: policy.temperature }),
         ...(remaining === undefined ? {} : { timeoutMs: remaining }),
         ...(overrides?.signal === undefined ? {} : { signal: overrides.signal }),
       };
@@ -269,7 +275,7 @@ export function createRpgAiClient(options: CreateRpgAiClientOptions): RpgAiClien
         if (audit?.enabled) {
           const auditOptions: AiTextAuditRequestOptions = {
             timeoutMs: transportOptions.timeoutMs,
-            ...(providerOptions.temperature === undefined ? {} : { temperature: providerOptions.temperature }),
+            ...(transportOptions.temperature === undefined ? {} : { temperature: transportOptions.temperature }),
             ...(effectiveMaxTokens === undefined ? {} : { maxTokens: effectiveMaxTokens }),
             jsonMode: policy.jsonMode,
             thinking: policy.thinking,

@@ -34,6 +34,27 @@ function fakeRecorder(): AiTextAuditRecorder & { records: AiTextAuditPayload[] }
 }
 
 describe("staged narrative roles", () => {
+  it("一致性审核只有一次HTTP，配置不能提高次数；审计保留role与job关联", async () => {
+    const complete = vi.fn().mockResolvedValue({ ok: false, code: "timeout", retryable: true, latencyMs: 1 });
+    const recorder = fakeRecorder();
+    const signal = new AbortController().signal;
+    const client = createRpgAiClient({ config, transport: transportFor(complete), auditRecorder: recorder,
+      policies: { dialogue_consistency_review: { maxAttempts: 9 } } });
+    await client.complete("dialogue_consistency_review", messages, { purpose: "staged_narrative_generation",
+      trigger: "dialogue_consistency_review", jobId: "job-review", cycle: 2, inputDigest: "digest" }, { signal, timeoutMs: 1200 });
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(complete.mock.calls[0]?.[2]).toMatchObject({ signal, timeoutMs: 1200, temperature: 0,
+      extraBody: { max_tokens: 800, thinking: { type: "disabled" }, response_format: { type: "json_object" } } });
+    expect(recorder.records).toHaveLength(1);
+    expect(recorder.records[0]).toMatchObject({ role: "dialogue_consistency_review", context: {
+      jobId: "job-review", cycle: 2, inputDigest: "digest" }, input: { options: { temperature: 0 } } });
+  });
+  it("生产环境默认prompt_only和thinking覆盖都不能改变审核协议", () => {
+    const client = createServerRpgAiClient({ AI_API_BASE_URL: "http://provider.test/v1", AI_API_KEY: "secret", AI_MODEL: "model",
+      AI_RUNTIME_THINKING_ROLES: "dialogue_consistency_review" });
+    expect(client?.policy("dialogue_consistency_review")).toMatchObject({ thinking: "off", jsonMode: "json_object",
+      maxAttempts: 1, timeoutMs: 30_000, maxTokens: 800, temperature: 0 });
+  });
   it("传输重试共用调用截止时间，不重置剩余预算", async () => {
     let time = 1000;
     const clock = vi.spyOn(Date, "now").mockImplementation(() => time);
@@ -91,7 +112,7 @@ describe("staged narrative roles", () => {
 });
 
 describe("createRpgAiClient", () => {
-  it.each(RPG_AI_ROLES)("records the previous transport cause for %s without altering messages", async (role) => {
+  it.each(RPG_AI_ROLES.filter(role => role !== "dialogue_consistency_review"))("records the previous transport cause for %s without altering messages", async (role) => {
     const audit = fakeRecorder();
     const complete = vi.fn().mockResolvedValueOnce({ ok: false, code: "rate_limited", retryable: true, latencyMs: 1 }).mockResolvedValueOnce({ ok: true, content: "{}", latencyMs: 1 });
     const client = createRpgAiClient({ transport: transportFor(complete), config, auditRecorder: audit });
