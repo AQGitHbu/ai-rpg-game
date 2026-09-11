@@ -1,10 +1,29 @@
 import { expect, it } from "vitest";
-import { parseExpressionTask } from "./expressionTask";
+import { parseExpressionTask, requiredExpressionFactIds } from "./expressionTask";
 import { parseUnit } from "./narrativeUnit";
 import { parseBranchOption } from "./narrativeBranch";
 import { makeStagedPlan } from "./testing/stagedNarrativeFixture.testutil";
 
-const task = { intent: "offer", focusFactIds: ["fact_0"], prerequisiteFactIds: ["fact_1"] };
+const task = { intent: "offer" as const, focusFactIds: ["fact_0"], prerequisiteFactIds: ["fact_1"] };
+it("完整 brief 与正文事实经过严格解析并原样保留", () => {
+  const concrete = { ...task, brief: "答应帮老人留意刀客的行踪，并说明会先问清装束。",
+    contentFactIds: ["fact_0"] };
+  expect(parseExpressionTask(concrete)).toEqual(concrete);
+  expect(parseUnit({ ...makeStagedPlan().units[1], task: concrete })?.task).toEqual(concrete);
+  expect(parseBranchOption({ ...makeStagedPlan().decision!.options[0], task: concrete }).ok).toBe(true);
+  expect(parseExpressionTask({ ...concrete, contentFactIds: ["fact_secret"] })).toBeNull();
+  expect(parseExpressionTask({ ...concrete, brief: "" })).toBeNull();
+  expect(parseExpressionTask({ ...concrete, brief: "x".repeat(1201) })).toBeNull();
+});
+it("正文事实与话题背景分离，旧任务继续要求原 focus", () => {
+  const answer = { factId: "fact_notice", aspect: "source" as const, outcome: "answer" as const,
+    answerFactIds: ["fact_answer"] };
+  expect(requiredExpressionFactIds({ intent: "inform", brief: "回答告示由哪个衙门发布。",
+    focusFactIds: ["fact_notice", "fact_answer", "fact_background"], contentFactIds: ["fact_notice"],
+    prerequisiteFactIds: ["fact_condition"], answers: [answer] }))
+    .toEqual(["fact_notice", "fact_condition", "fact_answer"]);
+  expect(requiredExpressionFactIds(task)).toEqual(["fact_0", "fact_1"]);
+});
 it("回应结果随任务解析保存，答案事实必须属于任务，未知/拒答不能夹带答案", () => {
   const answer = { factId: "fact_question", aspect: "source", outcome: "answer", answerFactIds: ["fact_0"] };
   const reply = { ...task, intent: "inform", answers: [answer] };

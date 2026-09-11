@@ -250,6 +250,7 @@ function createMemoryJobRepository(): NarrativeJobRepository & { initializeSchem
 // ---------------------------------------------------------------------------
 
 export type HarnessSource = {
+  requiresTaskBrief?: boolean;
   generate(request: StageRequest, execution: StageExecution): Promise<StageSuccess | AiSourceFailure>;
   calls: readonly { readonly stage: StageRequest["stage"]; readonly timeoutMs: number; readonly repair?: StageExecution["repair"] }[];
   /** 完整请求正文（与 calls 一一对应），供输入隔离类断言逐字段取证。 */

@@ -126,6 +126,12 @@ export type PublishJobInput = Readonly<{
   publication: Publication;
 }>;
 
+export type RecentDialogueJobsInput = Readonly<{
+  readonly gameId: string;
+  readonly npcId: string;
+  readonly beforeRevision: number;
+}>;
+
 /**
  * 任务仓储端口。get 不暴露给 UI（安全 status 由上层另行投影）；
  * claim/renew/save/publish 的调用方必须持续持有有效 lease。
@@ -135,6 +141,8 @@ export type PublishJobInput = Readonly<{
 export interface NarrativeJobRepository {
   start(input: StartJobInput): Promise<JobCheck<StoredJob>>;
   get(id: string): Promise<JobCheck<StoredJob>>;
+  /** 可选只读历史能力；旧 fixture/适配器缺省时规划继续使用当前轮上下文。 */
+  getRecentDialogueJobs?(input: RecentDialogueJobsInput): Promise<JobCheck<readonly StoredJob[]>>;
   /** 读当前 initialization slot 的任务；无 slot 时返回 null。 */
   getInitialization(): Promise<JobCheck<StoredJob | null>>;
   claim(input: ClaimJobInput): Promise<JobCheck<Lease>>;

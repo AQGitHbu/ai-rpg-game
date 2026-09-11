@@ -34,6 +34,8 @@ import type {
 import { planningSceneContract } from "./planningSceneContract";
 import { approvePlanningContext } from "./approvePlanningContext";
 import type { StageExecution, StageRequest, StageSource } from "./stageSource";
+import type { DialogueHistoryEntry } from "./stageSource";
+import { loadDialogueHistory } from "./dialogueHistory";
 
 const PLANNING_UNIT_KEY = "planning";
 /** 每 job 最多同时在途的 provider 请求；批调度按此上限派发。 */
@@ -67,6 +69,8 @@ export type RunJobInput = Readonly<{
   lease: Lease;
   /** 当前执行作用域内的规划修复反馈，不写入游戏状态。 */
   planningRepair?: StageExecution["repair"];
+  /** 递归规划修复复用首次只读加载的历史，不写入 StoredJob。 */
+  dialogueHistory?: readonly DialogueHistoryEntry[];
 }>;
 
 export type RunJobDeps = Readonly<{
@@ -126,6 +130,19 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
   if (!loaded.ok) return loaded;
   let job = loaded.value;
   if (job.status !== "pending") return fail("JOB_CONFLICT");
+  const dialogueHistory = input.dialogueHistory ?? await loadDialogueHistory(job, deps.jobs);
+  const planningContext = job.input.kind === "decision" && dialogueHistory.length > 0
+    ? { ...job.input, dialogueHistory } : job.input;
+  const approveGeneratedPlan = (proposal: PlanProposal) => {
+    if (deps.source.requiresTaskBrief && (proposal.units.some(unit => unit.stage !== "choices"
+      && (unit.task?.brief === undefined || unit.task.contentFactIds === undefined))
+      || (proposal.decision?.kind === "ordinary" && proposal.decision.options.some(option => option.task?.brief === undefined
+        || option.task.contentFactIds === undefined)))) {
+      return { ok: false as const, code: "plan_task_missing",
+        detail: "live planning task requires brief and contentFactIds" };
+    }
+    return approvePlanningContext(job.input, proposal);
+  };
 
   // 惰性续租：每次写入前把租约推到 now + TTL（如已过半程）。租约丢失时
   // 立即中止——继续生成只会得到一批无法发布的单元。
@@ -216,9 +233,11 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
   if (planningUnit !== undefined && planningUnit.status === "approved"
     && planningUnit.value !== null && "steps" in (planningUnit.value as object)) {
     const proposal = planningUnit.value as PlanProposal;
-    const planApproval = approvePlanningContext(job.input, proposal);
+    const planApproval = approveGeneratedPlan(proposal);
     if (!planApproval.ok) {
-      if (planApproval.code !== "plan_mandatory_beat_mismatch" && planApproval.code !== "beat_authority_conflict" && planApproval.code !== "plan_dialogue_repeated" && !planApproval.code.startsWith("plan_reply_")) return failJob(planApproval.code);
+      if (planApproval.code !== "plan_mandatory_beat_mismatch" && planApproval.code !== "beat_authority_conflict"
+        && planApproval.code !== "plan_dialogue_repeated" && planApproval.code !== "plan_task_missing"
+        && planApproval.code !== "plan_character_response_split" && !planApproval.code.startsWith("plan_reply_")) return failJob(planApproval.code);
       cachedPlanRepair = { attempt: planningUnit.attempts, reason: "invalid_schema",
         rejectionCode: planApproval.code, detail: planApproval.detail };
       // 旧骨架的表达不可复用。先落盘撤销，保留 attempts 与 usedRequests，
@@ -247,7 +266,7 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
     }));
     if (charged !== true) return failJob(charged);
 
-    const request: StageRequest = { stage: "planning", context: job.input };
+    const request: StageRequest = { stage: "planning", context: planningContext };
     let response = await generate(request, {
       signal: deps.signal,
       timeoutMs: cappedTimeoutMs(job, PLANNING_TIMEOUT_MS, deps.now()),
@@ -256,7 +275,7 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
     });
     let repairAttempt = (planningUnit?.attempts ?? 0) + 1;
     let planApproval = response.ok && response.stage === "planning"
-      ? approvePlanningContext(job.input, response.value) : null;
+      ? approveGeneratedPlan(response.value) : null;
     while ((!response.ok || planApproval?.ok === false) && repairAttempt < 4) {
       const retryCharge = canStartRequest({ job, unitAttempts: repairAttempt, now: deps.now() });
       if (!retryCharge.ok) return failJob(retryCharge.code);
@@ -280,7 +299,7 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
       });
       repairAttempt += 1;
       planApproval = response.ok && response.stage === "planning"
-        ? approvePlanningContext(job.input, response.value) : null;
+        ? approveGeneratedPlan(response.value) : null;
     }
     if (!response.ok) {
       return failJob(response.failure.kind);
@@ -387,7 +406,7 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
             units: current.units.map(stored => ({ ...stored, status: "pending" as const, value: null })),
           }));
           if (invalidated !== true) return fail(invalidated);
-          return runJob({ id: input.id, lease, planningRepair: {
+          return runJob({ id: input.id, lease, dialogueHistory, planningRepair: {
             attempt: unitOfKey(job, PLANNING_UNIT_KEY)?.attempts ?? 0,
             reason: "invalid_schema", rejectionCode: context.code, detail: JSON.stringify({
               approvedWorldDelta: approved.proposal.worldDelta,

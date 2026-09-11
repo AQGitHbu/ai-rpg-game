@@ -29,15 +29,24 @@ export function projectExpressionTask(task: ExpressionTask, facts: readonly Safe
     const fact = facts.find(fact => fact.id === id)!;
     return `[${id}，${fact.certainty}] ${fact.text}`;
   }).join("；");
-  return { ok: true, value: [
-    task.prerequisiteFactIds.length ? `先要求对方核实以下说法，未得到答复前不无条件承诺：${topic(task.prerequisiteFactIds)}。然后才表达以下意图。` : "",
-    `任务：${purposes[task.intent]}。`,
-    task.focusFactIds.length ? `具体内容：${topic(task.focusFactIds)}。` : "只承接本场已批准节拍、现场或当前话语，不另编关键事实。",
+  const boundedReferences = [
+    task.prerequisiteFactIds.length ? `先要求对方核实以下说法，未得到答复前不无条件承诺：${topic(task.prerequisiteFactIds)}。然后才表达主要内容。` : "",
+    task.contentFactIds?.length ? `正文必须明确包含：${topic(task.contentFactIds)}。` : "",
     ...(task.inquiries ?? []).map(inquiry => `必须针对事实 ${inquiry.factId} 具体询问：${inquiry.aspects.map(aspect => inquiryLabels[aspect]).join("、")}。这些是待问的维度，未知答案不能当作已知事实；每个维度都须保留，不能替换成笼统的“怎么解释”。`),
     ...(task.answers ?? []).map(answer => `对玩家关于 ${answer.factId} 的「${inquiryLabels[answer.aspect]}」问题：${answer.outcome === "answer"
       ? `只用以下授权内容回答，保留 certainty：${topic(answer.answerFactIds)}`
       : answer.outcome === "unknown" ? "明确表示不知道，不能改成失忆、拒绝透露或编造答案"
         : "明确拒绝回答，不暗示知道任何未授权答案，也不编造拒绝原因"}。这是已规划的回应结果，不得自行改变。`),
+  ].filter(Boolean);
+  if (task.brief !== undefined) return { ok: true, value: [
+    task.brief,
+    ...boundedReferences,
+    "完整保留以上本轮内容的对象、回答、未知范围、态度、协助方式与条件；只调整措辞，不把相关话题背景补进内容稿，不增加线索、任务、路线或行动结果。",
+  ].join("\n") };
+  return { ok: true, value: [
+    `任务：${purposes[task.intent]}。`,
+    task.focusFactIds.length ? `具体内容：${topic(task.focusFactIds)}。` : "只承接本场已批准节拍、现场或当前话语，不另编关键事实。",
+    ...boundedReferences,
     "保留以上目的、具体内容与先后条件，只调整措辞；不得自行增加交易条件、线索、任务、路线或行动结果。",
   ].filter(Boolean).join("\n") };
 }

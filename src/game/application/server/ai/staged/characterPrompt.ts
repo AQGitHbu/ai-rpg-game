@@ -1,3 +1,4 @@
+import { requiredExpressionFactIds } from "@/game/domain/expressionTask";
 // staged character prompt（Plan Task 5 Step 3）。
 //
 // 角色 prompt 只接 SafeContext：人格仅公开结构化面（名/role/emotion/关系档位/
@@ -73,7 +74,7 @@ ${repair === undefined ? "" : `\n# 上次生成的校验反馈\n${renderAiRepair
 ${anchors ? `\n# 可公开的人格锚点\n${anchors}` : ""}
 ${goals ? `\n# 可公开的当前目标\n${goals}` : ""}
 
-# 本单元任务事实（台词只能围绕这些事实组织）
+# 本单元相关事实索引（用于理解话题，不是正文提纲）
 ${tasks}
 
 # 你可说的事实（只能引用这些事实；certainty 只可降级，不可升级）
@@ -82,11 +83,6 @@ ${contestedNote}
 # 前文（已批准的可见表达，不得复述）
 ${prior}
 ${context.previousReply === undefined ? "" : `上一轮你实际说过的话（只用于衔接，不新增事实）：${JSON.stringify(context.previousReply)}`}
-
-# 规划批准的具体表达任务
-${context.taskInstruction ?? "只表达以下批准节拍和本场内容，不新增剧情。"}
-回答内容与 answer/unknown/refuse 结果由规划器确定，只调整口吻和句式；不能自行决定消息来源、是否知道、是否拒答或新的承诺。不替旁白、其他 NPC 或玩家拟写内容。
-${context.unit.task === undefined ? "" : `任务引用必须在正文及对应 part.facts 覆盖：${JSON.stringify([...context.unit.task.focusFactIds, ...context.unit.task.prerequisiteFactIds])}。保持其确定程度；不能仅回填 ID 而不表达内容。`}
 
 # 必选节拍（必须在台词中自然承接，beatIds 原样回填）
 ${beats.join("\n")}
@@ -109,6 +105,11 @@ ${context.scene === undefined ? "（未提供）" : JSON.stringify(context.scene
 
 # 输出契约
 ${expressionBoundary()}
+
+# 规划器给本单元的完整表达内容
+${context.taskInstruction ?? "只表达批准节拍和本场内容，不新增剧情。"}
+只润色以上内容，一次给出完整回应；正文全部是 NPC 第一人称台词，不把“他点头、他回答”等叙述写入台词。没有写入内容稿的背景或解释不补入正文。回答不知道时，只保留规划的未知对象和态度，不添加不知道的原因。
+${context.unit.task === undefined ? "" : `必须覆盖的正文事实：${JSON.stringify(requiredExpressionFactIds(context.unit.task))}；只在实际表达该事实的 part.facts 回填引用。`}
 
 只返回一个 JSON 对象：{"stage":"character","speakerId":"${context.unit.speakerId ?? ""}","parts":[{"text":"...","facts":[],"evidence":[],"beatIds":[]}],"emotion":"...","actions":[],"answeredBeatIds":[]}
 - parts 是台词句段数组（1 到 12 段，单段不超过 500 字），中文。

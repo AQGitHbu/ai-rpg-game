@@ -5,7 +5,7 @@ import { projectUnitContext } from "./perspectiveContext";
 import { approveUnit } from "./approveUnit";
 import { asQuestId } from "@/game/domain/worldEntity";
 import { narrationLayoutOf } from "./perspectiveContext";
-import { buildPlanningPrompt } from "../server/ai/staged/planningPrompt";
+import { buildPlanningPrompt, PLANNING_CONTENT_RULES } from "../server/ai/staged/planningPrompt";
 import { approvePlanningContext } from "./approvePlanningContext";
 import { createPendingDecisionRecord, makeDecisionPlan } from "@/game/domain/testing/stagedNarrativeFixture.testutil";
 import type { PlanningContext } from "./stageSource";
@@ -72,6 +72,16 @@ it("无必选节拍的普通回应也不能新增当前节拍，开局契约不�
     ? { ...unit, requiredBeats: [{ beatId: "player_utterance", kind: "player_utterance",
       factIds: [], evidence: [], instruction: "自造节拍" }] } : unit) }))
     .toMatchObject({ ok: false, code: "plan_mandatory_beat_mismatch" });
+});
+
+it("同一场景同一 NPC 的回应必须合在一个 character 单元", () => {
+  const base = makeDecisionPlan();
+  const character = base.units.find(unit => unit.stage === "character")!;
+  const split = { ...character, key: `${character.key}_split`,
+    point: { ...character.point, order: character.point.order + 1 } };
+  const result = approvePlanningContext(context(), { ...base, units: [...base.units, split] });
+  expect(result).toMatchObject({ ok: false, code: "plan_character_response_split" });
+  if (!result.ok) expect(JSON.parse(result.detail!).repeatedResponseUnits).toEqual([split.key]);
 });
 
 it("旁白与 NPC 可用不同表达共同承接，原提案和事实权限不改写", () => {
@@ -232,5 +242,5 @@ it("柳三娘回归：重复来源/时间在表达前退回规划，同事实的
   ] as const } };
   expect(approvePlanningContext(scoped, repaired).ok).toBe(true);
   expect(buildPlanningPrompt(scoped)).toContain('"aspects":["source","time"]');
-  expect(buildPlanningPrompt(scoped)).toContain("不能再把刚问过的问题");
+  expect(PLANNING_CONTENT_RULES).toContain("已问过且答称不知道的问题不再问");
 });

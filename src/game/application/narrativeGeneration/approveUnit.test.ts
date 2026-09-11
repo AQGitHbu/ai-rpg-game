@@ -78,6 +78,27 @@ describe("approveUnit", () => {
     ] } }).ok).toBe(true);
   });
 
+  it("新任务只强制正文事实、条件与答案，话题背景无需复述", () => {
+    const u = unit({ key: "c1", stage: "character", speakerId: "npc_0", task: { intent: "inform",
+      brief: "回答告示由县衙发布，不必复述告示内容。", focusFactIds: ["fact_notice", "fact_source", "fact_background"],
+      contentFactIds: [], prerequisiteFactIds: [], answers: [
+        { factId: "fact_notice", aspect: "source", outcome: "answer", answerFactIds: ["fact_source"] },
+      ] } });
+    const ctx = context({ unit: u, visibleFacts: [
+      { id: "fact_notice", text: "城门贴有告示", certainty: "known", sources: [] },
+      { id: "fact_source", text: "告示由县衙发布", certainty: "known", sources: [] },
+      { id: "fact_background", text: "告示写了宵禁", certainty: "known", sources: [] },
+    ] });
+    const base: Omit<Extract<UnitOutput, { stage: "character" }>, "parts"> = {
+      stage: "character", speakerId: "npc_0", emotion: "neutral", actions: [], answeredBeatIds: [],
+    };
+    expect(approveUnit({ unit: u, context: ctx, output: { ...base, parts: [
+      part("是县衙发的。", { facts: [{ factId: "fact_source", certainty: "known" }] }),
+    ] } }).ok).toBe(true);
+    expect(approveUnit({ unit: u, context: ctx, output: { ...base, parts: [part("我看过告示。")] } }))
+      .toEqual({ ok: false, code: "unit_output_task_missing" });
+  });
+
   it("旁白输出通过", () => {
     const u = unit({ key: "n1", stage: "narration" });
     const output: UnitOutput = { stage: "narration", parts: [part("风从门缝里挤进来。")], actionKeys: [] };

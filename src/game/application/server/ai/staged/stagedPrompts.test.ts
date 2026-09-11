@@ -3,6 +3,8 @@ import { asGenerationId } from "@/game/domain/worldEntity";
 import { DIALOGUE_ACTS } from "@/game/domain/action";
 import {
   buildPlanningPrompt,
+  PLANNING_CONTENT_RULES,
+  renderPlanProposalContract,
   PLANNING_BEAT_KINDS,
   PLANNING_TRIGGER_KINDS,
   PLANNING_ROUTE_TARGET_KINDS,
@@ -49,8 +51,29 @@ it("选项身份直接来自批准焦点，不复制前文中的玩家称呼", (
   const safe = contextFor(plan, FIXTURE_CHOICE_UNIT);
   expect(safe.dialogue?.speakerName).toBe(plan.world.player.name);
   expect(safe.dialogue?.addresseeId).toBe(plan.choiceExpression?.npcId);
+  expect(safe.dialogue?.addresseeRole).toBe("知情者");
   expect(buildChoicePrompt(safe)).toContain(JSON.stringify(safe.dialogue));
   expect(buildChoicePrompt(safe)).toContain("前文 NPC 对玩家的称呼不能照搬");
+});
+
+it("完整内容和已说对白进入润色 prompt，旧候选不再作为表达模板", () => {
+  const plan = approvedPlan();
+  const brief = "先承认不知道告示的发布衙门，再回应玩家愿意帮忙留意陌生刀客；不重讲镇子不太平。";
+  const history = "我只知道客栈近日早早落闩。";
+  const character = { ...contextFor(plan, FIXTURE_NPC_A_UNIT), taskInstruction: brief, previousReply: history };
+  expect(buildCharacterPrompt(character)).toContain(brief);
+  expect(buildCharacterPrompt(character)).toContain(history);
+  expect(buildNarrationPrompt({ ...contextFor(plan, FIXTURE_NARRATION_UNIT), previousReply: history })).toContain(history);
+  const choices = { ...contextFor(plan, FIXTURE_CHOICE_UNIT), previousReply: history,
+    previousChoices: ["OLD_CHOICE_TEMPLATE"], options: contextFor(plan, FIXTURE_CHOICE_UNIT).options.map(option => ({
+      ...option, publicIntent: { ...option.publicIntent, text: brief },
+    })) };
+  expect(buildChoicePrompt(choices)).toContain(brief);
+  expect(buildChoicePrompt(choices)).toContain(history);
+  expect(buildChoicePrompt(choices)).not.toContain("OLD_CHOICE_TEMPLATE");
+  for (const prompt of [buildCharacterPrompt(character), buildChoicePrompt(choices)]) {
+    expect(prompt.indexOf(brief)).toBeGreaterThan(prompt.indexOf(history));
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -146,6 +169,21 @@ function contextFor(plan: ApprovedPlan, key: string) {
 
 const REPAIR: AiContentRepair = { attempt: 2, reason: "invalid_schema", rejectionCode: "plan_unknown_key" };
 
+it("规划器接收隔轮未知与已选完整意图，不能把历史措辞当作新答案", () => {
+  const prompt = buildPlanningPrompt({ kind: "decision", world: personaWorld(), story: branchStory(),
+    job: makeStagedJob(), dialogueHistory: [{ previousReply: "我不知道告示是哪个衙门发布的。",
+      previousChoices: ["我帮你留意陌生刀客。"], selectedDialogue: { dialogueAct: "support", task: {
+        intent: "support", brief: "帮老人留意刀客行踪，不承诺独自追捕。", focusFactIds: [],
+        contentFactIds: [], prerequisiteFactIds: [],
+      } } }] });
+  expect(prompt).toContain("我不知道告示是哪个衙门发布的。");
+  expect(prompt).toContain("帮老人留意刀客行踪，不承诺独自追捕。");
+  expect(PLANNING_CONTENT_RULES).toContain("历史对白只供衔接，不是事实依据");
+  expect(PLANNING_CONTENT_RULES).toContain("已问过且答称不知道的问题不再问");
+  expect(prompt).toContain("已选、未选都已展示");
+  expect(prompt).not.toContain("以及哪些背景不必复述");
+});
+
 function makeStagedJob(): PendingNarrativeJob {
   const result = createPendingNarrativeJob({
     jobId: asNarrativeJobId("job-1"),
@@ -184,6 +222,13 @@ function makeStagedJob(): PendingNarrativeJob {
 }
 
 describe("buildPlanningPrompt", () => {
+  it("固定选项将已选 label 明确作为本轮玩家原话，自由输入仍优先", () => {
+    const context = { kind: "decision" as const, world: personaWorld(), story: branchStory(),
+      job: { ...makeStagedJob(), utterance: undefined, selectedDialogue: { dialogueAct: "challenge" as const, topic: { kind: "general" as const }, label: "你凭什么信它是真的？" } } };
+    expect(buildPlanningPrompt(context)).toContain("- 玩家原话：你凭什么信它是真的？");
+    expect(buildPlanningPrompt({ ...context, job: { ...context.job, utterance: "我想核实发布者。" } })).toContain("- 玩家原话：我想核实发布者。");
+  });
+
   it("下一幕不能把增量前的 ending 当权威图，保留玩家已选语义", () => {
     const story = branchStory();
     const prompt = buildPlanningPrompt({ kind: "decision", world: personaWorld(),
@@ -308,6 +353,20 @@ describe("buildPlanningPrompt 契约完整性", () => {
     });
   }
 
+  it("连续对白的可选 atmosphere 不作为必须表达的节拍", () => {
+    const plan = approvedPlan();
+    const prompt = buildPlanningPrompt({ kind: "decision", world: plan.world, story: plan.story,
+      job: { ...makeStagedJob(), objectiveTransition: { before: null, completed: [], after: { questId: plan.world.quests[0]!.id, objectiveIndex: 0, label: "继续对白" }, mode: "unchanged" },
+        mandatoryBeats: [{ beatId: "atmosphere", kind: "atmosphere", subjectIds: [], instruction: "可选氛围" }] } }, REPAIR);
+    expect(prompt).toContain("本轮没有必选节拍");
+    expect(prompt).toContain("三个单元的 requiredBeats 均为 []");
+    expect(prompt).toContain("plan_unknown_key");
+    expect(prompt).toContain("fact_pub");
+    const graph = JSON.parse(prompt.split("# 服务端场景骨架\n")[1]!.split("\n")[0]!);
+    expect(graph.decisionNpcId).toBe(FIXTURE_NPC_A);
+    expect(graph.candidateIds).toEqual(["current_scene_choice_1", "current_scene_choice_2"]);
+  });
+
   it("开局和续接观察均使用权威玩家实体 player_0", () => {
     for (const prompt of [openingPrompt(), decisionPrompt()]) {
       expect(prompt).toContain('玩家必须写 "player_0"');
@@ -333,6 +392,19 @@ describe("buildPlanningPrompt 契约完整性", () => {
     // 反向提示：模型凭直觉会写 type / dependsOn，契约必须点名禁止。
     expect(prompt).toContain("不是 type");
     expect(prompt).toContain("不是 dependsOn");
+  });
+
+  it("新 live task 要求完整 brief、正文事实分层与单次 NPC 回应", () => {
+    const prompt = decisionPrompt();
+    expect(prompt).toContain('"brief"');
+    expect(prompt).toContain('"contentFactIds"');
+    expect(prompt).toContain("focusFactIds 是本任务可用的话题背景范围");
+    expect(prompt).toContain("答应帮老人留意刀客的行踪");
+    expect(prompt).toContain("询问告示由哪个衙门发布");
+    expect(prompt).toContain("同一 stepKey 的同一 NPC 必须恰好用一个 character 单元");
+    expect(prompt).toContain("全部合并进同场该 NPC 的唯一 character 单元");
+    expect(prompt).not.toContain("可分配给同场该 NPC 的多个单元");
+    expect(prompt).toContain("unknown 不要求复述问题背景");
   });
 
   it("列出 parseTrigger 的全部 trigger kind", () => {
@@ -466,7 +538,7 @@ describe("buildPlanningPrompt 契约完整性", () => {
   it("worldDelta 契约覆盖 parseWorldDeltaProposal 的全部顶层键与空提案拒绝", () => {
     // narrativePlan 已把 worldDelta 委托给 parseWorldDeltaProposal 逐字段解析，
     // prompt 不给出完整形状时模型只能靠猜，坏形状直接 plan_world_delta_invalid。
-    const prompt = decisionPrompt();
+    const prompt = renderPlanProposalContract({ kind: "decision", world: personaWorld(), story: branchStory(), job: makeStagedJob() });
     for (const key of [
       "beatSummary", "newLocation", "newNpc", "newItem", "newEnemy",
       "newFact", "nextMainQuest", "endingPair",
@@ -479,8 +551,17 @@ describe("buildPlanningPrompt 契约完整性", () => {
     expect(prompt).toContain("至少包含一个实体变化字段");
   });
 
-  it("worldDelta 子结构契约逐字段对齐 parser（newNpc 7 键全必填、锚点/目标/关系种子形状）", () => {
+  it("无需世界增量的普通对白只提供相关契约，场景骨架不重复", () => {
     const prompt = decisionPrompt();
+    expect(prompt).toContain("本次必须为 null；只规划当前规则要求的表达");
+    expect(prompt).not.toContain("7 键全部必填");
+    expect(prompt).not.toContain("# 世界演化与衔接");
+    expect(prompt.match(/# 服务端场景骨架/g)).toHaveLength(1);
+    for (const stage of ["narration", "character", "choices"]) expect(prompt).toContain(stage);
+  });
+
+  it("worldDelta 子结构契约逐字段对齐 parser（newNpc 7 键全必填、锚点/目标/关系种子形状）", () => {
+    const prompt = renderPlanProposalContract({ kind: "decision", world: personaWorld(), story: branchStory(), job: makeStagedJob() });
     // newNpc 7 键必须全部出现且声明必填（parser 用 hasExactKeys）。
     for (const key of ["locationRef", "anchors", "goals", "relationshipSeeds"]) {
       expect(prompt).toContain(key);
@@ -499,7 +580,7 @@ describe("buildPlanningPrompt 契约完整性", () => {
   });
 
   it("worldDelta 调查方式契约对齐 parseFactInvestigationApproaches", () => {
-    const prompt = decisionPrompt();
+    const prompt = renderPlanProposalContract({ kind: "decision", world: personaWorld(), story: branchStory(), job: makeStagedJob() });
     for (const key of ["approachId", "evidenceQuality", "tensionDelta", "investigationApproaches"]) {
       expect(prompt).toContain(key);
     }

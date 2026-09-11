@@ -1,4 +1,4 @@
-import { repeatedDialogueCandidates, plannedReplyRejection } from "./dialogueContinuity";
+import { repeatedDialogueCandidates, plannedReplyRejection, repeatedNpcResponseUnits } from "./dialogueContinuity";
 import { previousDialogue } from "./dialogueContext";
 import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
 import type { PlanProposal } from "@/game/domain/narrativePlan";
@@ -20,6 +20,10 @@ export function stagedEvolutionNeed(story: StoryState): EvolutionNeed {
 
 /** 所有结构审批发生在表达请求之前；世界增量只预览，发布时仍在单次 CAS 中提交。 */
 export function approvePlanningContext(input: PlanningContext, proposal: PlanProposal): ReturnType<typeof approvePlan> & { readonly detail?: string } {
+  const repeatedResponseUnits = repeatedNpcResponseUnits(proposal);
+  if (repeatedResponseUnits.length > 0) return { ok: false, code: "plan_character_response_split",
+    detail: JSON.stringify({ repeatedResponseUnits,
+      repairInstruction: "同一 stepKey 的同一 NPC 只能有一个 character 单元；把回答、未知范围、态度和协助内容合并进该单元的完整 brief/task，不自动拆分或依赖表达器补全。" }) };
   if (input.kind === "opening") {
     const approved = approvePlan({ kind: "opening", proposal, generation: input.generation,
       gameLength: input.input.gameLength, seed: input.input.seed });

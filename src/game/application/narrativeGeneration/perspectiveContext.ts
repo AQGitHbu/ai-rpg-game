@@ -95,7 +95,7 @@ export type SafeContext = Readonly<{
   options: readonly SafeOption[];
   playerUtterance: string | null;
   /** 当前生成对白的身份，不从前文的称呼推断。choices 的 speaker 永远是玩家。 */
-  dialogue?: Readonly<{ speakerId: string; speakerName: string; addresseeId: string; addresseeName: string }>;
+  dialogue?: Readonly<{ speakerId: string; speakerName: string; addresseeId: string; addresseeName: string; addresseeRole?: string }>;
   scene?: Readonly<{ locationId: string; locationName: string; playerName: string; speakers: readonly { id: string; name: string }[] }>;
   style: string;
   taskInstruction?: string;
@@ -222,7 +222,9 @@ function priorTextOf(
     if (unit.stage === "choices" && dependency.stage === "character"
       && dependency.speakerId !== plan.choiceExpression?.npcId) continue;
     if (unit.stage !== "character" || dependency.speakerId === unit.speakerId) {
-      parts.push(...output.parts.filter(part => part.facts.every(fact => visibleFacts.some(visible => visible.id === fact.factId)))
+      // 一次表达作为整体保留，避免留下失去前句与指代对象的尾句。
+      if (!output.parts.every(part => part.facts.every(fact => visibleFacts.some(visible => visible.id === fact.factId)))) continue;
+      parts.push(...output.parts
         .map(part => unit.stage === "character" ? part : { ...part, text: `${dependency.stage === "narration" ? "旁白"
           : `NPC ${getEntity(plan.world.entityStore, dependency.speakerId ?? "")?.core.name ?? dependency.speakerId}`}：${part.text}` }));
       continue;
@@ -490,6 +492,10 @@ export function projectUnitContext(input: ProjectUnitContextInput): ContextCheck
     ...JSON.parse(task.detail ?? "{}"), unitKey: unit.key, stage: unit.stage,
     stepKey: unit.point.stepKey, speakerId: unit.speakerId,
   }) };
+  // 历史按完整视角权限判断，不能用本轮选题把上一轮对白裁成碎片。
+  const historyFacts = visibleFacts;
+  const priorText = priorTextOf(plan, unit, input.approved, historyFacts);
+  if (!priorText.ok && priorText.code !== "dependency_output_missing") return priorText;
   // 新任务的可说内容局限于规划选定主题与必须表达的节拍/观察，不能遍历整个知识库另起话题。
   if (unit.task !== undefined && unit.stage !== "choices") {
     const selected = new Set([...unit.task.focusFactIds, ...unit.task.prerequisiteFactIds,
@@ -499,8 +505,6 @@ export function projectUnitContext(input: ProjectUnitContextInput): ContextCheck
   }
   const beats = safeBeats(unit, visibleFacts, plan);
   if (!beats.ok) return beats;
-
-  const priorText = priorTextOf(plan, unit, input.approved, visibleFacts);
   if (!priorText.ok) return priorText;
 
   const rebuilt = rebuildUnit({ ...unit, requiredBeats: beats.value }, new Set(visibleFacts.map((fact) => fact.id)), plan);
@@ -531,16 +535,16 @@ export function projectUnitContext(input: ProjectUnitContextInput): ContextCheck
       priorText: priorText.value,
       allowedActions: allowedActionsOf(plan, unit),
       options: options.value,
-      ...(currentDialogue ? {
+      ...((currentDialogue || (unit.stage === "narration" && unit.point.stepKey === "current")) ? {
         ...(plan.currentUtterance?.previousReply !== undefined
-          && plan.currentUtterance.previousReply.factIds.every(id => visibleFacts.some(fact => fact.id === id))
+          && plan.currentUtterance.previousReply.factIds.every(id => historyFacts.some(fact => fact.id === id))
           ? { previousReply: plan.currentUtterance.previousReply.text } : {}),
         ...(unit.stage === "choices" ? { askedInquiries: plan.currentUtterance?.inquiries ?? [],
           previousChoices: plan.currentUtterance?.previousChoices ?? [] } : {}),
       } : {}),
       ...(choiceNpc === undefined ? {} : { dialogue: {
         speakerId: String(PLAYER_ENTITY_ID), speakerName: ws.player.name,
-        addresseeId: String(choiceNpc.id), addresseeName: choiceNpc.name,
+        addresseeId: String(choiceNpc.id), addresseeName: choiceNpc.name, addresseeRole: choiceNpc.role,
       } }),
       playerUtterance: unit.point.stepKey === "current"
         && (unit.stage !== "character" || unit.speakerId === plan.currentUtterance?.npcId)

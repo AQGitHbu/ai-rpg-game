@@ -89,7 +89,8 @@ export const RPG_AI_DEFAULT_POLICIES: Readonly<Record<RpgAiRole, RpgAiRolePolicy
   // 分阶段生成的固定决策表预算（Plan Task 5 Step 4）：planning 一次产整个
   // 骨架，预算高于单表达 stage；表达 stage 每次只产一个小型 JSON。
   planning: {
-    thinking: "off",
+    // 内容取舍与结构约束由规划器完成，表达角色保持非思考润色。
+    thinking: "on",
     timeoutMs: 90_000,
     maxTokens: 6_000,
     jsonMode: "prompt_only",
@@ -358,7 +359,8 @@ export function createRpgAiClient(options: CreateRpgAiClientOptions): RpgAiClien
 export function resolveRpgAiThinkingRoles(
   env: Record<string, string | undefined>,
 ): readonly RpgAiRole[] {
-  const requested = new Set((env.AI_RUNTIME_THINKING_ROLES ?? "")
+  const defaults = RPG_AI_ROLES.filter(role => RPG_AI_DEFAULT_POLICIES[role].thinking === "on").join(",");
+  const requested = new Set((env.AI_RUNTIME_THINKING_ROLES ?? defaults)
     .split(",")
     .map((value) => value.trim())
     .filter((value) => value.length > 0));

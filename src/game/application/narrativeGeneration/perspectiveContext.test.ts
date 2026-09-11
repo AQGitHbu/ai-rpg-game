@@ -165,6 +165,11 @@ describe("projectUnitContext", () => {
     const other = contextOf(plan, FIXTURE_NPC_B_UNIT);
     expect(other.ok).toBe(true);
     expect(JSON.stringify(other)).not.toMatch(/PLAYER_QUESTION|MY_PREVIOUS_REPLY|OLD_A|OLD_B/);
+    const narrator = contextOf(plan, FIXTURE_NARRATION_UNIT);
+    expect(narrator.ok && narrator.value.previousReply).toBe("MY_PREVIOUS_REPLY");
+    const privateHistory = contextOf({ ...plan, currentUtterance: { ...plan.currentUtterance,
+      previousReply: { text: SENTINEL, factIds: [FACT_SECRET] } } }, FIXTURE_NARRATION_UNIT);
+    expect(privateHistory.ok && privateHistory.value.previousReply).toBeUndefined();
   });
 
   it("未来选项不继承旧场景原文、玩家问题或其他 NPC 的内容", () => {
@@ -417,4 +422,35 @@ describe("projectUnitContext", () => {
       approved: approvedOutputs(),
     })).toEqual({ ok: false, code: "unknown_unit" });
   });
+});
+
+it("老周头完整公开前文先按权限保留，再收窄当前任务；含越权事实的整次表达不留残句", () => {
+  const seed = personaWorld();
+  const world = branchWorld({ ...seed,
+    worldFacts: [...seed.worldFacts, { factId: asFactId("fact_1"), text: "灯火在渡口东侧", source: "generated", discovered: true }],
+    npcs: seed.npcs.map(npc => npc.id === FIXTURE_NPC_A ? { ...npc, memory: { ...npc.memory,
+      knownFactIds: [...npc.memory.knownFactIds, asFactId("fact_1")] } } : npc),
+  });
+  const base = approvedPlanOf(world);
+  const original = base.units.find(unit => unit.key === FIXTURE_NPC_A_UNIT)!;
+  const later = { ...original, key: "later", point: { stepKey: "current", order: 4 },
+    dependencies: [original.key], task: { intent: "inform" as const, focusFactIds: ["fact_1"], prerequisiteFactIds: [] } };
+  const text = "渡口昨夜有灯火。这件事我已经说过，时间我不知道。";
+  const plan = { ...base, units: [...base.units, later], currentUtterance: { npcId: original.speakerId, text: "几点？",
+    previousReply: { text, factIds: [FACT_PUB, "fact_1"] } } };
+  const output = { ...makeCharacterOutput(FIXTURE_NPC_A), parts: [
+    { text: "渡口昨夜有灯火。", facts: [{ factId: FACT_PUB, certainty: "known" as const }, { factId: "fact_1", certainty: "known" as const }], evidence: [], beatIds: [] },
+    { text: "这件事我已经说过，时间我不知道。", facts: [], evidence: [], beatIds: [] },
+  ] };
+  const context = projectUnitContext({ plan, unit: later, approved: new Map([[original.key, output]]) });
+  expect(context.ok).toBe(true);
+  if (!context.ok) return;
+  expect(context.value.visibleFacts.map(fact => fact.id)).toEqual(["fact_1"]);
+  expect(context.value.priorText).toEqual(output.parts);
+  expect(context.value.previousReply).toBe(text);
+  const unsafe = { ...output, parts: [{ ...output.parts[0]!, facts: [{ factId: FACT_SECRET, certainty: "known" as const }] }, output.parts[1]!] };
+  const hidden = projectUnitContext({ plan: { ...plan, currentUtterance: { ...plan.currentUtterance,
+    previousReply: { text: SENTINEL, factIds: [FACT_SECRET] } } }, unit: later, approved: new Map([[original.key, unsafe]]) });
+  expect(hidden.ok && hidden.value.priorText).toEqual([]);
+  expect(hidden.ok && hidden.value.previousReply).toBeUndefined();
 });

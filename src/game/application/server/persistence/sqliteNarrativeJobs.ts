@@ -311,6 +311,34 @@ export function createSqliteNarrativeJobs(
       }
     },
 
+    async getRecentDialogueJobs({ gameId, npcId, beforeRevision }) {
+      try {
+        await ensureSchema();
+        const result = await client.execute({
+          sql: `SELECT id, request_id, digest, scope, status, version, cycle, game_id,
+                       lease_owner, fence, lease_expires_at, payload_json
+                FROM narrative_jobs
+                WHERE scope = 'decision' AND status = 'published' AND game_id = ?
+                  AND base_revision < ?
+                  AND json_extract(payload_json, '$.input.kind') = 'decision'
+                  AND json_extract(payload_json, '$.input.job.focusNpcId') = ?
+                ORDER BY base_revision DESC, id DESC
+                LIMIT 6`,
+          args: [gameId, beforeRevision, npcId],
+        });
+        const jobs: StoredJob[] = [];
+        for (const row of result.rows) {
+          const parsed = rowToJob(row as unknown as Record<string, unknown>);
+          if (!parsed.ok) return parsed;
+          jobs.push(parsed.value);
+        }
+        return { ok: true, value: jobs };
+      } catch (error) {
+        logError("narrativeJobs.getRecentDialogueJobs failed", error);
+        return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+      }
+    },
+
     async getInitialization(): Promise<JobCheck<StoredJob | null>> {
       try {
         await ensureSchema();

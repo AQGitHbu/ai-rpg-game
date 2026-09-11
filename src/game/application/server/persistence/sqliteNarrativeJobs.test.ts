@@ -215,6 +215,32 @@ describe("sqliteNarrativeJobs", () => {
     }
   });
 
+  it("只读查询返回同 game/NPC 最近六个已发布 decision job", async () => {
+    const { jobs } = openStores(nextDbPath());
+    for (let revision = 1; revision <= 8; revision++) {
+      const base = decisionJob();
+      if (base.input.kind !== "decision") throw Error("decision");
+      const stored: StoredJob = { ...base, id: `history-${revision}`, status: "published",
+        gameId: "history-game", baseRevision: revision,
+        input: { ...base.input, job: { ...base.input.job, focusNpcId: asNpcId("npc_history") } } };
+      expect((await jobs.start({ requestId: `req-history-${revision}`, digest: stored.inputDigest, job: stored })).ok).toBe(true);
+    }
+    for (const [id, status, gameId, npcId] of [
+      ["wrong-status", "failed", "history-game", "npc_history"],
+      ["wrong-game", "published", "other-game", "npc_history"],
+      ["wrong-npc", "published", "history-game", "npc_other"],
+    ] as const) {
+      const base = decisionJob();
+      if (base.input.kind !== "decision") throw Error("decision");
+      const stored: StoredJob = { ...base, id, status, gameId, baseRevision: 9,
+        input: { ...base.input, job: { ...base.input.job, focusNpcId: asNpcId(npcId) } } };
+      expect((await jobs.start({ requestId: `req-${id}`, digest: stored.inputDigest, job: stored })).ok).toBe(true);
+    }
+    const result = await jobs.getRecentDialogueJobs!({ gameId: "history-game", npcId: "npc_history", beforeRevision: 9 });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.map(job => job.baseRevision)).toEqual([8, 7, 6, 5, 4, 3]);
+  });
+
   it("initialization job 必须带 envelope；decision job 的 initialization 必须为 null", async () => {
     const { jobs } = openStores(nextDbPath());
     const withoutEnvelope = decisionJob({ scope: "initialization", gameId: null, baseRevision: null });

@@ -49,7 +49,7 @@ describe("staged narrative roles", () => {
     } finally { clock.mockRestore(); }
   });
   it("defines fixed decision-table budgets for the four staged roles", () => {
-    expect(RPG_AI_DEFAULT_POLICIES.planning).toMatchObject({ thinking: "off", timeoutMs: 90_000, maxTokens: 6_000, maxAttempts: 2 });
+    expect(RPG_AI_DEFAULT_POLICIES.planning).toMatchObject({ thinking: "on", timeoutMs: 90_000, maxTokens: 6_000, maxAttempts: 2 });
     expect(RPG_AI_DEFAULT_POLICIES.narration).toMatchObject({ thinking: "off", timeoutMs: 45_000, maxTokens: 2_000, maxAttempts: 2 });
     expect(RPG_AI_DEFAULT_POLICIES.character).toMatchObject({ thinking: "off", timeoutMs: 45_000, maxTokens: 2_000, maxAttempts: 2 });
     expect(RPG_AI_DEFAULT_POLICIES.choices).toMatchObject({ thinking: "off", timeoutMs: 30_000, maxTokens: 600, maxAttempts: 2 });
@@ -250,12 +250,20 @@ describe("createRpgAiClient", () => {
 });
 
 describe("resolveRpgAiThinkingRoles", () => {
-  it("defaults to no thinking roles and ignores unknown/duplicate values", () => {
-    expect(resolveRpgAiThinkingRoles({})).toEqual([]);
+  it("默认仅规划思考，显式空值可关闭，仍忽略未知和重复角色", () => {
+    expect(resolveRpgAiThinkingRoles({})).toEqual(["planning"]);
+    expect(resolveRpgAiThinkingRoles({ AI_RUNTIME_THINKING_ROLES: "" })).toEqual([]);
     expect(resolveRpgAiThinkingRoles({ AI_RUNTIME_THINKING_ROLES: "world,unknown,scene,world" })).toEqual([
       "scene",
       "world",
     ]);
+  });
+  it("生产装配使用规划默认值，三个润色角色保持关闭", () => {
+    const client = createServerRpgAiClient({ AI_API_BASE_URL: "http://provider.test/v1", AI_API_KEY: "secret", AI_MODEL: "model" });
+    expect(client?.policy("planning").thinking).toBe("on");
+    for (const role of ["narration", "character", "choices"] as const) expect(client?.policy(role).thinking).toBe("off");
+    const disabled = createServerRpgAiClient({ AI_API_BASE_URL: "http://provider.test/v1", AI_API_KEY: "secret", AI_MODEL: "model", AI_RUNTIME_THINKING_ROLES: "" });
+    expect(disabled?.policy("planning").thinking).toBe("off");
   });
 });
 

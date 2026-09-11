@@ -17,6 +17,7 @@ import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
 import { LEGACY_IMPORT_REASON_KEY } from "@/game/domain/entity";
 import type { SafeContext } from "./perspectiveContext";
 import { checkDialogueLabel } from "./dialogueLabel";
+import { requiredExpressionFactIds } from "@/game/domain/expressionTask";
 
 export type ApproveUnitInput = Readonly<{
   unit: Unit;
@@ -85,7 +86,7 @@ function checkParts(context: SafeContext, output: Extract<UnitOutput, { stage: "
     }
   }
   const expressedFacts = new Set(output.parts.flatMap(part => part.facts.map(fact => fact.factId)));
-  if (context.unit.task !== undefined && [...context.unit.task.focusFactIds, ...context.unit.task.prerequisiteFactIds]
+  if (context.unit.task !== undefined && requiredExpressionFactIds(context.unit.task)
     .some(id => !expressedFacts.has(id))) return "unit_output_task_missing";
   const covered = new Set(output.parts.flatMap(part => part.beatIds));
   if (context.requiredBeats.some(beat => !covered.has(beat.beatId))) return "unit_output_beat_missing";

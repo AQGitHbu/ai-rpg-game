@@ -48,7 +48,7 @@
   → ready scene + opaque choices
 ```
 
-Prompt 只接收编译后的公开事实、当前位置、焦点 NPC 的有限结构化交互、强制节拍、实体索引、持有状态、上一场景和有界 memory cards。不向表达 prompt 传完整 `GameRecord`、event ledger、其他 NPC 历史、secret fact 正文、玩家长期原文或隐藏 registry。全局 planning prompt 接收预算、公开与私密分区、已选 branch、当前 job 的 `selectedDialogue` 与 `domainEventIds` 对应的已提交结果，以及开局 situation/history/novelty；表达 prompt 只接收 `SafeContext`。统一规划器还接收同一焦点 NPC 上一轮实际展示的旁白、对白及两个选项，不包含 token 或其他 NPC 对话历史。审计中的 `narrativeContext` 只是 block 元数据与预算，不是 prompt 正文副本。
+Prompt 只接收编译后的公开事实、当前位置、焦点 NPC 的有限结构化交互、强制节拍、实体索引、持有状态、上一场景和有界 memory cards。不向表达 prompt 传完整 `GameRecord`、event ledger、其他 NPC 历史、secret fact 正文、玩家长期原文或隐藏 registry。全局 planning prompt 接收预算、公开与私密分区、已选 branch、当前 job 的 `selectedDialogue` 与 `domainEventIds` 对应的已提交结果，以及开局 situation/history/novelty；表达 prompt 只接收 `SafeContext`。统一规划器还接收同一焦点 NPC 上一轮实际展示的旁白、对白及两个选项，并只读查询该游戏、该 NPC、当前 revision 之前最多六个已发布 decision 任务，投影当时的 NPC 回答、候选和实际选择的结构化任务。历史总量最多 12,000 字符，按整项取舍，不含 token、旧玩家自由输入或其他 NPC 历史；仅在本次执行使用，不另建持久化记忆。历史表达只用于承接，不能作为补造事实的依据。审计中的 `narrativeContext` 只是 block 元数据与预算，不是 prompt 正文副本。
 
 各 stage 使用独立 messages，不共享会话。跨场景依赖仅表示执行顺序，旧场景的对白原文不进入下一场景表达；跨场景认知仍由事实和观察回执投影。选项前文标记旁白/说话人，只保留本场旁白与当前对话对象；NPC 不接收玩家候选，也不继承其他 NPC 的私聊。本场公开定位由步骤快照投影地点 ID/名称、玩家名称与本场参与说话人名称，不携带地点背景或 NPC 隐藏动机。当前任务的实际选择 label（自由输入则为本次 utterance）作为待回应话语绑定到 current 旁白、选项和当前焦点 NPC；不转发给未来场景或其他 NPC。话语单独标记为非指令、非已核实事实，不扩大事实引用权限。
 
@@ -56,9 +56,13 @@ Prompt 只接收编译后的公开事实、当前位置、焦点 NPC 的有限�
 
 旁白每个 `part` 最多引用一个节拍，无节拍的氛围段使用空数组；全部段落仍须覆盖全部必选节拍，事实和证据保持逐段归属。多节拍合段由 `approveUnit` 以 `unit_output_beat_ambiguous` 拒绝并在该表达单元内有界重试，装配保留防御性校验，不丢弃节拍或复制正文补覆盖。此限制不套用于 NPC 回答。当前决策旁白通过 `narrationLayout` 只接收排版约束：同一节拍只能构成连续段，独立氛围只允许在最后一个当前旁白单元末尾；先前单元须承接必选节拍。违规以 `unit_output_beat_layout` 在表达阶段退回修复，反馈明确允许的节拍 ID 与氛围权限，不重排获批正文。开局与未来场景不套用当前回合布局。恢复旧任务时，若已批准缓存仍含多节拍合段或布局违规旁白，先撤销该单元及其传递依赖的表达缓存，再按原 DAG 重新生成；规划、无关单元、已扣请求和尝试次数保留。
 
-规划器的 `publicIntent.text` 与 `requiredBeats.instruction` 是规划备注，不直接传给表达器，也不能作为未编码内容的隐式指令。新 live 规划必须给 narration/character 单元及两个普通候选提供 `ExpressionTask`：`intent` 指定受控目的，`focusFactIds` 指定具体内容，`prerequisiteFactIds` 指定先求证再回应的已知说法；缺失以 `plan_task_missing` 拒绝。条件仅表达先后与不无条件承诺，不是交易、调查成功或新增规则动作。旧缓存/离线 fixture 的可选字段保留兼容。
+规划器的 `publicIntent.text` 与 `requiredBeats.instruction` 是规划备注，不直接传给表达器。新 live 规划必须给 narration/character 单元及两个普通候选提供 `ExpressionTask`：`brief` 写清该单元或候选的完整内容，包括回答或提问对象、未知范围、态度、协助方式及先后条件；`intent` 指定受控目的，`focusFactIds` 指定相关事实范围，`contentFactIds` 指定本轮必须讲出的事实（focus 的子集，可为空），`prerequisiteFactIds` 指定先求证再回应的已知说法。条件不表示已经完成调查或新增规则动作。缺少任务、brief 或 contentFactIds 以 `plan_task_missing` 拒绝。旧存档和离线 fixture 仍可读取；live 恢复缺少完整内容的旧规划缓存时，撤销骨架及依赖表达，沿原请求和尝试预算重新规划。
 
-安全编译将任务里的每个事实引用与该时点的可知、可披露事实求交核验；缺一即退回规划，不静默删除条件或转发全局原文。新任务的旁白/NPC 事实范围收窄到任务、必选节拍与本单元观察的引用；普通选项的事实范围收窄到两个获批任务；动作只投影同 step 且不晚于本单元的获批动作。编译后的 `taskInstruction` 保留目的、具体事实及先求证顺序。旁白/NPC 输出必须覆盖任务事实引用，否则以 `unit_output_task_missing` 拒绝；选项只能返回忠于获批意图的两条纯对白。任意自然语言条件不在这份小契约的表达能力内，不能靠备注交给表达器补写；事实引用覆盖也不等于自然语言语义证明。三个表达 prompt 明确禁止补造玩家经历、往日对白、目击细节和现场证据；旁白不能把口述改成脚印等物证，NPC 不知道时不能编理由或改成失忆，两个候选的条件与承诺不能互相复制。
+安全编译将任务里的每个事实引用与该时点的可知、可披露事实求交核验；缺一即退回规划，不静默删除条件或转发全局原文。通过引用检查后，专属 brief 原样进入 `taskInstruction`，附带已批准的提问、回答和条件约束，不再只从 intent 与事实标签重建泛化目的；brief 本身不授予额外知识。旁白/NPC 输出必须覆盖 content、prerequisite 和答案事实引用，否则以 `unit_output_task_missing` 拒绝；仅作为 focus 背景的事实不强制复述。旧任务缺 content 时保持原 focus 覆盖语义。选项只能返回忠于各自完整任务的两条纯对白。事实引用检查不证明任意自然语言安全或忠实，正文仍需真实样本验收。三个表达 prompt 明确禁止补造玩家经历、往日对白、目击细节和现场证据；旁白不能把口述改成脚印等物证，NPC 不知道时不能编理由或改成失忆，两个候选的条件与承诺不能互相复制。
+
+前文先按该视角完整权限投影，再将本轮可输出事实收窄到任务、必选节拍与本单元观察的引用，避免换话题时截断上一轮回应。一次表达含任何不可见事实时整次不传，不留下失去指代的尾句；跨场景、跨 NPC 与私聊隔离保持。普通选项的事实范围收窄到两个获批任务，公开对话身份包含听者职业，旧候选不作为润色模板；动作只投影同 step 且不晚于本单元的获批动作。
+
+同一步骤同一 NPC 只规划一个完整回应单元，由一次 character 调用生成全部回答、未知说明及转话题内容，可自然分段。同 NPC 拆分单元以 `plan_character_response_split` 退回规划，旧缓存同样沿原预算重规划；编译器不合并或改写模型任务。
 
 节拍证据通常只允许本视角知识条目的实际来源。唯一规则结果例外是 current 旁白的强制 `quest_progress/quest_advanced`：服务端确认事件已提交、属于当前 job 且对应本次完成目标后，允许引用该 `quest_completed` 证明任务完成；它不授予事实知识，不适用于 NPC 或未来旁白。拒绝反馈逐节拍列出非法与允许的事件 ID，无需要时可用空证据。合法 ID 不证明任意原文安全，仍需检查真实文本是否编造或隐含泄漏。
 
@@ -68,7 +72,7 @@ Prompt 只接收编译后的公开事实、当前位置、焦点 NPC 的有限�
 
 选项的 `SafeContext.dialogue` 绑定玩家与批准的对话对象（包括终幕），不从前文猜身份。`approveUnit` 以 `unit_output_self_address` 拒绝明确自称呼语，保留自我介绍；不保证识别所有语言形式。
 
-`ExpressionTask.inquiries` 为可选 `{factId,aspects}[]`：仅 ask/challenge 可非空，最多 4 个不同 focusFactIds，各含 1–4 个不重复维度。枚举以 `src/game/domain/expressionTask.ts` 为准，不接受答案或自由正文。投影保留全部维度，拒绝未知字段和越权事实，不转发原始 publicIntent。旧任务兼容但不恢复未编码意图。
+`ExpressionTask.inquiries` 为可选 `{factId,aspects}[]`：仅 ask/challenge 可非空，最多 4 个不同 focusFactIds，各含 1–4 个不重复维度。枚举以 `src/game/domain/expressionTask.ts` 为准；该字段只编码提问维度，具体问题对象和措辞含义由 brief 说明。投影保留全部维度，拒绝未知字段和越权事实，不转发原始 publicIntent。旧任务兼容但不恢复未编码意图。
 
 当前焦点 NPC 对 `selectedDialogue.task.inquiries` 的回应由 `task.answers` 逐项确定：`{factId, aspect, outcome, answerFactIds}`，最多 16 项。每个已问维度恰好安排一次，outcome 为 answer/unknown/refuse；answer 的非空答案引用必须属于本任务 focusFactIds 并通过 NPC 可知/可披露审批，unknown/refuse 不携带答案。问题引用只绑定实际提问，不授予 NPC 知识。缺失或错配分别以 `plan_reply_missing`、`plan_reply_question_mismatch` 退回同一规划阶段；旧缓存同样撤销依赖表达后有界重规划，预算不重置。开局与无结构化提问的旧任务/自由输入沿用 intent 和授权事实安排回应，不额外解析意图或调用模型。
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createLiveStageSource } from "./liveStageSource";
+import { PLANNING_CONTENT_RULES } from "./planningPrompt";
 import { projectUnitContext } from "@/game/application/narrativeGeneration/perspectiveContext";
 import { approvePlan, type ApprovedPlan } from "@/game/gameplay/rpg/narrativePlanning";
 import { branchWorld, branchStory } from "@/game/gameplay/rpg/narrativePlanning/branchFixture.testutil";
@@ -31,18 +32,41 @@ function livePlan() {
   const base = makeStagedPlan();
   if (base.decision?.kind !== "ordinary") throw Error("ordinary");
   return { ...base, units: base.units.map(unit => unit.stage === "choices" ? unit : { ...unit,
-    task: { intent: unit.stage === "narration" ? "describe" : "inform", focusFactIds: [], prerequisiteFactIds: [] } }),
+    task: { intent: unit.stage === "narration" ? "describe" : "inform",
+      brief: unit.stage === "narration" ? "承接现场。" : "完整回应玩家。",
+      focusFactIds: [], contentFactIds: [], prerequisiteFactIds: [] } }),
     decision: { ...base.decision, options: base.decision.options.map(option => ({ ...option,
-      task: { intent: option.dialogueAct, focusFactIds: [], prerequisiteFactIds: [] } })) } };
+      task: { intent: option.dialogueAct, brief: "表达一个具体回应。",
+        focusFactIds: [], contentFactIds: [], prerequisiteFactIds: [] } })) } };
 }
-it("新 live 规划缺少具体任务时显式退回，不回落到笼统润色", async () => {
-  const { client } = recordingClient([OK_JSON(makeStagedPlan())]);
+it.each(["task", "brief", "contentFactIds"])("新 live 规划缺少 %s 时显式退回，不回落到笼统润色", async missing => {
+  const base = livePlan();
+  const plan = missing === "task" ? makeStagedPlan() : { ...base, units: base.units.map(unit => {
+    if (unit.stage === "choices") return unit;
+    const task = { ...unit.task } as Record<string, unknown>;
+    delete task[missing];
+    return { ...unit, task };
+  }) };
+  const { client } = recordingClient([OK_JSON(plan)]);
   const source = createLiveStageSource({ client });
   const result = await source.generate({ stage: "planning", context: { kind: "opening",
     input: { gameType: "wuxia", gameLength: "short", seed: "s" },
     generation: OPENING_GENERATION } }, { signal: new AbortController().signal, timeoutMs: 1000, audit: { purpose: "game_api", trigger: "staged_planning" } });
   expect(result).toMatchObject({ ok: false });
   expect(JSON.stringify(result)).toContain("plan_task_missing");
+});
+
+it("同场同 NPC 的多个 character 单元被退回给规划器合并", async () => {
+  const base = livePlan();
+  const character = base.units.find(unit => unit.stage === "character")!;
+  const plan = { ...base, units: [...base.units, { ...character, key: `${character.key}_split`,
+    point: { ...character.point, order: character.point.order + 1 } }] };
+  const { client } = recordingClient([OK_JSON(plan)]);
+  const source = createLiveStageSource({ client });
+  const result = await source.generate({ stage: "planning", context: { kind: "opening",
+    input: { gameType: "wuxia", gameLength: "short", seed: "s" }, generation: OPENING_GENERATION } },
+  executionWith(new AbortController().signal));
+  expect(JSON.stringify(result)).toContain("plan_character_response_split");
 });
 
 const SENTINEL = "SECRET_TRACKING_SEAL";
@@ -262,6 +286,9 @@ describe("createLiveStageSource", () => {
     }
     expect(calls.map((call) => call.role)).toEqual(["planning", "narration", "character", "choices"]);
     expect(calls.every((call) => call.messages).valueOf()).toBe(true);
+    expect(calls[0]!.messages[0]).toEqual({ role: "system", content: PLANNING_CONTENT_RULES });
+    expect(calls.slice(1).every(call => call.messages[0]?.role === "system"
+      && call.messages[0].content.includes("你不从这些资料中选取新内容"))).toBe(true);
     expect(calls.every((call) => call.auditContext === AUDIT)).toBe(true);
   });
 

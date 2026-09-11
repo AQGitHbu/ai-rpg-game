@@ -16,6 +16,16 @@ import type { OpeningGenerationInput } from "@/game/application/createGame";
 import type { SafeContext } from "./perspectiveContext";
 import type { DisclosureReviewRequest } from "./disclosureReview";
 
+export type DialogueHistoryEntry = Readonly<{
+  readonly previousReply: string;
+  readonly previousChoices: readonly string[];
+  readonly selectedDialogue: Readonly<{
+    readonly dialogueAct: NonNullable<PendingNarrativeJob["selectedDialogue"]>["dialogueAct"];
+    readonly topic?: NonNullable<PendingNarrativeJob["selectedDialogue"]>["topic"];
+    readonly task?: NonNullable<PendingNarrativeJob["selectedDialogue"]>["task"];
+  }>;
+}>;
+
 /** planning 的两种上下文：开局规划消费开局输入；决策规划消费权威状态与 job。 */
 export type PlanningContext =
   | {
@@ -32,6 +42,8 @@ export type PlanningContext =
     readonly world: WorldState;
     readonly story: StoryState;
     readonly job: PendingNarrativeJob;
+    /** 同一 NPC 的有界已展示历史；只供 planning 理解连续对话，不写回存档或参与审批。 */
+    readonly dialogueHistory?: readonly DialogueHistoryEntry[];
   };
 
 export type ExpressionStage = Exclude<Stage, "planning">;
@@ -59,6 +71,8 @@ export type StageExecution = Readonly<{
  * 失败一律返回 AiSourceFailure，不抛出传输异常。
  */
 export type StageSource = {
+  /** live source 要求新规划的每个表达任务携带完整 brief/contentFactIds；旧 fixture 可省略。 */
+  readonly requiresTaskBrief?: boolean;
   /** 不是生成阶段；缺少端口时仅允许无新增披露的单元。 */
   reviewDisclosure?(
     request: DisclosureReviewRequest, execution: StageExecution,

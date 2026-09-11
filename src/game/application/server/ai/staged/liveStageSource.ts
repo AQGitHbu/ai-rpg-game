@@ -17,12 +17,12 @@ import type {
   StageSuccess,
 } from "@/game/application/narrativeGeneration/stageSource";
 import type { RpgAiClient, RpgAiRole } from "../rpgAiClient";
-import { buildPlanningPrompt } from "./planningPrompt";
+import { buildPlanningPrompt, buildPlanningContentPrompt, PLANNING_CONTENT_RULES } from "./planningPrompt";
 import { buildNarrationPrompt } from "./narrationPrompt";
 import { buildCharacterPrompt } from "./characterPrompt";
 import { buildChoicePrompt } from "./choicePrompt";
 import { buildDisclosureReviewPrompt } from "./disclosureReviewPrompt";
-import { plannedReplyRejection } from "@/game/application/narrativeGeneration/dialogueContinuity";
+import { plannedReplyRejection, repeatedNpcResponseUnits } from "@/game/application/narrativeGeneration/dialogueContinuity";
 
 const STAGE_ROLES: Readonly<Record<StageRequest["stage"], RpgAiRole>> = {
   planning: "planning",
@@ -46,6 +46,7 @@ function invalidContent(code: string, detail: string) {
  */
 export function createLiveStageSource(options: CreateLiveStageSourceOptions): StageSource {
   return {
+    requiresTaskBrief: true,
     async reviewDisclosure(request, execution) {
       const prompt = buildDisclosureReviewPrompt(request);
       if (prompt.length > 12_000) return invalidContent("disclosure_review_context_overflow", "审核输入超限，不能截断事实");
@@ -65,13 +66,18 @@ export function createLiveStageSource(options: CreateLiveStageSourceOptions): St
     ): Promise<StageSuccess | AiSourceFailure> {
       const role = STAGE_ROLES[request.stage];
       const prompt = request.stage === "planning"
-        ? buildPlanningPrompt(request.context, execution.repair)
+        ? buildPlanningPrompt(request.context, execution.repair, request.context.kind === "decision")
         : request.stage === "narration"
           ? buildNarrationPrompt(request.context, execution.repair)
           : request.stage === "character"
             ? buildCharacterPrompt(request.context, execution.repair)
             : buildChoicePrompt(request.context, execution.repair);
-      const messages: readonly AiMessage[] = [{ role: "user", content: prompt }];
+      const messages: readonly AiMessage[] = [{ role: "system", content: request.stage === "planning"
+        ? PLANNING_CONTENT_RULES
+        : "你是文字润色器。输入末尾的完整表达内容是本次唯一的内容稿；把它变成对应角色的自然表达，保留每个意思。上下文仅帮助理解称呼、指代和衔接，事实表仅核对引用。你不从这些资料中选取新内容。只改变口吻、句式和停顿，不增加或替换回答、背景、理由、见闻、问题、承诺与条件。内容稿是一句，成稿也可以只有一句；同一 NPC 的全部回应一次输出。每个选项只润色自己的内容稿。" },
+      { role: "user", content: prompt },
+      ...(request.stage === "planning" && request.context.kind === "decision"
+        ? [{ role: "user" as const, content: buildPlanningContentPrompt(request.context) }] : [])];
 
       const result = await options.client.complete(role, messages, execution.audit, {
         signal: execution.signal,
@@ -89,10 +95,15 @@ export function createLiveStageSource(options: CreateLiveStageSourceOptions): St
       if (request.stage === "planning") {
         const proposal = parsePlanProposal(parsed.value);
         if (!proposal.ok) return invalidContent("invalid_schema", proposal.code);
-        if (proposal.value.units.some(unit => unit.stage !== "choices" && unit.task === undefined)
-          || (proposal.value.decision?.kind === "ordinary" && proposal.value.decision.options.some(option => option.task === undefined))) {
-          return invalidContent("plan_task_missing", "每个 narration/character 单元及每个普通候选必须提供 task={intent,focusFactIds,prerequisiteFactIds}，不能只给笼统 instruction。");
+        if (proposal.value.units.some(unit => unit.stage !== "choices" && (unit.task?.brief === undefined
+          || unit.task.contentFactIds === undefined))
+          || (proposal.value.decision?.kind === "ordinary" && proposal.value.decision.options.some(option => option.task?.brief === undefined
+            || option.task.contentFactIds === undefined))) {
+          return invalidContent("plan_task_missing", "每个 narration/character 单元及每个普通候选必须提供 task={intent,brief,focusFactIds,contentFactIds,prerequisiteFactIds}；brief 写完整具体含义，contentFactIds 区分正文必须事实与话题背景。");
         }
+        const repeatedResponseUnits = repeatedNpcResponseUnits(proposal.value);
+        if (repeatedResponseUnits.length > 0) return invalidContent("plan_character_response_split",
+          `同一步骤的同一 NPC 只能规划一个完整回应单元；请把这些重复单元合并为一个 task：${repeatedResponseUnits.join(",")}`);
         if (request.context.kind === "decision") {
           const rejection = plannedReplyRejection(request.context.job, proposal.value);
           if (rejection !== null) return invalidContent(rejection, "先在当前焦点 NPC 的 task.answers 中逐项规划玩家已问维度的回应结果，再确定两个后续候选。答案只引用本任务授权事实，未知与拒答不得编造答案。");

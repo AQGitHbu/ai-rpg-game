@@ -27,21 +27,12 @@ ${kind}
 
 # 当前说话身份（优先于前文称呼）
 ${context.dialogue === undefined ? "玩家本人说话，对当前焦点 NPC 说；身份不足时用你/您，不猜名字。" : JSON.stringify(context.dialogue)}
-speakerName 是正在说这句话的玩家，addresseeName 才是听者。label 的“我”属于玩家，“你/您”属于该 NPC。
+speakerName 是正在说这句话的玩家，addresseeName 才是听者，addresseeRole 是听者公开身份，不把话题中其他人的职业或经历赋给听者。label 的“我”属于玩家，“你/您”属于该 NPC。
 前文 NPC 对玩家的称呼不能照搬成玩家呼语；可以直接称你/您，不要求每句叫名字，不代写 NPC 的回答。
-
-# 已批准的候选意图（candidateId 原样回填，label 忠于各自意图）
-${options.join("\n")}
-这是最终意图，不是供你重新选题的草案。你只润色，不重新规划；不要把候选 A 的问题或条件混入候选 B。
-
-# 本轮已经问过的维度（禁止重问，也不因换成质疑或加新问题而豁免）
-${JSON.stringify(context.askedInquiries ?? [])}
-上一组实际展示的选项（仅用于避免重复，不是候选模板）：${JSON.stringify(context.previousChoices ?? [])}
-NPC 已明确不知道、没有依据或拒绝回答时，不能再次让玩家原样或换措辞询问同一内容。
-只询问获批任务明确列出的维度，不额外添加来源、时间或可信度问题；非询问任务只表达态度，不擅自附带问题。
 
 # 前文（已批准的可见表达，保持衔接，不得复述）
 ${prior}
+${context.previousReply === undefined ? "" : `上一轮 NPC 已说过（仅用于衔接，不重复）：${context.previousReply}`}
 前文已标记旁白与说话人。只有该 NPC 的实际台词才能表述为“你刚才说”；玩家已知事实或旁白提及不等于 NPC 说过。
 
 # 本场公开定位（只能在此场景表达，不回到旧地点或代写其他角色）
@@ -54,7 +45,12 @@ ${context.scene === undefined ? "（未提供）" : JSON.stringify(context.scene
 # 输出契约
 ${expressionBoundary()}
 
-只返回一个 JSON 对象：{"stage":"choices","labels":[{"candidateId":"...","label":"..."},{"candidateId":"...","label":"..."}]}
+# 规划器分别给两个候选的完整表达内容（candidateId 原样回填）
+${options.join("\n")}
+逐条润色以上内容稿，保留各自对象、问题、态度、协助方式和条件；不重新选题，不从前文补话，不把两个候选的意思混在一起。内容稿没有的问题、经历和条件不写入 label。
+
+按以下两项逐一填写 label，不删除候选，不合并候选：
+${JSON.stringify({ stage: "choices", labels: context.options.map((option, index) => ({ candidateId: option.candidateId, label: `第${index + 1}份内容稿润色后的玩家对白` })) })}
 - labels 恰好两条；candidateId 与上方候选一一对应；label 是一句玩家对该焦点 NPC 说的中文对白（不超过 80 字）。
 - 候选任务是“讲什么”的边界：主旨、具体事实、先求证条件均保留，只调整句式和口吻；不要因前文提到其他事就改换候选主题。两个候选的不同目的须直接体现在对白中。
 - 不得新增玩家经历或能力（如没有依据的“那条路我熟”）、幕后真相、交易条件或已执行行动。提出协助不等于编造自己熟悉路线；不知道就用提问，不把未知当事实。

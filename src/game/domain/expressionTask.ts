@@ -1,6 +1,6 @@
 import { DIALOGUE_ACTS, type DialogueAct } from "./action";
 
-/** 表达任务，不产生规则动作。正文只从授权事实投影，禁止夹带规划自由文本。 */
+/** 表达任务不产生规则动作；只允许本任务专属 brief，不转发全局规划备注。 */
 export const EXPRESSION_INTENTS = ["describe", "inform", "admit_unknown", ...DIALOGUE_ACTS] as const;
 /** 只指定问什么维度，不携带答案、隐藏实体或自由规划备注。 */
 export const INQUIRY_ASPECTS = ["identity", "location", "direction", "depth", "time", "cause",
@@ -16,7 +16,11 @@ export type PlannedAnswer = Readonly<{
 }>;
 export type ExpressionTask = Readonly<{
   intent: "describe" | "inform" | "admit_unknown" | DialogueAct;
+  /** 规划器决定的完整具体含义；表达器只能在不改变含义的前提下润色。 */
+  brief?: string;
   focusFactIds: readonly string[];
+  /** 必须在正文中明确表达的事实；省略时按旧任务的 focusFactIds 处理。 */
+  contentFactIds?: readonly string[];
   /** 先核实这些已知说法，再表达主意图；不是已经完成的调查或规则前置条件。 */
   prerequisiteFactIds: readonly string[];
   inquiries?: readonly Readonly<{ factId: string; aspects: readonly InquiryAspect[] }>[];
@@ -27,12 +31,17 @@ export type ExpressionTask = Readonly<{
 export function parseExpressionTask(value: unknown): ExpressionTask | null {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
-  if (Object.keys(record).some(key => !["intent", "focusFactIds", "prerequisiteFactIds", "inquiries", "answers"].includes(key))
+  if (Object.keys(record).some(key => !["intent", "brief", "focusFactIds", "contentFactIds", "prerequisiteFactIds", "inquiries", "answers"].includes(key))
     || !EXPRESSION_INTENTS.includes(record.intent as ExpressionTask["intent"])) return null;
   const ids = (value: unknown): value is string[] => Array.isArray(value) && value.length <= 12
     && value.every(id => typeof id === "string" && /^[a-zA-Z0-9_:-]{1,128}$/.test(id))
     && new Set(value).size === value.length;
   if (!ids(record.focusFactIds) || !ids(record.prerequisiteFactIds)) return null;
+  const brief = record.brief;
+  if (brief !== undefined && (typeof brief !== "string" || brief.trim().length < 1 || brief.length > 1200)) return null;
+  const contentFactIds = record.contentFactIds;
+  if (contentFactIds !== undefined && (!ids(contentFactIds)
+    || contentFactIds.some(id => !(record.focusFactIds as string[]).includes(id)))) return null;
   let inquiries: NonNullable<ExpressionTask["inquiries"]> | undefined;
   if (record.inquiries !== undefined) {
     if (!Array.isArray(record.inquiries) || record.inquiries.length > 4
@@ -68,6 +77,17 @@ export function parseExpressionTask(value: unknown): ExpressionTask | null {
     }
   }
   return { intent: record.intent as ExpressionTask["intent"],
-    focusFactIds: [...record.focusFactIds], prerequisiteFactIds: [...record.prerequisiteFactIds],
+    ...(brief === undefined ? {} : { brief }), focusFactIds: [...record.focusFactIds],
+    ...(contentFactIds === undefined ? {} : { contentFactIds: [...contentFactIds] }),
+    prerequisiteFactIds: [...record.prerequisiteFactIds],
     ...(inquiries === undefined ? {} : { inquiries }), ...(answers === undefined ? {} : { answers }) };
+}
+
+/** 正文必须逐项引用的事实；旧任务缺 contentFactIds 时保持原有 focus 语义。 */
+export function requiredExpressionFactIds(task: ExpressionTask): readonly string[] {
+  return [
+    ...(task.contentFactIds ?? task.focusFactIds),
+    ...task.prerequisiteFactIds,
+    ...(task.answers ?? []).flatMap(answer => answer.answerFactIds),
+  ];
 }

@@ -1,3 +1,4 @@
+import { requiredExpressionFactIds } from "@/game/domain/expressionTask";
 // staged narration prompt（Plan Task 5 Step 3）。
 //
 // 旁白是玩家视角：persona 为 null，只携带玩家可见事实、前文、受控行动与
@@ -66,10 +67,7 @@ ${facts}
 ${contestedNote}
 # 前文（已批准的可见表达，保持连贯，不得复述）
 ${prior}
-
-# 规划批准的具体表达任务
-${context.taskInstruction ?? "只表达以下批准节拍和本场内容，不新增剧情。"}
-${context.unit.task === undefined ? "" : `任务引用必须在正文及对应 part.facts 覆盖：${JSON.stringify([...context.unit.task.focusFactIds, ...context.unit.task.prerequisiteFactIds])}。保持其确定程度；不能仅回填 ID 而不表达内容。`}
+${context.previousReply === undefined ? "" : `上一轮 NPC 已说过（仅用于衔接，不重复）：${context.previousReply}`}
 
 # 必选节拍（必须在旁白中自然承接，beatIds 原样回填）
 ${beats.join("\n")}
@@ -91,6 +89,11 @@ ${expressionBoundary()}
 ${context.narrationLayout === undefined ? "" : `- 同一 beatId 的正文必须连续出现，不得在其他节拍之后再次插回。
 - ${context.narrationLayout.allowAtmosphere ? "纯氛围段（beatIds=[] 或 [atmosphere]）只能放在全部必选节拍之后、正文末尾。" : "本单元禁止独立氛围段（beatIds=[] 或 [atmosphere]）；每段必须归属本单元一个必选节拍，氛围描写可融入该节拍正文。"}
 `}
+# 规划器给本单元的完整表达内容
+${context.taskInstruction ?? "只表达批准节拍和本场内容，不新增剧情。"}
+只润色以上本轮内容；一句承接也足够，不另起环境铺垫，不从前文搬回旧描写，不为 NPC 补动作、神态或解释。
+${context.unit.task === undefined ? "" : `必须覆盖的正文事实：${JSON.stringify(requiredExpressionFactIds(context.unit.task))}；只在实际表达该事实的 part.facts 回填引用。`}
+
 只返回一个 JSON 对象：{"stage":"narration","parts":[{"text":"...","facts":[],"evidence":[],"beatIds":[]}],"actionKeys":[]}
 - parts 是正文句段数组（1 到 12 段，单段不超过 500 字），中文。
 - 每个 part 恰有 4 键：text（中文字符串）、facts、evidence、beatIds。**多一个键即整体被拒。**
