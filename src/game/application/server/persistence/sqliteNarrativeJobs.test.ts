@@ -7,7 +7,8 @@
 // 与当前周期。
 
 /** @vitest-environment node */
-import { describe, it, expect, afterAll } from "vitest";
+import { startLeaseKeeper } from "../../narrativeGeneration/leaseKeeper";
+import { describe, it, expect, afterAll, vi } from "vitest";
 import { join } from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -170,6 +171,30 @@ async function startDecisionJob(jobs: NarrativeJobRepository, job?: StoredJob) {
 }
 
 describe("sqliteNarrativeJobs", () => {
+  it("95 秒请求期间另一 SQLite worker 无法接管，旧 expiresAt 保存会自动换成续租凭据", async () => {
+    const database = nextDbPath();
+    const first = openStores(database).jobs;
+    const second = openStores(database).jobs;
+    const job = await startDecisionJob(first);
+    const claimed = await first.claim({ id: job.id, owner: OWNER_A, now: NOW, expiresAt: EXPIRES });
+    if (!claimed.ok) throw new Error(claimed.code);
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    vi.setSystemTime(Date.parse(NOW));
+    const keeper = startLeaseKeeper({ jobs: first, lease: claimed.value, now: () => new Date().toISOString() });
+    try {
+      for (let index = 0; index < 19; index++) {
+        await vi.advanceTimersByTimeAsync(5_000);
+        const competing = await second.claim({ id: job.id, owner: OWNER_B, now: new Date().toISOString(), expiresAt: new Date(Date.now() + 30_000).toISOString() });
+        expect(competing.ok).toBe(false);
+      }
+      const saved = await keeper.jobs.save({ lease: claimed.value, expectedVersion: job.version, job });
+      expect(saved.ok).toBe(true);
+      await keeper.stop();
+      await vi.advanceTimersByTimeAsync(35_000);
+      const takeover = await second.claim({ id: job.id, owner: OWNER_B, now: new Date().toISOString(), expiresAt: new Date(Date.now() + 30_000).toISOString() });
+      expect(takeover.ok).toBe(true);
+    } finally { await keeper.stop(); vi.useRealTimers(); }
+  });
   it("start/get 往返；同 requestId 同 digest 返回现有 job；不同 digest 冲突", async () => {
     const { jobs } = openStores(nextDbPath());
     const stored = decisionJob();

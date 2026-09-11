@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -184,6 +184,7 @@ export function buildBranchSummaryLine(report) {
     ok: report?.ok === true,
     durationMs: typeof report?.durationMs === "number" ? Math.round(report.durationMs) : 0,
     requestCount: typeof report?.requestCount === "number" ? report.requestCount : 0,
+    ...(report?.ok === true ? {} : { failureCode: typeof report?.failureCode === "string" ? report.failureCode : "unknown" }),
   };
   return `${DIAG_PREFIX} branch ${JSON.stringify(payload)}`;
 }
@@ -202,6 +203,11 @@ export function summarizeAuditEvents(events) {
   };
   for (const event of events) {
     if (!event || typeof event !== "object") continue;
+    if (event.kind === "ai_call") {
+      codes.push(event.output?.ok === true ? "attempt_ok" : `transport_${event.output?.code ?? "unknown"}`);
+      for (const key of ["promptTokens", "completionTokens", "totalTokens"]) addTokens(key, event.output?.usage?.[key]);
+      continue;
+    }
     if (typeof event.source === "string" && (event.kind === undefined || event.kind === "story_text")) {
       sources.push(event.source);
     }
@@ -415,8 +421,10 @@ function loadTsModules() {
   tsModulesPromise ??= (async () => {
     installTsHooks();
     const composition = await import("../src/game/application/server/compositionRoot.ts");
+    const sqlite = await import("../src/game/application/server/persistence/sqliteClient.ts");
     return {
       createServerGameEntryPoints: composition.createServerGameEntryPoints,
+      createSqliteClient: sqlite.createSqliteClient,
     };
   })();
   return tsModulesPromise;
@@ -456,25 +464,6 @@ function resolveAiEnvOrThrow() {
 }
 
 const TEMP_DB_PREFIX = "staged-narrative-smoke-";
-
-/** 清扫上次运行因 Windows 句柄延迟而遗留的临时库（与 sqlite 测试同一约定）。 */
-function sweepStaleTempDatabases() {
-  const tmpRoot = resolve(projectRoot, "tmp");
-  let entries;
-  try {
-    entries = readdirSync(tmpRoot);
-  } catch {
-    return;
-  }
-  for (const entry of entries) {
-    if (!entry.startsWith(TEMP_DB_PREFIX)) continue;
-    try {
-      rmSync(join(tmpRoot, entry), { force: true });
-    } catch {
-      // 仍被占用：留待下次运行清理。
-    }
-  }
-}
 
 /** Windows 下 SQLite 句柄可能延迟释放：删除临时文件时短暂重试。 */
 async function removeTempDatabase(databasePath) {
@@ -551,18 +540,6 @@ function readAuditEventsSince(rootDir, before) {
 /** 审计根目录：smoke 用临时目录，绝不写入用户 logs/。 */
 const TEMP_AUDIT_PREFIX = "staged-narrative-smoke-audit-";
 
-/** 删除本次的临时审计根；被占用时留待下次 sweep，绝不抛出。 */
-async function removeTempAuditRoot(auditRoot) {
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    try {
-      rmSync(auditRoot, { recursive: true, force: true });
-      return;
-    } catch {
-      await sleep(200);
-    }
-  }
-}
-
 /**
  * 在临时 SQLite 上装配 production composition root。绝不接触用户当前存档：
  * 全部读写都落在本次随机命名的临时库上，退出前删除。审计同样定向到本次的
@@ -579,7 +556,6 @@ async function withTempEntry(overrides, run) {
   const aiEnv = overrides.aiEnv ?? resolveAiEnvOrThrow();
   const tmpRoot = resolve(projectRoot, "tmp");
   mkdirSync(tmpRoot, { recursive: true });
-  sweepStaleTempDatabases();
   const auditRoot = join(tmpRoot, `${TEMP_AUDIT_PREFIX}${randomUUID()}`);
   mkdirSync(auditRoot, { recursive: true });
   // 审计基线：本局之前的 run 目录一律不计入本局统计。
@@ -589,6 +565,7 @@ async function withTempEntry(overrides, run) {
     eventsSinceBaseline: () => readAuditEventsSince(auditRoot, auditBaseline),
   };
   const databasePath = join(tmpRoot, `${TEMP_DB_PREFIX}${randomUUID()}.sqlite`);
+  if (overrides.snapshotPath) copyFileSync(overrides.snapshotPath, databasePath);
   const entry = modules.createServerGameEntryPoints({
     AI_API_BASE_URL: aiEnv.AI_API_BASE_URL,
     AI_MODEL: aiEnv.AI_MODEL,
@@ -598,18 +575,40 @@ async function withTempEntry(overrides, run) {
     AI_TEXT_AUDIT_DIR: auditRoot,
   });
   let entryClosed = false;
+  audit.failureCode = async () => {
+    const client = modules.createSqliteClient(databasePath);
+    try {
+      const result = await client.execute("SELECT payload_json FROM narrative_jobs WHERE status = 'failed' ORDER BY rowid DESC LIMIT 1");
+      const payload = result.rows[0]?.payload_json;
+      return typeof payload === "string" ? JSON.parse(payload).failureCode : null;
+    } finally { client.close(); }
+  };
   try {
-    return await run(entry, audit);
+    const fork = async (callback) => {
+      const snapshotPath = join(tmpRoot, `${TEMP_DB_PREFIX}${randomUUID()}.sqlite`);
+      const client = modules.createSqliteClient(databasePath);
+      try {
+        await client.execute({ sql: "VACUUM INTO ?", args: [snapshotPath] });
+        return await withTempEntry({ ...overrides, aiEnv, snapshotPath }, callback);
+      } finally {
+        client.close();
+        await removeTempDatabase(snapshotPath);
+      }
+    };
+    const result = await run(entry, audit, fork);
+    // 可选诊断钩子只访问本次隔离库；便于重放/检查失败，不接触用户存档。
+    if (overrides.inspect !== undefined) await overrides.inspect({ entry, databasePath, auditRoot });
+    return result;
   } finally {
     if (!entryClosed) {
       try {
         await entry.close();
       } catch {
-        // close 失败不改变 smoke 结论：临时库稍后仍会在 sweep 中被清理。
+        // 仅尝试清理本次创建的临时库；占用残留保留，不扫描其他运行目录。
       }
     }
     await removeTempDatabase(databasePath);
-    await removeTempAuditRoot(auditRoot);
+    // 保留本次审计证据供人工质量验收；不自动删除失败样本。
   }
 }
 
@@ -650,14 +649,16 @@ async function awaitInitialization(entry, requestId, budget) {
  */
 export async function realRunOpening(smokeCase, overrides = {}) {
   // 开局自身的请求与两个分支的请求分别统计，便于总量预算判定。
-  const { report, requestCount, durationMs } = await withTempEntry(overrides, async (entry, audit) => {
+  const { report, requestCount, durationMs } = await withTempEntry(overrides, async (entry, audit, fork) => {
     const startedAt = performance.now();
     // requestId 是持久初始化任务的幂等键，属 CreateGameInput 必填项
     // （compositionRoot 注释：路由层已做形状校验）。smoke 直连组合根，
     // 必须自己补上；缺失会让 startInitialization 以 INFRASTRUCTURE_FAILURE
     // 在毫秒级提前返回，且零 provider 请求。
     const requestId = `staged-smoke-${randomUUID()}`;
-    const created = await entry.createGame({ ...smokeCase.input, requestId });
+    const { gameType, gameLength, seed: _seed, ...setup } = smokeCase.input;
+    const created = await entry.createGame({ gameType, gameLength,
+      setup: { personalityTags: [], narrativeStyle: "concise", contentIntensity: "normal", ...setup }, requestId });
     const ready = created.ok === true
       ? await awaitInitialization(entry, requestId, 5 * 60 * 1000)
       : { ok: false, failureCode: "CREATE_GAME_NOT_STARTED", failureKind: "AI_CALL_FAILED" };
@@ -688,24 +689,29 @@ export async function realRunOpening(smokeCase, overrides = {}) {
         report: {
           gameType: smokeCase.gameType,
           ok: false,
-          failureCode: ready.failureCode,
+          failureCode: await audit.failureCode() ?? ready.failureCode,
           failureKind: ready.failureKind,
         },
       };
     }
 
+    const acknowledged = await entry.ackPrologue();
+    if (!acknowledged.ok) throw new Error("PROLOGUE_ACK_FAILED");
     const reload = await entry.getCurrentGame();
     const reloadOk = reload.ok === true && reload.status === "active";
     // 来源判定：只要开局存在非 generated 的 story_text 审计（fixture/rule/
     // deterministic），或完全没有 story_text 审计，都不得算作真实 AI 生成。
-    const source = sources.length > 0 && sources.every((value) => value === REQUIRED_SOURCE)
+    const generatedStages = new Set(events.filter(event => event.kind === "ai_call" && event.output?.ok === true).map(event => event.role));
+    const source = (sources.length > 0 && sources.every((value) => value === REQUIRED_SOURCE))
+      || ["planning", "narration", "character", "choices"].every(stage => generatedStages.has(stage))
       ? REQUIRED_SOURCE
       : "invalid";
 
     const branches = [];
     let branchRequests = 0;
-    for (const candidateId of smokeCase.candidateIds) {
-      const branch = await runBranchOnFreshEntry(entry, candidateId, audit);
+    for (const [choiceIndex, candidateId] of smokeCase.candidateIds.entries()) {
+      const branch = await fork((branchEntry, branchAudit) =>
+        runBranchOnFreshEntry(branchEntry, candidateId, branchAudit, choiceIndex));
       branches.push(branch);
       branchRequests += branch.requestCount;
     }
@@ -715,8 +721,9 @@ export async function realRunOpening(smokeCase, overrides = {}) {
     let playthrough;
     let playRequests = 0;
     if (smokeCase.playToEnding === true) {
-      const advanced = await runToEnding(entry, audit);
-      playthrough = { endingReached: advanced.endingReached, turns: advanced.turns };
+      const advanced = await runToEnding(entry, audit, { maxManualRetries: smokeCase.maxManualRetries ?? 0 });
+      playthrough = { endingReached: advanced.endingReached, turns: advanced.turns, manualRetries: advanced.manualRetries, recoveredFailures: advanced.recoveredFailures,
+        ...(advanced.failureCode === undefined ? {} : { failureCode: advanced.failureCode }) };
       playRequests = advanced.requestCount;
     }
 
@@ -741,53 +748,74 @@ export async function realRunOpening(smokeCase, overrides = {}) {
  * 优先提交叙事选择（保持在剧情链上），没有叙事选择时提交当前目标行动。
  * 每步都等待在途生成落定，避免把 provider_pending 误判为「无下一步」。
  */
-async function runToEnding(entry, audit) {
-  const startedAt = performance.now();
+export async function runToEnding(entry, audit, timing = {}) {
+  const now = timing.now ?? (() => performance.now());
+  const pause = timing.sleep ?? sleep;
+  const startedAt = now();
+  const deadline = startedAt + SMOKE_LIMITS.maxDurationMs;
+  let pendingDeadline = null;
   let turns = 0;
-  const before = audit.eventsSinceBaseline().length;
+  let manualRetries = 0;
+  const recoveredFailures = [];
+  let failureCode;
+  const before = summarizeAuditEvents(audit.eventsSinceBaseline()).codes.length;
 
-  for (let turn = 0; turn < SMOKE_LIMITS.maxTurnsPerPlaythrough; turn += 1) {
+  while (turns < SMOKE_LIMITS.maxTurnsPerPlaythrough && now() < deadline) {
     const current = await entry.getCurrentGame();
-    if (current.ok !== true || current.status !== "active") break;
-    if (current.view?.ending != null) {
-      const requestCount = audit.eventsSinceBaseline().length - before;
-      return { endingReached: true, turns, requestCount, durationMs: performance.now() - startedAt };
+    if (current.ok !== true || current.status !== "active") { failureCode = "NO_ACTIVE_GAME"; break; }
+    if (current.view?.ending != null) break;
+    const status = current.view?.narrativeGeneration?.status;
+    if (status === "failed") {
+      const code = await audit.failureCode() ?? "GENERATION_FAILED";
+      if (manualRetries < (timing.maxManualRetries ?? 0)) {
+        manualRetries += 1;
+        recoveredFailures.push(code);
+        await entry.ensureNarrativeScene({ retry: true });
+        await pause(1000);
+        continue;
+      }
+      failureCode = code; break;
     }
 
-    // 生成未落定时先等：此时提交只会拿到 rejected，不构成真实推进。
-    if (current.view?.narrativeGeneration?.status === "pending") {
-      await sleep(1000);
+    // provider 等待不是玩家回合；不能用 40 次一秒轮询耗尽 40 回合预算。
+    if (status === "pending") {
+      pendingDeadline ??= now() + 600_000;
+      if (now() >= pendingDeadline) { failureCode = "GENERATION_TIMEOUT"; break; }
+      await entry.ensureNarrativeScene();
+      await pause(1000);
       continue;
     }
-
+    pendingDeadline = null;
     const token = pickProgressToken(current.view);
-    if (token === null) {
-      // 没有可用 action：等一拍再试，若长期无 action 由轮次上限收敛为未通关。
-      await sleep(1000);
-      continue;
-    }
-
-    const turnResult = await entry.performTurn({
-      actionId: `smoke_play_${turn}`,
+    if (token === null) { failureCode = "NO_PROGRESSION_TOKEN"; break; }
+    const result = await entry.performTurn({
+      actionId: `smoke_play_${turns}`,
       interaction: { kind: "fixed_choice", choiceToken: token },
       expectedRevision: current.revision,
     });
-    if (turnResult.ok !== true) break;
+    if (result.ok !== true) { failureCode = result.code ?? "PERFORM_TURN_FAILED"; break; }
     turns += 1;
   }
 
   const final = await entry.getCurrentGame();
   const endingReached = final.ok === true && final.view?.ending != null;
-  const requestCount = audit.eventsSinceBaseline().length - before;
-  return { endingReached, turns, requestCount, durationMs: performance.now() - startedAt };
+  const requestCount = summarizeAuditEvents(audit.eventsSinceBaseline()).codes.length - before;
+  if (!endingReached && failureCode === undefined) failureCode = turns >= SMOKE_LIMITS.maxTurnsPerPlaythrough ? "TURN_LIMIT" : "DURATION_LIMIT";
+  return { endingReached, turns, requestCount, manualRetries, recoveredFailures, durationMs: now() - startedAt,
+    ...(failureCode === undefined ? {} : { failureCode }) };
 }
 
 /**
  * 选一个能推进剧情的受控 action token：优先叙事选择，其次当前目标行动，
  * 再次地点可执行行动。绝不构造未在服务端注册的 token。
  */
+export function offeredChoices(view) {
+  const dialogue = view?.narrative?.npcDialogues?.find(npc => npc.choices?.length === 2);
+  return dialogue?.choices ?? view?.narrative?.choices ?? [];
+}
+
 function pickProgressToken(view) {
-  const narrativeChoices = view?.narrative?.choices;
+  const narrativeChoices = offeredChoices(view);
   if (Array.isArray(narrativeChoices) && narrativeChoices.length > 0) {
     const token = narrativeChoices[0]?.choiceToken;
     if (typeof token === "string" && token.length > 0) return token;
@@ -796,6 +824,10 @@ function pickProgressToken(view) {
   if (Array.isArray(objectiveTokens) && objectiveTokens.length > 0 && typeof objectiveTokens[0] === "string") {
     return objectiveTokens[0];
   }
+  // 城镇的事实抵达入口由建筑承载，isCurrentFocus 并非获得 token 的前提。
+  const buildingToken = view?.currentLocation?.town?.interactiveBuildings
+    ?.find(building => typeof building.arrivalChoiceToken === "string" && building.arrivalChoiceToken.length > 0)?.arrivalChoiceToken;
+  if (typeof buildingToken === "string") return buildingToken;
   const locationActions = view?.currentLocation?.actions;
   if (Array.isArray(locationActions) && locationActions.length > 0) {
     const token = locationActions[0]?.choiceToken;
@@ -810,9 +842,9 @@ function pickProgressToken(view) {
  * 在给定 entry 上执行一次分支续接：读取当前视图，找到与 candidateId 对应的
  * 已批准 choice token，提交一次 performTurn 并回报是否产生可证明的差异。
  */
-async function runBranchOnFreshEntry(entry, candidateId, audit) {
+async function runBranchOnFreshEntry(entry, candidateId, audit, choiceIndex = 0) {
   const startedAt = performance.now();
-  const before = audit.eventsSinceBaseline().length;
+  const before = summarizeAuditEvents(audit.eventsSinceBaseline()).codes.length;
   const current = await entry.getCurrentGame();
   if (current.ok !== true || current.status !== "active") {
     return {
@@ -824,7 +856,7 @@ async function runBranchOnFreshEntry(entry, candidateId, audit) {
       failureKind: "AI_CALL_FAILED",
     };
   }
-  const choice = findChoice(current.view, candidateId);
+  const choice = offeredChoices(current.view)[choiceIndex];
   if (choice === undefined) {
     return {
       candidateId,
@@ -841,7 +873,17 @@ async function runBranchOnFreshEntry(entry, candidateId, audit) {
     interaction: { kind: "fixed_choice", choiceToken: choice.choiceToken },
     expectedRevision: current.revision,
   });
-  const requestCount = audit.eventsSinceBaseline().length - before;
+  if (turn.ok === true) {
+    await entry.ensureNarrativeScene();
+    const deadline = performance.now() + 600_000;
+    while (performance.now() < deadline) {
+      const next = await entry.getCurrentGame();
+      if (next.view?.narrativeGeneration?.status !== "pending") break;
+      await sleep(1000);
+    }
+  }
+  const final = await entry.getCurrentGame();
+  const requestCount = summarizeAuditEvents(audit.eventsSinceBaseline()).codes.length - before;
 
   if (turn.ok !== true) {
     return {
@@ -853,7 +895,12 @@ async function runBranchOnFreshEntry(entry, candidateId, audit) {
       failureKind: "AI_RESPONSE_INVALID",
     };
   }
-  return { candidateId, ok: true, durationMs: performance.now() - startedAt, requestCount };
+  return { candidateId, ok: final.ok === true && final.view?.narrativeGeneration?.status === "idle"
+    && final.revision > current.revision,
+    failureCode: final.view?.narrativeGeneration?.status === "idle" && final.revision > current.revision
+      ? undefined : await audit.failureCode() ?? `CONTINUATION_${final.view?.narrativeGeneration?.status ?? "UNKNOWN"}`,
+    failureKind: "AI_RESPONSE_INVALID",
+    durationMs: performance.now() - startedAt, requestCount };
 }
 
 /** 在当前视图的叙事选择里按候选身份找 token；找不到即该候选未被提出。 */
@@ -905,10 +952,26 @@ function resolveAiEnvOrEmpty() {
 }
 
 async function main() {
-  const exitCode = await runStagedNarrativeSmoke(realRunCaseDeps((line) => {
+  const originalFetch = globalThis.fetch;
+  let requests = 0;
+  const deadline = performance.now() + SMOKE_LIMITS.maxDurationMs;
+  globalThis.fetch = async (input, init = {}) => {
+    if (requests >= SMOKE_LIMITS.maxProviderRequests || performance.now() >= deadline) {
+      throw new Error("SMOKE_BUDGET_EXCEEDED");
+    }
+    requests += 1;
+    const timeout = AbortSignal.timeout(Math.max(1, Math.ceil(deadline - performance.now())));
+    const signal = init.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
+    return originalFetch(input, { ...init, signal });
+  };
+  try {
+    const exitCode = await runStagedNarrativeSmoke(realRunCaseDeps((line) => {
     process.stdout.write(`${line}\n`);
-  }));
-  process.exitCode = exitCode;
+    }));
+    process.exitCode = exitCode;
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 }
 
 const invokedDirectly = typeof process.argv[1] === "string"

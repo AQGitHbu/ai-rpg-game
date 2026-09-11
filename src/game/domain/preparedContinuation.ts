@@ -1,3 +1,4 @@
+import { isApprovedChoiceBranch } from "./approvedChoice";
 import type { Action, DialogueTopic } from "./action";
 import type { NarrativeJobId } from "./events";
 import type { NarrativeEventState, NarrativeNpcLineState, NpcDialogueInScene } from "./narrative";
@@ -26,6 +27,7 @@ export type PreparedContinuationTrigger =
     };
 
 export type PreparedChoiceSeedState = {
+  readonly branch?: import("./approvedChoice").ApprovedChoiceBranch;
   readonly label: string;
   readonly action: Action;
 };
@@ -242,6 +244,12 @@ function isNpcDialogue(value: unknown): value is NpcDialogueInScene {
     ));
 }
 
+export function isPreparedChoiceSeed(value: unknown): value is PreparedChoiceSeedState {
+  return isRecord(value) && hasOnlyKeys(value, ["label", "action", "branch"])
+    && (value.branch === undefined || isApprovedChoiceBranch(value.branch))
+    && isNonEmptyString(value.label) && isAction(value.action);
+}
+
 function isScene(value: unknown): value is PreparedSceneSeedState {
   if (!isRecord(value) || !hasOnlyKeys(value, [
     "segments", "event", "npcLine", "npcDialogues", "objectiveLink", "choiceSeeds", "source",
@@ -266,12 +274,7 @@ function isScene(value: unknown): value is PreparedSceneSeedState {
     && (value.objectiveLink.objectiveIndex as number) >= 0
     && ["hint", "progress", "handoff"].includes(value.objectiveLink.mode as string)
   )) return false;
-  if (!Array.isArray(value.choiceSeeds) || !value.choiceSeeds.every((choice) => (
-    isRecord(choice)
-    && hasOnlyKeys(choice, ["label", "action"])
-    && isNonEmptyString(choice.label)
-    && isAction(choice.action)
-  ))) return false;
+  if (!Array.isArray(value.choiceSeeds) || !value.choiceSeeds.every(isPreparedChoiceSeed)) return false;
   if (value.conditionalEvidence !== undefined
     && (!Array.isArray(value.conditionalEvidence) || !value.conditionalEvidence.every((entry) => (
       isRecord(entry)

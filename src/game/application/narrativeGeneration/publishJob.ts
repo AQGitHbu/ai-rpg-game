@@ -11,7 +11,7 @@
 
 import { fail, type Check, type Unit, type UnitOutput } from "@/game/domain/narrativeUnit";
 import type { PlanProposal } from "@/game/domain/narrativePlan";
-import { approvePlan } from "@/game/gameplay/rpg/narrativePlanning";
+import { approvePlanningContext } from "./approvePlanningContext";
 import { validateStagedReadyCoverage } from "@/game/gameplay/rpg/narrativeBundle";
 import { assembleBundle } from "./assembleBundle";
 import type {
@@ -70,12 +70,7 @@ export async function publishJob(
   let terminalKind: "ending" | "next_decision" = proposal.terminal.kind === "ending" ? "ending" : "next_decision";
 
   if (job.input.kind === "decision") {
-    const planApproval = approvePlan({
-      kind: "decision",
-      proposal,
-      world: job.input.world,
-      story: job.input.story,
-    });
+    const planApproval = approvePlanningContext(job.input, proposal);
     if (!planApproval.ok) return fail(planApproval.code);
     units = planApproval.value.units;
     terminalKind = planApproval.value.proposal.terminal.kind === "ending" ? "ending" : "next_decision";
@@ -87,13 +82,7 @@ export async function publishJob(
     // 装配复核与 decision 同源——但发布载荷由编排层安装好叙事后再传入，
     // 这里只做覆盖复核，绝不伪造 ID 或重跑结构编译。
     if (job.initialization === null) return fail("job_initialization_missing");
-    const planApproval = approvePlan({
-      kind: "opening",
-      proposal,
-      generation: job.initialization.generation,
-      gameLength: job.input.input.gameLength,
-      seed: job.input.input.seed,
-    });
+    const planApproval = approvePlanningContext({ ...job.input, generation: job.initialization.generation }, proposal);
     if (!planApproval.ok) return fail(planApproval.code);
     units = planApproval.value.units;
     terminalKind = planApproval.value.proposal.terminal.kind === "ending" ? "ending" : "next_decision";

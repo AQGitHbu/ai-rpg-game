@@ -150,6 +150,19 @@ function quest(objectives: WorldState["quests"][number]["objectives"]): WorldSta
 }
 
 describe("buildNarrativeBundleDescriptors", () => {
+  it("外出后必须返程才能再次与留在原处的 NPC 对话", () => {
+    const ws = worldState({ currentLocationId: locDyn1, quests: [quest([
+      { kind: "visit_location", locationId: locTown },
+      { kind: "talk_to_npc", npcId: npcDyn1 },
+    ])] });
+    const graph = buildNarrativeBundleDescriptors({ worldState: ws, storyState: storyState(), transition: transition(0) });
+    expect(graph.steps.map(step => step.stepKey)).toEqual(["move:loc_town", "move:loc_dyn_1"]);
+    expect(graph.steps[0]?.nextStepKeys).toEqual(["move:loc_dyn_1"]);
+    expect(graph.steps[0]?.choiceCandidates).toEqual([]);
+    expect(graph.steps[0]?.arrivalNpc).toBeUndefined();
+    expect(graph.steps[1]?.arrivalNpc?.id).toBe(npcDyn1);
+    expect(graph.terminal).toEqual({ kind: "next_decision", target: { kind: "continuation_step", stepKey: "move:loc_dyn_1" } });
+  });
   it("folds visit→discover→talk into one step with absorbed objectives", () => {
     const ws = worldState({
       quests: [quest([
@@ -258,6 +271,7 @@ describe("buildNarrativeBundleDescriptors", () => {
 
   it("uses the post-victory talk objective as the battle bundle's formal decision", () => {
     const ws = worldState({
+      currentLocationId: locDyn1,
       enemies: [{
         id: enemyWolf,
         name: "野狼",
@@ -303,6 +317,7 @@ describe("buildNarrativeBundleDescriptors", () => {
 
   it("makes a direct talk objective a current_scene formal decision with two server candidates", () => {
     const ws = worldState({
+      currentLocationId: locDyn1,
       quests: [quest([
         { kind: "talk_to_npc", npcId: npcDyn1 },
       ])],

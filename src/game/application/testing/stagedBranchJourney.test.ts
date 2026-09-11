@@ -185,7 +185,7 @@ describe("staged branch journey", () => {
     const intents = shared.approved.options.map((option) => option.publicIntent.text);
     expect(new Set(intents).size).toBe(2);
     const targets = shared.approved.options.map((option) =>
-      option.target.kind === "visit_location" ? String(option.target.locationId) : option.target.kind);
+      option.target?.kind === "visit_location" ? String(option.target.locationId) : option.target?.kind);
     expect(new Set(targets).size).toBe(2);
   });
 

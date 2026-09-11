@@ -6,6 +6,8 @@
 
 import { describe, expect, it } from "vitest";
 import { assembleBundle } from "./assembleBundle";
+import { projectUnitContext } from "./perspectiveContext";
+import { approveUnit } from "./approveUnit";
 import { approvePlan } from "@/game/gameplay/rpg/narrativePlanning";
 import {
   branchWorld,
@@ -25,10 +27,10 @@ import {
   FIXTURE_CANDIDATE_ROUTE,
   FIXTURE_CANDIDATE_ALT,
 } from "@/game/domain/testing/stagedNarrativeFixture.testutil";
-import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
+import { asEndingId, asLocationId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import { LEGACY_IMPORT_REASON_KEY } from "@/game/domain/entity";
 import type { Observation } from "@/game/domain/narrativeObservation";
-import type { PlanProposal } from "@/game/domain/narrativePlan";
+import { parsePlanProposal, type PlanProposal } from "@/game/domain/narrativePlan";
 import type { UnitOutput } from "@/game/domain/narrativeUnit";
 
 /** 与单元归属规则匹配的观察源：同一 stepKey、order 先于单元、受众含说话人。 */
@@ -74,6 +76,63 @@ function fullApprovedMap(overrides: {
 }
 
 describe("assembleBundle", () => {
+  it("真实 parser 的 decision=null 终幕经规则派生、选项表达与装配闭环", () => {
+    const parsed = parsePlanProposal({ ...makeStagedPlan(), decision: null, terminal: { kind: "ending" } });
+    if (!parsed.ok) throw Error(parsed.code);
+    const world = { ...branchWorld(), endings: [
+      { id: asEndingId("ending_trust"), name: "信任", description: "未发生的结果", requirements: [] },
+      { id: asEndingId("ending_doubt"), name: "质疑", description: "另一结果", requirements: [] },
+    ] };
+    const result = approvePlan({ kind: "decision", proposal: parsed.value, world,
+      story: { ...branchStory(), endingAllowed: true } });
+    if (!result.ok) throw Error(result.code);
+    expect(result.value.proposal.decision).toBeNull();
+    expect(result.value.choiceExpression?.kind).toBe("ending");
+    const choice: UnitOutput = { stage: "choices", labels: [
+      { candidateId: "trust", label: "我信你，这件事我们一起查到底。" },
+      { candidateId: "doubt", label: "证据还不够，我要亲自核对你的说法。" },
+    ] };
+    const outputs = fullApprovedMap({ choice });
+    const unit = result.value.units.find(unit => unit.stage === "choices")!;
+    const context = projectUnitContext({ plan: result.value, unit, approved: outputs });
+    if (!context.ok) throw Error(context.code);
+    expect(JSON.stringify(context.value)).not.toContain("未发生的结果");
+    expect(approveUnit({ unit, context: context.value, output: choice }).ok).toBe(true);
+    const assembled = assembleBundle({ plan: result.value, approved: outputs });
+    if (!assembled.ok) throw Error(assembled.code);
+    expect(assembled.value.currentScene.choices).toEqual([]);
+    expect(assembled.value.endingLabels).toEqual({ trust: choice.labels[0]!.label, doubt: choice.labels[1]!.label });
+    expect(approvePlan({ kind: "decision", proposal: parsed.value, world, story: branchStory() }))
+      .toEqual({ ok: false, code: "plan_ending_not_ready" });
+  });
+
+  it("多个无强制节拍的获批旁白句段合并为氛围段", () => {
+    const output = makeNarrationOutput();
+    const result = assembleBundle({ plan: approvedPlan(), approved: fullApprovedMap({ narration: {
+      ...output, parts: [...output.parts, { text: "门外响起脚步声。", facts: [], evidence: [], beatIds: [] }],
+    } }) });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.currentScene.segments).toHaveLength(1);
+    expect(result.value.currentScene.segments[0]?.text).toContain("门外响起脚步声。");
+  });
+  it("未来决策不能被提升为当前场景而提前剧透", () => {
+    const base = makeStagedPlan();
+    if (base.decision === null) throw new Error("missing decision");
+    const plan = approvedPlan({
+      units: base.units.map(unit => unit.stage === "choices"
+        ? { ...unit, point: { stepKey: "future", order: 4 } } : unit),
+      decision: { ...base.decision, point: { stepKey: "future", order: 4 } },
+      steps: [{ key: "future", trigger: { kind: "move", locationId: asLocationId("loc_b") }, next: [] }],
+      terminal: { kind: "next_decision", target: { kind: "continuation_step", stepKey: "future" } },
+    });
+    const result = assembleBundle({ plan, approved: fullApprovedMap() });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.currentScene.choices).toEqual([]);
+    expect(result.value.currentScene.npcLine?.npcId).toBe(FIXTURE_NPC_A);
+    expect(result.value.continuationScenes[0]?.scene.choices).toHaveLength(2);
+  });
   it("按 ScenePoint 顺序装配 currentScene", () => {
     const plan = approvedPlan();
     const result = assembleBundle({ plan, approved: fullApprovedMap() });
@@ -100,7 +159,11 @@ describe("assembleBundle", () => {
   it("后续 stepKey 的单元进入 continuationScenes", () => {
     const plan = approvedPlan({
       units: makeStagedPlan().units.map((u) =>
-        u.key === FIXTURE_NPC_B_UNIT ? { ...u, point: { stepKey: "arrive", order: 1 } } : u),
+        u.key === FIXTURE_NPC_B_UNIT ? { ...u, point: { stepKey: "arrive", order: 1 } }
+          : u.stage === "choices" ? { ...u, point: { stepKey: "arrive", order: 4 } } : u),
+      decision: { ...makeStagedPlan().decision!, point: { stepKey: "arrive", order: 4 } },
+      steps: [{ key: "arrive", trigger: { kind: "move", locationId: asLocationId("loc_b") }, next: [] }],
+      terminal: { kind: "next_decision", target: { kind: "continuation_step", stepKey: "arrive" } },
     });
     const npcB: UnitOutput = {
       stage: "character", speakerId: FIXTURE_NPC_B,
@@ -170,7 +233,12 @@ describe("assembleBundle", () => {
         return u;
       }),
     });
-    const result = assembleBundle({ plan, approved: fullApprovedMap() });
+    const narration = makeNarrationOutput();
+    const npcA = makeCharacterOutput(FIXTURE_NPC_A);
+    const result = assembleBundle({ plan, approved: fullApprovedMap({
+      narration: { ...narration, parts: narration.parts.map(part => ({ ...part, facts: [{ factId: "fact_ctx", certainty: "known" }] })) },
+      npcA: { ...npcA, parts: npcA.parts.map(part => ({ ...part, facts: [{ factId: "fact_ctx", certainty: "known" }] })) },
+    }) });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const evidence = result.value.currentScene.conditionalEvidence ?? [];

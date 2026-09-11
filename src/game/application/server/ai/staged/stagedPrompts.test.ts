@@ -29,6 +29,19 @@ import { asFactId, asLocationId, asNpcId } from "@/game/domain/worldEntity";
 import type { NpcEntry } from "@/game/domain/worldEntries";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 
+it("三个表达器不把措辞加工变成新经历、往日对白或现场证据", () => {
+  const plan = approvedPlan();
+  for (const stage of ["narration", "character", "choices"] as const) {
+    const unit = plan.units.find(unit => unit.stage === stage)!;
+    const safe = projectUnitContext({ plan, unit, approved: approvedOutputs(plan) });
+    if (!safe.ok) throw Error(safe.code);
+    const prompt = stage === "narration" ? buildNarrationPrompt(safe.value)
+      : stage === "character" ? buildCharacterPrompt(safe.value) : buildChoicePrompt(safe.value);
+    expect(prompt).toContain(stage === "narration" ? "禁止把口述变成目击"
+      : stage === "character" ? "不为解释不知道再编一段经过" : "不得新增玩家经历或能力");
+  }
+});
+
 // ---------------------------------------------------------------------------
 // 四类 staged prompt 的内容契约：设定风格不丢失、公开/私密分区、SafeContext
 // 投影进入对应 prompt；choice prompt 只返回两条对白 label。
@@ -70,9 +83,15 @@ function personaWorld(): WorldState {
 }
 
 function approvedPlan(): ApprovedPlan {
+  const proposal = makeStagedPlan();
+  if (proposal.decision?.kind !== "ordinary") throw new Error("ordinary fixture required");
+  const options = proposal.decision.options;
   const result = approvePlan({
     kind: "decision",
-    proposal: makeStagedPlan(),
+    proposal: { ...proposal, decision: { ...proposal.decision, options: [
+      { ...options[0], target: { kind: "visit_location", locationId: "loc_b" } },
+      { ...options[1], target: { kind: "visit_location", locationId: "loc_c" } },
+    ] } },
     world: personaWorld(),
     story: branchStory(),
   });
@@ -154,6 +173,29 @@ function makeStagedJob(): PendingNarrativeJob {
 }
 
 describe("buildPlanningPrompt", () => {
+  it("下一幕不能把增量前的 ending 当权威图，保留玩家已选语义", () => {
+    const story = branchStory();
+    const prompt = buildPlanningPrompt({ kind: "decision", world: personaWorld(),
+      story: { ...story, evolution: { ...story.evolution, status: "needs_next_act" } },
+      job: { ...makeStagedJob(), selectedDialogue: { dialogueAct: "challenge", topic: { kind: "general" }, label: "我不认同。" } },
+    });
+    const graph = JSON.parse(prompt.split("# 服务端场景骨架\n")[1]!.split("\n")[0]!);
+    expect(graph.graphStatus).toBe("pending_world_delta");
+    expect(graph).not.toHaveProperty("terminal");
+    expect(graph).not.toHaveProperty("decisionPoint");
+    expect(graph.dynamicIds.location).toBe(`loc_dyn_${story.evolution.nextLocationOrdinal}`);
+    expect(prompt).toContain('"dialogueAct":"challenge"');
+    expect(prompt).toContain("我不认同。");
+  });
+
+  it("普通开局明确分工且不强制新地点路线", () => {
+    const prompt = buildPlanningPrompt({ kind: "opening", input: { gameType: "wuxia", gameLength: "short", seed: "scope" },
+      generation: { generationId: asGenerationId("gen_scope"), seed: "scope", templateVersion: "v2", inputDigest: "", gameType: "wuxia" } });
+    expect(prompt).toContain("target/deferredLocation 都为 null");
+    expect(prompt).toContain("三个表达器只负责表达");
+    expect(prompt).not.toContain("开局普通选项必须各带一个不同的 deferredLocation");
+  });
+
   it("opening 规划保留玩家设定风格：profile、性格标签与故事开端不丢失", () => {
     const prompt = buildPlanningPrompt({
       kind: "opening",
@@ -254,6 +296,13 @@ describe("buildPlanningPrompt 契约完整性", () => {
       job: makeStagedJob(),
     });
   }
+
+  it("开局和续接观察均使用权威玩家实体 player_0", () => {
+    for (const prompt of [openingPrompt(), decisionPrompt()]) {
+      expect(prompt).toContain('玩家必须写 "player_0"');
+      expect(prompt).not.toContain('玩家写 "player"');
+    }
+  });
 
   it("渲染 PlanProposal 顶层 8 键与全部子结构段", () => {
     const prompt = decisionPrompt();
@@ -451,6 +500,18 @@ describe("buildPlanningPrompt 契约完整性", () => {
 });
 
 describe("buildNarrationPrompt", () => {
+  it("旁白明确单段单节拍、全量覆盖及局部事实归属", () => {
+    const prompt = buildNarrationPrompt(contextFor(approvedPlan(), FIXTURE_NARRATION_UNIT), {
+      attempt: 1, reason: "invalid_schema", rejectionCode: "unit_output_beat_ambiguous",
+    });
+    expect(prompt).toContain("每个 part 最多一个 beatId");
+    expect(prompt).toContain("必须覆盖全部必选节拍");
+    expect(prompt).toContain("按语义拆成不同 part");
+    expect(prompt).toContain("不可复制同一段正文");
+    expect(prompt).toContain("不扩大知识范围");
+    expect(prompt).toContain("unit_output_beat_ambiguous");
+  });
+
   it("旁白 prompt 是玩家视角：可见事实进入，无 NPC 台词输出字段", () => {
     const plan = approvedPlan();
     const prompt = buildNarrationPrompt(contextFor(plan, FIXTURE_NARRATION_UNIT));
@@ -637,6 +698,28 @@ describe("buildChoicePrompt", () => {
     expect(prompt).toContain("只返回玩家直接说出的对白");
     expect(prompt).toContain("cand_route");
     expect(prompt).toContain("cand_alt");
-    expect(prompt).toContain("我想去loc_1看看。");
+    expect(prompt).toContain("讨论目标：");
+    expect(prompt).not.toContain("我想去loc_1看看。");
+  });
+  it("规划自由文本夹带未引用的秘密也不进入任何表达 prompt", () => {
+    const base = approvedPlan();
+    const secret = "UNREFERENCED_PRIVATE_PLOT";
+    if (base.choiceExpression?.kind !== "ordinary") throw new Error("ordinary fixture required");
+    const [left, right] = base.choiceExpression.options;
+    const plan: ApprovedPlan = { ...base,
+      units: base.units.map(unit => ({ ...unit, requiredBeats: [{
+        beatId: "atmosphere", kind: "atmosphere", factIds: [], evidence: [], instruction: secret,
+      }] })),
+      choiceExpression: { ...base.choiceExpression, options: [
+        { ...left, publicIntent: { text: secret, facts: [], evidence: [], beatIds: [] } },
+        { ...right, publicIntent: { text: secret, facts: [], evidence: [], beatIds: [] } },
+      ] },
+    };
+    for (const unit of plan.units) {
+      const context = contextFor(plan, unit.key);
+      const prompt = unit.stage === "choices" ? buildChoicePrompt(context)
+        : unit.stage === "character" ? buildCharacterPrompt(context) : buildNarrationPrompt(context);
+      expect(prompt).not.toContain(secret);
+    }
   });
 });

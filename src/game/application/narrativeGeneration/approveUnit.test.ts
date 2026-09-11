@@ -46,10 +46,72 @@ function context(overrides: Partial<SafeContext> & Pick<SafeContext, "unit">): S
 }
 
 describe("approveUnit", () => {
+  it("任务主题及先求证条件不得仅在输入出现、在输出里丢失", () => {
+    const u = unit({ key: "n1", stage: "narration", task: { intent: "describe",
+      focusFactIds: ["fact_0"], prerequisiteFactIds: [] } });
+    const ctx = context({ unit: u, visibleFacts: [{ id: "fact_0", text: "渡口有灯火", certainty: "known", sources: [] }] });
+    const output: UnitOutput = { stage: "narration", parts: [part("夜色渐深。")], actionKeys: [] };
+    expect(approveUnit({ unit: u, context: ctx, output })).toEqual({ ok: false, code: "unit_output_task_missing" });
+    expect(approveUnit({ unit: u, context: ctx, output: { ...output, parts: [
+      part("渡口的灯火仍亮着。", { facts: [{ factId: "fact_0", certainty: "known" }] }),
+    ] } }).ok).toBe(true);
+  });
+
   it("旁白输出通过", () => {
     const u = unit({ key: "n1", stage: "narration" });
     const output: UnitOutput = { stage: "narration", parts: [part("风从门缝里挤进来。")], actionKeys: [] };
     expect(approveUnit({ unit: u, context: context({ unit: u }), output })).toEqual({ ok: true, value: output });
+  });
+
+  it("旁白同一段不能归属多个已知节拍，拆段后保留全部覆盖", () => {
+    const beats: SafeBeat[] = ["quest_progress_0", "quest_advanced_1"].map(beatId => ({
+      beatId, kind: "atmosphere", factIds: [], evidence: [], instruction: "承接现场",
+    }));
+    const u = unit({ key: "n1", stage: "narration", requiredBeats: beats });
+    const ctx = context({ unit: u, requiredBeats: beats });
+    expect(approveUnit({ unit: u, context: ctx, output: {
+      stage: "narration", actionKeys: [],
+      parts: [part("线索与进展。", { beatIds: beats.map(beat => beat.beatId) })],
+    } })).toEqual({ ok: false, code: "unit_output_beat_ambiguous" });
+    const parts = [part("风声渐起。"), ...beats.map((beat, index) =>
+      part(index === 0 ? "线索已经清楚。" : "眼前有了新的方向。", { beatIds: [beat.beatId] }))];
+    expect(approveUnit({ unit: u, context: ctx, output: {
+      stage: "narration", actionKeys: [], parts,
+    } }).ok).toBe(true);
+    expect(approveUnit({ unit: u, context: ctx, output: {
+      stage: "narration", actionKeys: [], parts: parts.slice(0, 2),
+    } })).toEqual({ ok: false, code: "unit_output_beat_missing" });
+  });
+
+  it("NPC 单段回答多个节拍仍然有效，不套用旁白段落契约", () => {
+    const beats: SafeBeat[] = ["beat_a", "beat_b"].map(beatId => ({
+      beatId, kind: "atmosphere", factIds: [], evidence: [], instruction: "回应",
+    }));
+    const u = unit({ key: "c1", stage: "character", speakerId: "npc_0", requiredBeats: beats });
+    expect(approveUnit({ unit: u, context: context({ unit: u, requiredBeats: beats }), output: {
+      stage: "character", speakerId: "npc_0", emotion: "neutral", actions: [],
+      answeredBeatIds: beats.map(beat => beat.beatId),
+      parts: [part("这两件事我都听说了。", { beatIds: beats.map(beat => beat.beatId) })],
+    } }).ok).toBe(true);
+  });
+
+  it("当前旁白每节拍只能形成一个连续段，氛围只在最后一个旁白单元末尾", () => {
+    const beats: SafeBeat[] = ["a", "b"].map(beatId => ({
+      beatId, kind: "quest_progress", factIds: [], evidence: [], instruction: "承接进展",
+    }));
+    const u = unit({ key: "n1", stage: "narration", requiredBeats: beats });
+    const a = part("前事。", { beatIds: ["a"] });
+    const b = part("后事。", { beatIds: ["b"] });
+    const atmosphere = part("夜深了。");
+    const check = (parts: TextPart[], allowAtmosphere = true) => approveUnit({
+      unit: u, context: context({ unit: u, requiredBeats: beats, narrationLayout: { allowAtmosphere } }),
+      output: { stage: "narration", parts, actionKeys: [] },
+    });
+    expect(check([a, b, a])).toMatchObject({ ok: false, code: "unit_output_beat_layout" });
+    expect(check([atmosphere, a, b])).toMatchObject({ ok: false, code: "unit_output_beat_layout" });
+    expect(check([a, b, atmosphere], false)).toMatchObject({ ok: false, code: "unit_output_beat_layout" });
+    expect(check([a, a, b, atmosphere, atmosphere]).ok).toBe(true);
+    expect(check([a, a, b], false).ok).toBe(true);
   });
 
   it("stage 不匹配拒绝", () => {
@@ -107,6 +169,17 @@ describe("approveUnit", () => {
       output,
     });
     expect(okResult.ok).toBe(true);
+    expect(approveUnit({ unit: u, context: context({ unit: u, allowedActions: [action] }),
+      output: { ...output, actions: [{ ...action, objectId: "secret_entity" }] },
+    })).toEqual({ ok: false, code: "unit_output_action_unapproved" });
+  });
+
+  it("不能遗漏全部必需节拍却通过审批", () => {
+    const u = unit({ key: "n1", stage: "narration" });
+    const beat: SafeBeat = { beatId: "required", kind: "atmosphere", factIds: [], evidence: [], instruction: "描写现场" };
+    expect(approveUnit({ unit: u, context: context({ unit: u, requiredBeats: [beat] }),
+      output: { stage: "narration", parts: [part("风吹过。")], actionKeys: [] },
+    })).toEqual({ ok: false, code: "unit_output_beat_missing" });
   });
 
   it("fact 引用不在可见事实中拒绝", () => {

@@ -18,7 +18,7 @@
 import { asEventId, asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import { asGameId } from "@/game/application/server/persistence/gameRepository";
-import { asGenerationId, asLocationId, asNpcId, type GenerationMetadata } from "@/game/domain/worldEntity";
+import { asGenerationId, asLocationId, asNpcId, asQuestId, type GenerationMetadata } from "@/game/domain/worldEntity";
 import {
   makeStagedPlan,
   makeOpeningStagedPlan,
@@ -68,7 +68,12 @@ function harnessWorld(): WorldState {
     items: [],
     inventory: [],
     worldFacts: [],
-    quests: [],
+    quests: [{
+      id: asQuestId("quest_harness"), name: "渡口疑云", description: "查清去向",
+      objectives: [{ kind: "talk_to_npc", npcId: asNpcId("npc_0") }],
+      onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
+      tags: [], kind: "main", stage: 1, status: "active",
+    }],
     enemies: [],
     defeatedEnemyIds: [],
     factions: [],
@@ -79,7 +84,7 @@ function harnessWorld(): WorldState {
 function harnessStory(): StoryState {
   return createInitialStoryState({
     gameLength: "short",
-    initialEntityCounts: { locations: 3, npcs: 2, quests: 0, events: 0 },
+    initialEntityCounts: { locations: 3, npcs: 2, quests: 1, events: 0 },
     initialNarrative: createFixtureNarrativeRuntimeState(),
   });
 }
@@ -423,7 +428,7 @@ export function createStagedHarness() {
           domainEventIds: [asEventId("turn-1:event-1")],
           focusNpcId: asNpcId("npc_0"),
           requestedAt: clock.now(),
-          objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
+          objectiveTransition: { before: null, completed: [], after: { questId: asQuestId("quest_harness"), objectiveIndex: 0, label: "对话" }, mode: "unchanged" },
           mandatoryBeats: [],
           generationKind: "npc_fixed_choice",
           sceneRequestKind: "npc_response",

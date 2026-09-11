@@ -23,6 +23,7 @@ import {
   type EntityMutation,
 } from "@/game/gameplay/rpg/entityWorld";
 import { knowledgeWritesFromFactChange } from "@/game/gameplay/rpg/npcMemory";
+import { buildNpcSpeechAuthority } from "../npcSpeechAuthority";
 import type { NpcEntityRecord } from "@/game/domain/entity";
 
 /** scene 条件证据条目（与 domain 的 conditionalEvidence 同形，避免反向依赖）。 */
@@ -78,10 +79,40 @@ export function realizeObservations(input: RealizeObservationsInput): RealizeObs
   const drafts: NarrativeEventDraft[] = [];
   const mutations: EntityMutation[] = [];
 
+  const learned = new Map<string, "known" | "suspected">();
+  const seen = new Set<string>();
   for (const entry of conditionalEvidence) {
     const observation = byKey.get(entry.observationKey);
     if (observation === undefined) return { ok: false, code: "observation_source_missing" };
     const eventKey = draftEventKey(stepId, entry.observationKey, entry.audienceId);
+    if (seen.has(eventKey)) continue;
+    seen.add(eventKey);
+    if (!worldState.worldFacts.some(fact => String(fact.factId) === observation.factId)) return { ok: false, code: "observation_fact_unknown" };
+    const audienceLocation = entry.audienceId === String(PLAYER_ENTITY_ID) ? worldState.currentLocationId
+      : worldState.npcs.find(npc => String(npc.id) === entry.audienceId)?.locationId;
+    if (audienceLocation === undefined || audienceLocation !== input.locationId) return { ok: false, code: "observation_audience_absent" };
+    if (observation.source.kind === "speech" && !worldState.npcs.some(npc =>
+      String(npc.id) === (observation.source.kind === "speech" ? observation.source.speakerId : "") && npc.locationId === input.locationId)) return { ok: false, code: "observation_speaker_absent" };
+    if (observation.source.kind === "speech") {
+      const speakerId = observation.source.speakerId;
+      const speaker = worldState.entityStore.records.find((record): record is NpcEntityRecord =>
+        record.core.kind === "npc" && String(record.core.id) === speakerId);
+      const knowledge = speaker?.knowledge.entries.find(entry => String(entry.factId) === observation.factId);
+      const earlier = learned.get(`${speakerId}:${observation.factId}`);
+      if (knowledge !== undefined) {
+        const authority = buildNpcSpeechAuthority({ store: worldState.entityStore,
+          speakerNpcId: asNpcId(speakerId), sceneVisibleFactIds: [asFactId(observation.factId)],
+          eventLedger: worldState.eventLedger });
+        if (!authority?.allowedFactIds.some(id => String(id) === observation.factId)
+          || (observation.certainty === "known" && knowledge.certainty !== "known")) {
+          return { ok: false, code: "observation_speech_authority_changed" };
+        }
+      } else if (earlier === undefined || (observation.certainty === "known" && earlier !== "known")) {
+        return { ok: false, code: "observation_speech_authority_changed" };
+      }
+    }
+    const learnedKey = `${entry.audienceId}:${observation.factId}`;
+    if (learned.get(learnedKey) !== "known") learned.set(learnedKey, observation.certainty);
     const eventId = eventIdFor(input.turnId, eventKey);
     const isPlayerAudience = entry.audienceId === String(PLAYER_ENTITY_ID);
 

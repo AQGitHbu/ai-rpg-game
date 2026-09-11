@@ -1,10 +1,12 @@
 import type { StepDependency } from "@/game/domain/narrativePlan";
 import type { Observation, ScenePoint } from "@/game/domain/narrativeObservation";
-import { fail } from "@/game/domain/narrativeUnit";
+import { fail, type UnitOutput } from "@/game/domain/narrativeUnit";
 import type { WorldState } from "@/game/domain/worldState";
-import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
+import { PLAYER_ENTITY_ID, locationScaleOf } from "@/game/domain/worldEntity";
 import type { StoryState } from "@/game/domain/storyState";
 import type { ApprovedPlan } from "./approvePlan";
+import { applyEntityMutations, type EntityMutation } from "@/game/gameplay/rpg/entityWorld";
+import { isTravelTarget } from "@/game/domain/worldState";
 
 // ---------------------------------------------------------------------------
 // 场景条件快照与步骤依赖复核。
@@ -16,6 +18,8 @@ export type SceneSnapshot = {
   readonly world: WorldState;
   readonly story: StoryState;
   readonly observations: readonly Observation[];
+  /** 已批准上游实际披露的条件认知，绝不伪造成已提交 knowledge/EventId。 */
+  readonly learned: readonly Observation[];
 };
 
 export type SceneSnapshotResult =
@@ -29,6 +33,7 @@ const samePoint = (a: ScenePoint, b: ScenePoint): boolean =>
 export function sceneSnapshot(input: {
   readonly plan: ApprovedPlan;
   readonly point: ScenePoint;
+  readonly approved?: ReadonlyMap<string, UnitOutput>;
 }): SceneSnapshotResult {
   const { plan, point } = input;
   const observations = plan.proposal.observations.filter((o) => samePoint(o.point, point));
@@ -37,12 +42,99 @@ export function sceneSnapshot(input: {
   if (observations.length === 0 && !hasUnits && !hasActions) {
     return fail("unknown_point");
   }
+  // 只沿该节点的唯一祖先路径预览；多父节点的结果不能盲目取并集。
+  const path: string[] = [];
+  const seen = new Set<string>();
+  let key = point.stepKey;
+  while (key !== "current") {
+    if (seen.has(key)) return fail("snapshot_step_cycle");
+    seen.add(key);
+    const step = plan.proposal.steps.find(step => step.key === key);
+    if (step === undefined) return fail("snapshot_step_unknown");
+    path.unshift(key);
+    const parents = plan.proposal.steps.filter(step => step.next.includes(key));
+    if (parents.length > 1) return fail("snapshot_path_ambiguous");
+    key = parents[0]?.key ?? "current";
+  }
+  let world = plan.world;
+  for (const stepKey of path) {
+    const trigger = plan.proposal.steps.find(step => step.key === stepKey)!.trigger;
+    let mutation: EntityMutation | null = null;
+    switch (trigger.kind) {
+      case "move":
+        if (!isTravelTarget(world, trigger.locationId)) return fail("snapshot_move_unreachable");
+        mutation = { kind: "move_player", toLocationId: trigger.locationId, markVisited: true }; break;
+      case "take_item":
+        if (!world.locations.find(location => location.id === world.currentLocationId)?.availableItemIds.includes(trigger.itemId)) return fail("snapshot_item_unavailable");
+        mutation = { kind: "transfer_item", itemId: trigger.itemId, owner: { kind: "player", playerId: PLAYER_ENTITY_ID } }; break;
+      case "give_item":
+        if (!world.inventory.includes(trigger.itemId) || !world.npcs.some(npc => npc.id === trigger.npcId && npc.locationId === world.currentLocationId)) return fail("snapshot_give_unavailable");
+        mutation = { kind: "transfer_item", itemId: trigger.itemId, owner: { kind: "npc", npcId: trigger.npcId } }; break;
+      case "battle_resolved": mutation = { kind: "set_enemy_defeated", enemyId: trigger.enemyId, defeated: true }; break;
+      // 只预览 trigger 能保证的事实，不预测战斗 HP/伤害或调查产生的未知信息。
+      case "investigate": {
+        const fact = world.worldFacts.find(fact => fact.factId === trigger.factId);
+        if (fact === undefined || (fact.locationId !== undefined && fact.locationId !== world.currentLocationId)) return fail("snapshot_fact_unavailable");
+        if (trigger.approachId !== undefined && !fact.investigationApproaches?.some(approach => approach.approachId === trigger.approachId)) return fail("snapshot_approach_unknown");
+        mutation = { kind: "discover_fact", factId: trigger.factId }; break;
+      }
+      case "explore":
+        if (trigger.locationId !== world.currentLocationId) return fail("snapshot_explore_location");
+        break;
+      case "battle_started": break;
+    }
+    if (mutation !== null) {
+      const applied = applyEntityMutations(world, [mutation]);
+      if (!applied.ok) return fail("snapshot_trigger_invalid");
+      world = applied.worldState;
+    }
+    // 正式规则在动作边界确认连续 discover_fact 目标。描述图已把这些零动作
+    // 目标折入对应步骤；只预览本路径、本步骤的事实，不能把整包事实提前公开。
+    const descriptor = plan.ruleSceneGraph?.steps.find(step => step.stepKey === stepKey);
+    const quest = world.quests.find(quest => quest.id === descriptor?.authority.questId);
+    const location = world.locations.find(location => location.id === world.currentLocationId);
+    const canDiscover = location === undefined || locationScaleOf(location) !== "town"
+      || trigger.kind === "explore" || trigger.kind === "take_item";
+    if (descriptor !== undefined && quest !== undefined && canDiscover) {
+      for (const index of descriptor.absorbedObjectiveIndexes) {
+        const objective = quest.objectives[index];
+        if (objective?.kind !== "discover_fact") continue;
+        const fact = world.worldFacts.find(fact => fact.factId === objective.factId);
+        // 与实际自动确认一致：遇到异地/缺失事实即停止，不跳过它揭示后续事实。
+        if (fact === undefined || (fact.locationId !== undefined && fact.locationId !== world.currentLocationId)) break;
+        if (fact.discovered) continue;
+        const discovered = applyEntityMutations(world, [{ kind: "discover_fact", factId: objective.factId }]);
+        if (!discovered.ok) return fail("snapshot_trigger_invalid");
+        world = discovered.worldState;
+      }
+    }
+  }
+  const ranks = new Map(["current", ...path].map((step, index) => [step, index]));
+  const rank = ranks.get(point.stepKey)!;
+  const learned = plan.proposal.observations.flatMap(observation => {
+    const priorRank = ranks.get(observation.point.stepKey);
+    if (priorRank === undefined || priorRank > rank
+      || (priorRank === rank && observation.point.order >= point.order)) return [];
+    const disclosed = plan.units.flatMap(unit => {
+      if (unit.point.stepKey !== observation.point.stepKey || unit.point.order > (priorRank === rank ? point.order - 1 : Infinity)
+        || !unit.requiredObservationKeys.includes(observation.key)) return [];
+      if (observation.source.kind === "speech" ? unit.speakerId !== observation.source.speakerId : unit.stage !== "narration") return [];
+      const output = input.approved?.get(unit.key);
+      return output !== undefined && output.stage !== "choices" ? output.parts.flatMap(part =>
+        part.facts.filter(fact => fact.factId === observation.fact.factId)) : [];
+    });
+    if (disclosed.length === 0) return [];
+    const certainty = observation.fact.certainty === "suspected" || disclosed.some(fact => fact.certainty === "suspected")
+      ? "suspected" as const : "known" as const;
+    return [{ ...observation, fact: { ...observation.fact, certainty } }];
+  });
   return {
     ok: true,
     value: {
-      world: plan.world,
+      world,
       story: plan.story,
       observations,
+      learned,
     },
   };
 }
@@ -52,9 +144,9 @@ export type StepDependencyCheckResult =
   | { readonly ok: false; readonly code: string };
 
 /**
- * 观察回执凭据格式：`audienceId:observationKey`。由任务执行层（decisionJob
- * 的 observationReceiptsOf）在装配审批前铸造：计划获批即其全部声明观察获批，
- * 无逐条观察审批。持有回执才能通过 observation 依赖的 fail-closed 检查。
+ * 离线依赖检查的观察键格式：`audienceId:observationKey`。
+ * 计划声明不构成回执。生产发布重放实际表达审批；消费时以 bundle premises
+ * 绑定的 ledger 序号下界、受众、事实与 certainty 验证真实观察。
  */
 export function observationReceiptKey(audienceId: string, observationKey: string): string {
   return `${audienceId}:${observationKey}`;

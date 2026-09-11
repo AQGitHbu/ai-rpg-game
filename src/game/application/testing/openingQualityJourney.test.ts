@@ -364,8 +364,8 @@ describe("opening quality create → ack → choice → decision context", () =>
     expect(planningPrompt).toContain("# 本回合上下文");
     expect(planningPrompt).toContain("- 行动：talk");
     expect(planningPrompt).toContain("# 必选节拍");
-    // 开局交接的公开事实进入「公开事实」分区（可按 fact id 与文本引用）。
-    expect(planningPrompt).toContain("# 公开事实（可进入可见文本）");
+    // 开局交接事实可供规划引用，但不代表每个 NPC 都知道。
+    expect(planningPrompt).toContain("# 玩家侧/非秘密事实（不代表所有 NPC 都知道；每个角色仍只能使用自己的可知与可披露事实）");
     expect(planningPrompt).toContain("主角过去曾与船厂技师共同维修引擎");
     expect(planningPrompt).toContain("老旧引擎必须立刻停机检查");
     // 私密事实只允许出现在「私密事实」分区，不得混入公开分区。

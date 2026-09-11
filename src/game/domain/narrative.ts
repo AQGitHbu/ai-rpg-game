@@ -6,7 +6,7 @@ import {
   PROVIDER_GENERATION_KINDS,
   type PendingNarrativeJob,
 } from "./pendingNarrativeJob";
-import { createApprovedChoice, type ApprovedChoice } from "./approvedChoice";
+import { createApprovedChoice, isApprovedChoiceBranch, type ApprovedChoice } from "./approvedChoice";
 import { composeDirectNpcGreeting, normalizeNpcSpeech } from "./npcSpeech";
 import {
   isSafeNarrativeGenerationRepairReason,
@@ -330,8 +330,9 @@ function isBattleCheckpoint(value: unknown): value is BattleNarrativeCheckpointS
 
 function isApprovedChoice(value: unknown): value is ApprovedChoice {
   if (!isRecord(value) || !hasOnlyKeys(value, [
-    "choiceToken", "sceneId", "basedOnRevision", "label", "action", "semanticSummary",
+    "choiceToken", "sceneId", "basedOnRevision", "label", "action", "semanticSummary", "branch",
   ])) return false;
+  if (value.branch !== undefined && !isApprovedChoiceBranch(value.branch)) return false;
   if (!isNonEmptyString(value.choiceToken)
     || !isNonEmptyString(value.sceneId)
     || !Number.isInteger(value.basedOnRevision)
@@ -346,6 +347,7 @@ function isApprovedChoice(value: unknown): value is ApprovedChoice {
       basedOnRevision: value.basedOnRevision as number,
       label: value.label,
       action: value.action as ApprovedChoice["action"],
+      ...(value.branch === undefined ? {} : { branch: value.branch }),
     });
     return rebuilt.ok
       && rebuilt.choice.choiceToken === value.choiceToken

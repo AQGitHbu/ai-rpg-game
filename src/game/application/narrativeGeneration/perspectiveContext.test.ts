@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { projectUnitContext } from "./perspectiveContext";
-import { approvePlan } from "@/game/gameplay/rpg/narrativePlanning";
+import { approvePlan, approvePlanDecision } from "@/game/gameplay/rpg/narrativePlanning";
 import { branchWorld, branchStory } from "@/game/gameplay/rpg/narrativePlanning/branchFixture.testutil";
 import {
   makeStagedPlan,
@@ -117,6 +117,13 @@ function withTamperedAnchors(world: WorldState): WorldState {
 }
 
 function approvedPlanOf(world: WorldState, proposal: PlanProposal = makeStagedPlan()) {
+  if (proposal.decision?.kind === "ordinary") {
+    const options = proposal.decision.options;
+    proposal = { ...proposal, decision: { ...proposal.decision, options: [
+      { ...options[0], target: { kind: "visit_location", locationId: "loc_b" } },
+      { ...options[1], target: { kind: "visit_location", locationId: "loc_c" } },
+    ] } };
+  }
   const result = approvePlan({ kind: "decision", proposal, world, story: branchStory() });
   if (!result.ok) throw new Error(`fixture plan rejected: ${result.code}`);
   return result.value;
@@ -138,6 +145,82 @@ function contextOf(plan: ReturnType<typeof approvedPlanOf>, key: string) {
 }
 
 describe("projectUnitContext", () => {
+  it("具体意图与先求证条件保真：合法事实不许可任意规划正文", () => {
+    const base = makeStagedPlan();
+    if (base.decision?.kind !== "ordinary") throw Error("decision");
+    const proposal: PlanProposal = { ...base,
+      units: base.units.map(unit => unit.stage === "narration" ? { ...unit,
+        task: { intent: "describe", focusFactIds: [FACT_PUB], prerequisiteFactIds: [] } } : unit),
+      decision: { ...base.decision, options: [
+        { ...base.decision.options[0], dialogueAct: "offer", publicIntent: { text: SENTINEL, facts: [], evidence: [], beatIds: [] },
+          task: { intent: "offer", focusFactIds: [FACT_PUB], prerequisiteFactIds: [FACT_PUB] } },
+        { ...base.decision.options[1], dialogueAct: "refuse",
+          task: { intent: "refuse", focusFactIds: [FACT_PUB], prerequisiteFactIds: [] } },
+      ] } };
+    const plan = approvedPlanOf(personaWorld(), proposal);
+    const narration = contextOf(plan, FIXTURE_NARRATION_UNIT);
+    expect(narration.ok && narration.value.taskInstruction).toContain("渡口");
+    const choices = contextOf(plan, FIXTURE_CHOICE_UNIT);
+    if (!choices.ok) throw Error(choices.code);
+    expect(choices.value.options[0]!.publicIntent.text).toContain("先要求对方核实");
+    expect(choices.value.options[1]!.publicIntent.text).toContain("明确拒绝");
+    expect(JSON.stringify(choices)).not.toContain(SENTINEL);
+  });
+
+  it("旁白与角色都不能拿到未来步骤或尚未发生的表演动作", () => {
+    const base = makeStagedPlan();
+    const proposal: PlanProposal = { ...base, actions: [
+      { key: "future_scene", actorId: FIXTURE_NPC_A, point: { stepKey: "elsewhere", order: 0 },
+        kind: "look", objectId: null, audienceIds: ["player_0"] },
+      { key: "future_order", actorId: FIXTURE_NPC_A, point: { stepKey: "current", order: 99 },
+        kind: "look", objectId: null, audienceIds: ["player_0"] },
+    ] };
+    const plan = approvedPlanOf(personaWorld(), proposal);
+    for (const key of [FIXTURE_NARRATION_UNIT, FIXTURE_NPC_A_UNIT]) {
+      const result = contextOf(plan, key);
+      expect(result.ok && result.value.allowedActions).toEqual([]);
+    }
+  });
+
+  it("先求证条件也不能携带秘密，不能静默删条件冒充原意图", () => {
+    const base = makeStagedPlan();
+    const plan = approvedPlanOf(personaWorld(), { ...base, units: base.units.map(unit =>
+      unit.stage === "narration" ? { ...unit, task: { intent: "describe", focusFactIds: [FACT_PUB],
+        prerequisiteFactIds: [FACT_SECRET] } } : unit) });
+    expect(contextOf(plan, FIXTURE_NARRATION_UNIT)).toMatchObject({ ok: false, code: "beat_authority_conflict" });
+  });
+
+  it("规划意图和节拍即使不标注秘密引用，也不能把正文传给表达器", () => {
+    const base = makeStagedPlan();
+    const proposal: PlanProposal = {
+      ...base,
+      decision: base.decision?.kind === "ordinary" ? {
+        ...base.decision,
+        options: [
+          { ...base.decision.options[0], publicIntent: { text: SENTINEL, facts: [], evidence: [], beatIds: [] } },
+          { ...base.decision.options[1], publicIntent: { text: SENTINEL, facts: [], evidence: [], beatIds: [] } },
+        ],
+      } : base.decision,
+      units: base.units.map(unit => ({ ...unit, requiredBeats: [{
+        beatId: "safe_beat", kind: "atmosphere", factIds: [], evidence: [], instruction: SENTINEL,
+      }] })),
+    };
+    const plan = approvedPlanOf(personaWorld(), proposal);
+    for (const unit of plan.units) {
+      const result = contextOf(plan, unit.key);
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(JSON.stringify(result.value)).not.toContain(SENTINEL);
+    }
+  });
+
+  it("非 legacy 人格锚点也不是公开事实证明", () => {
+    const world = personaWorld();
+    const record = world.entityStore.records.find(r => r.core.kind === "npc") as NpcEntityRecord;
+    Object.assign(record.identity.anchors, { selfConcept: SENTINEL, speechStyle: SENTINEL });
+    const result = contextOf(approvedPlanOf(world), FIXTURE_NPC_A_UNIT);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(JSON.stringify(result.value)).not.toContain(SENTINEL);
+  });
   it("角色上下文不含秘密：知识、描述、目标、锚点与任务名中的 sentinel 全部不可见", () => {
     const plan = approvedPlanOf(withTamperedAnchors(personaWorld()));
     const result = contextOf(plan, FIXTURE_NPC_A_UNIT);
@@ -199,6 +282,31 @@ describe("projectUnitContext", () => {
     expect(JSON.stringify(result.value)).not.toContain("先坐吧，路上不好走。");
   });
 
+  it("新增 DAG 依赖不能把玩家私聊原文授权给其他 NPC", () => {
+    const base = makeStagedPlan();
+    const plan = approvedPlanOf(personaWorld(), { ...base, units: base.units.map(unit =>
+      unit.key === FIXTURE_NPC_B_UNIT ? { ...unit, dependencies: [FIXTURE_NPC_A_UNIT] } : unit) });
+    const output = makeCharacterOutput(FIXTURE_NPC_A);
+    const approved = new Map<string, UnitOutput>([[FIXTURE_NARRATION_UNIT, makeNarrationOutput()], [FIXTURE_NPC_A_UNIT, {
+      ...output, parts: [{ text: SENTINEL, facts: [], evidence: [], beatIds: [] }],
+    }]]);
+    const unit = plan.units.find(unit => unit.key === FIXTURE_NPC_B_UNIT)!;
+    const result = projectUnitContext({ plan, unit, approved });
+    expect(result.ok).toBe(true);
+    expect(JSON.stringify(result)).not.toContain(SENTINEL);
+  });
+
+  it("候选经过规范化后任务仍须与最终对白意图一致", () => {
+    const base = approvedPlanOf(personaWorld());
+    if (base.choiceExpression?.kind !== "ordinary") throw Error("ordinary");
+    const [left, right] = base.choiceExpression.options;
+    const plan = { ...base, choiceExpression: { ...base.choiceExpression, options: [
+      { ...left, dialogueAct: "support" as const, task: { intent: "refuse" as const, focusFactIds: [], prerequisiteFactIds: [] } }, right,
+    ] as const } };
+    expect(approvePlanDecision(plan)).toMatchObject({ ok: false, code: "plan_task_intent_mismatch" });
+    expect(contextOf(plan, FIXTURE_CHOICE_UNIT)).toMatchObject({ ok: false, code: "plan_task_intent_mismatch" });
+  });
+
   it("终幕表达投影 ending 候选，不需要 RouteTarget", () => {
     const proposal: PlanProposal = {
       ...makeStagedPlan(),
@@ -244,7 +352,8 @@ describe("projectUnitContext", () => {
       { key: "character_npc_9", stage: "character", point: { stepKey: "current", order: 2 }, speakerId: "npc_9", dependencies: [], taskFactIds: [], requiredObservationKeys: [], requiredBeats: [] },
       { key: FIXTURE_CHOICE_UNIT, stage: "choices", point: { stepKey: "current", order: 3 }, speakerId: null, dependencies: [FIXTURE_NARRATION_UNIT, "character_npc_9"], taskFactIds: [], requiredObservationKeys: [], requiredBeats: [] },
     ];
-    const proposal: PlanProposal = { ...makeStagedPlan(), units };
+    const proposal: PlanProposal = { ...makeStagedPlan(), units,
+      decision: { ...makeStagedPlan().decision!, point: { stepKey: "current", order: 3 } } };
     const plan = approvedPlanOf(world, proposal);
     const ghostUnit = plan.units.find((candidate) => candidate.key === "character_npc_9");
     if (ghostUnit === undefined) throw new Error("fixture missing ghost unit");

@@ -269,9 +269,27 @@ export function buildNarrativeBundleDescriptors(
     // land on the server-owned dialogue boundary.
     if (objective.kind === "talk_to_npc") {
       const lastDesc = descriptors[descriptors.length - 1];
+      const terminalNpc = findNpc(worldState, objective.npcId);
+      const lastMove = [...descriptors].reverse().find(step => step.trigger.kind === "move");
+      const sceneLocation = lastMove?.trigger.kind === "move" ? lastMove.trigger.locationId : worldState.currentLocationId;
+      // 对话目标不等于移动：原 NPC 留在原处时必须先实际返程，不能远程接入对白。
+      if (terminalNpc !== undefined && terminalNpc.locationId !== sceneLocation) {
+        const trigger: NarrativeBundleTrigger = { kind: "move", locationId: terminalNpc.locationId };
+        const stepKey = narrativeBundleTriggerKey(trigger);
+        const arrivalNpc = preparedNpcContext(worldState, terminalNpc);
+        descriptors.push({ stepKey, objectiveKey: objectiveKey(activeQuest.id, objectiveIndex),
+          consumptionGroupKey: groupKeyFor(activeQuest.id, objectiveIndex, "return_to_npc", branchKey),
+          trigger, absorbedObjectiveIndexes: [objectiveIndex],
+          authority: { questId: activeQuest.id, objectiveIndex,
+            allowedEntityIds: [String(terminalNpc.id), String(terminalNpc.locationId)],
+            visibleFactIds: authorizedFactIdsForArrivalNpc(arrivalNpc) },
+          arrivalNpc, choiceCandidates: choicesForNpc(arrivalNpc, stepKey), nextStepKeys: [],
+        });
+        return [stepKey];
+      }
       if (lastDesc !== undefined) {
         const idx = descriptors.length - 1;
-        const npc = findNpc(worldState, objective.npcId);
+        const npc = terminalNpc;
         const arrivalNpc = npc === undefined ? undefined : preparedNpcContext(worldState, npc);
         descriptors[idx] = {
           ...lastDesc,

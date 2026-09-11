@@ -15,6 +15,11 @@ function raw(overrides: Record<string, unknown> = {}): Record<string, unknown> {
 }
 
 describe("parseBranchOption", () => {
+  it("accepts ordinary dialogue without a route target", () => {
+    expect(parseBranchOption(raw({ target: null })).ok).toBe(true);
+    expect(parseBranchOption(raw({ target: undefined })).ok).toBe(false);
+  });
+
   it("accepts a fully typed route option", () => {
     expect(parseBranchOption(raw()).ok).toBe(true);
   });

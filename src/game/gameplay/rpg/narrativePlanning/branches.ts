@@ -84,7 +84,7 @@ export function decisionIdOf(decision: Decision): string {
     ...decision.options.map((option) => [
       option.candidateId,
       option.dialogueAct,
-      routeTargetKey(option.target),
+      option.target === null ? "dialogue" : routeTargetKey(option.target),
       option.deferredLocation === null ? "null" : option.deferredLocation.name,
     ].join(":")),
   ].join("|");
@@ -150,6 +150,7 @@ export function approveDecision(input: {
   readonly story: StoryState;
 }): Check<Decision> {
   const { decision, world } = input;
+  if (decision.options.some(option => option.target === null)) return fail("unknown_target_entity");
 
   if (decision.options[0].candidateId === decision.options[1].candidateId) {
     return fail("duplicate_candidate_id");
@@ -169,7 +170,7 @@ export function approveDecision(input: {
       rebuilt.push(option);
       continue;
     }
-    if (option.target.kind !== "visit_location") return fail("deferred_requires_visit_location");
+    if (option.target?.kind !== "visit_location") return fail("deferred_requires_visit_location");
     // 两条候选各自保留一个序号：未选分支留下空洞，但不合并计算为两个已生成地点。
     const reserved = asLocationId(`loc_dyn_${baseOrdinal + index}`);
     // 第一次审批看到 provider 的局部符号；重复审批（apply 时的 stale 检查）看到
@@ -186,11 +187,13 @@ export function approveDecision(input: {
   const options = [rebuilt[0]!, rebuilt[1]!] as const;
 
   for (const option of options) {
+    if (option.target === null) return fail("unknown_target_entity");
     if (option.deferredLocation !== null) continue;
     if (!targetEntityExists(world, option.target)) return fail("unknown_target_entity");
     if (!targetIsReachable(world, option.target)) return fail("target_unreachable");
     if (isObjectiveSatisfied(world, objectiveOfTarget(option.target))) return fail("target_already_satisfied");
   }
+  if (options[0].target === null || options[1].target === null) return fail("unknown_target_entity");
   if (sameTarget(options[0].target, options[1].target)) return fail("duplicate_target");
 
   return {
@@ -236,6 +239,7 @@ export function applyNarrativeBranch(input: {
 
   const option = approved.options.find((entry) => entry.candidateId === input.candidateId);
   if (option === undefined) return fail("unknown_candidate");
+  if (option.target === null) return fail("unknown_target_entity");
 
   const objective = currentObjectiveOf(input.world, input.story);
   if (objective === null) return fail("no_active_quest");

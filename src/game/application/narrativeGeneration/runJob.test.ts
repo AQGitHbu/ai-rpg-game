@@ -8,7 +8,159 @@
 import { describe, expect, it } from "vitest";
 import { createStagedHarness } from "@/game/application/testing/stagedNarrativeHarness.testutil";
 
+import type { UnitOutput } from "@/game/domain/narrativeUnit";
+import type { PlanProposal } from "@/game/domain/narrativePlan";
+import { approvePlanningContext } from "./approvePlanningContext";
+import { assembleBundle } from "./assembleBundle";
+import { runJob } from "./runJob";
+
+function twoBeatHarness(ambiguousAttempts = 1) {
+  const h = createStagedHarness();
+  const generate = h.source.generate.bind(h.source);
+  let narrationAttempts = 0;
+  h.source.generate = async (request, execution) => {
+    const response = await generate(request, execution);
+    if (!response.ok) return response;
+    if (response.stage === "planning") return { ...response, value: {
+      ...response.value,
+      units: response.value.units.map(unit => unit.stage === "narration"
+        ? { ...unit, point: { ...unit.point, order: 2 }, requiredBeats: ["beat_a", "beat_b"].map(beatId => ({
+          beatId, kind: "atmosphere" as const, factIds: [], evidence: [], instruction: "描写现场",
+        })) }
+        : unit.key === "character_npc_0" ? { ...unit, point: { ...unit.point, order: 3 }, dependencies: ["narration_current"] }
+          : unit.key === "character_npc_1" ? { ...unit, point: { ...unit.point, order: 1 } } : unit),
+    } };
+    if (response.stage !== "narration") return response;
+    narrationAttempts += 1;
+    return { ...response, value: { ...response.value, parts: narrationAttempts <= ambiguousAttempts
+      ? [{ text: "灯火明暗，窗外风起。", facts: [], evidence: [], beatIds: ["beat_a", "beat_b"] }]
+      : [
+        { text: "灯火明暗。", facts: [], evidence: [], beatIds: ["beat_a"] },
+        { text: "窗外风起。", facts: [], evidence: [], beatIds: ["beat_b"] },
+      ],
+    } };
+  };
+  const startDecision = h.startDecision.bind(h);
+  h.startDecision = async (...args) => {
+    await startDecision(...args);
+    const loaded = await h.readJob();
+    if (!loaded.ok) throw Error(loaded.code);
+    const started = loaded.value;
+    if (started.input.kind !== "decision") throw Error("decision fixture");
+    const saved = await h.jobs.save({ lease: h.lease(), expectedVersion: started.version,
+      job: { ...started, input: { ...started.input, job: { ...started.input.job,
+        mandatoryBeats: ["beat_a", "beat_b"].map(beatId => ({
+          beatId, kind: "atmosphere" as const, subjectIds: [], instruction: "描写现场",
+        })),
+      } } },
+    });
+    if (!saved.ok) throw Error(saved.code);
+  };
+  return h;
+}
+
 describe("runJob", () => {
+  it("多节拍旁白在单元内带反馈重试，规划不重跑且完整装配保留两个段落", async () => {
+    const h = twoBeatHarness();
+    await h.startDecision();
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const calls = h.calls.filter(call => call.stage === "narration");
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.repair?.rejectionCode).toBe("unit_output_beat_ambiguous");
+    expect(h.calls.filter(call => call.stage === "planning")).toHaveLength(1);
+    expect(h.calls.filter(call => call.stage === "character")).toHaveLength(2);
+    expect(h.calls.filter(call => call.stage === "choices")).toHaveLength(1);
+    expect(result.value.usedRequests).toBe(6);
+    const proposal = result.value.units.find(unit => unit.key === "planning")?.value as PlanProposal;
+    const plan = approvePlanningContext(result.value.input, proposal);
+    if (!plan.ok) throw new Error(plan.code);
+    const outputs = new Map<string, UnitOutput>();
+    for (const unit of result.value.units) {
+      if (unit.key !== "planning" && unit.value !== null) outputs.set(unit.key, unit.value as UnitOutput);
+    }
+    const assembled = assembleBundle({ plan: plan.value, approved: outputs });
+    expect(assembled.ok).toBe(true);
+    if (assembled.ok) expect(assembled.value.currentScene.segments).toEqual([
+      { beatId: "beat_a", text: "灯火明暗。" }, { beatId: "beat_b", text: "窗外风起。" },
+    ]);
+  });
+
+  it("持续多节拍歧义耗尽四次后显式失败，不发布半包", async () => {
+    const h = twoBeatHarness(10);
+    await h.startDecision();
+    expect(await h.run()).toEqual({ ok: false, code: "unit_output_beat_ambiguous" });
+    expect(h.calls.filter(call => call.stage === "narration")).toHaveLength(4);
+    expect(h.publications()).toHaveLength(0);
+  });
+
+  it.each(["ambiguous", "layout"])("重试旧装配失败任务：只失效违规旁白与传递依赖，保留尝试额度（%s）", async violation => {
+    const h = twoBeatHarness(0);
+    await h.startDecision();
+    const initial = await h.run();
+    if (!initial.ok) throw new Error(initial.code);
+    const saved = await h.jobs.save({
+      lease: h.lease(), expectedVersion: initial.value.version,
+      job: { ...initial.value, status: "failed", failureCode: "assemble_segment_ambiguous_beat",
+        units: initial.value.units.map(unit => unit.value !== null && "stage" in unit.value
+          && unit.value.stage === "narration" ? { ...unit, value: { ...unit.value,
+            parts: violation === "ambiguous"
+              ? [{ text: "旧版本合段。", facts: [], evidence: [], beatIds: ["beat_a", "beat_b"] }]
+              : ["beat_a", "beat_b", "beat_a"].map(beatId => ({ text: "旧重复段。", facts: [], evidence: [], beatIds: [beatId] })),
+          } } : unit),
+      },
+    });
+    expect(saved.ok).toBe(true);
+    expect((await h.retry()).ok).toBe(true);
+    const claimed = await h.jobs.claim({
+      id: h.jobId(), owner: "retry-worker", now: h.clock.now(),
+      expiresAt: new Date(Date.parse(h.clock.now()) + 30_000).toISOString(),
+    });
+    if (!claimed.ok) throw new Error(claimed.code);
+    const callsBefore = h.calls.length;
+    const result = await runJob({ id: h.jobId(), lease: claimed.value }, {
+      jobs: h.jobs, source: h.source, now: () => h.clock.now(), signal: h.controller.signal,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(h.calls.slice(callsBefore).map(call => call.stage)).toEqual(["narration", "character", "choices"]);
+    expect(result.value.usedRequests).toBe(3);
+    for (const key of ["narration_current", "character_npc_0", "choices_current"]) {
+      expect(result.value.units.find(unit => unit.key === key)?.attempts).toBe(2);
+    }
+    expect(result.value.units.find(unit => unit.key === "planning")?.value)
+      .toEqual(initial.value.units.find(unit => unit.key === "planning")?.value);
+    expect(result.value.units.find(unit => unit.key === "character_npc_1"))
+      .toEqual(initial.value.units.find(unit => unit.key === "character_npc_1"));
+  });
+
+  it("旧歧义旁白已用尽尝试时恢复不偷重置额度，也不发布旧依赖", async () => {
+    const h = twoBeatHarness(0);
+    await h.startDecision();
+    const initial = await h.run();
+    if (!initial.ok) throw new Error(initial.code);
+    expect((await h.jobs.save({
+      lease: h.lease(), expectedVersion: initial.value.version,
+      job: { ...initial.value, units: initial.value.units.map(unit =>
+        unit.value !== null && "stage" in unit.value && unit.value.stage === "narration"
+          ? { ...unit, attempts: 4, value: { ...unit.value,
+            parts: [{ text: "旧合段。", facts: [], evidence: [], beatIds: ["beat_a", "beat_b"] }],
+          } } : unit),
+      },
+    })).ok).toBe(true);
+    const callsBefore = h.calls.length;
+    expect(await h.run()).toEqual({ ok: false, code: "unit_attempts_exhausted" });
+    expect(h.calls).toHaveLength(callsBefore);
+    const stored = await h.readJob();
+    if (!stored.ok) throw new Error(stored.code);
+    expect(stored.value.usedRequests).toBe(initial.value.usedRequests);
+    expect(stored.value.units.find(unit => unit.key === "narration_current"))
+      .toMatchObject({ attempts: 4, status: "pending", value: null });
+    expect(stored.value.units.find(unit => unit.key === "choices_current")?.value).toBeNull();
+    expect(h.publications()).toHaveLength(0);
+  });
+
   it("失败单元重试：planning 一次、choices 两次、narration 一次", async () => {
     const h = createStagedHarness();
     h.source.failNext("choices");
@@ -19,6 +171,19 @@ describe("runJob", () => {
     expect(h.source.calls.filter((c) => c.stage === "choices")).toHaveLength(2);
     expect(h.source.calls.filter((c) => c.stage === "narration")).toHaveLength(1);
     expect(h.source.calls.filter((c) => c.stage === "character")).toHaveLength(2);
+    if (result.ok) expect(result.value.usedRequests).toBe(h.source.calls.length);
+  });
+
+  it("source 抛错也持久化为失败，不能留下永久 pending", async () => {
+    const h = createStagedHarness();
+    h.source.generate = async () => { throw new Error("private provider detail"); };
+    await h.startDecision();
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    const stored = await h.jobs.get(h.jobId());
+    if (!stored.ok) throw new Error("job missing");
+    expect(stored.value.status).toBe("failed");
+    expect(stored.value.failureCode).not.toContain("private");
   });
 
   it("全部单元 approved 后返回待发布 pending job", async () => {

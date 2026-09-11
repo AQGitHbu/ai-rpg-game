@@ -17,7 +17,7 @@ function worldWithFact() {
     unlockedLocationIds: [asLocationId("loc_0")],
     visitedLocationIds: [asLocationId("loc_0")],
     npcs: [
-      { id: asNpcId("npc_0"), name: "老陈", role: "知情者", description: "守渡口", locationId: asLocationId("loc_0"), isCompanion: false, tags: [], met: true, memory: { npcId: asNpcId("npc_0"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] } },
+      { id: asNpcId("npc_0"), name: "老陈", role: "知情者", description: "守渡口", locationId: asLocationId("loc_0"), isCompanion: false, tags: [], met: true, memory: { npcId: asNpcId("npc_0"), knownFactIds: [asFactId("fact_old")], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] } },
       { id: asNpcId("npc_1"), name: "哑姑", role: "向导", description: "向导", locationId: asLocationId("loc_0"), isCompanion: false, tags: [], met: true, memory: { npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] } },
     ],
     items: [],
@@ -54,6 +54,21 @@ const SPEECH_OBSERVATION: BundleStepObservation = {
 };
 
 describe("realizeObservations", () => {
+  it.each(["forgotten", "secret", "suspected"] as const)("消费拒绝来源认知已变化：%s", change => {
+    const base = worldWithFact();
+    const ws = { ...base, entityStore: { ...base.entityStore, records: base.entityStore.records.map(record =>
+      "knowledge" in record && String(record.core.id) === "npc_0"
+        ? { ...record, knowledge: { ...record.knowledge, entries: change === "forgotten" ? [] :
+          record.knowledge.entries.map(entry => ({ ...entry,
+            ...(change === "secret" ? { disclosure: "secret" as const } : { certainty: "suspected" as const }) })) } } : record) } };
+    const result = realizeObservations({ worldState: ws, stepId: "s1", observations: [SPEECH_OBSERVATION],
+      conditionalEvidence: [{ partIndex: -1, observationKey: "obs_speech", audienceId: "npc_1" }],
+      turnId: asTurnId("turn-1"), actionId: "a1", turnNumber: 1,
+      episodeKey: "turn", locationId: asLocationId("loc_0"), causeKeys: [] });
+    expect(result).toEqual({ ok: false, code: "observation_speech_authority_changed" });
+    expect(ws.eventLedger).toBe(base.eventLedger);
+  });
+
   it("无条件证据时原样返回世界状态与空草稿", () => {
     const ws = worldWithFact();
     const result = realizeObservations({
@@ -110,7 +125,7 @@ describe("realizeObservations", () => {
     const ws = worldWithFact();
     const result = realizeObservations({
       worldState: ws, stepId: "s1", observations: [OBSERVATION],
-      conditionalEvidence: [{ partIndex: 0, observationKey: "obs_old", audienceId: "player" }],
+      conditionalEvidence: [{ partIndex: 0, observationKey: "obs_old", audienceId: "player_0" }],
       turnId: asTurnId("turn-1"), actionId: "a1", turnNumber: 1,
       episodeKey: "turn", locationId: asLocationId("loc_0"), causeKeys: [],
     });

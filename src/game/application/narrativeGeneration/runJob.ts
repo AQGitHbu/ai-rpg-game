@@ -16,20 +16,22 @@ import type { PlanProposal } from "@/game/domain/narrativePlan";
 import type { Unit, UnitOutput } from "@/game/domain/narrativeUnit";
 import type { ApprovedPlan } from "@/game/gameplay/rpg/narrativePlanning";
 import {
-  approvePlan,
   readyUnits,
   collectDisclosures,
 } from "@/game/gameplay/rpg/narrativePlanning";
-import { projectUnitContext } from "./perspectiveContext";
-import { approveUnit } from "./approveUnit";
+import { projectUnitContext, narrationLayoutOf } from "./perspectiveContext";
+import { approveUnit, narrationLayoutRejection } from "./approveUnit";
 import { canStartRequest } from "./jobBudget";
+import { createAiSourceFailure, repairFromSourceFailure } from "../aiGenerationRetry";
 import type {
   Lease,
   NarrativeJobRepository,
   StoredJob,
   StoredUnit,
 } from "../server/persistence/narrativeJobRepository";
-import type { PlanningContext, StageRequest, StageSource } from "./stageSource";
+import { planningSceneContract } from "./planningSceneContract";
+import { approvePlanningContext } from "./approvePlanningContext";
+import type { StageExecution, StageRequest, StageSource } from "./stageSource";
 
 const PLANNING_UNIT_KEY = "planning";
 /** 每 job 最多同时在途的 provider 请求；批调度按此上限派发。 */
@@ -61,6 +63,8 @@ export type RunJobResult =
 export type RunJobInput = Readonly<{
   id: string;
   lease: Lease;
+  /** 当前执行作用域内的规划修复反馈，不写入游戏状态。 */
+  planningRepair?: StageExecution["repair"];
 }>;
 
 export type RunJobDeps = Readonly<{
@@ -87,33 +91,11 @@ function unitOfKey(job: StoredJob, key: string): StoredUnit | undefined {
   return job.units.find((candidate) => candidate.key === key);
 }
 
-/**
- * 按 planning context 审批计划：opening 用初始化 envelope（generation/gameLength/seed）
- * 重建结构，不读 job.input 之外的现成世界/剧情；decision 用权威状态。
- * 任一路径都不允许「拿假的 world/story 充数」。
- */
-function approvePlanningContext(
-  input: PlanningContext,
-  proposal: PlanProposal,
-): ReturnType<typeof approvePlan> {
-  if (input.kind === "opening") {
-    return approvePlan({
-      kind: "opening",
-      proposal,
-      generation: input.generation,
-      gameLength: input.input.gameLength,
-      seed: input.input.seed,
-    });
-  }
-  return approvePlan({
-    kind: "decision",
-    proposal,
-    world: input.world,
-    story: input.story,
-  });
-}
-
 export async function runJob(input: RunJobInput, deps: RunJobDeps): Promise<RunJobResult> {
+  const generate: StageSource["generate"] = async (request, execution) => {
+    try { return await deps.source.generate(request, execution); }
+    catch { return createAiSourceFailure("scene", "unavailable"); }
+  };
   const loaded = await deps.jobs.get(input.id);
   if (!loaded.ok) return loaded;
   let job = loaded.value;
@@ -197,15 +179,27 @@ export async function runJob(input: RunJobInput, deps: RunJobDeps): Promise<RunJ
   // -----------------------------------------------------------------------
 
   let approved: ApprovedPlan | null = null;
-  const planningUnit = unitOfKey(job, PLANNING_UNIT_KEY);
+  let planningUnit = unitOfKey(job, PLANNING_UNIT_KEY);
+  let cachedPlanRepair: StageExecution["repair"] = input.planningRepair;
   if (planningUnit !== undefined && planningUnit.status === "approved"
     && planningUnit.value !== null && "steps" in (planningUnit.value as object)) {
     const proposal = planningUnit.value as PlanProposal;
     const planApproval = approvePlanningContext(job.input, proposal);
-    if (!planApproval.ok) return failJob(planApproval.code);
-    approved = planApproval.value;
-  } else {
-    const charge = canStartRequest({ job, unitAttempts: 0, now: deps.now() });
+    if (!planApproval.ok) {
+      if (planApproval.code !== "plan_mandatory_beat_mismatch" && planApproval.code !== "beat_authority_conflict") return failJob(planApproval.code);
+      cachedPlanRepair = { attempt: planningUnit.attempts, reason: "invalid_schema",
+        rejectionCode: planApproval.code, detail: planApproval.detail };
+      // 旧骨架的表达不可复用。先落盘撤销，保留 attempts 与 usedRequests，
+      // 即使接下来预算耗尽，也能在显式手动重试的新周期正常恢复。
+      const invalidated = await persist(current => ({ ...current,
+        units: current.units.map(unit => ({ ...unit, status: "pending" as const, value: null })),
+      }));
+      if (invalidated !== true) return fail(invalidated);
+      planningUnit = unitOfKey(job, PLANNING_UNIT_KEY);
+    } else approved = planApproval.value;
+  }
+  if (approved === null) {
+    const charge = canStartRequest({ job, unitAttempts: planningUnit?.attempts ?? 0, now: deps.now() });
     if (!charge.ok) return failJob(charge.code);
     if (deps.signal.aborted) return fail("JOB_ABORTED");
 
@@ -222,29 +216,39 @@ export async function runJob(input: RunJobInput, deps: RunJobDeps): Promise<RunJ
     if (charged !== true) return failJob(charged);
 
     const request: StageRequest = { stage: "planning", context: job.input };
-    let response = await deps.source.generate(request, {
+    let response = await generate(request, {
       signal: deps.signal,
       timeoutMs: cappedTimeoutMs(job, PLANNING_TIMEOUT_MS, deps.now()),
+      ...(cachedPlanRepair === undefined ? {} : { repair: cachedPlanRepair }),
       audit: { purpose: "game_api", trigger: "staged_planning", jobId: job.id },
     });
-    let repairAttempt = 1;
-    while (!response.ok && repairAttempt < 4) {
-      const retryCharge = canStartRequest({ job, unitAttempts: 0, now: deps.now() });
+    let repairAttempt = (planningUnit?.attempts ?? 0) + 1;
+    let planApproval = response.ok && response.stage === "planning"
+      ? approvePlanningContext(job.input, response.value) : null;
+    while ((!response.ok || planApproval?.ok === false) && repairAttempt < 4) {
+      const retryCharge = canStartRequest({ job, unitAttempts: repairAttempt, now: deps.now() });
       if (!retryCharge.ok) return failJob(retryCharge.code);
       if (deps.signal.aborted) return fail("JOB_ABORTED");
-      await persist((current) => ({
+      const retrySaved = await persist((current) => ({
         ...current,
         usedRequests: current.usedRequests + 1,
         units: current.units.map((unit) => unit.key === PLANNING_UNIT_KEY
           ? { ...unit, attempts: unit.attempts + 1 }
           : unit),
       }));
-      response = await deps.source.generate(request, {
+      if (retrySaved !== true) return fail(retrySaved);
+      const repair = !response.ok ? repairFromSourceFailure(response, repairAttempt)
+        : { attempt: repairAttempt, reason: "invalid_schema", rejectionCode: planApproval?.ok === false ? planApproval.code : "unit_output_stage_mismatch",
+          ...(planApproval?.detail === undefined ? {} : { detail: planApproval.detail }) };
+      response = await generate(request, {
         signal: deps.signal,
         timeoutMs: cappedTimeoutMs(job, PLANNING_TIMEOUT_MS, deps.now()),
+        repair,
         audit: { purpose: "game_api", trigger: "staged_planning", jobId: job.id },
       });
       repairAttempt += 1;
+      planApproval = response.ok && response.stage === "planning"
+        ? approvePlanningContext(job.input, response.value) : null;
     }
     if (!response.ok) {
       return failJob(response.failure.kind);
@@ -252,11 +256,15 @@ export async function runJob(input: RunJobInput, deps: RunJobDeps): Promise<RunJ
     if (response.stage !== "planning") return failJob("unit_output_stage_mismatch");
 
     const proposal = response.value;
-    const planApproval = approvePlanningContext(job.input, proposal);
+    if (planApproval === null) return failJob("unit_output_stage_mismatch");
     if (!planApproval.ok) return failJob(planApproval.code);
     approved = planApproval.value;
     const savedPlan = await persist((current) =>
-      patchedUnit(current, PLANNING_UNIT_KEY, { status: "approved", value: proposal }));
+      patchedUnit({ ...current, baselineRequests: 1 + planApproval.value.units.length,
+        // 新骨架不再引用的旧表达缓存可以移除；已经消耗的 job 请求额度不变。
+        units: current.units.filter(unit => unit.key === PLANNING_UNIT_KEY
+          || planApproval.value.units.some(planned => planned.key === unit.key)),
+      }, PLANNING_UNIT_KEY, { status: "approved", value: proposal }));
     if (savedPlan !== true) return failJob(savedPlan);
   }
 
@@ -269,6 +277,31 @@ export async function runJob(input: RunJobInput, deps: RunJobDeps): Promise<RunJ
   const planUnits: readonly Unit[] = approved.units;
   const expressionUnits = planUnits;
   const unitByKey = new Map<string, Unit>(expressionUnits.map((unit) => [unit.key, unit]));
+
+  // 旧版本可能已批准多节拍合段，随后才在装配失败。重试保留 approved 缓存，
+  // 因此调度前撤销这些旁白及其传递依赖，避免继续使用旧前文。保留规划与
+  // 无关单元、已扣请求和 attempts；仍经原有 charge/审批/CAS 路径有界生成。
+  const invalidated = new Set(job.units.filter(stored => {
+    const output = approvedOutputOf(stored);
+    return unitByKey.get(stored.key)?.stage === "narration"
+      && output?.stage === "narration" && (output.parts.some(part => part.beatIds.length > 1)
+        || narrationLayoutRejection(output, narrationLayoutOf(approved, unitByKey.get(stored.key)!)) !== null);
+  }).map(stored => stored.key));
+  if (invalidated.size > 0) {
+    for (;;) {
+      const previousSize = invalidated.size;
+      for (const unit of expressionUnits) {
+        if (unit.dependencies.some(key => invalidated.has(key))) invalidated.add(unit.key);
+      }
+      if (invalidated.size === previousSize) break;
+    }
+    const saved = await persist(current => ({
+      ...current,
+      units: current.units.map(unit => invalidated.has(unit.key)
+        ? { ...unit, status: "pending" as const, value: null } : unit),
+    }));
+    if (saved !== true) return fail(saved);
+  }
 
   for (;;) {
     if (deps.signal.aborted) return fail("JOB_ABORTED");
@@ -287,7 +320,7 @@ export async function runJob(input: RunJobInput, deps: RunJobDeps): Promise<RunJ
       .map((stored) => unitByKey.get(stored.key))
       .filter((unit): unit is Unit => unit !== undefined)
       .filter((unit) => unit.dependencies.every((dep) => approvedKeys.has(dep)));
-    const batch = [...readyPlanUnits, ...redonePlanUnits].slice(0, MAX_IN_FLIGHT);
+    const batch = [...new Map([...readyPlanUnits, ...redonePlanUnits].map(unit => [unit.key, unit])).values()].slice(0, MAX_IN_FLIGHT);
     if (batch.length === 0) break;
 
     const failures: string[] = [];
@@ -305,12 +338,29 @@ export async function runJob(input: RunJobInput, deps: RunJobDeps): Promise<RunJ
         approved: approvedOutputs(job),
       });
       if (!context.ok) {
+        if (context.code === "beat_authority_conflict") {
+          const invalidated = await persist(current => ({ ...current,
+            units: current.units.map(stored => ({ ...stored, status: "pending" as const, value: null })),
+          }));
+          if (invalidated !== true) return fail(invalidated);
+          return runJob({ id: input.id, lease, planningRepair: {
+            attempt: unitOfKey(job, PLANNING_UNIT_KEY)?.attempts ?? 0,
+            reason: "invalid_schema", rejectionCode: context.code, detail: JSON.stringify({
+              approvedWorldDelta: approved.proposal.worldDelta,
+              ...(approved.ruleSceneGraph === undefined ? {} : {
+                sceneContract: planningSceneContract(approved.ruleSceneGraph, job.input.kind === "decision" ? job.input.job.focusNpcId ?? null : null),
+              }),
+              ...JSON.parse(context.detail ?? "{}"),
+            }),
+          } }, deps);
+        }
         failures.push(context.code);
         continue;
       }
       // charge/save running 先于请求；新单元在此首次写入存储。
       const charged = await persist((current) => ({
         ...current,
+        usedRequests: current.usedRequests + 1,
         units: current.units.some((candidate) => candidate.key === unit.key)
           ? current.units.map((candidate) => candidate.key === unit.key
             ? { ...candidate, attempts: attempts + 1, status: "running" as const, unit }
@@ -326,7 +376,7 @@ export async function runJob(input: RunJobInput, deps: RunJobDeps): Promise<RunJ
       }
 
       const request: StageRequest = { stage: unit.stage, context: context.value };
-      let response = await deps.source.generate(request, {
+      let response = await generate(request, {
         signal: deps.signal,
         timeoutMs: cappedTimeoutMs(job, EXPRESSION_TIMEOUT_MS, deps.now()),
         audit: { purpose: "game_api", trigger: "staged_expression", jobId: job.id },
@@ -349,7 +399,7 @@ export async function runJob(input: RunJobInput, deps: RunJobDeps): Promise<RunJ
           if (!unitApproval.ok) {
             rejection = unitApproval.code;
           } else {
-            const disclosures = collectDisclosures({ plan: approved, unit, output: response.value });
+            const disclosures = collectDisclosures({ plan: approved, unit, output: response.value, approved: approvedOutputs(job) });
             if (!disclosures.ok) {
               rejection = disclosures.code;
             } else {
@@ -362,19 +412,27 @@ export async function runJob(input: RunJobInput, deps: RunJobDeps): Promise<RunJ
         const retryCharge = canStartRequest({ job, unitAttempts: attemptsUsed, now: deps.now() });
         if (!retryCharge.ok) break;
         if (deps.signal.aborted) return fail("JOB_ABORTED");
-        await persist((current) => patchedUnit(current, unit.key, {
+        const retrySaved = await persist((current) => patchedUnit({ ...current, usedRequests: current.usedRequests + 1 }, unit.key, {
           attempts: attemptsUsed + 1,
           status: "running",
         }));
+        if (retrySaved !== true) return fail(retrySaved);
         attemptsUsed += 1;
         const providerFailureKind = response.ok ? undefined : response.failure.kind;
-        response = await deps.source.generate(request, {
+        response = await generate(request, {
           signal: deps.signal,
           timeoutMs: cappedTimeoutMs(job, EXPRESSION_TIMEOUT_MS, deps.now()),
           repair: {
             attempt: attemptsUsed - 1,
             reason: providerFailureKind ?? "invalid_schema",
             rejectionCode: providerFailureKind !== undefined ? undefined : rejection ?? undefined,
+            ...(rejection === "unit_output_beat_layout" ? { detail: JSON.stringify({
+              allowedBeatIds: context.value.requiredBeats.map(beat => beat.beatId),
+              allowAtmosphere: context.value.narrationLayout?.allowAtmosphere,
+              repairInstruction: context.value.narrationLayout?.allowAtmosphere === false
+                ? "本单元每个 part.beatIds 必须恰好一个上列 ID，不能出现 [] 或 atmosphere。不要添加开头或结尾的独立氛围段；只表达本单元的具体节拍。"
+                : "先按节拍连续表达完必选内容，再写氛围；不能先写 beatIds=[] 再插入必选节拍。",
+            }) } : {}),
           },
           audit: { purpose: "game_api", trigger: "staged_expression", jobId: job.id },
         });

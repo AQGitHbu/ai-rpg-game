@@ -27,6 +27,24 @@ import type { NpcEntry } from "@/game/domain/worldEntries";
 // SafeContext 的投影内容；取消信号与剩余预算原样透传；输出经 domain 解析。
 // ---------------------------------------------------------------------------
 
+function livePlan() {
+  const base = makeStagedPlan();
+  if (base.decision?.kind !== "ordinary") throw Error("ordinary");
+  return { ...base, units: base.units.map(unit => unit.stage === "choices" ? unit : { ...unit,
+    task: { intent: unit.stage === "narration" ? "describe" : "inform", focusFactIds: [], prerequisiteFactIds: [] } }),
+    decision: { ...base.decision, options: base.decision.options.map(option => ({ ...option,
+      task: { intent: option.dialogueAct, focusFactIds: [], prerequisiteFactIds: [] } })) } };
+}
+it("新 live 规划缺少具体任务时显式退回，不回落到笼统润色", async () => {
+  const { client } = recordingClient([OK_JSON(makeStagedPlan())]);
+  const source = createLiveStageSource({ client });
+  const result = await source.generate({ stage: "planning", context: { kind: "opening",
+    input: { gameType: "wuxia", gameLength: "short", seed: "s" },
+    generation: OPENING_GENERATION } }, { signal: new AbortController().signal, timeoutMs: 1000, audit: { purpose: "game_api", trigger: "staged_planning" } });
+  expect(result).toMatchObject({ ok: false });
+  expect(JSON.stringify(result)).toContain("plan_task_missing");
+});
+
 const SENTINEL = "SECRET_TRACKING_SEAL";
 const FACT_PUB = "fact_pub";
 const FACT_SECRET = "fact_secret";
@@ -109,9 +127,15 @@ function personaWorld(): WorldState {
 }
 
 function approvedPlan(): ApprovedPlan {
+  const proposal = makeStagedPlan();
+  if (proposal.decision?.kind !== "ordinary") throw new Error("ordinary fixture required");
+  const options = proposal.decision.options;
   const result = approvePlan({
     kind: "decision",
-    proposal: makeStagedPlan(),
+    proposal: { ...proposal, decision: { ...proposal.decision, options: [
+      { ...options[0], target: { kind: "visit_location", locationId: "loc_b" } },
+      { ...options[1], target: { kind: "visit_location", locationId: "loc_c" } },
+    ] } },
     world: personaWorld(),
     story: branchStory(),
   });
@@ -201,7 +225,7 @@ function fourStageRequests(): readonly StageRequest[] {
 describe("createLiveStageSource", () => {
   it("四个 stage 各调用一次 complete，role 顺序为 planning/narration/character/choices", async () => {
     const { client, calls } = recordingClient([
-      OK_JSON(makeStagedPlan()),
+      OK_JSON(livePlan()),
       OK_JSON(VALID_NARRATION),
       OK_JSON(VALID_CHARACTER),
       OK_JSON(VALID_CHOICES),
@@ -221,7 +245,7 @@ describe("createLiveStageSource", () => {
 
   it("角色请求的消息不携带秘密，也不含 planning 阶段内容", async () => {
     const { client, calls } = recordingClient([
-      OK_JSON(makeStagedPlan()),
+      OK_JSON(livePlan()),
       OK_JSON(VALID_NARRATION),
       OK_JSON(VALID_CHARACTER),
       OK_JSON(VALID_CHOICES),
@@ -241,7 +265,7 @@ describe("createLiveStageSource", () => {
 
   it("choice prompt 只返回两条玩家直接说出的对白", async () => {
     const { client, calls } = recordingClient([
-      OK_JSON(makeStagedPlan()),
+      OK_JSON(livePlan()),
       OK_JSON(VALID_NARRATION),
       OK_JSON(VALID_CHARACTER),
       OK_JSON(VALID_CHOICES),
@@ -259,7 +283,7 @@ describe("createLiveStageSource", () => {
 
   it("AbortSignal 与剩余 timeoutMs 原样透传给 client", async () => {
     const { client, calls } = recordingClient([
-      OK_JSON(makeStagedPlan()),
+      OK_JSON(livePlan()),
       OK_JSON(VALID_NARRATION),
       OK_JSON(VALID_CHARACTER),
       OK_JSON(VALID_CHOICES),

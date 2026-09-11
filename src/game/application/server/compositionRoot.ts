@@ -516,11 +516,12 @@ export function createServerGameEntryPoints(
 
   return {
     createGame: async (input, traceId) => {
+      // 首次开局也必须初始化游戏表；任务仓储只拥有任务表，发布事务不会建游戏表。
+      const current = await repository.getCurrentGame();
+      if (!current.ok) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
       // restart 合法性先行校验：不通过就不创建任何持久任务。
       let replaceCurrent: { readonly expectedGameId: GameId; readonly expectedRevision: number } | undefined;
       if (input.restart !== undefined) {
-        const current = await repository.getCurrentGame();
-        if (!current.ok) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
         if (current.status !== "active") return { ok: false, code: "NO_ACTIVE_GAME" };
         if (
           current.record.revision !== input.restart.expectedRevision

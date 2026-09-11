@@ -58,7 +58,7 @@ function materializeScene(step: NarrativeBundleStepState, actionId: string, revi
   const sceneId = `scene-bundle-${actionId}-${step.stepId}`;
   const choiceRegistry: ApprovedChoice[] = [];
   for (const seed of step.scene.choiceSeeds) {
-    const created = createApprovedChoice({ sceneId, basedOnRevision: revision, label: seed.label, action: seed.action });
+    const created = createApprovedChoice({ sceneId, basedOnRevision: revision, label: seed.label, action: seed.action, ...(seed.branch === undefined ? {} : { branch: seed.branch }) });
     if (!created.ok) return null;
     choiceRegistry.push(created.choice);
   }
@@ -129,6 +129,30 @@ export function consumeNarrativeBundle(input: {
   const selected = matches[0];
   if (selected.nextStepIds.some(id => !bundle.steps.some(step => step.stepId === id))) {
     return { ok: false, code: "NARRATIVE_CONTINUATION_MISSING" };
+  }
+  if (selected.premises !== undefined) {
+    if (selected.premises.discoveredFactIds?.some(id =>
+      !input.resolvedWorldState.worldFacts.some(fact => String(fact.factId) === id && fact.discovered))) {
+      return { ok: false, code: "NARRATIVE_CONTINUATION_INVALID" };
+    }
+    if (String(input.resolvedWorldState.currentLocationId) !== selected.premises.locationId) {
+      return { ok: false, code: "NARRATIVE_CONTINUATION_INVALID" };
+    }
+    for (const required of selected.premises.observations) {
+      const received = input.resolvedWorldState.eventLedger.some(event => {
+        if (event.kind !== "narrative_observed" || event.sequence <= selected.premises!.afterSequence) return false;
+        const payload = event.payload as { observationKey: string; audienceId: string; factId: string; certainty: string };
+        return payload.observationKey === required.observationKey && payload.audienceId === required.audienceId
+          && String(payload.factId) === required.factId
+          && (required.certainty === "suspected" || payload.certainty === "known");
+      });
+      if (!received) return { ok: false, code: "NARRATIVE_CONTINUATION_INVALID" };
+    }
+  }
+  const speakers = [selected.scene.npcLine, ...(selected.scene.npcDialogues ?? [])].filter(line => line != null);
+  if (speakers.some(line => !input.resolvedWorldState.npcs.some(npc =>
+    String(npc.id) === String(line.npcId) && npc.locationId === input.resolvedWorldState.currentLocationId))) {
+    return { ok: false, code: "NARRATIVE_CONTINUATION_INVALID" };
   }
   // 消费时复核实际前提：条件证据必须能对上本步的观察清单，且观察的来源
   // 与该步真正持有的表达顺序一致。这里比较的是内容而不是 baseRevision——

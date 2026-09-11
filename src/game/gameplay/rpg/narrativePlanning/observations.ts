@@ -8,6 +8,7 @@
 // 未知说话人与幽灵事实都返回稳定 code，绝不静默丢弃。
 
 import type { ApprovedPlan } from "./approvePlan";
+import { sceneSnapshot } from "./sceneSnapshot";
 import {
   fail,
   type Check,
@@ -50,7 +51,7 @@ export function observationsForUnit(
 ): readonly Observation[] {
   const atOrBefore = (observation: Observation): boolean =>
     observation.point.stepKey === unit.point.stepKey
-    && observation.point.order <= unit.point.order;
+    && (observation.point.order === unit.point.order || unit.requiredObservationKeys.includes(observation.key));
   if (unit.stage === "narration") {
     return observations.filter(
       (observation) => observation.source.kind === "witness" && atOrBefore(observation),
@@ -135,6 +136,7 @@ function checkObservation(input: Readonly<{
   observation: Observation;
   refs: ReadonlyMap<string, "known" | "suspected">;
   sceneLocation: string | null;
+  learned?: readonly Observation[];
 }>): string | null {
   const { ws, observation, refs, sceneLocation } = input;
   // 见证观察锚定玩家所在场景；speech 观察锚定说话人所在地点。
@@ -154,8 +156,14 @@ function checkObservation(input: Readonly<{
   if (observation.source.kind === "speech") {
     const speaker = getEntity(ws.entityStore, observation.source.speakerId);
     if (!isNpcRecord(speaker)) return "observation_speaker_unknown";
-    if (!disclosureAvailable(speaker, observation)) return "observation_disclosure_unavailable";
-    if (!certaintySupported(speaker, observation)) return "observation_certainty_invalid";
+    const entry = speaker.knowledge.entries.find(entry => String(entry.factId) === observation.fact.factId);
+    const learned = input.learned?.find(prior => prior.fact.factId === observation.fact.factId
+      && prior.audienceIds.includes(observation.source.kind === "speech" ? observation.source.speakerId : "")
+      && observation.audienceIds.every(id => prior.audienceIds.includes(id)));
+    if (entry !== undefined || learned === undefined) {
+      if (!disclosureAvailable(speaker, observation)) return "observation_disclosure_unavailable";
+      if (!certaintySupported(speaker, observation)) return "observation_certainty_invalid";
+    } else if (learned.fact.certainty === "suspected" && observation.fact.certainty === "known") return "observation_certainty_invalid";
   }
   if (factRecordOf(ws, observation.fact.factId) === undefined) {
     return "observation_fact_unknown";
@@ -175,6 +183,7 @@ export type CollectDisclosuresInput = Readonly<{
   plan: ApprovedPlan;
   unit: Unit;
   output: UnitOutput;
+  approved?: ReadonlyMap<string, UnitOutput>;
 }>;
 
 /**
@@ -192,14 +201,18 @@ export function collectDisclosures(input: CollectDisclosuresInput): Check<readon
     }
   }
 
-  const ws = input.plan.world;
+  const snapshot = sceneSnapshot({ plan: input.plan, point: unit.point, approved: input.approved });
+  if (!snapshot.ok) return snapshot;
+  const ws = snapshot.value.world;
   const observations = observationsForUnit(unit, input.plan.proposal.observations);
   const refs = factRefsOf(input.output);
   const sceneLocation = locationOf(ws, String(PLAYER_ENTITY_ID));
 
   for (const observation of observations) {
-    const rejection = checkObservation({ ws, observation, refs, sceneLocation });
+    const rejection = checkObservation({ ws, observation, refs, sceneLocation, learned: snapshot.value.learned });
     if (rejection !== null) return fail(rejection);
   }
-  return { ok: true, value: observations };
+  return { ok: true, value: observations.map(observation => ({ ...observation,
+    fact: { ...observation.fact, certainty: refs.get(observation.fact.factId) ?? observation.fact.certainty },
+  })) };
 }

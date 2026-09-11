@@ -7,7 +7,7 @@ import type {
   LocationId,
   NpcId,
 } from "./worldEntity";
-import type { PreparedSceneSeedState } from "./preparedContinuation";
+import { isPreparedChoiceSeed, type PreparedSceneSeedState } from "./preparedContinuation";
 import { areUniqueNpcSpeechReferenceIds } from "./npcSpeechReferences";
 
 // ---------------------------------------------------------------------------
@@ -172,6 +172,14 @@ export type BundleStepObservation = Readonly<{
  * 依赖仍由 nextStepIds 表达（有向无环，parse 已校验）；expressionOrder 是
  * 该步表达单元 key 的确定顺序，消费时按此复核前提而非比较 baseRevision。
  */
+export type BundleScenePremises = Readonly<{
+  locationId: string;
+  afterSequence: number;
+  /** 未来条件快照预览的规则发现；消费时必须已真实发生。旧包缺省为空。 */
+  discoveredFactIds?: readonly string[];
+  observations: readonly Readonly<{ observationKey: string; audienceId: string; factId: string; certainty: "known" | "suspected" }>[];
+}>;
+
 export type NarrativeBundleStepState = {
   readonly stepId: string;
   readonly objectiveKey: string;
@@ -181,6 +189,8 @@ export type NarrativeBundleStepState = {
   readonly nextStepIds: readonly string[];
   readonly observations?: readonly BundleStepObservation[];
   readonly expressionOrder?: readonly string[];
+  /** 服务端从获批表达上下文推导，消费时对真实 ledger 复核。 */
+  readonly premises?: BundleScenePremises;
 };
 
 export type NarrativeBundleState = {
@@ -570,7 +580,7 @@ function isPreparedSceneSeedState(value: unknown): boolean {
     if (!isScenePerformanceObjectiveLink(value.objectiveLink)) return false;
   }
   // choiceSeeds
-  if (!Array.isArray(value.choiceSeeds)) return false;
+  if (!Array.isArray(value.choiceSeeds) || !value.choiceSeeds.every(isPreparedChoiceSeed)) return false;
   // source
   return value.source === "generated" || value.source === "fixture";
 }
@@ -603,7 +613,7 @@ function isBundleStepState(value: unknown, contractVersion: 1 | 2): value is Nar
   if (!isRecord(value)) return false;
   if (!hasOnlyKeys(value, [
     "stepId", "objectiveKey", "consumptionGroupKey", "trigger", "scene", "nextStepIds",
-    "observations", "expressionOrder",
+    "observations", "expressionOrder", "premises",
   ])) return false;
   if (!isNonEmptyString(value.stepId)
     || !isNonEmptyString(value.objectiveKey)
@@ -613,13 +623,26 @@ function isBundleStepState(value: unknown, contractVersion: 1 | 2): value is Nar
     || !isStringArray(value.nextStepIds)) return false;
   if (contractVersion === 2) {
     if (!hasContractTwoStepFields(value)) return false;
+    if (value.premises !== undefined) {
+      const premises = value.premises;
+      if (!isRecord(premises) || !hasOnlyKeys(premises, ["locationId", "afterSequence", "observations", "discoveredFactIds"])
+        || (premises.discoveredFactIds !== undefined && (!Array.isArray(premises.discoveredFactIds)
+          || !premises.discoveredFactIds.every(isNonEmptyString)
+          || new Set(premises.discoveredFactIds).size !== premises.discoveredFactIds.length))
+        || !isNonEmptyString(premises.locationId) || !Number.isInteger(premises.afterSequence)
+        || typeof premises.afterSequence !== "number" || premises.afterSequence < -1 || !Array.isArray(premises.observations)
+        || !premises.observations.every(entry => isRecord(entry)
+          && hasOnlyKeys(entry, ["observationKey", "audienceId", "factId", "certainty"])
+          && isNonEmptyString(entry.observationKey) && isNonEmptyString(entry.audienceId)
+          && isNonEmptyString(entry.factId) && (entry.certainty === "known" || entry.certainty === "suspected"))) return false;
+    }
     if (!Array.isArray(value.observations) || !value.observations.every(isBundleStepObservation)) return false;
     if (!isStringArray(value.expressionOrder) || !hasUniqueStrings(value.expressionOrder)) return false;
     const keys = new Set((value.observations as readonly BundleStepObservation[]).map((o) => o.key));
     if (keys.size !== (value.observations as readonly BundleStepObservation[]).length) return false;
     return true;
   }
-  return !hasContractTwoStepFields(value);
+  return !hasContractTwoStepFields(value) && value.premises === undefined;
 }
 
 function isAcyclic(steps: readonly NarrativeBundleStepState[]): boolean {

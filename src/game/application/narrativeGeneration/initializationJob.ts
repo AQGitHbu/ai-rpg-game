@@ -28,9 +28,11 @@ import type { OpeningNoveltyRecord } from "@/game/domain/openingNovelty";
 import { createApprovedChoice, type ApprovedChoice } from "@/game/domain/approvedChoice";
 import { commitEventDrafts } from "@/game/domain/eventLedger";
 import { reconcileCommittedMemory } from "../reconcileCommittedMemory";
-import { approvePlan, type ApprovedPlan } from "@/game/gameplay/rpg/narrativePlanning";
+import { approvePlanDecision, decisionIdOf, type ApprovedPlan } from "@/game/gameplay/rpg/narrativePlanning";
 import { OPENING_NPC_ID, resolveOpeningResponses } from "@/game/gameplay/rpg/openingGeneration";
 import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
+import { validateStagedOutputs } from "./validateStagedOutputs";
+import { approvePlanningContext } from "./approvePlanningContext";
 import { assembleBundle } from "./assembleBundle";
 import { realizeObservations } from "./realizeObservations";
 import { publishJob } from "./publishJob";
@@ -221,6 +223,11 @@ export function installOpeningNarrative(input: Readonly<{
     return { ok: false, code: "install_opening_choices_invalid" };
   }
 
+  const decisionApproval = approvePlanDecision(approved);
+  if (!decisionApproval.ok) return decisionApproval;
+  const decision = decisionApproval.value.choiceExpression;
+  if (decision?.kind !== "ordinary") return { ok: false, code: "install_decision_missing" };
+  const decisionId = decisionIdOf(decision);
   const sceneId = `scene-${job.id}`;
   const choiceRegistry: ApprovedChoice[] = [];
   for (const choice of scene.choices) {
@@ -229,6 +236,8 @@ export function installOpeningNarrative(input: Readonly<{
       basedOnRevision: 0,
       label: choice.label,
       action: responseById.get(choice.candidateId)!,
+      ...(decision.options.every(option => option.target !== null)
+        ? { branch: { decisionId, candidateId: choice.candidateId } } : {}),
     });
     if (!created.ok) return { ok: false, code: "install_choice_rejected" };
     choiceRegistry.push(created.choice);
@@ -305,7 +314,12 @@ export function buildOpeningPublication(input: Readonly<{
 
   // 开局场景的条件证据（来自安装时的装配产物）：观察键必须能对上计划观察清单。
   const sceneConditional = installed.conditionalEvidence;
-  const observationByKey = new Map(proposal.observations.map((observation) => [observation.key, observation]));
+  const outputs = new Map(job.units.flatMap(unit => {
+    const output = approvedOutputOf(unit); return output === null ? [] : [[unit.key, output] as const];
+  }));
+  const replay = validateStagedOutputs(approved, outputs);
+  if (!replay.ok) return replay;
+  const observationByKey = new Map(replay.value.observations.map((observation) => [observation.key, observation]));
   const observations = sceneConditional
     .map((entry) => observationByKey.get(entry.observationKey))
     .filter((observation): observation is NonNullable<typeof observation> => observation !== undefined)
@@ -350,8 +364,15 @@ export function buildOpeningPublication(input: Readonly<{
   if (!committed.ok) return { ok: false, code: "install_event_commit_rejected" };
 
   const nextWorldState = { ...realized.worldState, eventLedger: committed.ledger };
+  const decisionApproval = approvePlanDecision(approved);
+  if (!decisionApproval.ok) return decisionApproval;
+  const decision = decisionApproval.value.choiceExpression;
+  if (decision?.kind !== "ordinary") return { ok: false, code: "install_decision_missing" };
   const nextStoryState = {
     ...approved.story,
+    branchDecisions: decision.options.every(option => option.target !== null)
+      ? { ...approved.story.branchDecisions, [decisionIdOf(decision)]: decision } : approved.story.branchDecisions,
+    prologueText: installed.narrative.status === "ready" ? installed.narrative.currentScene.narration : "",
     narrative: installed.narrative,
     memory: reconcileCommittedMemory({ previous: approved.story.memory, ledger: committed.ledger }),
   };
@@ -424,9 +445,19 @@ export async function runInitialization(
     controller,
   });
 
+  async function failed(code: string): Promise<RunInitializationResult> {
+    const current = await deps.jobs.get(id);
+    const held = await keeper.acquire();
+    if (current.ok && current.value.status === "pending" && held !== null) {
+      await keeper.jobs.save({ lease: held, expectedVersion: current.value.version,
+        job: { ...current.value, status: "failed", failureCode: code } });
+    }
+    return { ok: false, code };
+  }
+
   try {
     const ran = await runJob({ id, lease }, {
-      jobs: deps.jobs,
+      jobs: keeper.jobs,
       source: deps.source,
       now: deps.now,
       signal: composeSignals(deps.signal, controller.signal),
@@ -449,17 +480,13 @@ export async function runInitialization(
 
     const proposal = planningProposalOf(pendingJob);
     if (proposal === null) return { ok: false, code: "install_plan_missing" };
-    const planApproval = approvePlan({
-      kind: "opening",
-      proposal,
-      generation: envelope.generation,
-      gameLength: pendingJob.input.input.gameLength,
-      seed: envelope.seed,
-    });
-    if (!planApproval.ok) return { ok: false, code: planApproval.code };
+    // 与生成阶段共用同一审批入口，保留 opening 局部 topic → 权威 topic 的转换。
+    // 仅重跑 approvePlan 会丢失 approvePlanDecision 的 canonical thread ID。
+    const planApproval = approvePlanningContext(pendingJob.input, proposal);
+    if (!planApproval.ok) return await failed(planApproval.code);
 
     const installed = installOpeningNarrative({ job: pendingJob, approved: planApproval.value });
-    if (!installed.ok) return { ok: false, code: installed.code };
+    if (!installed.ok) return await failed(installed.code);
 
     const publication = buildOpeningPublication({
       job: pendingJob,
@@ -478,16 +505,18 @@ export async function runInitialization(
           }
         : {}),
     });
-    if (!publication.ok) return { ok: false, code: publication.code };
+    if (!publication.ok) return await failed(publication.code);
 
     const published = await publishJob(
       { job: pendingJob, lease: activeLease, publication: publication.publication },
-      deps.jobs,
+      keeper.jobs,
     );
-    if (!published.ok) return { ok: false, code: published.code };
+    if (!published.ok) return await failed(published.code);
     return { ok: true, job: published.value };
+  } catch {
+    return await failed("initialization_execution_failed");
   } finally {
-    keeper.stop();
+    await keeper.stop();
     const releaseLease = keeper.current() ?? lease;
     await deps.jobs.release({ lease: releaseLease }).catch(() => undefined);
   }

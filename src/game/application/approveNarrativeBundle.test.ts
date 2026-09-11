@@ -540,7 +540,7 @@ describe("approveNarrativeBundle", () => {
       worldState: directTalkWorld(),
     }));
 
-    expect(result).toEqual({ ok: false, code: "bundle_invalid_scene" });
+    expect(result).toEqual({ ok: false, code: "bundle_invalid_scene", detail: "current_scene_terminal_requires_two_choices" });
   });
 
   it("rejects a proposal terminal that does not match the server graph", () => {

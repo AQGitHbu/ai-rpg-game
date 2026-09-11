@@ -74,6 +74,10 @@ export function createLiveStageSource(options: CreateLiveStageSourceOptions): St
       if (request.stage === "planning") {
         const proposal = parsePlanProposal(parsed.value);
         if (!proposal.ok) return invalidContent("invalid_schema", proposal.code);
+        if (proposal.value.units.some(unit => unit.stage !== "choices" && unit.task === undefined)
+          || (proposal.value.decision?.kind === "ordinary" && proposal.value.decision.options.some(option => option.task === undefined))) {
+          return invalidContent("plan_task_missing", "每个 narration/character 单元及每个普通候选必须提供 task={intent,focusFactIds,prerequisiteFactIds}，不能只给笼统 instruction。");
+        }
         return { ok: true, stage: "planning", value: proposal.value };
       }
 

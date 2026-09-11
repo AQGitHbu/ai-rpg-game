@@ -117,7 +117,7 @@ describe("approveDecision deferred locations", () => {
     const result = approveDecision({ decision, world: branchWorld(), story: branchStory() });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    const ids = result.value.options.map((o) => (o.target.kind === "visit_location" ? o.target.locationId : ""));
+    const ids = result.value.options.map((o) => (o.target?.kind === "visit_location" ? o.target.locationId : ""));
     expect(ids).toEqual(["loc_dyn_0", "loc_dyn_1"]);
     expect(new Set(ids).size).toBe(2);
   });

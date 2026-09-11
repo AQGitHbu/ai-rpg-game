@@ -3,6 +3,7 @@
 // 本模块是四类生成职责共享的纯类型与严格解析层：不含 IO、AI 或规则审批。
 // `Check` 让“解析失败”成为显式结果，调用方不能把未校验的 AI 输出当成合法输入。
 
+import { parseExpressionTask, type ExpressionTask } from "./expressionTask";
 import { NARRATIVE_EMOTIONS, type NarrativeEmotion } from "./narrative";
 import type { MandatoryNarrativeBeat } from "./narrativeBeat";
 
@@ -85,6 +86,8 @@ export type Unit = {
   readonly speakerId: string | null;
   readonly dependencies: readonly string[];
   readonly taskFactIds: readonly string[];
+  /** 缺省仅兼容旧内部产物；新 live 规划必须提供。 */
+  readonly task?: ExpressionTask;
   readonly requiredObservationKeys: readonly string[];
   readonly requiredBeats: readonly SafeBeat[];
 };
@@ -295,7 +298,7 @@ export function parseUnit(value: unknown): Unit | null {
   if (!isPlainRecord(value)) return null;
   if (!hasOnlyKeys(value, [
     "key", "stage", "point", "speakerId", "dependencies",
-    "taskFactIds", "requiredObservationKeys", "requiredBeats",
+    "taskFactIds", "requiredObservationKeys", "requiredBeats", "task",
   ])) return null;
   const key = parseKey(value.key);
   if (key === null) return null;
@@ -318,7 +321,10 @@ export function parseUnit(value: unknown): Unit | null {
     if (beat === null) return null;
     requiredBeats.push(beat);
   }
-  return { key, stage, point, speakerId, dependencies, taskFactIds, requiredObservationKeys, requiredBeats };
+  const task = value.task === undefined ? undefined : parseExpressionTask(value.task);
+  if (task === null || (task !== undefined && stage === "narration" && task.intent !== "describe")) return null;
+  return { key, stage, point, speakerId, dependencies, taskFactIds, requiredObservationKeys, requiredBeats,
+    ...(task === undefined ? {} : { task }) };
 }
 
 /** 逐字段重建生成单元输出；未知字段、越界长度和未知枚举一律拒绝。 */

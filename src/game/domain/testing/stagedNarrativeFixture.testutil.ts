@@ -9,7 +9,7 @@ import type { TextPart, Unit, UnitOutput } from "../narrativeUnit";
 import type { CommittedNarrativeEvent } from "../events";
 import { asNarrativeJobId, asTurnId, episodeIdForTurn, eventIdFor } from "../events";
 import type { GenerationMetadata } from "../worldEntity";
-import { asGenerationId, asLocationId, asNpcId, asQuestId, PLAYER_ENTITY_ID } from "../worldEntity";
+import { asFactId, asGenerationId, asLocationId, asNpcId, asQuestId, PLAYER_ENTITY_ID } from "../worldEntity";
 import { createPendingNarrativeJob } from "../pendingNarrativeJob";
 import { createInitialStoryState, type StoryState } from "../storyState";
 import type { WorldState } from "../worldState";
@@ -158,9 +158,12 @@ function decisionBranchOption(
     candidateId,
     dialogueAct,
     topic: { kind: "general" },
-    target: { kind: "talk_to_npc", npcId: FIXTURE_DECISION_NPC },
+    target: { kind: "visit_location", locationId: "$deferred" },
     publicIntent: intent(dialogueAct === "support" ? "我先顺着他说。" : "我直接问他。"),
-    deferredLocation: null,
+    deferredLocation: {
+      name: dialogueAct === "support" ? "北滩" : "南岗", description: "镇外可以探查的旧路。",
+      placement: "world", scale: "scene", connectFromLocationId: FIXTURE_DECISION_LOC_SCENE,
+    },
   };
 }
 
@@ -228,9 +231,12 @@ function openingBranchOption(candidateId: string, label: string): BranchOption {
     topic: { kind: "general" },
     // 开局候选的真实 action 由 resolveOpeningResponses 从 situation.responses 铸造；
     // 这里的 target 只是结构占位，必须与开局 NPC 对上。
-    target: { kind: "talk_to_npc", npcId: FIXTURE_NPC_A },
+    target: { kind: "visit_location", locationId: "$deferred" },
     publicIntent: intent(label),
-    deferredLocation: null,
+    deferredLocation: {
+      name: candidateId === "ask_lead" ? "北滩" : "南岗", description: "镇外可以探查的旧路。",
+      placement: "world", scale: "scene", connectFromLocationId: "loc_0",
+    },
   };
 }
 
@@ -253,7 +259,11 @@ export function makeOpeningStagedPlan(
   opening: NonNullable<PlanProposal["opening"]>,
 ): PlanProposal {
   return {
-    opening,
+    opening: {
+      ...opening,
+      world: { ...opening.world, publicFacts: [...opening.world.publicFacts, { key: "branch_routes", text: "镇外北滩和南岗都可以探查。" }] },
+      opening: { ...opening.opening, npc: { ...opening.opening.npc, knownFactKeys: [...opening.opening.npc.knownFactKeys, "branch_routes"] } },
+    },
     worldDelta: null,
     steps: [],
     units: [
@@ -367,7 +377,7 @@ export function createDecisionWorldFixture(): WorldState {
         }],
         items: [],
         inventory: [],
-        worldFacts: [],
+        worldFacts: [{ factId: asFactId("fact_routes"), text: "镇外北滩和南岗都可以探查。", discovered: true, source: "generated" }],
         quests: [],
         enemies: [],
         defeatedEnemyIds: [],

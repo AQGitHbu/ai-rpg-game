@@ -3,11 +3,13 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import {
   SMOKE_CASES,
+  offeredChoices,
   SMOKE_LIMITS,
   buildBranchSummaryLine,
   buildOpeningSummaryLine,
   buildRunSummaryLine,
   realRunOpening,
+  runToEnding,
   realRunContinuation,
   resolveOutputFormatLabel,
   runStagedNarrativeSmoke,
@@ -16,6 +18,89 @@ import {
   validateBranchReport,
   validateOpeningReport,
 } from "./stagedNarrativeSmoke.mjs";
+
+test("等待超过 40 秒不耗尽 40 个玩家回合，长生成结束后仍推进", async () => {
+  let elapsed = 0, polls = 0, ended = false, performed = 0;
+  const entry = {
+    getCurrentGame: async () => ({ ok: true, status: "active", revision: 1, view: {
+      ending: ended ? {} : null,
+      narrativeGeneration: { status: polls < 60 ? "pending" : "idle" },
+      narrative: { choices: [{ choiceToken: "approved" }] },
+    } }),
+    ensureNarrativeScene: async () => { polls += 1; },
+    performTurn: async () => { performed += 1; ended = true; return { ok: true }; },
+  };
+  const result = await runToEnding(entry, { eventsSinceBaseline: () => [], failureCode: async () => null },
+    { now: () => elapsed, sleep: async ms => { elapsed += ms; } });
+  assert.equal(result.endingReached, true);
+  assert.equal(result.turns, 1);
+  assert.equal(performed, 1);
+  assert.equal(elapsed, 60_000);
+});
+
+test("城镇建筑已提供正式抵达 token 时继续消费，不伪造调查行动", async () => {
+  let ended = false;
+  const entry = {
+    getCurrentGame: async () => ({ ok: true, status: "active", revision: 4, view: {
+      ending: ended ? {} : null, narrativeGeneration: { status: "idle" },
+      narrative: { choices: [] }, story: { currentObjectiveChoiceToken: null, currentObjectiveChoiceTokens: [] },
+      currentLocation: { actions: [], town: { interactiveBuildings: [
+        { buildingId: "old", isCurrentFocus: false },
+        { buildingId: "new", isCurrentFocus: false, arrivalChoiceToken: "approved_arrival" },
+      ] } },
+    } }),
+    performTurn: async input => { assert.equal(input.interaction.choiceToken, "approved_arrival"); ended = true; return { ok: true }; },
+  };
+  const result = await runToEnding(entry, { eventsSinceBaseline: () => [], failureCode: async () => null });
+  assert.equal(result.endingReached, true);
+  assert.equal(result.turns, 1);
+});
+
+test("显式授权测试重试只重开原失败任务，次数有界且保留失败证据", async () => {
+  let elapsed = 0, retried = 0, ended = false;
+  const entry = {
+    getCurrentGame: async () => ({ ok: true, status: "active", revision: 1, view: {
+      ending: ended ? {} : null, narrativeGeneration: { status: retried ? "idle" : "failed" },
+      narrative: { choices: [{ choiceToken: "approved" }] },
+    } }),
+    ensureNarrativeScene: async options => { assert.deepEqual(options, { retry: true }); retried += 1; },
+    performTurn: async () => { ended = true; return { ok: true }; },
+  };
+  const audit = { eventsSinceBaseline: () => [], failureCode: async () => "beat_authority_conflict" };
+  const result = await runToEnding(entry, audit, { maxManualRetries: 1, now: () => elapsed, sleep: async ms => { elapsed += ms; } });
+  assert.equal(result.endingReached, true);
+  assert.equal(result.manualRetries, 1);
+  assert.deepEqual(result.recoveredFailures, ["beat_authority_conflict"]);
+  assert.equal(result.turns, 1);
+  retried = 0;
+  const exhausted = await runToEnding({ ...entry,
+    getCurrentGame: async () => ({ ok: true, status: "active", view: { narrativeGeneration: { status: "failed" } } }),
+  }, audit, { maxManualRetries: 1, now: () => elapsed, sleep: async ms => { elapsed += ms; } });
+  assert.equal(exhausted.failureCode, "beat_authority_conflict");
+  assert.equal(retried, 1);
+});
+
+test("真实旅程失败保留规则码，永远 pending 按等待预算停止", async () => {
+  let elapsed = 0;
+  const audit = { eventsSinceBaseline: () => [], failureCode: async () => "beat_authority_conflict" };
+  const entry = { getCurrentGame: async () => ({ ok: true, status: "active", view: { narrativeGeneration: { status: "failed" } } }) };
+  const failed = await runToEnding(entry, audit);
+  assert.equal(failed.failureCode, "beat_authority_conflict");
+  const timedOut = await runToEnding({ ...entry,
+    getCurrentGame: async () => ({ ok: true, status: "active", view: { narrativeGeneration: { status: "pending" } } }),
+    ensureNarrativeScene: async () => {},
+  }, audit, { now: () => elapsed, sleep: async ms => { elapsed += ms; } });
+  assert.equal(timedOut.failureCode, "GENERATION_TIMEOUT");
+  assert.equal(timedOut.turns, 0);
+  assert.equal(elapsed, 600_000);
+});
+
+test("正式对白选项来自 NPC 面板，不能把空的旁白 choices 当作没有候选", () => {
+  const choices = [{ choiceToken: "left" }, { choiceToken: "right" }];
+  assert.deepEqual(offeredChoices({ narrative: { choices: [], npcDialogues: [
+    { choices: [] }, { choices },
+  ] } }), choices);
+});
 
 // ---------------------------------------------------------------------------
 // 分阶段叙事真实 AI smoke 的安全门禁测试：绝不访问网络。
@@ -34,6 +119,15 @@ const SECRET_ENV = {
   AI_MODEL: "secret-model-name",
   AI_API_KEY: "sk-super-secret-value",
 };
+
+test("真实 ai_call 审计使用嵌套 output，不能统计成零请求", () => {
+  const result = summarizeAuditEvents([
+    { kind: "ai_call", role: "planning", output: { ok: true, usage: { totalTokens: 12 } } },
+    { kind: "ai_call", role: "choices", output: { ok: false, code: "timeout" } },
+  ]);
+  assert.deepEqual(result.codes, ["attempt_ok", "transport_timeout"]);
+  assert.equal(result.usage.totalTokens, 12);
+});
 
 /** 合法的开局报告：生成成功、可 reload 且两次续接都成功。 */
 function okOpeningReport(gameType, overrides = {}) {

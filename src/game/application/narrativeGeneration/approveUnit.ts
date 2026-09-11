@@ -13,6 +13,7 @@ import {
   type Unit,
   type UnitOutput,
 } from "@/game/domain/narrativeUnit";
+import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
 import { LEGACY_IMPORT_REASON_KEY } from "@/game/domain/entity";
 import type { SafeContext } from "./perspectiveContext";
 import { checkDialogueLabel } from "./dialogueLabel";
@@ -69,8 +70,13 @@ function checkParts(context: SafeContext, output: Extract<UnitOutput, { stage: "
     }
     for (const evidence of part.evidence) {
       if (evidence.kind === "committed") {
-        if (!eventIds.has(evidence.eventId)) return "unit_output_evidence_unavailable";
-      } else if (!context.unit.requiredObservationKeys.includes(evidence.observationKey)) {
+        const beatEvent = context.unit.stage === "narration" && context.unit.point.stepKey === "current"
+          && context.requiredBeats.some(beat => part.beatIds.includes(beat.beatId)
+            && beat.evidence.some(ref => ref.kind === "committed" && ref.eventId === evidence.eventId));
+        if (!eventIds.has(evidence.eventId) && !beatEvent) return "unit_output_evidence_unavailable";
+      } else if (!context.unit.requiredObservationKeys.includes(evidence.observationKey)
+        && !context.visibleFacts.some(fact => fact.sources.some(source => source.kind === "conditional"
+          && source.observationKey === evidence.observationKey))) {
         return "unit_output_evidence_unavailable";
       }
     }
@@ -78,6 +84,11 @@ function checkParts(context: SafeContext, output: Extract<UnitOutput, { stage: "
       if (!knownBeats.has(beatId)) return "unit_output_beat_unknown";
     }
   }
+  const expressedFacts = new Set(output.parts.flatMap(part => part.facts.map(fact => fact.factId)));
+  if (context.unit.task !== undefined && [...context.unit.task.focusFactIds, ...context.unit.task.prerequisiteFactIds]
+    .some(id => !expressedFacts.has(id))) return "unit_output_task_missing";
+  const covered = new Set(output.parts.flatMap(part => part.beatIds));
+  if (context.requiredBeats.some(beat => !covered.has(beat.beatId))) return "unit_output_beat_missing";
   return null;
 }
 
@@ -85,6 +96,24 @@ function checkParts(context: SafeContext, output: Extract<UnitOutput, { stage: "
  * 审批一个已生成的表达单元输出：只对照投影上下文逐项验证结构与引用，
  * 不接触世界状态；世界级披露核对在 collectDisclosures（gameplay）承担。
  */
+export function narrationLayoutRejection(
+  output: Extract<UnitOutput, { stage: "narration" }>, layout: SafeContext["narrationLayout"],
+): string | null {
+  if (layout === undefined) return null;
+  const seen = new Set<string>();
+  let previous: string | null = null;
+  for (const part of output.parts) {
+    const beatId = part.beatIds[0] ?? ATMOSPHERE_BEAT_ID;
+    if (beatId === ATMOSPHERE_BEAT_ID && !layout.allowAtmosphere) return "unit_output_beat_layout";
+    if (beatId !== previous) {
+      if (seen.has(beatId) || seen.has(ATMOSPHERE_BEAT_ID)) return "unit_output_beat_layout";
+      seen.add(beatId);
+      previous = beatId;
+    }
+  }
+  return null;
+}
+
 export function approveUnit(input: ApproveUnitInput): Check<UnitOutput> {
   const { unit, context, output } = input;
   if (context.unit.key !== unit.key) return fail("unit_output_key_mismatch");
@@ -95,9 +124,14 @@ export function approveUnit(input: ApproveUnitInput): Check<UnitOutput> {
     if (output.stage !== "character") return fail("unit_output_stage_mismatch");
     if (unit.speakerId === null) return fail("unit_output_speaker_mismatch");
     if (output.speakerId !== unit.speakerId) return fail("unit_output_speaker_mismatch");
-    const approvedActionKeys = new Set(context.allowedActions.map((action) => action.key));
     for (const action of output.actions) {
-      if (action.actorId !== output.speakerId || !approvedActionKeys.has(action.key)) {
+      const expected = context.allowedActions.find(candidate => candidate.key === action.key);
+      if (action.actorId !== output.speakerId || expected === undefined
+        || expected.actorId !== action.actorId || expected.kind !== action.kind
+        || expected.objectId !== action.objectId || expected.point.stepKey !== action.point.stepKey
+        || expected.point.order !== action.point.order
+        || expected.audienceIds.length !== action.audienceIds.length
+        || !expected.audienceIds.every(id => action.audienceIds.includes(id))) {
         return fail("unit_output_action_unapproved");
       }
     }
@@ -107,11 +141,18 @@ export function approveUnit(input: ApproveUnitInput): Check<UnitOutput> {
     for (const beatId of output.answeredBeatIds) {
       if (!knownBeats.has(beatId)) return fail("unit_output_beat_unknown");
     }
+    if (context.requiredBeats.some(beat => !output.answeredBeatIds.includes(beat.beatId))) {
+      return fail("unit_output_beat_missing");
+    }
     return { ok: true, value: output };
   }
 
   if (unit.stage === "narration") {
     if (output.stage !== "narration") return fail("unit_output_stage_mismatch");
+    // 装配后的旁白 segment 只归属一个节拍；多节拍必须在表达阶段拆段重试。
+    if (output.parts.some(part => part.beatIds.length > 1)) return fail("unit_output_beat_ambiguous");
+    const layoutRejection = narrationLayoutRejection(output, context.narrationLayout);
+    if (layoutRejection !== null) return fail(layoutRejection);
     // 上下文的 allowedActions 已限定「已批准 ∩ 玩家可见」。
     const approvedActionKeys = new Set(context.allowedActions.map((action) => action.key));
     for (const actionKey of output.actionKeys) {
@@ -124,6 +165,9 @@ export function approveUnit(input: ApproveUnitInput): Check<UnitOutput> {
 
   if (output.stage !== "choices") return fail("unit_output_stage_mismatch");
   const expectedCandidates = new Set(context.options.map((option) => option.candidateId));
+  if (new Set(output.labels.map(label => label.candidateId)).size !== output.labels.length) {
+    return fail("unit_output_candidate_missing");
+  }
   for (const label of output.labels) {
     if (!expectedCandidates.has(label.candidateId)) return fail("unit_output_candidate_unknown");
     const labelCheck = checkDialogueLabel(label.label);

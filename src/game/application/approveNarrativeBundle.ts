@@ -47,16 +47,18 @@ import {
   type BundleStepDescriptor,
 } from "@/game/gameplay/rpg/narrativeBundle";
 import type { ApprovedPlan } from "@/game/gameplay/rpg/narrativePlanning";
-import { checkStepDependencies } from "@/game/gameplay/rpg/narrativePlanning";
+import { approvePlanDecision, decisionIdOf, sceneSnapshot } from "@/game/gameplay/rpg/narrativePlanning";
 import type { NarrativeBundleRejection } from "./narrativeBundleSource";
 import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
 import { entitiesOfKind } from "@/game/domain/entity";
-import { asFactId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
+import { asFactId, asNpcId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import {
   buildNpcSpeechAuthority,
   isValidNpcSpeechTarget,
   validateNpcSpeechReferences,
 } from "./npcSpeechAuthority";
+import { validateStagedOutputs, type StagedSpeechFacts } from "./narrativeGeneration/validateStagedOutputs";
+import type { UnitOutput } from "@/game/domain/narrativeUnit";
 import { buildNarrativeScenePresentedDraft } from "./approveAndWriteScene";
 
 // ---------------------------------------------------------------------------
@@ -106,6 +108,7 @@ export type ApproveNarrativeBundleInput = {
    * before 依赖（场景快照与观察回执），再走既有审批转换；缺省时行为不变。
    */
   readonly plan?: ApprovedPlan;
+  readonly approvedUnits?: ReadonlyMap<string, UnitOutput>;
   /** 已批准观察的回执凭据（`audienceId:observationKey`）；与 plan 配套传入。 */
   readonly observationReceipts?: ReadonlySet<string>;
 };
@@ -232,6 +235,8 @@ function buildStepState(
   staged?: Readonly<{
     observations: readonly BundleStepObservation[];
     expressionOrder: readonly string[];
+    speechFacts?: StagedSpeechFacts;
+    premises?: NarrativeBundleStepState["premises"];
   }>,
 ): NarrativeBundleStepState | NarrativeBundleRejection {
   // The proposal stepKey must match the descriptor stepKey (after symbol resolution)
@@ -244,6 +249,7 @@ function buildStepState(
     worldState,
     descriptor.arrivalNpc?.id,
     presentNpcIdsAtLocation(worldState, sceneLocationId),
+    staged?.speechFacts,
   ) !== null) {
     return "bundle_invalid_scene";
   }
@@ -294,7 +300,7 @@ function buildStepState(
   const choiceSeeds = descriptor.choiceCandidates.map((candidate) => {
     const label = proposalChoiceMap.get(candidate.candidateId);
     if (label === undefined) return null;
-    return { label, action: candidate.action };
+    return { label, action: candidate.action, ...(candidate.branch === undefined ? {} : { branch: candidate.branch }) };
   });
   if (choiceSeeds.some((seed) => seed === null)) {
     return "bundle_invalid_scene";
@@ -328,6 +334,7 @@ function buildStepState(
     nextStepIds: [...descriptor.nextStepKeys],
     observations: [...(staged?.observations ?? [])],
     expressionOrder: [...(staged?.expressionOrder ?? [])],
+    ...(staged?.premises === undefined ? {} : { premises: staged.premises }),
   };
 }
 
@@ -374,6 +381,7 @@ type SceneContentRejection = { readonly code: NarrativeBundleRejection; readonly
 function validateBundleNpcSpeech(
   line: { readonly npcId: string; readonly usedFactIds: readonly string[]; readonly usedEventIds: readonly string[] },
   worldState: WorldState,
+  speechFacts?: StagedSpeechFacts,
 ): SceneContentRejection | null {
   const visibleFactIds = entitiesOfKind(worldState.entityStore, "fact")
     .filter((fact) => fact.fact.discovered)
@@ -389,7 +397,7 @@ function validateBundleNpcSpeech(
   });
   if (authority === null) return { code: "bundle_invalid_scene", detail: "missing_speaker" };
   const result = validateNpcSpeechReferences({
-    authority,
+    authority: speechFacts === undefined ? authority : { ...authority, allowedFactIds: [...(speechFacts.get(line.npcId) ?? [])].map(asFactId) },
     usedFactIds: line.usedFactIds,
     usedEventIds: line.usedEventIds,
     eventLedger: worldState.eventLedger,
@@ -404,6 +412,7 @@ function validateBundleSceneNpcSpeech(
   worldState: WorldState,
   expectedNpcId?: string,
   presentNpcIds?: ReadonlySet<string>,
+  speechFacts?: StagedSpeechFacts,
 ): SceneContentRejection | null {
   const dialogues = scene.npcDialogues ?? [];
   const speakers = [
@@ -420,7 +429,7 @@ function validateBundleSceneNpcSpeech(
     if (expectedNpcId !== undefined && scene.npcLine.npcId !== expectedNpcId) {
       return { code: "bundle_invalid_scene", detail: "missing_speaker" };
     }
-    const rejection = validateBundleNpcSpeech(scene.npcLine, worldState);
+    const rejection = validateBundleNpcSpeech(scene.npcLine, worldState, speechFacts);
     if (rejection !== null) return rejection;
   }
   for (const dialogue of dialogues) {
@@ -428,7 +437,7 @@ function validateBundleSceneNpcSpeech(
       npcId: dialogue.npcId,
       usedFactIds: dialogue.usedFactIds,
       usedEventIds: dialogue.usedEventIds,
-    }, worldState);
+    }, worldState, speechFacts);
     if (rejection !== null) return rejection;
   }
   return null;
@@ -464,6 +473,7 @@ function validateCurrentSceneContent(input: {
   readonly scene: BundleSceneProposal;
   readonly mandatoryBeats: readonly MandatoryNarrativeBeat[];
   readonly dialogueFocusNpcId: string | undefined;
+  readonly speechFacts?: StagedSpeechFacts;
   readonly transition: ObjectiveTransition;
   readonly worldState: WorldState;
 }): SceneContentRejection | null {
@@ -532,6 +542,7 @@ function validateCurrentSceneContent(input: {
     worldState,
     undefined,
     presentNpcIdsAtLocation(worldState, String(worldState.currentLocationId)),
+    input.speechFacts,
   );
   if (speechRejection !== null) return speechRejection;
 
@@ -566,26 +577,15 @@ export function approveNarrativeBundle(
 
   // Step 1: Parse the proposal
   const parsed = parseNarrativeBundleProposal(proposal);
-  if (!parsed.ok) return { ok: false, code: "bundle_invalid_scene" };
+  if (!parsed.ok) return { ok: false, code: "bundle_invalid_scene", detail: parsed.reason };
 
-  // Step 1.5 (staged): 逐步骤复核 before 依赖（场景快照 + 观察回执）。
-  // 观察依赖 fail-closed：没有回执凭据就不能证明受众已观察到。
-  if (input.plan !== undefined) {
-    const plan = input.plan;
-    const stepKeys = ["current", ...proposal.continuationScenes.map((step) => step.stepKey)];
-    for (const stepKey of stepKeys) {
-      const expected = plan.stepDependencies[stepKey] ?? [];
-      if (expected.length === 0) continue;
-      const holds = checkStepDependencies({
-        world: plan.world,
-        story: plan.story,
-        phase: "before",
-        expected,
-        observationReceipts: input.observationReceipts,
-      });
-      if (!holds.ok) return { ok: false, code: "staged_dependency_unmet", detail: holds.code };
-    }
-  }
+  const stagedValidation = input.plan !== undefined && input.approvedUnits !== undefined
+    ? validateStagedOutputs(input.plan, input.approvedUnits) : null;
+  if (stagedValidation !== null && !stagedValidation.ok) return { ok: false, code: "bundle_invalid_scene", detail: stagedValidation.code };
+  const staged = stagedValidation?.ok ? stagedValidation.value : null;
+
+  // 生产条件审批由上述逐单元重放与消费时 premises 复核承担。
+  // 不再以 stepKey 查 unitKey 依赖表，也不把本幕待披露的观察当作 before 回执。
 
   // Step 2: Approve worldDelta (if present)
   let previewWorldState = worldState;
@@ -660,11 +660,38 @@ export function approveNarrativeBundle(
         mode: "advanced_act",
       }
     : transition;
-  const graph = buildNarrativeBundleDescriptors({
+  let graph = buildNarrativeBundleDescriptors({
     worldState: previewWorldState,
     storyState: previewStoryState,
     transition: descriptorTransition,
   });
+
+  if (input.plan !== undefined) {
+    const branchApproval = approvePlanDecision(input.plan);
+    if (!branchApproval.ok) return { ok: false, code: "bundle_invalid_scene", detail: branchApproval.code };
+    const decision = branchApproval.value.choiceExpression;
+    if (decision?.kind === "ordinary") {
+      const decisionId = decisionIdOf(decision);
+      const candidates = decision.options.map(option => ({
+        candidateId: option.candidateId,
+        action: { type: "talk" as const, npcId: asNpcId(decision.npcId), dialogueAct: option.dialogueAct, topic: option.topic },
+        ...(decision.options.every(option => option.target !== null)
+          ? { branch: { decisionId, candidateId: option.candidateId } } : {}),
+      }));
+      graph = {
+        ...graph,
+        currentChoiceCandidates: decision.point.stepKey === "current" ? candidates : [],
+        steps: graph.steps.map(step => ({
+          ...step, choiceCandidates: step.stepKey === decision.point.stepKey ? candidates : [],
+        })),
+      };
+      previewStoryState = {
+        ...previewStoryState,
+        branchDecisions: decision.options.every(option => option.target !== null)
+          ? { ...previewStoryState.branchDecisions, [decisionId]: decision } : previewStoryState.branchDecisions,
+      };
+    }
+  }
 
   // Step 4: Validate coverage
   const coverage = validateNarrativeBundleCoverage(graph);
@@ -687,7 +714,7 @@ export function approveNarrativeBundle(
       );
       observationsByStep.set(
         proposalStep.stepKey,
-        input.plan.proposal.observations
+        (staged?.observations ?? input.plan.proposal.observations)
           .filter((observation) => referencedKeys.has(observation.key))
           .map((observation) => ({
             key: observation.key,
@@ -718,7 +745,23 @@ export function approveNarrativeBundle(
     if (descriptor === undefined) {
       return { ok: false, code: "bundle_unknown_step" };
     }
-    const stepResult = buildStepState(proposalStep, descriptor, previewWorldState, {
+    let sceneWorld = previewWorldState;
+    if (input.plan !== undefined) {
+      const unit = input.plan.units.find(unit => unit.point.stepKey === proposalStep.stepKey);
+      if (unit === undefined) return { ok: false, code: "bundle_invalid_scene", detail: "scene_unit_missing" };
+      const snapshot = sceneSnapshot({ plan: input.plan, point: unit.point, approved: input.approvedUnits });
+      if (!snapshot.ok) return { ok: false, code: "bundle_invalid_scene", detail: snapshot.code };
+      sceneWorld = snapshot.value.world;
+    }
+    const stepResult = buildStepState(proposalStep, descriptor, sceneWorld, {
+      premises: input.plan === undefined ? undefined : {
+        locationId: String(sceneWorld.currentLocationId),
+        afterSequence: input.plan.world.eventLedger.at(-1)?.sequence ?? -1,
+        discoveredFactIds: sceneWorld.worldFacts.filter(fact => fact.discovered
+          && !input.plan!.world.worldFacts.some(prior => prior.factId === fact.factId && prior.discovered)).map(fact => String(fact.factId)),
+        observations: staged?.prerequisitesByStep.get(proposalStep.stepKey) ?? [],
+      },
+      speechFacts: staged?.speechFactsByStep.get(proposalStep.stepKey),
       observations: observationsByStep.get(proposalStep.stepKey) ?? [],
       expressionOrder: expressionOrderByStep.get(proposalStep.stepKey) ?? [],
     });
@@ -769,6 +812,7 @@ export function approveNarrativeBundle(
     : undefined;
   const contentRejection = validateCurrentSceneContent({
     scene: proposal.currentScene,
+    speechFacts: staged?.speechFactsByStep.get("current"),
     mandatoryBeats: input.mandatoryBeats,
     dialogueFocusNpcId: currentDialogueFocusNpcId === undefined
       ? undefined
@@ -816,6 +860,7 @@ export function approveNarrativeBundle(
         basedOnRevision,
         label,
         action: candidate.action,
+        ...(candidate.branch === undefined ? {} : { branch: candidate.branch }),
       });
       if (!approved.ok) {
         return { ok: false, code: "bundle_invalid_scene" };
@@ -836,6 +881,7 @@ export function approveNarrativeBundle(
         basedOnRevision,
         label,
         action: matchingCandidate.action,
+        ...(matchingCandidate.branch === undefined ? {} : { branch: matchingCandidate.branch }),
       });
       if (!approved.ok) {
         return { ok: false, code: "bundle_invalid_scene" };

@@ -113,7 +113,14 @@ function observation(overrides: Partial<Observation> & Pick<Observation, "key">)
 }
 
 function planWith(units: readonly Unit[], observations: readonly Observation[]): PlanProposal {
-  return { ...makeStagedPlan(), decision: null, units, observations };
+  const stepKeys = [...new Set(units.map(unit => unit.point.stepKey))].filter(key => key !== "current");
+  const last = stepKeys.at(-1) ?? "current";
+  return { ...makeStagedPlan(), decision: { ...makeStagedPlan().decision!, point: { stepKey: last, order: 99 } },
+    units: [...units, unit({ key: "choices_terminal", stage: "choices", point: { stepKey: last, order: 99 }, dependencies: units.map(unit => unit.key) })],
+    observations,
+    steps: stepKeys.map((key, index) => ({ key, trigger: { kind: "explore", locationId: branchWorld().currentLocationId }, next: stepKeys[index + 1] === undefined ? [] : [stepKeys[index + 1]!] })),
+    terminal: last === "current" ? { kind: "next_decision", target: { kind: "current_scene" } } : { kind: "next_decision", target: { kind: "continuation_step", stepKey: last } },
+  };
 }
 
 function approve(proposal: PlanProposal, world: WorldState) {

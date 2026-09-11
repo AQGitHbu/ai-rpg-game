@@ -75,6 +75,20 @@ export async function generatePendingNarrativeBundle(
     return { ok: true, revision: current.record.revision };
   }
 
+  // 游戏侧显式 failed→pending 已保留同 job 身份；同时恢复 durable 任务周期。
+  // 普通 ensure 不允许重置失败预算，避免后台无限自动重试。
+  if (started.job.status === "failed" && narrative.retryContext !== undefined) {
+    const resumed = await deps.jobs.control({ id: started.job.id, expectedVersion: started.job.version,
+      expectedCycle: started.job.cycle, operation: "retry", now: deps.now() });
+    if (!resumed.ok) {
+      // 另一 worker 已恢复同周期时可继续走 claim/fence；其他状态不猜测。
+      const latest = resumed.code === "JOB_CONFLICT" ? await deps.jobs.get(started.job.id) : null;
+      if (latest?.ok !== true || latest.value.status !== "pending") {
+        return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+      }
+    }
+  }
+
   const ran = await runDecision(started.job.id, "decision-worker", {
     jobs: deps.jobs,
     source: deps.source,

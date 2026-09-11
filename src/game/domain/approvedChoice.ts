@@ -87,6 +87,14 @@ export function createApprovedChoice(input: CreateApprovedChoiceInput): CreateAp
   };
 }
 
+export function isApprovedChoiceBranch(value: unknown): value is ApprovedChoiceBranch {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const branch = value as Record<string, unknown>;
+  return Object.keys(branch).every(key => key === "decisionId" || key === "candidateId")
+    && typeof branch.decisionId === "string" && branch.decisionId.trim() !== ""
+    && typeof branch.candidateId === "string" && branch.candidateId.trim() !== "";
+}
+
 function rebuildBranch(branch: ApprovedChoiceBranch): ApprovedChoiceBranch | null {
   const decisionId = branch.decisionId.trim();
   const candidateId = branch.candidateId.trim();

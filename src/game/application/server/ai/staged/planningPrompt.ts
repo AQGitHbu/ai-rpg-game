@@ -13,7 +13,12 @@ import { renderOpeningSetupSection } from "../openingNarrativePrompt";
 import { MAX_PLAN_UNITS } from "@/game/domain/narrativePlan";
 import { MAX_NARRATIVE_BUNDLE_STEPS } from "@/game/domain/narrativeBundle";
 import { DIALOGUE_ACTS } from "@/game/domain/action";
-import { MAX_LABEL_LENGTH, MAX_TEXT_PART_LENGTH } from "@/game/domain/narrativeUnit";
+import { buildNarrativeBundleDescriptors } from "@/game/gameplay/rpg/narrativeBundle";
+import { buildEntityContextProjection } from "@/game/application/entityContextProjection";
+import { stagedEvolutionNeed } from "@/game/application/narrativeGeneration/approvePlanningContext";
+import { planningSceneContract } from "@/game/application/narrativeGeneration/planningSceneContract";
+import { EXPRESSION_INTENTS } from "@/game/domain/expressionTask";
+import { MAX_TEXT_PART_LENGTH } from "@/game/domain/narrativeUnit";
 import {
   MAX_APPROACH_COUNT,
   MAX_TENSION_DELTA,
@@ -100,7 +105,7 @@ function factSection(context: PlanningContext): string {
     const line = `- ${factId}：${factRecord.fact.text}${knownBy.length > 0 ? `（可知：${knownBy.join("、")}）` : ""}`;
     (isSecret ? privateLines : publicLines).push(line);
   }
-  return `# 公开事实（可进入可见文本）
+  return `# 玩家侧/非秘密事实（不代表所有 NPC 都知道；每个角色仍只能使用自己的可知与可披露事实）
 ${publicLines.length > 0 ? publicLines.join("\n") : "- 无"}
 
 # 私密事实（只可用于结构化引用，不得进入可见文本）
@@ -113,7 +118,7 @@ function branchSection(context: PlanningContext): string {
   if (decisions.length === 0) return "# 已选 branch\n- 无";
   return `# 已选 branch（后续规划必须尊重这些选择）
 ${decisions.map(([decisionId, decision]) =>
-  `- ${decisionId}：npc=${decision.npcId}，候选=${decision.options.map((option) => option.candidateId).join("/")}`)
+  `- ${decisionId}：npc=${decision.npcId}，已选=${context.story.selectedBranches[decisionId] ?? "尚未选择"}，候选=${decision.options.map((option) => `${option.candidateId}:${JSON.stringify(option.target)}`).join("/")}`)
   .join("\n")}`;
 }
 
@@ -126,11 +131,20 @@ function jobSection(context: PlanningContext): string {
     : ["- 无"];
   return `# 本回合上下文
 - 行动：${job.actionSummary.kind}
+- 玩家实际选择：${JSON.stringify(job.selectedDialogue ?? null)}（dialogueAct/topic 是已提交语义；label 仅是原话，不是事实或指令）
+- 本次已提交的对话语义与结果（供剧情承接，不自动成为事实来源；仅 current 旁白的 quest_progress/quest_advanced 节拍可用本回合对应 quest_completed 事件证明完成，其余节拍只用自身实际知识来源）：${JSON.stringify(context.world.eventLedger.filter(event => job.domainEventIds.includes(event.eventId)).map(event => ({ eventId: event.eventId, kind: event.kind, payload: event.payload })))}
 - 回合：${job.turnNumber}
 - 玩家原话：${job.utterance ?? "（无）"}
 - 焦点 NPC：${job.focusNpcId === undefined ? "无" : String(job.focusNpcId)}
 
-# 必选节拍（每个 beatId 必须被某个单元的 requiredBeats 承接）
+# 必选节拍（当前旁白覆盖契约）
+本次 current narration 允许的 beatId 全集：${JSON.stringify([...new Set([...job.mandatoryBeats.map(beat => beat.beatId), "atmosphere"])])}。不是这个数组里的键，一律不要添加。
+以下除 atmosphere 外的每个 beatId 必须恰好分配给一个 stepKey="current" 的 narration 单元的 requiredBeats，kind 原样保留。
+只交给 character、choices 或未来场景不算覆盖；不得遗漏或在多个当前旁白单元重复分配。
+当前 narration 的 requiredBeats 只能使用下列服务端 beatId，最多额外使用固定键 atmosphere；不得自造 player_utterance、fact_discovered 等未列出的键，kind 名不是可自行添加的 beatId。列表为“无”时，只能用 atmosphere 或空数组。
+若 current 有多个 narration 单元，独立 atmosphere 只能分配给最后一个；此前每个 narration 单元必须至少承接一个必选节拍，不能安排纯氛围空单元。
+NPC 可以另行回应同一个节拍，但那是角色的说法，不替代旁白对已发生事件的交代；不要把 NPC 台词复制进旁白。
+只有下表确实包含 player_utterance 时，该节拍才还须由当前焦点 NPC 回答。没有该节拍不表示 NPC 不回应玩家，只是不新增该节拍 ID。事实与证据仍须遵守各单元原有的可知、可披露范围。
 ${beats.join("\n")}`;
 }
 
@@ -152,7 +166,7 @@ export function renderPlanProposalContract(context: PlanningContext): string {
   return `# PlanProposal 精确契约（多一个键即整体拒绝，少一个键也拒绝）
 
 顶层恰有 8 键：opening、worldDelta、steps、units、observations、actions、decision、terminal。
-所有 key 满足 [a-z][a-z0-9_]*，长度 ≤ 128，不得重复。
+自定义 key 用小写字母/数字/下划线，长度 ≤ 128，不得重复。服务端 steps 的 key（可含冒号）必须原样引用；"$deferred" 是允许的专用占位符。
 
 ## steps[] —— 剧情骨架
 每项恰有 3 键：{"key": 键, "trigger": 触发器, "next": 键数组}
@@ -166,13 +180,21 @@ export function renderPlanProposalContract(context: PlanningContext): string {
   - {"kind":"battle_resolved","enemyId":键,"outcome":"victory"}（outcome 只能是 "victory"）
 - steps 数量 ≤ ${MAX_NARRATIVE_BUNDLE_STEPS}，next 不得悬空、不得成环。
 
+## task —— 具体表达任务（不是最终文本，不含自由正文）
+{"intent": 意图枚举, "focusFactIds": 事实 ID 数组, "prerequisiteFactIds": 事实 ID 数组}
+- intent ∈ ${EXPRESSION_INTENTS.join(" | ")}。narration 用 describe；NPC 用 inform/ask/admit_unknown 或对话意图；选项 intent 必须等于其 dialogueAct。
+- focusFactIds 按顺序指定本单元必须讲什么；只引用本角色可知且可披露/玩家此时已知的事实。taskFactIds 同步这些事实，不靠 instruction/publicIntent.text 指派关键内容。
+- prerequisiteFactIds 表示先要求对方核实这些已知说法，然后才表达主意图（如先核实再协助）；不是已调查成功，不执行支付或移动。无需条件则 []。禁止为了保密直接删掉关键条件。
+- 数组各最多 12 项、无重复。无事实的现场描写用 describe + []；未知提问可用 admit_unknown + []，不引用未知秘密 ID。
+- task 不得增加 text/reason/隐藏动机字段。只按已有事实组织具体目的与先后条件；不支持的语义回到规划，不让表达器另编剧情。
+
 ## units[] —— 表达单元
-每项恰有 8 键：{"key","stage","point","speakerId","dependencies","taskFactIds","requiredObservationKeys","requiredBeats"}
+每项包含 {"key","stage","point","speakerId","dependencies","taskFactIds","requiredObservationKeys","requiredBeats"}；narration/character 还必须提供 task，choices 单元不提供 task（放在其两个候选上）。
 - stage 取 "narration" | "character" | "choices"（**不是 type**）。
 - **整份 units 里 stage="choices" 的单元只能有 1 个**，就是这个决策点本身；其余所有单元必须是 narration 或 character。
   一个 step 里排 2 个 choices 单元、或给每个场景都配一个 choices 单元，都会整体被拒（decision_unit_mismatch）。
   线性场景（非决策点）**没有** choices，只写 narration/character；玩家在决策点的两个候选由 decision 声明。
-- point 恰有 2 键：${pointShape}（**不是裸字符串**，stepKey 必须是上面声明的 step key）。
+- point 恰有 2 键：${pointShape}（**不是裸字符串**，stepKey 是 "current" 或上面声明的未来 step key）。
 - speakerId：stage="character" 时给 NPC 键，其余必须为 null。
 - dependencies：键数组，元素是其他 unit 的 key（**不是 dependsOn、不是 stepId**）。
 - taskFactIds：键数组，元素是本单元需要用到的事实**实体 id**（开局链路形如 fact_0，见 opening 节的实体 id 约定；decision 链路用公开/私密事实段列出的 id）。可为 []。
@@ -185,13 +207,13 @@ export function renderPlanProposalContract(context: PlanningContext): string {
   - kind ∈ ${PLANNING_BEAT_KINDS.join(" | ")}
   - evidence 必须是**对象数组**，绝不可写成裸字符串数组；元素二选一：
     {"kind":"committed","eventId": 已提交事件 id} 或 {"kind":"conditional","observationKey": 本次 observations 的 key}
-    无法确定时写 []。
+    无法确定时写 []。eventId 必须是真实事件 ID，不是事件 kind（如 quest_completed、npc_interaction_recorded）。已提交动作结果不自动成为任意事实的来源；没有明确事实来源时，requiredBeats.evidence 写 []，不要为每个节拍猜造证据。
 - 表达单元总数 ≤ ${MAX_PLAN_UNITS}，dependencies 不得悬空、不得成环。
 
 ## observations[]
 每项恰有 5 键：{"key","point","audienceIds","fact","source"}
 - point 同 units（${pointShape}）。
-- audienceIds：键数组，列出**确实能观察到这件事**的角色键（玩家写 "player"，NPC 写其键）。
+- audienceIds：键数组，列出**确实能观察到这件事**的实体键（玩家必须写 "player_0"，不能写 "player"；NPC 写其真实实体键）。
 - fact 恰有 2 键：{"factId": 事实实体 id, "certainty": "known" 或 "suspected"}。
 - source 二选一且只能二选一：{"kind":"witness"} 或 {"kind":"speech","speakerId": NPC 实体 id}（开局链路 NPC 实体 id 是 npc_0）。
 - speech 来源的 certainty 不得高于说话人自身的认知；key 不得重复。
@@ -211,20 +233,23 @@ export function renderPlanProposalContract(context: PlanningContext): string {
 ## decision
 恰有 4 键：{"kind":"ordinary","point":与承接它的 choices 单元**完全相同**的 point,"npcId": NPC 键,"options":[选项, 选项]}
 - options 恰好 2 项，candidateId 必须互不相同。
-- 选项恰有 6 键：{"candidateId","dialogueAct","topic","target","publicIntent","deferredLocation"}
+- 选项恰有 7 键：{"candidateId","dialogueAct","topic","target","publicIntent","deferredLocation","task"}
   - dialogueAct ∈ ${DIALOGUE_ACTS.join(" | ")}
   - topic 恰有 kind 与所需键，kind ∈ ${PLANNING_TOPIC_KINDS.join(" | ")}：
     {"kind":"general"} | {"kind":"fact","factId":键} | {"kind":"quest","questId":键} | {"kind":"thread","threadId":键}
-  - target 恰有 kind 与所需键，kind ∈ ${PLANNING_ROUTE_TARGET_KINDS.join(" | ")}：
+  - target 普通对白为 null。旧路线数据的对象形状为 kind 与所需键，kind ∈ ${PLANNING_ROUTE_TARGET_KINDS.join(" | ")}：
     {"kind":"talk_to_npc","npcId":键} | {"kind":"visit_location","locationId":键} | {"kind":"obtain_item","itemId":键}
     | {"kind":"discover_fact","factId":键} | {"kind":"defeat_enemy","enemyId":键}
   - publicIntent **不是字符串**，而是句段对象，恰有 4 键：${textPart}
-    - text 必须简短（≤ ${MAX_TEXT_PART_LENGTH} 字）。
+    - text 必须简短（≤ ${MAX_TEXT_PART_LENGTH} 字），仅写策略关键词，不写 NPC/玩家对白成稿；此字段不会转发给表达器。
     - facts 是 **FactUse 对象数组**，绝不可写成裸键数组：每项恰有 2 键 {"factId": 事实键, "certainty": "known" 或 "suspected"}。
       只放**公开事实**（私密事实不得进入玩家可见的选项意图）；不需要时写 []。
     - evidence 同 units 的 requiredBeats：对象数组（{"kind":"committed","eventId":…} 或 {"kind":"conditional","observationKey":…}），通常为 []。
     - beatIds：键数组，通常为 []。
-  - deferredLocation：通常为 null。
+  - 普通对白选项 target 必须为 null，deferredLocation 必须为 null。不需要新地点或不同未完成目标；不凭说话自动创建地点或替换任务。
+  - 两个选项的 dialogueAct/topic 组合必须不同，并代表本场景中不同的具体回应。可以是同地点同 NPC 的合作与拒绝、相信与质疑、询问不同关键事实；不是同义改写。
+  - 每个普通选项必须另有 task，intent 与 dialogueAct 一致，focusFactIds 明确该选择要讨论的具体内容，prerequisiteFactIds 保留先求证后表态的条件。publicIntent.text 是规划备注，不会转发给表达器。facts 引用必须与要谈论的授权内容一致，topic 尽量使用具体公开事实，避免 general 导致表达器猜测。
+  - 非 null 的旧路线目标仅用于恢复旧已批准数据，本次新的普通对话不得生成延迟路线模板。
 
 ## terminal
 {"kind":"next_decision","target":{"kind":"current_scene"}} 或 {"kind":"next_decision","target":{"kind":"continuation_step","stepKey":键}} 或 {"kind":"ending"}。
@@ -323,8 +348,46 @@ function openingContractSection(context: PlanningContext): string {
       fact key 必须属于 knownFactKeys；thread key 必须属于已声明的 threads；两项的 act/topic 语义必须不同。`;
 }
 
+/** 仅识别服务端审批反馈；普通文本/旧格式反馈不替换当前结构上下文。此投影不授予审批权限。 */
+function repairedSceneContract(repair: AiContentRepair | undefined): Record<string, unknown> | null {
+  if (repair?.detail === undefined) return null;
+  try {
+    const detail: unknown = JSON.parse(repair.detail);
+    if (detail === null || typeof detail !== "object" || !("sceneContract" in detail)) return null;
+    const value = detail.sceneContract;
+    if (value === null || typeof value !== "object" || !("graphStatus" in value) || value.graphStatus !== "approved"
+      || !("steps" in value) || !Array.isArray(value.steps) || !("terminal" in value)
+      || !("decisionPoint" in value) || typeof value.decisionPoint !== "string") return null;
+    return value as Record<string, unknown>;
+  } catch { return null; }
+}
+
 /** Builds the staged planning prompt: skeleton only, no presentation text. */
 export function buildPlanningPrompt(context: PlanningContext, repair?: AiContentRepair): string {
+  const sceneGraph = context.kind === "decision" ? buildNarrativeBundleDescriptors({
+    worldState: context.world, storyState: context.story, transition: context.job.objectiveTransition,
+  }) : null;
+  const needsNextAct = context.kind === "decision" && stagedEvolutionNeed(context.story).kind === "next_act";
+  const repairedGraph = context.kind === "decision" ? repairedSceneContract(repair) : null;
+  const entityContext = context.kind === "decision"
+    ? buildEntityContextProjection({ worldState: context.world, storyState: context.story, job: context.job }) : null;
+  const structuralContext = sceneGraph === null ? "" : `# 服务端场景骨架\n${JSON.stringify({
+    evolutionNeed: context.kind === "decision" ? stagedEvolutionNeed(context.story) : { kind: "none" },
+    current: "current",
+    currentLocationId: context.kind === "decision" ? context.world.currentLocationId : null,
+    entityContext,
+    ...(repairedGraph ?? (needsNextAct ? { graphStatus: "pending_world_delta", instruction: "旧幕已经结束；本轮必须生成 nextMainQuest 与目标实体，再按增量后的图安排场景。current 只回应本轮已发生的行动；若下一决策在未来，则 current 不得有 choices。没有当前可照抄的终点。" }
+      : planningSceneContract(sceneGraph, context.kind === "decision" ? context.job.focusNpcId ?? null : null))),
+    dynamicIds: context.kind === "decision" ? {
+      location: `loc_dyn_${context.story.evolution.nextLocationOrdinal}`,
+      npc: `npc_dyn_${context.story.evolution.nextNpcOrdinal}`,
+      item: `item_dyn_${context.story.evolution.nextItemOrdinal}`,
+      enemy: `enemy_dyn_${context.story.evolution.nextEnemyOrdinal}`,
+      fact: `fact_dyn_${context.story.evolution.nextFactOrdinal}`,
+      quest: `quest_dyn_${context.story.evolution.nextQuestOrdinal}`,
+    } : null,
+    entities: context.kind === "decision" ? context.world.entityStore.records.map(record => ({ id: record.core.id, name: record.core.name, kind: record.core.kind })) : [],
+  })}\nevolutionNeed.kind=none 时 worldDelta 必须严格为 null，不得用空对象、不得为刚选的路线再生成实体（路线已由规则创建）。当前回应必须有 stepKey=current 的旁白/角色单元；current 不属于 steps。无 worldDelta 时必须逐项沿用这里的 steps 和 terminal，不能自造 investigate 步骤代替对话，也不能把当前回应挂到未来。`;
   const repairSection = repair === undefined
     ? ""
     : `\n# 上次生成的校验反馈\n${renderAiRepairFeedback(repair)}\n请依据原契约修复并重新输出完整 JSON。\n`;
@@ -338,15 +401,21 @@ ${context.input.novelty?.recent?.length
     : "";
 
   const openingTask = context.kind === "opening"
-    ? `- opening 必须为完整 OpeningGenerationCandidate（见下节），prologue/描述只是内容素材，最终序幕由 narration 单元覆盖后才发布。`
+    ? `- opening 必须为完整 OpeningGenerationCandidate（见下节），prologue/描述只是内容素材，最终序幕由 narration 单元覆盖后才发布。
+- 开局已经位于起始地点，steps 必须为 []。所有单元 point.stepKey 固定为 "current"，依次 narration → character(npc_0) → choices；不得安排移动到自己所在地点、investigate 或未来片段。
+- 开局两个选项 target/deferredLocation 都为 null；用 opening.situation.responses 的不同 dialogueAct/topic 表示不同回应，不为凑选项创建地点。
+- decision.options 的 candidateId 必须逐项等于 opening.opening.situation.responses 的 key，dialogueAct/topic 同源，不能添加 opt_ 前缀或另起 ID。
+- privateFactKeys 对应秘密不得进入 narration/choices 的 taskFactIds、requiredBeats、observations；不能把玩家开端已亲眼看到的事设成 NPC 独占秘密。
+- requiredBeats.instruction 只写节拍类别意图，不写含秘密的台词草稿；必须用 taskFactIds/requiredBeats.factIds 明确本单元要表达的事实，旁白和 NPC 不能自行决定关键内容。`
     : `- opening 必须为 null；决策链路禁止重跑开局结构编译。`;
 
   return `你是 RPG 的剧情规划 AI。本次调用只产出结构化骨架（PlanProposal JSON），不产出最终旁白、台词或选项 label；最终展示文本由后续 narration/character/choices 阶段生成。
-${repairSection}
+${context.kind === "opening" ? "重要：你决定剧情事件、NPC 要表达的具体内容和两个玩家回应的不同语义；三个表达器只负责表达。普通回应允许同地同 NPC，不要求新地点。" : "你仍负责决定本轮内容和承接玩家选择；三个表达器只负责在授权范围内表达，不负责另编剧情。"}
 ${openingSection}
 ${factSection(context)}
 ${branchSection(context)}
 ${jobSection(context)}
+${structuralContext}
 
 # 预算与规模上限
 - 表达单元（narration/character/choices）总数不超过 ${MAX_PLAN_UNITS} 个。
@@ -356,14 +425,37 @@ ${jobSection(context)}
 
 # 创作要求
 ${openingTask}
-- 用有限模板表达后果：分支的 visit_location/talk_to_npc 等目标由 decision options 声明，不发明任意效果。
-- 规划的节拍链：服务端 mandatory beat 必须进入相应单元的 requiredBeats。
+- 世界和任务继续沿既有规则推进。不同回应由 dialogueAct/topic 及实际规则结果供后续规划承接，不强制额外路线，不发明任意效果。
+- 规划的节拍链：服务端 mandatory beat 按“当前旁白覆盖契约”分配，不是任意单元承接即可。
 - choices 单元与 decision 的候选数都是 2；选项 label 由后续 choices 阶段生成，本阶段只声明结构。
 
 ${renderPlanProposalContract(context)}
 ${openingContractSection(context)}
 
+# 世界演化与衔接
+- 已存在实体不是新建模板；entityContext.occupiedNames 是已占用名称，不是可用候选。想沿用旧 NPC/地点就引用已有 ID，不在 newNpc/newLocation 重建；新实体须使用未占用名称。
+- newLocation.connectFromLocationId 必须等于上方 currentLocationId，不因开局在 loc_0 就一直从 loc_0 接入。
+- newItem.acquisition=npc_gift 必须同批提出 nextMainQuest/newNpc，且 newItem 与 newNpc 共址；旧 NPC 不能充当本次新物品的赠予者。场景拾取用 scene，不能在文字里改称 NPC 已赠予。
+- evolutionNeed.kind=next_act 时，本轮旧主线已结束，必须提出 worldDelta.nextMainQuest，并提供能支撑新目标的新实体。不能只有任务名没有目标实体，不能回退 worldDelta=null。
+- 新 NPC 不继承旧 NPC、玩家或整包的知识。同批 newFact.visibility=public 才能成为新 NPC 的可说事实（ID 为 dynamicIds.fact）；不要把旧 NPC 的 fact_dyn_N 任务搬给新 NPC。没有可说事实时只回应自己的公开身份/现场，或 admit_unknown，不新增观察给自己授权。
+- 新 NPC、新地点等实体只按本次剧情需要生成，不是为了两选项而生成；引用服务端 dynamicIds（仅对应实体确实提出时才存在）。worldDelta 没有产生的 ID 不能引用。
+- newLocation.placement=world 且新 NPC 位于 new_location 时，步骤通常为 {"key":"move:新地点ID","trigger":{"kind":"move","locationId":"新地点ID"},"next":[]}，当前场景回应原 NPC，未来地点才让新 NPC 说话，choices 和 decision 都在未来抵达时点。决不能照抄增量前的 ending 终点。
+- newLocation.placement=town_building 时，建筑挂在原城镇下，不创建 loc_dyn 地点 ID；NPC 实际 locationId 仍为 connectFromLocationId，抵达步骤使用 explore:该城镇ID，不能写 move:loc_dyn 或 explore:loc_dyn。必须同时声明位于 new_location 的 newNpc。\n- next_act 可按既有规则提交新地点、新 NPC、物品、敌人和任务；public 只是可公开，不等于玩家已发现。新事实若尚未由规则目标确认，抵达后的第一段旁白不能提前引用；应先由确实知道该事实的新 NPC 在自己的 character 单元通过 speech observation 向 player_0 披露，再让同场更晚且依赖该角色单元的旁白/选项引用实际披露。NPC 的 requiredObservationKeys 包含该观察 key；不要用玩家旁白自造 witness 来授权，也不要让旧 NPC 讲述新 NPC 的知识。NPC 私有事实不自动公开。newFact.visibility=npc_private 时，不得把该事实写进玩家选项 topic、旁白 requiredBeats，或用 speech/witness observations 强行公开；角色可知道但本包不可说。为保密不需要生成观察，不披露的秘密只留给规划器。
+- 发生世界增量后，steps/terminal 必须匹配规则编译该增量所得的图；修复反馈若包含 approvedWorldDelta 和 steps/terminal，沿用已批准增量并严格引用该图。
+- evolutionNeed.kind=ending_pair 时，只提供 trust/doubt 两个 endingPair，terminal={"kind":"ending"}、steps=[]、decision=null。units 仍必须包含 current 旁白、现场 NPC 和最后一个 choices 单元；这是 decision 非空要求的唯一例外。服务端将为该 choices 单元派生 trust/support 和 doubt/challenge 候选，表达器只写立场对白，不预告结局结果。
+
+# 最终结构检查（优先于自定义 key 格式）
+${structuralContext}
+${repairSection}
+- terminal.kind=ending 时，顶层 decision 必须是 JSON null（不是 ordinary/ending 对象）；只保留 current 的最后一个 choices 单元。trust/doubt 内容由规则注入，无需在 decision.options 再定义。此条优先于普通决策的“两条候选”要求。
+- graphStatus=approved 表示场景图已经由规则编译（不是整包获批），包括有 worldDelta 的修复。terminal.kind=next_decision 时，唯一 choices 的 point.stepKey 和 decision.point.stepKey 必须同时等于 decisionPoint，二者 order 也必须一致；decision.npcId 必须等于 decisionNpcId，candidateId 沿用 candidateIds。terminal.kind=ending 则继续遵守上方 decision=null 的结局契约。不得因本回合焦点 NPC 是旧 NPC，就把下一决策也留给旧 NPC。
+- scenes[].allowsChoices=false 的场景只安排回应，不安排选项；responseNpcId 表示该场景的角色对象，不是全包共用 speaker。沿用反馈中的 approvedWorldDelta，重新规划各场景的表达意图、依赖与选项语义，不要仅改 terminal 或机械搬移旧 NPC 的对白任务。
+- current 只允许出现在 units[].point.stepKey，不允许作为 steps[].key。
+- 每个 requiredScenes 都必须有自己的 narration/character 单元，不得把全部单元放在 current。
+- 无 worldDelta 时，唯一 choices 单元和 decision.point 必须放在上方 decisionPoint。graphStatus=pending_world_delta 时，以增量后终点为准：如 steps=[move:新地点ID]，则未来旁白、未来 NPC、choices、decision.point 全部使用这个 stepKey，不得仍放在 current。未来场景 NPC 只能在其实际所在地出现。
+- 服务端带冒号的 step key 必须原样复制，禁止改名。不要重复选择本次已选路线或引用未选且未生成的实体。
+
 # 顶层输出
 只返回一个 JSON 对象，即 PlanProposal：顶层必须且只能有 opening、worldDelta、steps、units、observations、actions、decision、terminal。
-禁止输出任何解释文字、Markdown 代码围栏或 JSON 之外的包装。所有自由文本使用中文；key 只用 [a-z][a-z0-9_]*，长度 ≤ 128。`;
+禁止输出任何解释文字、Markdown 代码围栏或 JSON 之外的包装。所有自由文本使用中文；自定义 key 用 [a-z][a-z0-9_]*，服务端 key 原样保留，长度 ≤ 128。`;
 }

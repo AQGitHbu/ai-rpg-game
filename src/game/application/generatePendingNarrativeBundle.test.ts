@@ -12,6 +12,7 @@
 
 import { describe, it, expect } from "vitest";
 import { generatePendingNarrativeBundle } from "./generatePendingNarrativeBundle";
+import { retryNarrativeGeneration } from "./retryNarrativeGeneration";
 import type { GameRepository, GameRecord } from "./server/persistence/gameRepository";
 import type {
   NarrativeJobRepository,
@@ -90,7 +91,8 @@ function createMemoryJobs(applyPublication: (publication: Publication) => void):
       }
       const next: StoredJob = operation === "cancel"
         ? { ...row.job, status: "cancelled", version: row.job.version + 1 }
-        : { ...row.job, status: "pending", version: row.job.version + 1, cycle: row.job.cycle + 1 };
+        : { ...row.job, status: "pending", version: row.job.version + 1, cycle: row.job.cycle + 1,
+          usedRequests: 0, units: row.job.units.map(unit => unit.status === "approved" ? unit : { ...unit, status: "pending", attempts: 0 }) };
       row.job = next;
       return { ok: true, value: next };
     },
@@ -201,7 +203,7 @@ function createInMemoryRepo(record: GameRecord | null): {
           ...current,
           worldState: input.nextWorldState,
           storyState: input.nextStoryState,
-          revision: current.revision + 1,
+          revision: current.revision + (input.incrementRevision === false ? 0 : 1),
         };
         return { ok: true as const, record: current };
       },
@@ -262,6 +264,23 @@ function harness(gameId: string): Harness {
 }
 
 describe("generatePendingNarrativeBundle", () => {
+  it("显式重试同时恢复 durable failed job，普通 ensure 不自动重置周期", async () => {
+    const ctx = harness("manual-durable");
+    const failing = createFailingSource();
+    const deps = { repository: ctx.repo, jobs: ctx.jobs, now: () => NOW };
+    expect((await generatePendingNarrativeBundle({ ...deps, source: failing })).ok).toBe(false);
+    const calls = failing.calls();
+    expect((await generatePendingNarrativeBundle({ ...deps, source: failing })).ok).toBe(false);
+    expect(failing.calls()).toBe(calls);
+    expect(await retryNarrativeGeneration(ctx.repo, asGameId("manual-durable"), () => NOW))
+      .toMatchObject({ ok: true, result: "requeued" });
+    const source = createDecisionSource();
+    expect(await generatePendingNarrativeBundle({ ...deps, source })).toMatchObject({ ok: true });
+    expect(source.stages).toContain("planning");
+    const job = await ctx.jobs.get(decisionJobId(asGameId("manual-durable"), ctx.pendingJob, ctx.pendingJob.basedOnRevision - 1));
+    expect(job.ok && job.value).toMatchObject({ status: "published", cycle: 1 });
+  });
+
   it("returns NO_ACTIVE_GAME when no active game exists", async () => {
     const { repo } = createInMemoryRepo(null);
     const source = createFailingSource();

@@ -14,7 +14,6 @@ import type {
   ScenePerformanceNpcDialogue,
 } from "@/game/domain/narrativeBundle";
 import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
-import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import { LEGACY_IMPORT_REASON_KEY } from "@/game/domain/entity";
 import type { ApprovedPlan } from "@/game/gameplay/rpg/narrativePlanning";
 
@@ -82,10 +81,19 @@ function emptyScene(stepKey: string): SceneAccumulator {
 export function assembleBundle(input: AssembleBundleInput): Check<NarrativeBundleProposal> {
   const { plan, approved } = input;
 
+  const rank = new Map([["current", 0]]);
+  const visit = (key: string): void => {
+    if (rank.has(key)) return;
+    rank.set(key, rank.size);
+    for (const next of plan.proposal.steps.find(step => step.key === key)?.next ?? []) visit(next);
+  };
+  for (const step of plan.proposal.steps) {
+    if (!plan.proposal.steps.some(parent => parent.next.includes(step.key))) visit(step.key);
+  }
   const units = [...plan.units].sort((left, right) =>
     left.point.stepKey === right.point.stepKey
       ? left.point.order - right.point.order
-      : left.point.stepKey < right.point.stepKey ? -1 : 1);
+      : (rank.get(left.point.stepKey) ?? Infinity) - (rank.get(right.point.stepKey) ?? Infinity));
 
   for (const unit of units) {
     const output = approved.get(unit.key);
@@ -108,11 +116,10 @@ export function assembleBundle(input: AssembleBundleInput): Check<NarrativeBundl
     const output = approved.get(unit.key);
     if (output === undefined || output.stage !== unit.stage) continue;
     if (output.stage === "narration") {
-      for (const [partIndex, part] of output.parts.entries()) {
+      for (const part of output.parts) {
         let beatId: string;
         if (part.beatIds.length === 0) {
-          // 无节拍要求的句段按 atmosphere 兜底，且必须位于末尾。
-          if (partIndex !== output.parts.length - 1) return fail("assemble_segment_beat_missing");
+          // 无必需节拍的多个获批氛围句段可合并；不合成任何新剧情正文。
           beatId = ATMOSPHERE_BEAT_ID;
         } else if (part.beatIds.length === 1) {
           const required = part.beatIds[0];
@@ -123,12 +130,16 @@ export function assembleBundle(input: AssembleBundleInput): Check<NarrativeBundl
         } else {
           return fail("assemble_segment_ambiguous_beat");
         }
-        scene.segments.push({ beatId, text: part.text });
-        for (const observationKey of unit.requiredObservationKeys) {
-          scene.conditionalEvidence.push({
-            partIndex: scene.segments.length - 1,
-            observationKey,
-            audienceId: String(PLAYER_ENTITY_ID),
+        const previous = scene.segments.at(-1);
+        if (previous?.beatId === beatId) {
+          scene.segments[scene.segments.length - 1] = { beatId, text: `${previous.text}\n${part.text}` };
+        } else scene.segments.push({ beatId, text: part.text });
+        for (const observation of plan.proposal.observations) {
+          if (!unit.requiredObservationKeys.includes(observation.key)
+            || observation.source.kind !== "witness"
+            || !part.facts.some(fact => fact.factId === observation.fact.factId)) continue;
+          for (const audienceId of observation.audienceIds) scene.conditionalEvidence.push({
+            partIndex: scene.segments.length - 1, observationKey: observation.key, audienceId,
           });
         }
       }
@@ -151,14 +162,29 @@ export function assembleBundle(input: AssembleBundleInput): Check<NarrativeBundl
           usedFactIds: line.usedFactIds,
           usedEventIds: line.usedEventIds,
         };
+      } else if (scene.npcLine.npcId === line.npcId) {
+        scene.npcLine = {
+          ...scene.npcLine, text: `${scene.npcLine.text}\n${line.text}`,
+          usedFactIds: [...new Set([...scene.npcLine.usedFactIds, ...line.usedFactIds])],
+          usedEventIds: [...new Set([...scene.npcLine.usedEventIds, ...line.usedEventIds])],
+          answeredBeatIds: [...new Set([...scene.npcLine.answeredBeatIds, ...output.answeredBeatIds])],
+        };
       } else {
-        scene.npcDialogues.push(line);
+        const index = scene.npcDialogues.findIndex(dialogue => dialogue.npcId === line.npcId);
+        const previous = scene.npcDialogues[index];
+        if (previous === undefined) scene.npcDialogues.push(line);
+        else scene.npcDialogues[index] = {
+          ...previous, text: `${previous.text}\n${line.text}`,
+          usedFactIds: [...new Set([...previous.usedFactIds, ...line.usedFactIds])],
+          usedEventIds: [...new Set([...previous.usedEventIds, ...line.usedEventIds])],
+        };
       }
-      for (const observationKey of unit.requiredObservationKeys) {
-        scene.conditionalEvidence.push({
-          partIndex: -1,
-          observationKey,
-          audienceId: output.speakerId,
+      for (const observation of plan.proposal.observations) {
+        if (!unit.requiredObservationKeys.includes(observation.key)
+          || observation.source.kind !== "speech" || observation.source.speakerId !== output.speakerId
+          || !line.usedFactIds.includes(observation.fact.factId)) continue;
+        for (const audienceId of observation.audienceIds) scene.conditionalEvidence.push({
+          partIndex: -1, observationKey: observation.key, audienceId,
         });
       }
       continue;
@@ -167,12 +193,18 @@ export function assembleBundle(input: AssembleBundleInput): Check<NarrativeBundl
     scene.choices = output.labels.map((label) => ({ candidateId: label.candidateId, label: label.label }));
   }
 
-  // currentScene 是决策点所在组；其余组按单元排序后的出现顺序进入
-  // continuationScenes（不按完成顺序）。
-  const decisionStepKey = plan.proposal.decision?.point.stepKey ?? null;
-  const orderedStepKeys = decisionStepKey !== null && sceneOrder.includes(decisionStepKey)
-    ? [decisionStepKey, ...sceneOrder.filter((key) => key !== decisionStepKey)]
+  for (const scene of scenes.values()) {
+    scene.conditionalEvidence = [...new Map(scene.conditionalEvidence.map(entry =>
+      [`${entry.observationKey}:${entry.audienceId}`, entry])).values()];
+  }
+  // 决策可能位于未来；当前组绝不能依据决策位置选择。
+  const continuationKeys = new Set(plan.proposal.steps.map(step => step.key));
+  const currentKey = sceneOrder.includes("current") ? "current"
+    : sceneOrder.find(key => !continuationKeys.has(key));
+  const orderedStepKeys = currentKey !== undefined
+    ? [currentKey, ...sceneOrder.filter((key) => key !== currentKey)]
     : sceneOrder;
+  if (currentKey === undefined) return fail("assemble_current_scene_missing");
   const firstStepKey = orderedStepKeys[0];
   if (firstStepKey === undefined) return fail("assemble_scene_missing");
   const current = scenes.get(firstStepKey);
@@ -217,8 +249,8 @@ export function assembleBundle(input: AssembleBundleInput): Check<NarrativeBundl
     if (endingOutput === undefined || endingOutput.stage !== "choices") {
       return fail("assemble_ending_labels_missing");
     }
-    const trust = endingOutput.labels.find((label) => label.candidateId === "@ending.trust");
-    const doubt = endingOutput.labels.find((label) => label.candidateId === "@ending.doubt");
+    const trust = endingOutput.labels.find((label) => label.candidateId === "trust");
+    const doubt = endingOutput.labels.find((label) => label.candidateId === "doubt");
     if (trust === undefined || doubt === undefined) return fail("assemble_ending_labels_missing");
     if (endingOutput.labels.length !== 2) return fail("assemble_ending_labels_invalid");
     if (trust.label.trim() === "" || doubt.label.trim() === "") {

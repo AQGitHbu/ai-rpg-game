@@ -276,6 +276,23 @@ describe("initializationJob", () => {
     expect([...source.stages].sort()).toEqual(["character", "choices", "narration", "planning"]);
   });
 
+  it("发布被拒后任务必须 failed，而非永远 pending", async () => {
+    const now = () => "2026-09-09T08:00:00.000Z";
+    const jobs = createMemoryJobs(now);
+    jobs.publish = async () => ({ ok: false, code: "INFRASTRUCTURE_FAILURE" });
+    const source = createOpeningSource(makeOpeningStagedPlan(await openingCandidate()));
+    const started = await startInitialization(startInput(now), jobs);
+    if (!started.ok) throw new Error("start failed");
+    const result = await runInitialization(started.job.id, "worker", {
+      jobs, source, now, signal: new AbortController().signal, createdAt: now(),
+    });
+    expect(result.ok).toBe(false);
+    const stored = await jobs.get(started.job.id);
+    if (!stored.ok) throw new Error("job missing");
+    expect(stored.value.status).toBe("failed");
+    expect(stored.value.failureCode).toBe("INFRASTRUCTURE_FAILURE");
+  });
+
   it("query 无 slot 返回 none；start 后返回当前任务；cancel 经 CAS 置为 cancelled", async () => {
     const now = () => "2026-09-09T08:00:00.000Z";
     const jobs = createMemoryJobs(now);

@@ -3,6 +3,7 @@
 // branch contract 只声明受支持的条件与效果类型：选择一个已批准的后续目标，
 // 而不是任意效果 DSL。AI 只提议，服务端解析、批准并铸造正式 token。
 
+import { parseExpressionTask, type ExpressionTask } from "./expressionTask";
 import { DIALOGUE_ACTS, type DialogueAct, type StructuredDialogueTopic } from "./action";
 import type { WorldDeltaProposal } from "./worldDelta";
 import { asFactId, asQuestId } from "./worldEntity";
@@ -29,8 +30,9 @@ export type BranchOption = {
   readonly candidateId: string;
   readonly dialogueAct: DialogueAct;
   readonly topic: StructuredDialogueTopic;
-  readonly target: RouteTarget;
+  readonly target: RouteTarget | null;
   readonly publicIntent: TextPart;
+  readonly task?: ExpressionTask;
   /** 开局延迟地点定义：默认 null；非 null 时只允许 visit_location。 */
   readonly deferredLocation: WorldDeltaProposal["newLocation"];
 };
@@ -159,7 +161,7 @@ function parseDeferredLocation(value: unknown): WorldDeltaProposal["newLocation"
 export function parseBranchOption(raw: unknown): Check<BranchOption> {
   if (!isPlainRecord(raw)) return fail("branch_option_not_object");
   if (!hasOnlyKeys(raw, [
-    "candidateId", "dialogueAct", "topic", "target", "publicIntent", "deferredLocation",
+    "candidateId", "dialogueAct", "topic", "target", "publicIntent", "deferredLocation", "task",
   ])) return fail("branch_option_unknown_key");
 
   const candidateId = parseKey(raw.candidateId);
@@ -171,15 +173,17 @@ export function parseBranchOption(raw: unknown): Check<BranchOption> {
   const topic = parseTopic(raw.topic);
   if (topic === null) return fail("branch_option_topic_invalid");
   const target = parseRouteTarget(raw.target);
-  if (target === null) return fail("branch_option_target_invalid");
+  if (raw.target !== null && target === null) return fail("branch_option_target_invalid");
   if (raw.publicIntent === undefined) return fail("branch_option_intent_missing");
   const publicIntent = parseTextPart(raw.publicIntent);
   if (publicIntent === null) return fail("branch_option_intent_invalid");
+  const task = raw.task === undefined ? undefined : parseExpressionTask(raw.task);
+  if (task === null || (task !== undefined && task.intent !== raw.dialogueAct)) return fail("branch_option_task_invalid");
   const deferredLocation = parseDeferredLocation(raw.deferredLocation ?? null);
   if (raw.deferredLocation !== null && raw.deferredLocation !== undefined && deferredLocation === null) {
     return fail("branch_option_deferred_location_invalid");
   }
-  if (deferredLocation !== null && target.kind !== "visit_location") {
+  if (deferredLocation !== null && target?.kind !== "visit_location") {
     return fail("branch_option_deferred_target_mismatch");
   }
   return {
@@ -190,6 +194,7 @@ export function parseBranchOption(raw: unknown): Check<BranchOption> {
       topic,
       target,
       publicIntent,
+      ...(task === undefined ? {} : { task }),
       deferredLocation,
     },
   };

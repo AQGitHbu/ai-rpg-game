@@ -7,6 +7,7 @@ export {
   type ApplyNarrativeBranchResult,
   type BranchRejectionCode,
 } from "./branches";
+export { approvePlanDecision } from "./approvePlanDecision";
 export {
   approvePlan,
   type ApprovedPlan,

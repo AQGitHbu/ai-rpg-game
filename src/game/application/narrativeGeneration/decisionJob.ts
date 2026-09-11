@@ -22,13 +22,14 @@ import type { NarrativeRuntimeState } from "@/game/domain/narrative";
 import type { StoryState } from "@/game/domain/storyState";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { ObjectiveTransition } from "@/game/domain/narrativeBeat";
-import type { EvolutionNeed } from "@/game/domain/worldDelta";
 import { commitEventDrafts } from "@/game/domain/eventLedger";
 import { reconcileCommittedMemory } from "../reconcileCommittedMemory";
 import { approveNarrativeBundle, type ApprovedNarrativeBundle } from "../approveNarrativeBundle";
 import { buildWorldDeltaEntityContextClosure } from "../entityContextProjection";
-import { approvePlan } from "@/game/gameplay/rpg/narrativePlanning";
+import { approvePlanningContext, stagedEvolutionNeed } from "./approvePlanningContext";
 import type { UnitOutput } from "@/game/domain/narrativeUnit";
+import { validateStagedOutputs } from "./validateStagedOutputs";
+import { realizeObservations } from "./realizeObservations";
 import { assembleBundle } from "./assembleBundle";
 import { publishJob } from "./publishJob";
 import { runJob } from "./runJob";
@@ -78,16 +79,6 @@ export function decisionDigest(input: Readonly<{
       actionId: input.job.actionId,
     }))
     .digest("hex");
-}
-
-function deriveEvolutionNeed(storyState: StoryState): EvolutionNeed {
-  if (storyState.evolution.status === "needs_next_act") {
-    return { kind: "next_act", act: storyState.currentAct };
-  }
-  if (storyState.evolution.status === "needs_ending_pair") {
-    return { kind: "ending_pair", finalAct: storyState.targetActs };
-  }
-  return { kind: "none" };
 }
 
 /**
@@ -186,12 +177,7 @@ export function buildDecisionPublication(
   }
   const planProposal = planValue as import("@/game/domain/narrativePlan").PlanProposal;
 
-  const planApproval = approvePlan({
-    kind: "decision",
-    proposal: planProposal,
-    world: job.input.world,
-    story: job.input.story,
-  });
+  const planApproval = approvePlanningContext(job.input, planProposal);
   if (!planApproval.ok) return { ok: false, code: planApproval.code };
   const approvedPlan = planApproval.value;
 
@@ -217,7 +203,7 @@ export function buildDecisionPublication(
     worldState: world,
     storyState: story,
     transition,
-    evolutionNeed: deriveEvolutionNeed(story),
+    evolutionNeed: stagedEvolutionNeed(story),
     jobId: pendingJob.jobId,
     mandatoryBeats: pendingJob.mandatoryBeats,
     entityContextClosure: buildWorldDeltaEntityContextClosure({ worldState: world, storyState: story, job: pendingJob }),
@@ -226,7 +212,8 @@ export function buildDecisionPublication(
     // 是任务创建时读到的权威 revision，publish 的 CAS 也锚定它。
     basedOnRevision: (job.baseRevision ?? 0) + 1,
     plan: approvedPlan,
-    observationReceipts: observationReceiptsOf(approvedPlan),
+    approvedUnits: approvedOutputs,
+    observationReceipts: new Set((proposal.currentScene.conditionalEvidence ?? []).map(entry => `${entry.audienceId}:${entry.observationKey}`)),
     eventContext: {
       turnId: pendingJob.turnId,
       turnNumber: pendingJob.turnNumber,
@@ -254,20 +241,32 @@ export function buildDecisionPublication(
       : {}),
   };
 
+  const validated = validateStagedOutputs(approvedPlan, approvedOutputs);
+  if (!validated.ok) return validated;
+  const realized = realizeObservations({
+    worldState: approved.nextWorldState, stepId: "current",
+    observations: validated.value.observations.filter(observation => observation.point.stepKey === "current").map(observation => ({
+      key: observation.key, factId: observation.fact.factId, certainty: observation.fact.certainty, source: observation.source,
+    })),
+    conditionalEvidence: proposal.currentScene.conditionalEvidence ?? [],
+    turnId: pendingJob.turnId, actionId: pendingJob.actionId, turnNumber: pendingJob.turnNumber,
+    episodeKey: String(pendingJob.turnId), locationId: approved.nextWorldState.currentLocationId, causeKeys: [],
+  });
+  if (!realized.ok) return realized;
   const eventCommit = commitEventDrafts({
     ledger: world.eventLedger,
-    drafts: approved.eventDrafts,
+    drafts: [...approved.eventDrafts, ...realized.drafts],
     source: {
       turnId: pendingJob.turnId,
       actionId: pendingJob.actionId,
       turnNumber: pendingJob.turnNumber,
       committedAt: input.createdAt,
     },
-    entityStore: approved.nextWorldState.entityStore,
+    entityStore: realized.worldState.entityStore,
   });
   if (!eventCommit.ok) return { ok: false, code: `decision_event_commit_rejected:${eventCommit.code}` };
 
-  const nextWorldState = { ...approved.nextWorldState, eventLedger: eventCommit.ledger };
+  const nextWorldState = { ...realized.worldState, eventLedger: eventCommit.ledger };
   const nextStoryState: StoryState = {
     ...approved.nextStoryStatePreview,
     narrative: readyNarrative,
@@ -290,21 +289,6 @@ export function buildDecisionPublication(
       },
     },
   };
-}
-
-/**
- * 已批准计划里声明的观察回执（`audienceId:observationKey`）。观察没有逐条
- * 审批：approvePlan 批准计划即批准其全部声明观察，装配审批前在此一次性
- * 铸造回执——这就是 sceneSnapshot「任务执行层在批准观察时记录」的落地方式。
- */
-function observationReceiptsOf(plan: import("@/game/gameplay/rpg/narrativePlanning").ApprovedPlan): ReadonlySet<string> {
-  const receipts = new Set<string>();
-  for (const observation of plan.proposal.observations) {
-    for (const audience of observation.audienceIds) {
-      receipts.add(`${audience}:${observation.key}`);
-    }
-  }
-  return receipts;
 }
 
 /**
@@ -380,9 +364,19 @@ export async function runDecision(
     controller,
   });
 
+  async function failed(code: string): Promise<RunDecisionResult> {
+    const current = await deps.jobs.get(id);
+    const held = await keeper.acquire();
+    if (current.ok && current.value.status === "pending" && held !== null) {
+      await keeper.jobs.save({ lease: held, expectedVersion: current.value.version,
+        job: { ...current.value, status: "failed", failureCode: code } });
+    }
+    return { ok: false, code };
+  }
+
   try {
     const ran = await runJob({ id, lease }, {
-      jobs: deps.jobs,
+      jobs: keeper.jobs,
       source: deps.source,
       now: deps.now,
       signal: composeSignals(deps.signal, controller.signal),
@@ -400,16 +394,18 @@ export async function runDecision(
     if (activeLease === null) return { ok: false, code: "LEASE_LOST" };
 
     const built = buildDecisionPublication({ job: pendingJob, createdAt: deps.createdAt });
-    if (!built.ok) return { ok: false, code: built.code };
+    if (!built.ok) return await failed(built.code);
 
     const published = await publishJob(
       { job: pendingJob, lease: activeLease, publication: built.publication },
-      deps.jobs,
+      keeper.jobs,
     );
-    if (!published.ok) return { ok: false, code: published.code };
+    if (!published.ok) return await failed(published.code);
     return { ok: true, job: published.value };
+  } catch {
+    return await failed("decision_execution_failed");
   } finally {
-    keeper.stop();
+    await keeper.stop();
     const releaseLease = keeper.current() ?? lease;
     await deps.jobs.release({ lease: releaseLease }).catch(() => undefined);
   }
