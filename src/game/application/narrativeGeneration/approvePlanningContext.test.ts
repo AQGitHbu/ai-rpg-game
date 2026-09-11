@@ -154,6 +154,35 @@ it("表达调用前拒绝把 witness observation 分配给 character 单元", ()
   }
 });
 
+it("允许 character 引用更早 narration 真实披露的 conditional observation", () => {
+  const base = makeDecisionPlan();
+  const narration = base.units.find((unit) => unit.stage === "narration");
+  const character = base.units.find((unit) => unit.stage === "character");
+  if (narration === undefined || character === undefined) throw new Error("staged fixture missing");
+  const observation = {
+    key: "obs_witness",
+    point: { stepKey: "current", order: narration.point.order },
+    audienceIds: ["player_0", FIXTURE_DECISION_NPC],
+    fact: { factId: "fact_routes", certainty: "known" as const },
+    source: { kind: "witness" as const },
+  };
+  const proposal = {
+    ...base,
+    observations: [observation],
+    units: base.units.map((unit) => {
+      if (unit.key === narration.key) return { ...unit, requiredObservationKeys: [observation.key] };
+      if (unit.key === character.key) return { ...unit, requiredBeats: [{
+        beatId: "follow_up", kind: "player_utterance" as const, factIds: [],
+        evidence: [{ kind: "conditional" as const, observationKey: observation.key }],
+        instruction: "承接已披露观察",
+      }] };
+      return unit;
+    }),
+  };
+
+  expect(approvePlanningContext(context(), proposal)).toMatchObject({ ok: true });
+});
+
 it("同地点的不同对白无需路线目标，相同语义仍拒绝", () => {
   const base = makeDecisionPlan();
   if (base.decision?.kind !== "ordinary") throw Error("ordinary fixture");
