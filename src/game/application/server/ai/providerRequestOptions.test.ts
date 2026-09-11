@@ -41,4 +41,12 @@ describe("createProviderRequestOptions", () => {
       },
     });
   });
+
+  it("omits the output cap when thinking is enabled, even if a role override supplies one", () => {
+    expect(createProviderRequestOptions(90_000, 6_000, "prompt_only", "on")).toEqual({
+      timeoutMs: 90_000,
+      temperature: 0.2,
+      extraBody: { thinking: { type: "enabled" } },
+    });
+  });
 });

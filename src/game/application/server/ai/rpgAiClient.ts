@@ -39,10 +39,10 @@ export type RpgAiRolePolicyOverrides = Partial<{
 }>;
 
 /**
- * Provider reasoning is disabled for every production role by default. The
- * budgets include a safety margin because this provider has been observed to
- * spend completion tokens on reasoning even after receiving the nested off
- * switch.
+ * Production roles use bounded output budgets when reasoning is off. The
+ * planning role is the intentional exception: thinking is enabled and the
+ * shared request builder omits max_tokens so reasoning cannot consume the
+ * entire budget before the final planning JSON is emitted.
  */
 export const RPG_AI_DEFAULT_POLICIES: Readonly<Record<RpgAiRole, RpgAiRolePolicy>> = {
   disclosure_review: {
@@ -87,12 +87,11 @@ export const RPG_AI_DEFAULT_POLICIES: Readonly<Record<RpgAiRole, RpgAiRolePolicy
     maxAttempts: 2,
   },
   // 分阶段生成的固定决策表预算（Plan Task 5 Step 4）：planning 一次产整个
-  // 骨架，预算高于单表达 stage；表达 stage 每次只产一个小型 JSON。
+  // 骨架并开启思考，因此不设置 maxTokens；表达 stage 每次只产一个小型 JSON。
   planning: {
     // 内容取舍与结构约束由规划器完成，表达角色保持非思考润色。
     thinking: "on",
     timeoutMs: 90_000,
-    maxTokens: 6_000,
     jsonMode: "prompt_only",
     maxAttempts: 2,
   },
@@ -245,6 +244,7 @@ export function createRpgAiClient(options: CreateRpgAiClientOptions): RpgAiClien
       if (remaining !== undefined && remaining <= 0) {
         return { ok: false, code: "timeout", retryable: false, latencyMs: 0 };
       }
+      const effectiveMaxTokens = policy.thinking === "on" ? undefined : policy.maxTokens;
       const providerOptions = createProviderRequestOptions(
         policy.timeoutMs,
         policy.maxTokens,
@@ -269,7 +269,7 @@ export function createRpgAiClient(options: CreateRpgAiClientOptions): RpgAiClien
           const auditOptions: AiTextAuditRequestOptions = {
             timeoutMs: transportOptions.timeoutMs,
             ...(providerOptions.temperature === undefined ? {} : { temperature: providerOptions.temperature }),
-            ...(policy.maxTokens === undefined ? {} : { maxTokens: policy.maxTokens }),
+            ...(effectiveMaxTokens === undefined ? {} : { maxTokens: effectiveMaxTokens }),
             jsonMode: policy.jsonMode,
             thinking: policy.thinking,
           };

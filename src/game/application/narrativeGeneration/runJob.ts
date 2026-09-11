@@ -24,7 +24,7 @@ import { approveUnit, narrationLayoutRejection } from "./approveUnit";
 import { disclosureReviewRequest, disclosureReviewDigest } from "./disclosureReview";
 import { canStartRequest } from "./jobBudget";
 import { composeSignals } from "./leaseKeeper";
-import { createAiSourceFailure, repairFromSourceFailure } from "../aiGenerationRetry";
+import { aiRepairAuditContext, createAiSourceFailure, repairFromSourceFailure } from "../aiGenerationRetry";
 import type {
   Lease,
   NarrativeJobRepository,
@@ -41,9 +41,9 @@ const PLANNING_UNIT_KEY = "planning";
 /** 每 job 最多同时在途的 provider 请求；批调度按此上限派发。 */
 const MAX_IN_FLIGHT = 2;
 /**
- * 规划阶段超时（Plan 固定决策 3 的已记录偏离）：规划要产出 6000 maxTokens
- * 的完整骨架 JSON，比表达单元大一个量级，45s 对慢 provider 偏紧，放宽到 90s。
- * 表达单元维持 45s 不变。
+ * 规划阶段超时（Plan 固定决策 3 的已记录偏离）：规划要产出完整骨架 JSON，
+ * 比表达单元大一个量级，45s 对慢 provider 偏紧，放宽到 90s。表达单元维持
+ * 45s 不变。
  */
 const PLANNING_TIMEOUT_MS = 90_000;
 /** 表达单元（旁白/角色/选项）超时：与固定决策 3 的 45s 一致。 */
@@ -271,7 +271,10 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
       signal: deps.signal,
       timeoutMs: cappedTimeoutMs(job, PLANNING_TIMEOUT_MS, deps.now()),
       ...(cachedPlanRepair === undefined ? {} : { repair: cachedPlanRepair }),
-      audit: { purpose: "game_api", trigger: "staged_planning", jobId: job.id },
+      audit: {
+        purpose: "game_api", trigger: "staged_planning", jobId: job.id,
+        ...(cachedPlanRepair === undefined ? {} : { retry: aiRepairAuditContext(cachedPlanRepair) }),
+      },
     });
     let repairAttempt = (planningUnit?.attempts ?? 0) + 1;
     let planApproval = response.ok && response.stage === "planning"
@@ -295,7 +298,10 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
         signal: deps.signal,
         timeoutMs: cappedTimeoutMs(job, PLANNING_TIMEOUT_MS, deps.now()),
         repair,
-        audit: { purpose: "game_api", trigger: "staged_planning", jobId: job.id },
+        audit: {
+          purpose: "game_api", trigger: "staged_planning", jobId: job.id,
+          retry: aiRepairAuditContext(repair),
+        },
       });
       repairAttempt += 1;
       planApproval = response.ok && response.stage === "planning"

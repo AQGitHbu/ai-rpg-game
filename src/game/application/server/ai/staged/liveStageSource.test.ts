@@ -378,6 +378,33 @@ describe("createLiveStageSource", () => {
     if (result.ok) return;
     expect(result.failure.kind).toBe("AI_CALL_FAILED");
     expect(result.failure.phase).toBe("scene");
+    expect(result.repairReason).toBe("provider_failure");
+    expect(result.repairDetail).toContain("code=timeout");
+  });
+
+  it("把思考耗尽导致的空最终内容写成可执行的下一轮修复反馈", async () => {
+    const { client } = recordingClient([{
+      ok: false,
+      code: "empty_response",
+      retryable: false,
+      latencyMs: 5,
+      finishReason: "length",
+      reasoningTokens: 6_000,
+      hasReasoningContent: true,
+    } as AiCompletionResult]);
+    const source = createLiveStageSource({ client });
+    const result = await source.generate(
+      { stage: "planning", context: { kind: "opening", generation: OPENING_GENERATION,
+        input: { gameType: "wuxia", seed: "s", gameLength: "short" } } },
+      executionWith(new AbortController().signal),
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.failure.kind).toBe("AI_CALL_FAILED");
+    expect(result.repairReason).toBe("empty_response");
+    expect(result.repairDetail).toContain("finishReason=length");
+    expect(result.repairDetail).toContain("reasoningTokens=6000");
+    expect(result.repairDetail).toContain("未返回最终 JSON");
   });
 
   it("输出 stage 与请求不一致时拒绝", async () => {

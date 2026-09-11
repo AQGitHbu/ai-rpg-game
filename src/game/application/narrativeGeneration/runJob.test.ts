@@ -7,6 +7,7 @@
 
 import { describe, expect, it } from "vitest";
 import { createStagedHarness } from "@/game/application/testing/stagedNarrativeHarness.testutil";
+import { createAiSourceFailure } from "@/game/application/aiGenerationRetry";
 
 import type { UnitOutput } from "@/game/domain/narrativeUnit";
 import type { PlanProposal } from "@/game/domain/narrativePlan";
@@ -185,6 +186,34 @@ describe("runJob", () => {
     expect(h.source.calls.filter((c) => c.stage === "narration")).toHaveLength(1);
     expect(h.source.calls.filter((c) => c.stage === "character")).toHaveLength(2);
     if (result.ok) expect(result.value.usedRequests).toBe(h.source.calls.length);
+  });
+
+  it("planning provider 失败把明确原因传给下一次请求，并标记内容修复审计上下文", async () => {
+    const h = createStagedHarness();
+    const generate = h.source.generate.bind(h.source);
+    let firstPlanningFailure = true;
+    h.source.generate = async (request, execution) => {
+      const response = await generate(request, execution);
+      if (request.stage === "planning" && firstPlanningFailure) {
+        firstPlanningFailure = false;
+        return createAiSourceFailure("scene", "empty_response", "empty_response",
+          "provider 未返回最终 JSON：finishReason=length；reasoningTokens=6000；hasReasoningContent=true。思考阶段已达到长度上限，下一次必须在思考后输出完整 JSON。");
+      }
+      return response;
+    };
+
+    await h.startDecision();
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    const planningCalls = h.calls.filter((call) => call.stage === "planning");
+    expect(planningCalls).toHaveLength(2);
+    expect(planningCalls[1]?.repair).toMatchObject({
+      reason: "empty_response",
+      detail: expect.stringContaining("reasoningTokens=6000"),
+    });
+    expect(planningCalls[1]?.auditContext).toMatchObject({
+      retry: { mechanism: "content_repair", attempt: 1, reason: "empty_response" },
+    });
   });
 
   it("source 抛错也持久化为失败，不能留下永久 pending", async () => {

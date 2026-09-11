@@ -4,7 +4,7 @@
 // 只做 prompt 组装与 domain 解析（parsePlanProposal/parseUnitOutput），不做
 // 审批、不铸 ID、不写状态；provider 失败按既有分类映射为 AiSourceFailure。
 
-import type { AiMessage } from "@ai-game/ai-transport";
+import type { AiCompletionResult, AiMessage } from "@ai-game/ai-transport";
 import { createAiSourceFailure, type AiSourceFailure } from "@/game/application/aiGenerationRetry";
 import { transportFailureCodeToCategory } from "@/game/application/aiGenerationFailure";
 import { parseStructuredJsonObject } from "@/game/core/json";
@@ -39,6 +39,43 @@ function invalidContent(code: string, detail: string) {
   return createAiSourceFailure("scene", "invalid_schema", code, detail);
 }
 
+type ProviderFailureResult = Extract<AiCompletionResult, { ok: false }>;
+
+const asRecord = (value: unknown): Record<string, unknown> | undefined =>
+  typeof value === "object" && value !== null ? value as Record<string, unknown> : undefined;
+
+const finiteNumber = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) ? value : undefined;
+
+/**
+ * Preserve stable provider evidence for the next content-repair request.
+ * The provider may spend the entire completion budget on reasoning and return
+ * no final channel; reporting that fact is materially more useful than the
+ * old generic `provider_failure` message. Raw provider text is never copied.
+ */
+function providerFailure(result: ProviderFailureResult) {
+  const metadata = asRecord(result);
+  const usage = asRecord(metadata?.usage);
+  const finishReason = typeof metadata?.finishReason === "string" ? metadata.finishReason : undefined;
+  const reasoningTokens = finiteNumber(metadata?.reasoningTokens) ?? finiteNumber(usage?.reasoningTokens);
+  const hasReasoningContent = typeof metadata?.hasReasoningContent === "boolean"
+    ? metadata.hasReasoningContent : undefined;
+
+  if (result.code === "empty_response") {
+    const detail = finishReason === "length"
+      ? `provider 未返回最终 JSON：finishReason=length；reasoningTokens=${reasoningTokens ?? "unknown"}；hasReasoningContent=${hasReasoningContent ?? "unknown"}。思考阶段已达到长度上限，下一次必须在思考后输出完整 JSON。`
+      : "provider 未返回最终 JSON（empty_response）；下一次必须输出完整 JSON，不要只返回思考内容。";
+    return createAiSourceFailure("scene", "empty_response", "empty_response", detail);
+  }
+
+  return createAiSourceFailure(
+    "scene",
+    transportFailureCodeToCategory(result.code),
+    "provider_failure",
+    `provider transport 失败：code=${result.code}；本次没有可解析结果，下一次请重新调用并返回完整 JSON。`,
+  );
+}
+
 /**
  * 单次 stage 生成：role 映射、prompt 组装、JSON 解析与失败分类的唯一实现。
  * execution.signal / execution.timeoutMs 原样透传给 client（由 transport
@@ -52,7 +89,7 @@ export function createLiveStageSource(options: CreateLiveStageSourceOptions): St
       if (prompt.length > 12_000) return invalidContent("disclosure_review_context_overflow", "审核输入超限，不能截断事实");
       const response = await options.client.complete("disclosure_review", [{ role: "user", content: prompt }],
         execution.audit, { signal: execution.signal, timeoutMs: execution.timeoutMs });
-      if (!response.ok) return createAiSourceFailure("scene", transportFailureCodeToCategory(response.code));
+      if (!response.ok) return providerFailure(response);
       const parsed = parseStructuredJsonObject(response.content);
       if (!parsed.ok || Object.keys(parsed.value).length !== 1
         || typeof parsed.value.verdict !== "string"
@@ -84,7 +121,7 @@ export function createLiveStageSource(options: CreateLiveStageSourceOptions): St
         timeoutMs: execution.timeoutMs,
       });
       if (!result.ok) {
-        return createAiSourceFailure("scene", transportFailureCodeToCategory(result.code));
+        return providerFailure(result);
       }
 
       const parsed = parseStructuredJsonObject(result.content);

@@ -49,7 +49,8 @@ describe("staged narrative roles", () => {
     } finally { clock.mockRestore(); }
   });
   it("defines fixed decision-table budgets for the four staged roles", () => {
-    expect(RPG_AI_DEFAULT_POLICIES.planning).toMatchObject({ thinking: "on", timeoutMs: 90_000, maxTokens: 6_000, maxAttempts: 2 });
+    expect(RPG_AI_DEFAULT_POLICIES.planning).toMatchObject({ thinking: "on", timeoutMs: 90_000, maxAttempts: 2 });
+    expect(RPG_AI_DEFAULT_POLICIES.planning.maxTokens).toBeUndefined();
     expect(RPG_AI_DEFAULT_POLICIES.narration).toMatchObject({ thinking: "off", timeoutMs: 45_000, maxTokens: 2_000, maxAttempts: 2 });
     expect(RPG_AI_DEFAULT_POLICIES.character).toMatchObject({ thinking: "off", timeoutMs: 45_000, maxTokens: 2_000, maxAttempts: 2 });
     expect(RPG_AI_DEFAULT_POLICIES.choices).toMatchObject({ thinking: "off", timeoutMs: 30_000, maxTokens: 600, maxAttempts: 2 });
@@ -114,14 +115,13 @@ describe("createRpgAiClient", () => {
     expect(client.policy("narrative_bundle")).toMatchObject({ timeoutMs: 45_000, maxAttempts: 2, maxTokens: 8_000 });
   });
 
-  it("builds DeepSeek thinking and JSON options from the selected role policy", async () => {
+  it("omits the output cap when the selected role enables DeepSeek thinking", async () => {
     const complete = vi.fn(async (_config, _messages, options) => {
       expect(options).toEqual({
         timeoutMs: 45_000,
         temperature: 0.2,
         extraBody: {
           thinking: { type: "enabled" },
-          max_tokens: 3_000,
           response_format: { type: "json_object" },
         },
       });

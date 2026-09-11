@@ -170,7 +170,7 @@ function createMemoryJobRepository(): NarrativeJobRepository & { initializeSchem
       return { ok: true, value: { jobId: id, owner, fence, expiresAt } };
     },
 
-    async renew({ lease, now, expiresAt }) {
+    async renew({ lease, now: _now, expiresAt }) {
       const row = rowOf(lease.jobId);
       if (row === null) return { ok: false, code: "JOB_NOT_FOUND" };
       // 与生产一致：不否决已过期但未被接管的租约（fence 是并发权威）。
@@ -252,7 +252,12 @@ function createMemoryJobRepository(): NarrativeJobRepository & { initializeSchem
 export type HarnessSource = {
   requiresTaskBrief?: boolean;
   generate(request: StageRequest, execution: StageExecution): Promise<StageSuccess | AiSourceFailure>;
-  calls: readonly { readonly stage: StageRequest["stage"]; readonly timeoutMs: number; readonly repair?: StageExecution["repair"] }[];
+  calls: readonly {
+    readonly stage: StageRequest["stage"];
+    readonly timeoutMs: number;
+    readonly repair?: StageExecution["repair"];
+    readonly auditContext: StageExecution["audit"];
+  }[];
   /** 完整请求正文（与 calls 一一对应），供输入隔离类断言逐字段取证。 */
   requests: readonly StageRequest[];
   failNext(stage: StageRequest["stage"]): void;
@@ -263,7 +268,12 @@ export type HarnessSource = {
 };
 
 function createScriptedSource(): HarnessSource {
-  const calls: { stage: StageRequest["stage"]; timeoutMs: number; repair?: StageExecution["repair"] }[] = [];
+  const calls: {
+    stage: StageRequest["stage"];
+    timeoutMs: number;
+    repair?: StageExecution["repair"];
+    auditContext: StageExecution["audit"];
+  }[] = [];
   const requests: StageRequest[] = [];
   const failCounts = new Map<StageRequest["stage"], number>();
   const approvalFailCounts = new Map<StageRequest["stage"], number>();
@@ -334,7 +344,8 @@ function createScriptedSource(): HarnessSource {
       for (const resolve of resolvers ?? []) resolve();
     },
     async generate(request, execution) {
-      calls.push({ stage: request.stage, timeoutMs: execution.timeoutMs, ...(execution.repair === undefined ? {} : { repair: execution.repair }) });
+      calls.push({ stage: request.stage, timeoutMs: execution.timeoutMs, auditContext: execution.audit,
+        ...(execution.repair === undefined ? {} : { repair: execution.repair }) });
       requests.push(request);
       if (execution.signal.aborted) {
         return createAiSourceFailure("scene", "transport");
@@ -392,9 +403,15 @@ export function createStagedHarness() {
     return {
       async generate(request, execution) {
         if (request.stage === "planning") {
-          (base.calls as { stage: StageRequest["stage"]; timeoutMs: number; repair?: StageExecution["repair"] }[]).push({
+          (base.calls as {
+            stage: StageRequest["stage"];
+            timeoutMs: number;
+            repair?: StageExecution["repair"];
+            auditContext: StageExecution["audit"];
+          }[]).push({
             stage: "planning",
             timeoutMs: execution.timeoutMs,
+            auditContext: execution.audit,
             ...(execution.repair === undefined ? {} : { repair: execution.repair }),
           });
           (base.requests as StageRequest[]).push(request);
