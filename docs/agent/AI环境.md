@@ -24,6 +24,7 @@
 ## 运行与测试入口
 
 - 本地离线回归：`npm run journey:foundation`
+- 小范围表达保真与披露负例：进程内设置 `RUN_REAL_AI_FIDELITY=1` 后运行 `npx vitest run src/game/application/testing/stagedExpressionFidelity.live.test.ts --maxWorkers=1 --minWorkers=1`；默认跳过，最多 40 次真实请求、15 分钟。独立 tmp 审计/数据库保留证据；受控表达/混合闸门测试与自然四模块开局分别报告，不替代通关验收。
 - 真实 AI smoke：`RUN_REAL_AI_SMOKE=1 npm run smoke:ai:staged`（分阶段叙事链路）；`RUN_REAL_AI_SMOKE=1 npm run smoke:ai:phase4b`（旧链路对照）。两者都是受门禁的 smoke，不是完整旅程。
 - provider：`src/game/application/server/ai/rpgAiClient.ts`、`src/game/application/server/ai/sourceFactory.ts`、`src/game/application/server/ai/aiRuntimeConfig.ts`
 - 装配：`src/game/application/server/compositionRoot.ts`

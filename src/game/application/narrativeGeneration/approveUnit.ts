@@ -170,6 +170,13 @@ export function approveUnit(input: ApproveUnitInput): Check<UnitOutput> {
   }
   for (const label of output.labels) {
     if (!expectedCandidates.has(label.candidateId)) return fail("unit_output_candidate_unknown");
+    const dialogue = context.dialogue;
+    if (dialogue !== undefined && dialogue.speakerName !== dialogue.addresseeName) {
+      // 仅识别明确的开头呼语，不把自我介绍、引用自己的名字一律当串台。
+      const opening = label.label.trim().replace(/^[“「"]/, "").replace(/^(?:你好|喂|嗨)[，,\s]*/, "");
+      if (opening.startsWith(dialogue.speakerName)
+        && /^[，,！!：:、]/.test(opening.slice(dialogue.speakerName.length))) return fail("unit_output_self_address");
+    }
     const labelCheck = checkDialogueLabel(label.label);
     if (!labelCheck.ok) return labelCheck;
   }

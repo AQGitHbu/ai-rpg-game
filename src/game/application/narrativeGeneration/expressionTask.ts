@@ -1,4 +1,4 @@
-import { parseExpressionTask, type ExpressionTask } from "@/game/domain/expressionTask";
+import { parseExpressionTask, type ExpressionTask, type InquiryAspect } from "@/game/domain/expressionTask";
 import type { Check } from "@/game/domain/narrativeUnit";
 import type { SafeFact } from "./perspectiveContext";
 
@@ -7,6 +7,11 @@ const purposes: Record<ExpressionTask["intent"], string> = {
   ask: "追问并要求澄清", support: "表明支持", challenge: "质疑并要求解释",
   threaten: "施压要求回应", deceive: "试探性探问，不编造世界事实", offer: "提出协助",
   refuse: "明确拒绝", reassure: "安抚对方",
+};
+const inquiryLabels: Record<InquiryAspect, string> = {
+  identity: "涉及谁或身份", location: "所在地点", direction: "走向/方向", depth: "深浅",
+  time: "发生时间", cause: "原因", method: "具体方式", quantity: "数量/程度",
+  source: "消息来源", reliability: "依据与可信度", purpose: "目的",
 };
 
 /** 只编译表达职责；不验证或执行任何世界效果、承诺或知识写入。 */
@@ -25,6 +30,7 @@ export function projectExpressionTask(task: ExpressionTask, facts: readonly Safe
     task.prerequisiteFactIds.length ? `先要求对方核实以下说法，未得到答复前不无条件承诺：${topic(task.prerequisiteFactIds)}。然后才表达以下意图。` : "",
     `任务：${purposes[task.intent]}。`,
     task.focusFactIds.length ? `具体内容：${topic(task.focusFactIds)}。` : "只承接本场已批准节拍、现场或当前话语，不另编关键事实。",
+    ...(task.inquiries ?? []).map(inquiry => `必须针对事实 ${inquiry.factId} 具体询问：${inquiry.aspects.map(aspect => inquiryLabels[aspect]).join("、")}。这些是待问的维度，未知答案不能当作已知事实；每个维度都须保留，不能替换成笼统的“怎么解释”。`),
     "保留以上目的、具体内容与先后条件，只调整措辞；不得自行增加交易条件、线索、任务、路线或行动结果。",
   ].filter(Boolean).join("\n") };
 }

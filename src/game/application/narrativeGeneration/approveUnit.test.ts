@@ -46,6 +46,27 @@ function context(overrides: Partial<SafeContext> & Pick<SafeContext, "unit">): S
 }
 
 describe("approveUnit", () => {
+  it.each(["凯伦，你能确认吗？", "你好，凯伦，你能确认吗？"])("玩家选项不得把自己当受话者：%s", label => {
+    const u = unit({ key: "choices", stage: "choices" });
+    const ctx = context({ unit: u, options: [
+      { candidateId: "a", dialogueAct: "ask", publicIntent: part("询问") },
+      { candidateId: "b", dialogueAct: "challenge", publicIntent: part("质疑") },
+    ], dialogue: { speakerId: "player_0", speakerName: "凯伦", addresseeId: "npc_0", addresseeName: "林澈" } });
+    expect(approveUnit({ unit: u, context: ctx, output: { stage: "choices", labels: [
+      { candidateId: "a", label }, { candidateId: "b", label: "林澈，你为什么这样说？" },
+    ] } })).toMatchObject({ ok: false, code: "unit_output_self_address" });
+  });
+
+  it.each(["我叫凯伦，想问一下。", "林澈，那串脚印朝哪个方向？"])("合法自我介绍与NPC称呼不过度拦截：%s", label => {
+    const u = unit({ key: "choices", stage: "choices" });
+    const ctx = context({ unit: u, options: [
+      { candidateId: "a", dialogueAct: "ask", publicIntent: part("询问") },
+      { candidateId: "b", dialogueAct: "challenge", publicIntent: part("质疑") },
+    ], dialogue: { speakerId: "player_0", speakerName: "凯伦", addresseeId: "npc_0", addresseeName: "林澈" } });
+    expect(approveUnit({ unit: u, context: ctx, output: { stage: "choices", labels: [
+      { candidateId: "a", label }, { candidateId: "b", label: "这消息可靠吗？" },
+    ] } }).ok).toBe(true);
+  });
   it("任务主题及先求证条件不得仅在输入出现、在输出里丢失", () => {
     const u = unit({ key: "n1", stage: "narration", task: { intent: "describe",
       focusFactIds: ["fact_0"], prerequisiteFactIds: [] } });

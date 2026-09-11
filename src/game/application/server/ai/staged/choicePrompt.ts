@@ -6,6 +6,7 @@
 
 import { renderAiRepairFeedback, type AiContentRepair } from "@/game/application/aiGenerationRetry";
 import type { SafeContext } from "@/game/application/narrativeGeneration/perspectiveContext";
+import { expressionBoundary } from "./expressionBoundary";
 
 /** Builds the choice-label prompt from a SafeContext. */
 export function buildChoicePrompt(context: SafeContext, repair?: AiContentRepair): string {
@@ -24,6 +25,11 @@ ${repair === undefined ? "" : `\n# 上次生成的校验反馈\n${renderAiRepair
 # 决策类型
 ${kind}
 
+# 当前说话身份（优先于前文称呼）
+${context.dialogue === undefined ? "玩家本人说话，对当前焦点 NPC 说；身份不足时用你/您，不猜名字。" : JSON.stringify(context.dialogue)}
+speakerName 是正在说这句话的玩家，addresseeName 才是听者。label 的“我”属于玩家，“你/您”属于该 NPC。
+前文 NPC 对玩家的称呼不能照搬成玩家呼语；可以直接称你/您，不要求每句叫名字，不代写 NPC 的回答。
+
 # 已批准的候选意图（candidateId 原样回填，label 忠于各自意图）
 ${options.join("\n")}
 
@@ -38,6 +44,8 @@ ${context.scene === undefined ? "（未提供）" : JSON.stringify(context.scene
 - 题材风格：${context.style}
 
 # 输出契约
+${expressionBoundary()}
+
 只返回一个 JSON 对象：{"stage":"choices","labels":[{"candidateId":"...","label":"..."},{"candidateId":"...","label":"..."}]}
 - labels 恰好两条；candidateId 与上方候选一一对应；label 是一句玩家对该焦点 NPC 说的中文对白（不超过 80 字）。
 - 候选任务是“讲什么”的边界：主旨、具体事实、先求证条件均保留，只调整句式和口吻；不要因前文提到其他事就改换候选主题。两个候选的不同目的须直接体现在对白中。

@@ -94,6 +94,8 @@ export type SafeContext = Readonly<{
   allowedActions: readonly CosmeticAction[];
   options: readonly SafeOption[];
   playerUtterance: string | null;
+  /** 当前生成对白的身份，不从前文的称呼推断。choices 的 speaker 永远是玩家。 */
+  dialogue?: Readonly<{ speakerId: string; speakerName: string; addresseeId: string; addresseeName: string }>;
   scene?: Readonly<{ locationId: string; locationName: string; playerName: string; speakers: readonly { id: string; name: string }[] }>;
   style: string;
   taskInstruction?: string;
@@ -492,6 +494,10 @@ export function projectUnitContext(input: ProjectUnitContextInput): ContextCheck
   const options = unit.stage === "choices" ? optionsOf(plan, priorText.value, visibleFacts)
     : { ok: true as const, value: [] };
   if (!options.ok) return options;
+  const choiceNpc = unit.stage === "choices"
+    ? ws.npcs.find(npc => String(npc.id) === plan.choiceExpression?.npcId && npc.locationId === ws.currentLocationId)
+    : undefined;
+  if (unit.stage === "choices" && choiceNpc === undefined) return fail("choice_addressee_missing");
 
   return {
     ok: true,
@@ -502,6 +508,10 @@ export function projectUnitContext(input: ProjectUnitContextInput): ContextCheck
       priorText: priorText.value,
       allowedActions: allowedActionsOf(plan, unit),
       options: options.value,
+      ...(choiceNpc === undefined ? {} : { dialogue: {
+        speakerId: String(PLAYER_ENTITY_ID), speakerName: ws.player.name,
+        addresseeId: String(choiceNpc.id), addresseeName: choiceNpc.name,
+      } }),
       playerUtterance: unit.point.stepKey === "current"
         && (unit.stage !== "character" || unit.speakerId === plan.currentUtterance?.npcId)
         ? plan.currentUtterance?.text ?? null : null,

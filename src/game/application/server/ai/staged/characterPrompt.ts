@@ -5,6 +5,7 @@
 
 import { renderAiRepairFeedback, type AiContentRepair } from "@/game/application/aiGenerationRetry";
 import type { SafeContext } from "@/game/application/narrativeGeneration/perspectiveContext";
+import { expressionBoundary } from "./expressionBoundary";
 
 /**
  * 同一事实在「可说事实」与「必须披露的观察」两侧 certainty 不一致时列出该事实键。
@@ -105,6 +106,8 @@ ${context.scene === undefined ? "（未提供）" : JSON.stringify(context.scene
 - 玩家原话：${context.playerUtterance ?? "（无）"}
 
 # 输出契约
+${expressionBoundary()}
+
 只返回一个 JSON 对象：{"stage":"character","speakerId":"${context.unit.speakerId ?? ""}","parts":[{"text":"...","facts":[],"evidence":[],"beatIds":[]}],"emotion":"...","actions":[],"answeredBeatIds":[]}
 - parts 是台词句段数组（1 到 12 段，单段不超过 500 字），中文。
 - 每个 part 恰有 4 键：text（中文字符串）、facts、evidence、beatIds。**多一个键即整体被拒。**

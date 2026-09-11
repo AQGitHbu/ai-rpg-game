@@ -5,6 +5,7 @@
 
 import { renderAiRepairFeedback, type AiContentRepair } from "@/game/application/aiGenerationRetry";
 import type { SafeContext } from "@/game/application/narrativeGeneration/perspectiveContext";
+import { expressionBoundary } from "./expressionBoundary";
 
 /**
  * 同一事实在「玩家可见事实」与「必须披露的观察」两侧 certainty 不一致时列出该事实键。
@@ -85,6 +86,8 @@ ${disclosures}
 ${actions.join("\n")}
 
 # 输出契约
+${expressionBoundary()}
+
 ${context.narrationLayout === undefined ? "" : `- 同一 beatId 的正文必须连续出现，不得在其他节拍之后再次插回。
 - ${context.narrationLayout.allowAtmosphere ? "纯氛围段（beatIds=[] 或 [atmosphere]）只能放在全部必选节拍之后、正文末尾。" : "本单元禁止独立氛围段（beatIds=[] 或 [atmosphere]）；每段必须归属本单元一个必选节拍，氛围描写可融入该节拍正文。"}
 `}

@@ -66,6 +66,12 @@ Prompt 只接收编译后的公开事实、当前位置、焦点 NPC 的有限�
 
 ## 统一重试反馈
 
+选项的 `SafeContext.dialogue` 绑定玩家与批准的对话对象（包括终幕），不从前文猜身份。`approveUnit` 以 `unit_output_self_address` 拒绝明确自称呼语，保留自我介绍；不保证识别所有语言形式。
+
+`ExpressionTask.inquiries` 为可选 `{factId,aspects}[]`：仅 ask/challenge 可非空，最多 4 个不同 focusFactIds，各含 1–4 个不重复维度。枚举以 `src/game/domain/expressionTask.ts` 为准，不接受答案或自由正文。投影保留全部维度，拒绝未知字段和越权事实，不转发原始 publicIntent。旧任务兼容但不恢复未编码意图。
+
+三个表达 prompt 使用同一 `expressionBoundary` 约束区分修辞和实质信息，覆盖目击细节、历史比较、设备状态、玩家动作、线索和未来承诺；没有素材不自行补现场。有限 ID/格式审批不等于通用语义校验，正文是否遵守仍由真实样本验收，未增加新的在线审核角色。
+
 初始化 requestId 的摘要只绑定用户配置与替换目标，不绑定服务端随机 gameId、seed 或 generationId；同请求复用首次 envelope。pending/failed 初始化槽不能由新请求覆盖，需先显式取消；发布事务再次验证槽归属。查询 pending 任务通过现有 coordinator 恢复调度，不刷新预算；客户端不将无本次请求标记的历史 published 任务视为本次开局完成。
 
 每个执行作用域使用唯一租约 owner，竞争或失租不得把其他 worker 的任务写成 provider_failed。生成作用域按 job 绝对截止时间取消，响应后与发布前复核；传输重试共用剩余 timeout，不重新获得完整时长。截止失败保留为显式重试状态。

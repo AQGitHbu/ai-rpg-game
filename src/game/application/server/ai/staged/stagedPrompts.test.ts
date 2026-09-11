@@ -11,6 +11,7 @@ import {
 import { buildNarrationPrompt } from "./narrationPrompt";
 import { buildCharacterPrompt } from "./characterPrompt";
 import { buildChoicePrompt } from "./choicePrompt";
+import { expressionBoundary } from "./expressionBoundary";
 import { projectUnitContext } from "@/game/application/narrativeGeneration/perspectiveContext";
 import { approvePlan, type ApprovedPlan } from "@/game/gameplay/rpg/narrativePlanning";
 import { branchWorld, branchStory } from "@/game/gameplay/rpg/narrativePlanning/branchFixture.testutil";
@@ -39,7 +40,17 @@ it("三个表达器不把措辞加工变成新经历、往日对白或现场证�
       : stage === "character" ? buildCharacterPrompt(safe.value) : buildChoicePrompt(safe.value);
     expect(prompt).toContain(stage === "narration" ? "禁止把口述变成目击"
       : stage === "character" ? "不为解释不知道再编一段经过" : "不得新增玩家经历或能力");
+    expect(prompt).toContain(expressionBoundary());
   }
+});
+
+it("选项身份直接来自批准焦点，不复制前文中的玩家称呼", () => {
+  const plan = approvedPlan();
+  const safe = contextFor(plan, FIXTURE_CHOICE_UNIT);
+  expect(safe.dialogue?.speakerName).toBe(plan.world.player.name);
+  expect(safe.dialogue?.addresseeId).toBe(plan.choiceExpression?.npcId);
+  expect(buildChoicePrompt(safe)).toContain(JSON.stringify(safe.dialogue));
+  expect(buildChoicePrompt(safe)).toContain("前文 NPC 对玩家的称呼不能照搬");
 });
 
 // ---------------------------------------------------------------------------

@@ -17,7 +17,7 @@ import { buildNarrativeBundleDescriptors } from "@/game/gameplay/rpg/narrativeBu
 import { buildEntityContextProjection } from "@/game/application/entityContextProjection";
 import { stagedEvolutionNeed } from "@/game/application/narrativeGeneration/approvePlanningContext";
 import { planningSceneContract } from "@/game/application/narrativeGeneration/planningSceneContract";
-import { EXPRESSION_INTENTS } from "@/game/domain/expressionTask";
+import { EXPRESSION_INTENTS, INQUIRY_ASPECTS } from "@/game/domain/expressionTask";
 import { MAX_TEXT_PART_LENGTH } from "@/game/domain/narrativeUnit";
 import {
   MAX_APPROACH_COUNT,
@@ -185,6 +185,8 @@ export function renderPlanProposalContract(context: PlanningContext): string {
 - intent ∈ ${EXPRESSION_INTENTS.join(" | ")}。narration 用 describe；NPC 用 inform/ask/admit_unknown 或对话意图；选项 intent 必须等于其 dialogueAct。
 - focusFactIds 按顺序指定本单元必须讲什么；只引用本角色可知且可披露/玩家此时已知的事实。taskFactIds 同步这些事实，不靠 instruction/publicIntent.text 指派关键内容。
 - prerequisiteFactIds 表示先要求对方核实这些已知说法，然后才表达主意图（如先核实再协助）；不是已调查成功，不执行支付或移动。无需条件则 []。禁止为了保密直接删掉关键条件。
+- 具体问询用可选 inquiries=[{"factId":"fact_0","aspects":["direction","depth"]}]，表示针对已知脚印询问走向和深浅，不预设答案。维度枚举：${INQUIRY_ASPECTS.join(" | ")}。仅 ask/challenge 可提供非空 inquiries；最多4个不同 factId，每项1到4个不重复维度，factId 必须在 focusFactIds 中。
+- 询问谁、在哪里、方向、深浅、时间、原因、方式、数量、来源、可信度或目的时，必须编码相应 inquiries，不能只写在 publicIntent.text/instruction 后让投影丢掉。维度不得夹带实体名、答案或隐情；无法表达的额外含义退回规划，不用泛化提问冒充原意。
 - 数组各最多 12 项、无重复。无事实的现场描写用 describe + []；未知提问可用 admit_unknown + []，不引用未知秘密 ID。
 - task 不得增加 text/reason/隐藏动机字段。只按已有事实组织具体目的与先后条件；不支持的语义回到规划，不让表达器另编剧情。
 
