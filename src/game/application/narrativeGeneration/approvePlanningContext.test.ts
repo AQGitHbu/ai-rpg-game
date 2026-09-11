@@ -7,7 +7,7 @@ import { asQuestId } from "@/game/domain/worldEntity";
 import { narrationLayoutOf } from "./perspectiveContext";
 import { buildPlanningPrompt, PLANNING_CONTENT_RULES } from "../server/ai/staged/planningPrompt";
 import { approvePlanningContext } from "./approvePlanningContext";
-import { createPendingDecisionRecord, makeDecisionPlan } from "@/game/domain/testing/stagedNarrativeFixture.testutil";
+import { createPendingDecisionRecord, makeDecisionPlan, FIXTURE_DECISION_NPC } from "@/game/domain/testing/stagedNarrativeFixture.testutil";
 import type { PlanningContext } from "./stageSource";
 
 function context(): PlanningContext {
@@ -124,6 +124,34 @@ it("合法 current 决策先审批实质分支并保留原提案", () => {
   if (result.value.choiceExpression?.kind !== "ordinary") throw Error("ordinary decision expected");
   expect(result.value.choiceExpression.options.map(option => option.target))
     .toEqual([{ kind: "visit_location", locationId: "loc_dyn_0" }, { kind: "visit_location", locationId: "loc_dyn_1" }]);
+});
+
+it("表达调用前拒绝把 witness observation 分配给 character 单元", () => {
+  const base = makeDecisionPlan();
+  const character = base.units.find((unit) => unit.stage === "character");
+  if (character === undefined) throw new Error("character fixture missing");
+  const proposal = {
+    ...base,
+    observations: [{
+      key: "obs_witness",
+      point: { stepKey: "current", order: 1 },
+      audienceIds: ["player_0", FIXTURE_DECISION_NPC],
+      fact: { factId: "fact_routes", certainty: "known" as const },
+      source: { kind: "witness" as const },
+    }],
+    units: base.units.map((unit) => unit.key === character.key
+      ? { ...unit, requiredObservationKeys: ["obs_witness"] }
+      : unit),
+  };
+
+  const result = approvePlanningContext(context(), proposal);
+  expect(result).toMatchObject({ ok: false, code: "beat_authority_conflict" });
+  if (!result.ok) {
+    expect(JSON.parse(result.detail!)).toMatchObject({
+      unitKey: character.key,
+      unavailableEvidence: [{ kind: "required_observation", observationKey: "obs_witness" }],
+    });
+  }
 });
 
 it("同地点的不同对白无需路线目标，相同语义仍拒绝", () => {

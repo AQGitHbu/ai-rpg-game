@@ -216,6 +216,43 @@ describe("runJob", () => {
     });
   });
 
+  it("planning 静态校验失败时先重做 planning，不先调用 narration", async () => {
+    const h = createStagedHarness();
+    const generate = h.source.generate.bind(h.source);
+    let firstPlanning = true;
+    h.source.generate = async (request, execution) => {
+      const response = await generate(request, execution);
+      if (request.stage !== "planning" || !firstPlanning || !response.ok || response.stage !== "planning") return response;
+      firstPlanning = false;
+      const character = response.value.units.find((unit) => unit.stage === "character");
+      if (character === undefined) throw new Error("character fixture missing");
+      return { ...response, value: {
+        ...response.value,
+        observations: [{
+          key: "obs_witness",
+          point: { stepKey: "current", order: 1 },
+          audienceIds: ["player_0", "npc_0"],
+          fact: { factId: "fact_routes", certainty: "known" as const },
+          source: { kind: "witness" as const },
+        }],
+        units: response.value.units.map((unit) => unit.key === character.key
+          ? { ...unit, requiredObservationKeys: ["obs_witness"] }
+          : unit),
+      } };
+    };
+
+    await h.startDecision();
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(h.calls.map((call) => call.stage).slice(0, 3)).toEqual(["planning", "planning", "narration"]);
+    expect(h.calls.filter((call) => call.stage === "planning")).toHaveLength(2);
+    expect(h.calls[1]?.repair).toMatchObject({
+      reason: "invalid_schema",
+      rejectionCode: "beat_authority_conflict",
+      detail: expect.stringContaining("obs_witness"),
+    });
+  });
+
   it("source 抛错也持久化为失败，不能留下永久 pending", async () => {
     const h = createStagedHarness();
     h.source.generate = async () => { throw new Error("private provider detail"); };

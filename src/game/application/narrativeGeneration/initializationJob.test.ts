@@ -56,7 +56,7 @@ type MemoryRow = {
  *
  * `now` 由调用方注入，测试可用可推进的时钟复现长生成场景。
  */
-function createMemoryJobs(now: () => string): NarrativeJobRepository {
+function createMemoryJobs(_now: () => string): NarrativeJobRepository {
   const rows = new Map<string, MemoryRow>();
   let slot: string | null = null;
 
@@ -105,7 +105,7 @@ function createMemoryJobs(now: () => string): NarrativeJobRepository {
       row.lease = { owner, fence, expiresAt };
       return { ok: true, value: { jobId: id, owner, fence, expiresAt } };
     },
-    async renew({ lease, now, expiresAt }) {
+    async renew({ lease, now: _now, expiresAt }) {
       const row = rows.get(lease.jobId);
       if (row === undefined) return { ok: false, code: "JOB_NOT_FOUND" as const };
       // 与生产一致：不否决已过期但未被接管的租约（fence 是并发权威）。
@@ -285,6 +285,54 @@ describe("initializationJob", () => {
     if (!run.ok) return;
     expect(run.job.status).toBe("published");
     expect([...source.stages].sort()).toEqual(["character", "choices", "narration", "planning"]);
+  });
+
+  it("opening planning 静态校验失败时先重做 planning，不先调用 narration", async () => {
+    const now = () => "2026-09-09T08:00:00.000Z";
+    const jobs = createMemoryJobs(now);
+    const plan = makeOpeningStagedPlan(await openingCandidate());
+    const character = plan.units.find((unit) => unit.stage === "character");
+    if (character === undefined) throw new Error("character fixture missing");
+    const invalidPlan = {
+      ...plan,
+      observations: [{
+        key: "obs_witness",
+        point: { stepKey: "current", order: 1 },
+        audienceIds: ["player_0", FIXTURE_NPC_A],
+        fact: { factId: "branch_routes", certainty: "known" as const },
+        source: { kind: "witness" as const },
+      }],
+      units: plan.units.map((unit) => unit.key === character.key
+        ? { ...unit, requiredObservationKeys: ["obs_witness"] }
+        : unit),
+    };
+    const source = createOpeningSource(plan);
+    const generate = source.generate.bind(source);
+    const repairs: (StageExecution["repair"] | undefined)[] = [];
+    let firstPlanning = true;
+    source.generate = async (request, execution) => {
+      if (request.stage === "planning") repairs.push(execution.repair);
+      const response = await generate(request, execution);
+      if (!firstPlanning || request.stage !== "planning" || !response.ok || response.stage !== "planning") return response;
+      firstPlanning = false;
+      return { ...response, value: invalidPlan };
+    };
+
+    const started = await startInitialization(startInput(now), jobs);
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    const result = await runInitialization(started.job.id, "init-worker", {
+      jobs, source, now, signal: new AbortController().signal, createdAt: now(),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(source.stages.slice(0, 3)).toEqual(["planning", "planning", "narration"]);
+    expect(source.stages.filter((stage) => stage === "planning")).toHaveLength(2);
+    expect(repairs[1]).toMatchObject({
+      reason: "invalid_schema",
+      rejectionCode: "beat_authority_conflict",
+      detail: expect.stringContaining("obs_witness"),
+    });
   });
 
   it("发布被拒后任务必须 failed，而非永远 pending", async () => {

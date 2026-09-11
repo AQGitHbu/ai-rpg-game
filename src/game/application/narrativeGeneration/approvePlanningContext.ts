@@ -5,7 +5,7 @@ import type { PlanProposal } from "@/game/domain/narrativePlan";
 import type { EvolutionNeed } from "@/game/domain/worldDelta";
 import type { StoryState } from "@/game/domain/storyState";
 import type { PlanningContext } from "./stageSource";
-import { approvePlan, approvePlanDecision } from "@/game/gameplay/rpg/narrativePlanning";
+import { approvePlan, approvePlanDecision, observationsForUnit } from "@/game/gameplay/rpg/narrativePlanning";
 import { approveWorldDelta, materializeWorldDelta } from "@/game/gameplay/rpg/worldEvolution";
 import { buildNarrativeBundleDescriptors } from "@/game/gameplay/rpg/narrativeBundle";
 import { buildEntityContextProjection, buildWorldDeltaEntityContextClosure } from "../entityContextProjection";
@@ -18,6 +18,43 @@ export function stagedEvolutionNeed(story: StoryState): EvolutionNeed {
   return { kind: "none" };
 }
 
+/**
+ * 只检查不依赖上游表达结果的 observation 归属。不能直接用空的 approved
+ * map 跑完整 projectUnitContext：那会把尚未真实披露的条件观察当成已发生，
+ * 但 observation 的来源类型、speaker、step/order 与所属 unit 在 planning
+ * 阶段已经完全确定，应在任何表达请求前拒绝错误分配。
+ */
+function preflightObservationBindings(proposal: PlanProposal): { readonly ok: false; readonly code: "beat_authority_conflict"; readonly detail: string } | null {
+  for (const unit of proposal.units) {
+    const ownedObservationKeys = new Set(
+      observationsForUnit(unit, proposal.observations).map((observation) => observation.key),
+    );
+    const requiredObservationKeys = unit.requiredObservationKeys.filter((key) => !ownedObservationKeys.has(key));
+    const conditionalEvidence = unit.requiredBeats.flatMap((beat) => beat.evidence
+      .filter((evidence): evidence is Extract<typeof evidence, { kind: "conditional" }> => evidence.kind === "conditional")
+      .filter((evidence) => !ownedObservationKeys.has(evidence.observationKey)));
+    if (requiredObservationKeys.length === 0 && conditionalEvidence.length === 0) continue;
+
+    const unavailableEvidence = [
+      ...requiredObservationKeys.map((observationKey) => ({ kind: "required_observation", observationKey })),
+      ...conditionalEvidence,
+    ];
+    return {
+      ok: false,
+      code: "beat_authority_conflict",
+      detail: JSON.stringify({
+        unitKey: unit.key,
+        stage: unit.stage,
+        stepKey: unit.point.stepKey,
+        speakerId: unit.speakerId,
+        unavailableEvidence,
+        repairInstruction: "由规划器修正 observation 归属：narration 只能认领 witness 观察，character 只能认领自己 speakerId 的 speech 观察；同时保持 observation 与 unit 位于同一 step 且顺序合法。",
+      }),
+    };
+  }
+  return null;
+}
+
 /** 所有结构审批发生在表达请求之前；世界增量只预览，发布时仍在单次 CAS 中提交。 */
 export function approvePlanningContext(input: PlanningContext, proposal: PlanProposal): ReturnType<typeof approvePlan> & { readonly detail?: string } {
   const repeatedResponseUnits = repeatedNpcResponseUnits(proposal);
@@ -27,7 +64,10 @@ export function approvePlanningContext(input: PlanningContext, proposal: PlanPro
   if (input.kind === "opening") {
     const approved = approvePlan({ kind: "opening", proposal, generation: input.generation,
       gameLength: input.input.gameLength, seed: input.input.seed });
-    return approved.ok ? approvePlanDecision(approved.value) : approved;
+    if (!approved.ok) return approved;
+    const result = approvePlanDecision(approved.value);
+    if (!result.ok) return result;
+    return preflightObservationBindings(proposal) ?? result;
   }
   let world = input.world;
   let story = input.story;
@@ -140,6 +180,8 @@ export function approvePlanningContext(input: PlanningContext, proposal: PlanPro
     ...JSON.parse(detail), repeatedCandidates, selectedDialogue: input.job.selectedDialogue,
     repairInstruction: "这些候选重复了玩家刚向同一 NPC 问过的具体维度。先回应已问内容；不知道时明确不知道，再围绕尚未问过的维度、其他已知事实或不同回应意图重做候选。不能只换措辞、删掉 inquiries 或重复询问；不编造答案，不扩大知识权限。保留已批准的 worldDelta 与 sceneContract。",
   }) };
+  const observationBindingFailure = preflightObservationBindings(proposal);
+  if (observationBindingFailure !== null) return observationBindingFailure;
   // 无条件观察时，知识权限已可确定；不必先花费表达调用再发现规划分配错误。
   // 有观察依赖的计划仍等待真实上游输出，绝不合成“已经披露”的回执来通过预检。
   if (proposal.observations.length === 0) {
