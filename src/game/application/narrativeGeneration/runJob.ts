@@ -24,7 +24,7 @@ import { approveUnit, narrationLayoutRejection } from "./approveUnit";
 import { disclosureReviewRequest, disclosureReviewDigest } from "./disclosureReview";
 import { canStartRequest } from "./jobBudget";
 import { composeSignals } from "./leaseKeeper";
-import { aiRepairAuditContext, createAiSourceFailure, repairFromSourceFailure } from "../aiGenerationRetry";
+import { createAiSourceFailure, persistedAiRepairReason, repairFromSourceFailure } from "../aiGenerationRetry";
 import type {
   Lease,
   NarrativeJobRepository,
@@ -34,6 +34,7 @@ import type {
 import { planningSceneContract } from "./planningSceneContract";
 import { approvePlanningContext } from "./approvePlanningContext";
 import type { StageExecution, StageRequest, StageSource } from "./stageSource";
+import type { StageSuccess } from "./stageSource";
 import type { DialogueHistoryEntry } from "./stageSource";
 import { loadDialogueHistory } from "./dialogueHistory";
 
@@ -48,6 +49,22 @@ const MAX_IN_FLIGHT = 2;
 const PLANNING_TIMEOUT_MS = 90_000;
 /** 表达单元（旁白/角色/选项）超时：与固定决策 3 的 45s 一致。 */
 const EXPRESSION_TIMEOUT_MS = 45_000;
+
+function approvalRepairDetail(response: StageSuccess, rejection: string | null,
+  context: Extract<StageRequest, { stage: Exclude<StageRequest["stage"], "planning"> }> ["context"]): string | undefined {
+  if (rejection === "unit_output_candidate_unknown" && response.stage === "choices") {
+    const index = response.value.stage === "choices" ? response.value.labels.findIndex(label =>
+      !context.options.some(option => option.candidateId === label.candidateId)) : -1;
+    return `labels[${index}].candidateId: not approved`;
+  }
+  if (rejection === "unit_output_fact_unavailable" && response.stage !== "planning"
+    && response.value.stage !== "choices") {
+    const index = response.value.parts.findIndex(part => part.facts.some(fact =>
+      !context.visibleFacts.some(visible => visible.id === fact.factId)));
+    return `parts[${index}].facts: contains unavailable fact`;
+  }
+  return undefined;
+}
 
 /**
  * 按 job 剩余时间收缩请求超时：请求不得越过 job.deadline（固定决策 3
@@ -133,6 +150,9 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
   const dialogueHistory = input.dialogueHistory ?? await loadDialogueHistory(job, deps.jobs);
   const planningContext = job.input.kind === "decision" && dialogueHistory.length > 0
     ? { ...job.input, dialogueHistory } : job.input;
+  const manualRetry = job.cycle > 0
+    ? { origin: "manual_failed_job" as const, mechanism: "initial" as const, attempt: 0 }
+    : undefined;
   const approveGeneratedPlan = (proposal: PlanProposal) => {
     if (deps.source.requiresTaskBrief && (proposal.units.some(unit => unit.stage !== "choices"
       && (unit.task?.brief === undefined || unit.task.contentFactIds === undefined))
@@ -273,13 +293,14 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
       ...(cachedPlanRepair === undefined ? {} : { repair: cachedPlanRepair }),
       audit: {
         purpose: "game_api", trigger: "staged_planning", jobId: job.id,
-        ...(cachedPlanRepair === undefined ? {} : { retry: aiRepairAuditContext(cachedPlanRepair) }),
+        ...(manualRetry === undefined ? {} : { retry: manualRetry }),
       },
     });
     let repairAttempt = (planningUnit?.attempts ?? 0) + 1;
     let planApproval = response.ok && response.stage === "planning"
       ? approveGeneratedPlan(response.value) : null;
-    while ((!response.ok || planApproval?.ok === false) && repairAttempt < 4) {
+    while ((response.ok || response.failure.kind !== "AI_CALL_FAILED")
+      && (!response.ok || planApproval?.ok === false) && repairAttempt < 4) {
       const retryCharge = canStartRequest({ job, unitAttempts: repairAttempt, now: deps.now() });
       if (!retryCharge.ok) return failJob(retryCharge.code);
       if (deps.signal.aborted) return fail("JOB_ABORTED");
@@ -300,7 +321,7 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
         repair,
         audit: {
           purpose: "game_api", trigger: "staged_planning", jobId: job.id,
-          retry: aiRepairAuditContext(repair),
+          ...(manualRetry === undefined ? {} : { retry: manualRetry }),
         },
       });
       repairAttempt += 1;
@@ -308,7 +329,9 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
         ? approveGeneratedPlan(response.value) : null;
     }
     if (!response.ok) {
-      return failJob(response.failure.kind);
+      const failure = repairFromSourceFailure(response, Math.max(1, repairAttempt - 1));
+      return failJob(response.failure.kind === "AI_CALL_FAILED"
+        ? response.failure.kind : persistedAiRepairReason(failure));
     }
     if (deps.now() >= job.deadline) return failJob("job_deadline_exceeded");
     if (response.stage !== "planning") return failJob("unit_output_stage_mismatch");
@@ -448,7 +471,8 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
       let response = await generate(request, {
         signal: deps.signal,
         timeoutMs: cappedTimeoutMs(job, EXPRESSION_TIMEOUT_MS, deps.now()),
-        audit: { purpose: "game_api", trigger: "staged_expression", jobId: job.id },
+        audit: { purpose: "game_api", trigger: "staged_expression", jobId: job.id,
+          ...(manualRetry === undefined ? {} : { retry: manualRetry }) },
       });
       let attemptsUsed = attempts + 1;
       // 「先重试表达」（Spec §205）：provider 失败与内容审批失败（approveUnit/
@@ -509,6 +533,7 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
           }
         }
         if (approvedOutput !== null) break;
+        if (!response.ok && response.failure.kind === "AI_CALL_FAILED") break;
         if (attemptsUsed >= 4) break;
         const retryCharge = canStartRequest({ job, unitAttempts: attemptsUsed, now: deps.now() });
         if (!retryCharge.ok) break;
@@ -519,28 +544,36 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
         }));
         if (retrySaved !== true) return fail(retrySaved);
         attemptsUsed += 1;
-        const providerFailureKind = response.ok ? undefined : response.failure.kind;
+        const repair = !response.ok ? repairFromSourceFailure(response, attemptsUsed - 1) : {
+          attempt: attemptsUsed - 1,
+          reason: "invalid_schema" as const,
+          rejectionCode: rejection ?? undefined,
+          ...(rejection === "unit_output_beat_layout" ? { detail: JSON.stringify({
+            allowedBeatIds: context.value.requiredBeats.map(beat => beat.beatId),
+            allowAtmosphere: context.value.narrationLayout?.allowAtmosphere,
+            repairInstruction: context.value.narrationLayout?.allowAtmosphere === false
+              ? "本单元每个 part.beatIds 必须恰好一个上列 ID，不能出现 [] 或 atmosphere。不要添加开头或结尾的独立氛围段；只表达本单元的具体节拍。"
+              : "先按节拍连续表达完必选内容，再写氛围；不能先写 beatIds=[] 再插入必选节拍。",
+          }) } : response.ok ? (() => {
+            const detail = approvalRepairDetail(response, rejection, context.value);
+            return detail === undefined ? {} : { detail };
+          })() : {}),
+        };
         response = await generate(request, {
           signal: deps.signal,
           timeoutMs: cappedTimeoutMs(job, EXPRESSION_TIMEOUT_MS, deps.now()),
-          repair: {
-            attempt: attemptsUsed - 1,
-            reason: providerFailureKind ?? "invalid_schema",
-            rejectionCode: providerFailureKind !== undefined ? undefined : rejection ?? undefined,
-            ...(rejection === "unit_output_beat_layout" ? { detail: JSON.stringify({
-              allowedBeatIds: context.value.requiredBeats.map(beat => beat.beatId),
-              allowAtmosphere: context.value.narrationLayout?.allowAtmosphere,
-              repairInstruction: context.value.narrationLayout?.allowAtmosphere === false
-                ? "本单元每个 part.beatIds 必须恰好一个上列 ID，不能出现 [] 或 atmosphere。不要添加开头或结尾的独立氛围段；只表达本单元的具体节拍。"
-                : "先按节拍连续表达完必选内容，再写氛围；不能先写 beatIds=[] 再插入必选节拍。",
-            }) } : {}),
-          },
-          audit: { purpose: "game_api", trigger: "staged_expression", jobId: job.id },
+          repair,
+          audit: { purpose: "game_api", trigger: "staged_expression", jobId: job.id,
+            ...(manualRetry === undefined ? {} : { retry: manualRetry }) },
         });
       }
       if (approvedOutput === null) {
         await persist((current) => patchedUnit(current, unit.key, { status: "failed" }));
-        failures.push(rejection ?? "unknown_failure");
+        const terminal = !response.ok
+          ? (response.failure.kind === "AI_CALL_FAILED" ? response.failure.kind
+            : persistedAiRepairReason(repairFromSourceFailure(response, attemptsUsed)))
+          : rejection ?? "unknown_failure";
+        failures.push(terminal);
         continue;
       }
       const approvedSave = await persist((current) => patchedUnit(current, unit.key, {

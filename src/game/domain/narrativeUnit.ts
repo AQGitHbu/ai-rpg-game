@@ -14,7 +14,7 @@ import type { MandatoryNarrativeBeat } from "./narrativeBeat";
 /** 逐字段重建的解析结果：`ok:false` 只携带稳定 code，不回显模型原文。 */
 export type Check<T> =
   | { readonly ok: true; readonly value: T }
-  | { readonly ok: false; readonly code: string };
+  | { readonly ok: false; readonly code: string; readonly detail?: string };
 
 // ---------------------------------------------------------------------------
 // 阶段与规模上限
@@ -130,6 +130,10 @@ export function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly st
 
 export function fail(code: string): { readonly ok: false; readonly code: string } {
   return { ok: false, code };
+}
+
+function failWithDetail(code: string, detail: string): Check<never> {
+  return { ok: false, code, detail };
 }
 
 /** key 是稳定身份：非空且受长度上限约束，避免模型用超长字符串充当身份。 */
@@ -332,7 +336,8 @@ export function parseUnitOutput(raw: unknown): Check<UnitOutput> {
   if (!isPlainRecord(raw)) return fail("unit_output_not_object");
   const stage = raw.stage;
   if (typeof stage !== "string" || !EXPRESSION_STAGES.includes(stage as ExpressionStage)) {
-    return fail("unit_output_stage_invalid");
+    return failWithDetail("unit_output_stage_invalid",
+      `stage: expected one of ${EXPRESSION_STAGES.join(", ")}`);
   }
 
   if (stage === "narration") {
@@ -381,7 +386,7 @@ export function parseUnitOutput(raw: unknown): Check<UnitOutput> {
   if (!Array.isArray(raw.labels) || raw.labels.length !== 2) return fail("unit_output_labels_count_invalid");
   const labels: ChoiceLabel[] = [];
   const seen = new Set<string>();
-  for (const item of raw.labels) {
+  for (const [index, item] of raw.labels.entries()) {
     if (!isPlainRecord(item) || !hasOnlyKeys(item, ["candidateId", "label"])) {
       return fail("unit_output_label_shape_invalid");
     }
@@ -389,10 +394,12 @@ export function parseUnitOutput(raw: unknown): Check<UnitOutput> {
     if (candidateId === null) return fail("unit_output_candidate_invalid");
     if (seen.has(candidateId)) return fail("unit_output_candidate_duplicate");
     seen.add(candidateId);
-    if (typeof item.label !== "string") return fail("unit_output_label_invalid");
+    if (typeof item.label !== "string") return failWithDetail("unit_output_label_invalid",
+      `labels[${index}].label: expected string`);
     const label = item.label.trim();
     const length = Array.from(label).length;
-    if (length < 1 || length > MAX_LABEL_LENGTH) return fail("unit_output_label_invalid");
+    if (length < 1 || length > MAX_LABEL_LENGTH) return failWithDetail("unit_output_label_invalid",
+      `labels[${index}]: ${length} Unicode code points; maximum ${MAX_LABEL_LENGTH}`);
     labels.push({ candidateId, label });
   }
   return { ok: true, value: { stage: "choices", labels } };

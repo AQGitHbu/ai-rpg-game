@@ -33,6 +33,8 @@ export type NarrativeGenerationRepairReason =
   | "handoff_acknowledgement_invalid"
   | "prepared_continuations_invalid"
   | "invalid_schema"
+  | "unit_output_label_invalid"
+  | "unit_output_stage_invalid"
   | "provider_failure"
   | "source_exception"
   | `approval:${string}`;

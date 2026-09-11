@@ -5,7 +5,7 @@
 // 审批、不铸 ID、不写状态；provider 失败按既有分类映射为 AiSourceFailure。
 
 import type { AiCompletionResult, AiMessage } from "@ai-game/ai-transport";
-import { createAiSourceFailure, type AiSourceFailure } from "@/game/application/aiGenerationRetry";
+import { aiRepairAuditContext, createAiSourceFailure, type AiSourceFailure } from "@/game/application/aiGenerationRetry";
 import { transportFailureCodeToCategory } from "@/game/application/aiGenerationFailure";
 import { parseStructuredJsonObject } from "@/game/core/json";
 import { parsePlanProposal } from "@/game/domain/narrativePlan";
@@ -35,7 +35,7 @@ export type CreateLiveStageSourceOptions = Readonly<{
   readonly client: RpgAiClient;
 }>;
 
-function invalidContent(code: string, detail: string) {
+function invalidContent(code: string, detail?: string) {
   return createAiSourceFailure("scene", "invalid_schema", code, detail);
 }
 
@@ -87,8 +87,11 @@ export function createLiveStageSource(options: CreateLiveStageSourceOptions): St
     async reviewDisclosure(request, execution) {
       const prompt = buildDisclosureReviewPrompt(request);
       if (prompt.length > 12_000) return invalidContent("disclosure_review_context_overflow", "审核输入超限，不能截断事实");
+      const audit = execution.repair === undefined ? execution.audit : {
+        ...execution.audit, retry: aiRepairAuditContext(execution.repair, execution.audit.retry),
+      };
       const response = await options.client.complete("disclosure_review", [{ role: "user", content: prompt }],
-        execution.audit, { signal: execution.signal, timeoutMs: execution.timeoutMs });
+        audit, { signal: execution.signal, timeoutMs: execution.timeoutMs });
       if (!response.ok) return providerFailure(response);
       const parsed = parseStructuredJsonObject(response.content);
       if (!parsed.ok || Object.keys(parsed.value).length !== 1
@@ -116,7 +119,10 @@ export function createLiveStageSource(options: CreateLiveStageSourceOptions): St
       ...(request.stage === "planning" && request.context.kind === "decision"
         ? [{ role: "user" as const, content: buildPlanningContentPrompt(request.context) }] : [])];
 
-      const result = await options.client.complete(role, messages, execution.audit, {
+      const audit = execution.repair === undefined ? execution.audit : {
+        ...execution.audit, retry: aiRepairAuditContext(execution.repair, execution.audit.retry),
+      };
+      const result = await options.client.complete(role, messages, audit, {
         signal: execution.signal,
         timeoutMs: execution.timeoutMs,
       });
@@ -131,7 +137,7 @@ export function createLiveStageSource(options: CreateLiveStageSourceOptions): St
 
       if (request.stage === "planning") {
         const proposal = parsePlanProposal(parsed.value);
-        if (!proposal.ok) return invalidContent("invalid_schema", proposal.code);
+        if (!proposal.ok) return invalidContent(proposal.code, proposal.detail);
         if (proposal.value.units.some(unit => unit.stage !== "choices" && (unit.task?.brief === undefined
           || unit.task.contentFactIds === undefined))
           || (proposal.value.decision?.kind === "ordinary" && proposal.value.decision.options.some(option => option.task?.brief === undefined
@@ -152,9 +158,9 @@ export function createLiveStageSource(options: CreateLiveStageSourceOptions): St
       }
 
       const output = parseUnitOutput(parsed.value);
-      if (!output.ok) return invalidContent("invalid_schema", output.code);
+      if (!output.ok) return invalidContent(output.code, output.detail);
       if (output.value.stage !== request.stage) {
-        return invalidContent("invalid_schema", "unit_output_stage_mismatch");
+        return invalidContent("invalid_schema", `stage: expected ${request.stage}; received ${output.value.stage}`);
       }
       return { ok: true, stage: request.stage, value: output.value };
     },

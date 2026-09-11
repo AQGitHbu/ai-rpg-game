@@ -269,6 +269,23 @@ function fourStageRequests(): readonly StageRequest[] {
 }
 
 describe("createLiveStageSource", () => {
+  it("由 live source 合并内容修复审计并保留手动重试来源和调用字段", async () => {
+    const { client, calls } = recordingClient([OK_JSON(VALID_NARRATION)]);
+    const source = createLiveStageSource({ client });
+    await source.generate(
+      { stage: "narration", context: contextFor(approvedPlan(), FIXTURE_NARRATION_UNIT) },
+      { signal: new AbortController().signal, timeoutMs: 1000,
+        repair: { attempt: 2, reason: "invalid_schema", rejectionCode: "unit_output_beat_layout" },
+        audit: { purpose: "game_api", trigger: "staged_expression", jobId: "job_1",
+          retry: { origin: "manual_failed_job", mechanism: "initial", attempt: 1 } } },
+    );
+    expect(calls[0]?.auditContext).toMatchObject({
+      purpose: "game_api", trigger: "staged_expression", jobId: "job_1",
+      retry: { origin: "manual_failed_job", mechanism: "content_repair", attempt: 2,
+        reason: "invalid_schema:unit_output_beat_layout" },
+    });
+  });
+
   it("四个 stage 各调用一次 complete，role 顺序为 planning/narration/character/choices", async () => {
     const { client, calls } = recordingClient([
       OK_JSON(livePlan()),
@@ -361,8 +378,8 @@ describe("createLiveStageSource", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.failure.kind).toBe("AI_RESPONSE_INVALID");
-    expect(result.repairReason).toBe("invalid_schema");
-    expect(result.repairDetail).toBe("plan_unknown_key");
+    expect(result.repairReason).toBe("plan_unknown_key");
+    expect(result.repairDetail).toBeUndefined();
   });
 
   it("provider 传输失败按既有分类映射为 AI_CALL_FAILED", async () => {
@@ -419,6 +436,19 @@ describe("createLiveStageSource", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.failure.kind).toBe("AI_RESPONSE_INVALID");
-    expect(result.repairDetail).toBe("unit_output_stage_mismatch");
+    expect(result.repairDetail).toBe("stage: expected narration; received character");
+  });
+
+  it("choices 超长反馈保留字段索引和 Unicode 码点长度", async () => {
+    const invalid = { ...VALID_CHOICES, labels: [VALID_CHOICES.labels[0],
+      { candidateId: "cand_alt", label: "😀".repeat(106) }] };
+    const { client } = recordingClient([OK_JSON(invalid)]);
+    const source = createLiveStageSource({ client });
+    const result = await source.generate(
+      { stage: "choices", context: contextFor(approvedPlan(), FIXTURE_CHOICE_UNIT) },
+      executionWith(new AbortController().signal),
+    );
+    expect(result).toMatchObject({ ok: false, repairReason: "unit_output_label_invalid",
+      repairDetail: "labels[1]: 106 Unicode code points; maximum 80" });
   });
 });

@@ -89,15 +89,22 @@ describe("parseUnitOutput", () => {
   });
 
   it("rejects a label beyond the length cap", () => {
-    expect(
-      parseUnitOutput({
+    const result = parseUnitOutput({
         stage: "choices",
         labels: [
-          { candidateId: "a", label: "话".repeat(81) },
-          { candidateId: "b", label: "我不答应。" },
+          { candidateId: "a", label: "我不答应。" },
+          { candidateId: "b", label: "😀".repeat(81) },
         ],
-      }).ok,
-    ).toBe(false);
+      });
+    expect(result).toEqual({ ok: false, code: "unit_output_label_invalid",
+      detail: "labels[1]: 81 Unicode code points; maximum 80" });
+  });
+
+  it("reports the invalid stage field without echoing output", () => {
+    expect(parseUnitOutput({ stage: "secret prose", parts: [] })).toEqual({
+      ok: false, code: "unit_output_stage_invalid",
+      detail: "stage: expected one of narration, character, choices",
+    });
   });
 
   it("rejects an empty label", () => {

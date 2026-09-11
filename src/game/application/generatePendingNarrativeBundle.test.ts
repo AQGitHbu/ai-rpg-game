@@ -422,7 +422,7 @@ describe("generatePendingNarrativeBundle", () => {
     expect(replayRecord()?.revision).toBe(ctx.pendingJob.basedOnRevision - 1);
   });
 
-  it("失败把 game 落成 provider_failed，稳定码收敛为 AI_RESPONSE_INVALID", async () => {
+  it("调用失败把 game 落成 provider_failed，并保留 AI_CALL_FAILED 分类", async () => {
     const ctx = harness("failure");
     const source = createFailingSource();
 
@@ -434,13 +434,26 @@ describe("generatePendingNarrativeBundle", () => {
     });
 
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.code).toBe("AI_RESPONSE_INVALID");
+    if (!result.ok) expect(result).toMatchObject({ code: "AI_CALL_FAILED", failureKind: "AI_CALL_FAILED" });
 
     const record = ctx.getRecord();
     expect(record?.storyState.narrative).toMatchObject({
       status: "provider_failed",
       job: ctx.pendingJob,
-      failure: { kind: "AI_RESPONSE_INVALID", reason: "provider_failure", phase: "scene" },
+      failure: { kind: "AI_CALL_FAILED", reason: "provider_failure", phase: "scene" },
     });
+  });
+
+  it("schema 失败持久化安全的具体原因，不伪装成 provider failure", async () => {
+    const ctx = harness("schema-failure");
+    const source: StageSource = { async generate() {
+      return { ok: false as const, failure: { kind: "AI_RESPONSE_INVALID" as const, phase: "scene" as const },
+        repairReason: "unit_output_label_invalid", repairDetail: "labels[1]: 106 Unicode code points; maximum 80 SECRET_BODY" };
+    } };
+    const result = await generatePendingNarrativeBundle({ repository: ctx.repo, jobs: ctx.jobs, source, now: () => NOW });
+    expect(result).toMatchObject({ ok: false, code: "AI_RESPONSE_INVALID", failureKind: "AI_RESPONSE_INVALID" });
+    expect(ctx.getRecord()?.storyState.narrative).toMatchObject({ status: "provider_failed",
+      failure: { kind: "AI_RESPONSE_INVALID", reason: "unit_output_label_invalid", phase: "scene" } });
+    expect(JSON.stringify(ctx.getRecord()?.storyState.narrative)).not.toContain("SECRET_BODY");
   });
 });

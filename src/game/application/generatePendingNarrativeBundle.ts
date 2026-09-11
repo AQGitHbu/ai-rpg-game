@@ -22,6 +22,7 @@ import type { AiFailureKind } from "@/game/domain/narrativeGenerationFailure";
 import { startDecisionJob, runDecision } from "./narrativeGeneration/decisionJob";
 import type { StageSource } from "./narrativeGeneration/stageSource";
 import { markNarrativeGenerationFailed } from "./markNarrativeGenerationFailed";
+import { persistedAiRepairReason } from "./aiGenerationRetry";
 
 export type GeneratePendingNarrativeBundleResult =
   | { readonly ok: true; readonly revision: number }
@@ -47,6 +48,9 @@ export type GeneratePendingNarrativeBundleDeps = {
 function mapFailureCode(code: string): { code: GeneratePendingNarrativeBundleResult extends { ok: false; code: infer C } ? C : never; failureKind?: AiFailureKind } {
   if (code === "JOB_NOT_FOUND" || code === "JOB_CONFLICT" || code === "UNSUPPORTED_JOB" || code === "JOB_ABORTED") {
     return { code: "INFRASTRUCTURE_FAILURE" as never };
+  }
+  if (code === "AI_CALL_FAILED") {
+    return { code: "AI_CALL_FAILED" as never, failureKind: "AI_CALL_FAILED" };
   }
   // 租约/并发冲突：任务仍在 pending，下一次 ensure 会重试。
   return { code: "AI_RESPONSE_INVALID" as never, failureKind: "AI_RESPONSE_INVALID" };
@@ -107,7 +111,8 @@ export async function generatePendingNarrativeBundle(
     // 与已铸造 token 保持不变，可经 retryNarrativeGeneration 重新入队。
     await markNarrativeGenerationFailed(deps.repository, current.record, {
       kind: mapped.failureKind ?? "AI_RESPONSE_INVALID",
-      reason: "provider_failure",
+      reason: ran.code === "AI_CALL_FAILED" ? "provider_failure"
+        : persistedAiRepairReason({ attempt: 1, reason: ran.code }),
       phase: "scene",
       failedAt: deps.now(),
     }).catch(() => undefined);

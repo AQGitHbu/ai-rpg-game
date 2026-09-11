@@ -139,6 +139,8 @@ describe("runJob", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(h.calls.slice(callsBefore).map(call => call.stage)).toEqual(["narration", "character", "choices"]);
+    expect(h.calls.slice(callsBefore).every(call => call.auditContext.retry?.origin === "manual_failed_job"
+      && call.auditContext.retry.mechanism === "initial" && call.auditContext.retry.attempt === 0)).toBe(true);
     expect(result.value.usedRequests).toBe(3);
     for (const key of ["narration_current", "character_npc_0", "choices_current"]) {
       expect(result.value.units.find(unit => unit.key === key)?.attempts).toBe(2);
@@ -188,7 +190,7 @@ describe("runJob", () => {
     if (result.ok) expect(result.value.usedRequests).toBe(h.source.calls.length);
   });
 
-  it("planning provider 失败把明确原因传给下一次请求，并标记内容修复审计上下文", async () => {
+  it("planning schema 失败把稳定 code 和安全 detail 传给下一次请求", async () => {
     const h = createStagedHarness();
     const generate = h.source.generate.bind(h.source);
     let firstPlanningFailure = true;
@@ -196,8 +198,8 @@ describe("runJob", () => {
       const response = await generate(request, execution);
       if (request.stage === "planning" && firstPlanningFailure) {
         firstPlanningFailure = false;
-        return createAiSourceFailure("scene", "empty_response", "empty_response",
-          "provider 未返回最终 JSON：finishReason=length；reasoningTokens=6000；hasReasoningContent=true。思考阶段已达到长度上限，下一次必须在思考后输出完整 JSON。");
+        return createAiSourceFailure("scene", "invalid_schema", "unit_output_label_invalid",
+          "labels[1]: 106 Unicode code points; maximum 80");
       }
       return response;
     };
@@ -208,12 +210,54 @@ describe("runJob", () => {
     const planningCalls = h.calls.filter((call) => call.stage === "planning");
     expect(planningCalls).toHaveLength(2);
     expect(planningCalls[1]?.repair).toMatchObject({
-      reason: "empty_response",
-      detail: expect.stringContaining("reasoningTokens=6000"),
+      reason: "unit_output_label_invalid",
+      detail: "labels[1]: 106 Unicode code points; maximum 80",
     });
-    expect(planningCalls[1]?.auditContext).toMatchObject({
-      retry: { mechanism: "content_repair", attempt: 1, reason: "empty_response" },
-    });
+  });
+
+  it.each(["planning", "narration"] as const)("%s 的 AI_CALL_FAILED 立即终止，不进入内容修复", async stage => {
+    const h = createStagedHarness();
+    const generate = h.source.generate.bind(h.source);
+    let calls = 0;
+    h.source.generate = async (request, execution) => request.stage === stage
+      ? (calls += 1, createAiSourceFailure("scene", "transport", "provider_failure", "code=http_error"))
+      : generate(request, execution);
+    await h.startDecision();
+    expect(await h.run()).toEqual({ ok: false, code: "AI_CALL_FAILED" });
+    expect(calls).toBe(1);
+  });
+
+  it("真实 empty_response 只失败一次，不把思考耗尽说明当内容修复", async () => {
+    const h = createStagedHarness();
+    let calls = 0;
+    h.source.generate = async () => {
+      calls += 1;
+      return createAiSourceFailure("scene", "empty_response", "empty_response",
+        "provider 未返回最终 JSON：finishReason=length；reasoningTokens=6000");
+    };
+    await h.startDecision();
+    expect(await h.run()).toEqual({ ok: false, code: "AI_CALL_FAILED" });
+    expect(calls).toBe(1);
+  });
+
+  it("连续 source schema 失败逐轮替换 repair detail，不重用旧详情", async () => {
+    const h = createStagedHarness();
+    const generate = h.source.generate.bind(h.source);
+    let failures = 0;
+    const repairs: Array<Parameters<typeof generate>[1]["repair"]> = [];
+    h.source.generate = async (request, execution) => {
+      if (request.stage === "choices") repairs.push(execution.repair);
+      if (request.stage === "choices" && failures < 2) {
+        failures += 1;
+        return createAiSourceFailure("scene", "invalid_schema", "invalid_schema",
+          failures === 1 ? "labels[1]: 106 Unicode code points; maximum 80" : "stage: expected choices; received narration");
+      }
+      return generate(request, execution);
+    };
+    await h.startDecision();
+    expect((await h.run()).ok).toBe(true);
+    expect(repairs[1]?.detail).toContain("labels[1]");
+    expect(repairs[2]?.detail).toBe("stage: expected choices; received narration");
   });
 
   it("planning 静态校验失败时先重做 planning，不先调用 narration", async () => {
@@ -368,6 +412,7 @@ describe("runJob", () => {
     const narrationCalls = h.source.calls.filter((c) => c.stage === "narration");
     expect(narrationCalls).toHaveLength(2);
     expect(narrationCalls[1]?.repair?.rejectionCode).toBe("unit_output_fact_unavailable");
+    expect(narrationCalls[1]?.repair?.detail).toMatch(/^parts\[\d+\]\.facts:/);
     expect(narrationCalls[1]?.repair?.reason).toBe("invalid_schema");
     expect(narrationCalls[1]?.repair?.attempt).toBe(1);
     if (result.ok) {
@@ -384,6 +429,7 @@ describe("runJob", () => {
     const choicesCalls = h.source.calls.filter((c) => c.stage === "choices");
     expect(choicesCalls).toHaveLength(2);
     expect(choicesCalls[1]?.repair?.rejectionCode).toBe("unit_output_candidate_unknown");
+    expect(choicesCalls[1]?.repair?.detail).toBe("labels[0].candidateId: not approved");
     expect(choicesCalls[1]?.repair?.attempt).toBe(1);
   });
 
