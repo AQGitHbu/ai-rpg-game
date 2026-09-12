@@ -30,7 +30,9 @@ import type { NpcEntry } from "@/game/domain/worldEntries";
 
 function livePlan() {
   const base = makeStagedPlan(); if (base.decision?.kind !== "ordinary") throw Error("ordinary");
-  return { ...base, units: base.units.map(({ taskFactIds: _, ...unit }) => unit),
+  return { ...base, units: base.units.map(({ taskFactIds: _, ...unit }) => ({ ...unit,
+    requiredBeats: unit.requiredBeats.map(({ instruction: _, ...beat }) => beat),
+  })),
     decision: { ...base.decision, options: base.decision.options.map(option => {
       const { text: _, ...references } = option.publicIntent; return { ...option, publicIntent: references };
     }) } };

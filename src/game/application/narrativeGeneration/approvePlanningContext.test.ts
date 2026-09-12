@@ -10,6 +10,7 @@ import type { PlanningContext } from "./stageSource";
 import { asGenerationId } from "@/game/domain/worldEntity";
 import { makeLostConvoyOpening } from "@/game/domain/testing/lostConvoyOpening.testutil";
 import { makeOpeningStagedPlan } from "@/game/domain/testing/stagedNarrativeFixture.testutil";
+import { parseLiveDraftPlan } from "@/game/domain/liveDraftPlan";
 
 function lostConvoyContext(): PlanningContext {
   return { kind: "opening", input: { gameType: "wuxia", gameLength: "short", seed: "lost-convoy" },
@@ -53,6 +54,28 @@ it("独立单元的静态权限预检不被其他单元的观察跳过", () => {
         focusFactIds: ["fact_2"], contentFactIds: ["fact_2"], prerequisiteFactIds: [] } }
       : unit.stage === "character" ? { ...unit, requiredObservationKeys: ["guilds_speech"] } : unit) };
   expect(approvePlanningContext(lostConvoyContext(), proposal)).toMatchObject({ ok: false, code: "beat_authority_conflict" });
+});
+
+it("紧凑 wire 适配后仍拒绝合法格式的越权事实", () => {
+  const base = makeOpeningStagedPlan(makeLostConvoyOpening());
+  if (base.decision?.kind !== "ordinary" || base.opening === null) throw Error("ordinary opening fixture");
+  const raw = { ...base, units: base.units.map(unit => {
+    const { taskFactIds: _, ...fresh } = unit;
+    return { ...fresh,
+      requiredBeats: unit.stage === "narration"
+        ? [{ beatId: "atmosphere", kind: "atmosphere" as const, factIds: ["fact_2"], evidence: [] }]
+        : unit.requiredBeats.map(({ instruction: _, ...beat }) => beat),
+      ...(unit.stage === "narration" ? { draft: { ...unit.draft, parts: [{ text: "掌柜私藏的内情显露出来。",
+        facts: [{ factId: "fact_2", certainty: "known" as const }], evidence: [], beatIds: ["atmosphere"] }] } } : {}) };
+  }), decision: { ...base.decision, options: base.decision.options.map(option => {
+    const { text: _, ...publicIntent } = option.publicIntent;
+    return { ...option, target: null, deferredLocation: null, publicIntent };
+  }) } };
+  const parsed = parseLiveDraftPlan(raw);
+  expect(parsed.ok).toBe(true);
+  if (!parsed.ok) throw Error(parsed.code);
+  expect(approvePlanningContext(lostConvoyContext(), parsed.value))
+    .toMatchObject({ ok: false, code: "beat_authority_conflict" });
 });
 
 it("合法开局观察依赖等真实上游披露，审批不伪造玩家知识", () => {

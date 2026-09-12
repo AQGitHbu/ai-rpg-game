@@ -11,11 +11,18 @@ export function parseLiveDraftPlan(raw: unknown): Check<PlanProposal> {
   for (const unit of raw.units) {
     if (!isPlainRecord(unit) || Object.hasOwn(unit, "task") || Object.hasOwn(unit, "taskFactIds"))
       return fail("plan_duplicate_content");
+    if (!Array.isArray(unit.requiredBeats)) return fail("plan_unit_invalid");
+    const requiredBeats: Record<string, unknown>[] = [];
+    for (const beat of unit.requiredBeats) {
+      if (!isPlainRecord(beat) || !hasOnlyKeys(beat, ["beatId", "kind", "factIds", "evidence"]))
+        return fail("plan_unit_invalid");
+      requiredBeats.push({ ...beat, instruction: "按声明的节拍与引用呈现。" });
+    }
     const draft = parseUnitOutput(unit.draft);
     if (!draft.ok) return fail("plan_draft_invalid");
     if (draft.value.stage !== unit.stage || (draft.value.stage === "character" && draft.value.speakerId !== unit.speakerId))
       return fail("plan_draft_identity_mismatch");
-    units.push({ ...unit, draft: draft.value, taskFactIds: draft.value.stage === "choices" ? []
+    units.push({ ...unit, requiredBeats, draft: draft.value, taskFactIds: draft.value.stage === "choices" ? []
       : [...new Set(draft.value.parts.flatMap(part => part.facts.map(fact => fact.factId)))] });
   }
   let decision = raw.decision;

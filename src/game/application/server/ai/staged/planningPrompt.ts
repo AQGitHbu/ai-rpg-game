@@ -66,15 +66,6 @@ export const PLANNING_TRIGGER_KINDS = [
   "battle_resolved",
 ] as const;
 
-/** 与 parseRouteTarget 的 ROUTE_TARGET_KINDS 同源。 */
-export const PLANNING_ROUTE_TARGET_KINDS = [
-  "talk_to_npc",
-  "visit_location",
-  "obtain_item",
-  "discover_fact",
-  "defeat_enemy",
-] as const;
-
 /** 与 parseTopic 的 kind 分支同源。 */
 export const PLANNING_TOPIC_KINDS = ["general", "fact", "quest", "thread"] as const;
 
@@ -218,8 +209,8 @@ export function renderPlanProposalContract(context: PlanningContext, includeWorl
   - **stage="choices" 的单元必须写 []**：选项单元只产出 label，不引用观察。
   - 非空时，所引用的观察**必须与本单元位于同一个 step（stepKey 完全相同）**，且 order 不大于本单元。
     跨 step 引用一律被拒（observation_without_source）——想引用前一个场景的观察，必须在本 step 里重新声明一条 observations。
-- requiredBeats：数组，每项恰有 5 键：
-  {"beatId": 键, "kind": 节拍类型, "factIds": 事实实体 id 数组, "evidence": 证据数组, "instruction": 非空中文字符串}
+- requiredBeats：数组，每项恰有 4 键：
+  {"beatId": 键, "kind": 节拍类型, "factIds": 事实实体 id 数组, "evidence": 证据数组}
   - kind ∈ ${PLANNING_BEAT_KINDS.join(" | ")}
   - evidence 必须是**对象数组**，绝不可写成裸字符串数组；元素二选一：
     {"kind":"committed","eventId": 已提交事件 id} 或 {"kind":"conditional","observationKey": 本次 observations 的 key}
@@ -249,18 +240,15 @@ export function renderPlanProposalContract(context: PlanningContext, includeWorl
   - dialogueAct ∈ ${DIALOGUE_ACTS.join(" | ")}
   - topic 恰有 kind 与所需键，kind ∈ ${PLANNING_TOPIC_KINDS.join(" | ")}：
     {"kind":"general"} | {"kind":"fact","factId":键} | {"kind":"quest","questId":键} | {"kind":"thread","threadId":键}
-  - target 普通对白为 null。旧路线数据的对象形状为 kind 与所需键，kind ∈ ${PLANNING_ROUTE_TARGET_KINDS.join(" | ")}：
-    {"kind":"talk_to_npc","npcId":键} | {"kind":"visit_location","locationId":键} | {"kind":"obtain_item","itemId":键}
-    | {"kind":"discover_fact","factId":键} | {"kind":"defeat_enemy","enemyId":键}
+  - target 必须为 null。
   - publicIntent 恰有 3 键：{"facts":FactUse 数组,"evidence":EvidenceRef 数组,"beatIds":[]}，只保存候选的引用元数据，不得含 text
     - facts 是 **FactUse 对象数组**，绝不可写成裸键数组：每项恰有 2 键 {"factId": 事实键, "certainty": "known" 或 "suspected"}。
       只放**公开事实**（私密事实不得进入玩家可见的选项意图）；不需要时写 []。
     - evidence 同 units 的 requiredBeats：对象数组（{"kind":"committed","eventId":…} 或 {"kind":"conditional","observationKey":…}），通常为 []。
     - beatIds：键数组，通常为 []。
-  - 普通对白选项 target 必须为 null，deferredLocation 必须为 null。不需要新地点或不同未完成目标；不凭说话自动创建地点或替换任务。
+  - deferredLocation 必须为 null。不凭说话自动创建地点或替换任务。
   - 两个选项的 dialogueAct/topic 组合必须不同，并代表本场景中不同的具体回应。可以是同地点同 NPC 的合作与拒绝、相信与质疑、询问不同关键事实；不是同义改写。
   - 每个候选的完整台词只在 choices.draft.labels 写一次；publicIntent.facts 保留条件等全部授权事实引用，不仅是 topic。
-  - 非 null 的旧路线目标仅用于恢复旧已批准数据，本次新的普通对话不得生成延迟路线模板。
 
 ## terminal
 {"kind":"next_decision","target":{"kind":"current_scene"}} 或 {"kind":"next_decision","target":{"kind":"continuation_step","stepKey":键}} 或 {"kind":"ending"}。
@@ -418,7 +406,7 @@ ${context.input.novelty?.recent?.length
 - 开局两个选项 target/deferredLocation 都为 null；用 opening.situation.responses 的不同 dialogueAct/topic 表示不同回应，不为凑选项创建地点。
 - decision.options 的 candidateId 必须逐项等于 opening.opening.situation.responses 的 key，dialogueAct/topic 同源，不能添加 opt_ 前缀或另起 ID。
 - privateFactKeys 对应秘密不得进入 narration/choices 的 draft、requiredBeats、observations；不能把玩家开端已亲眼看到的事设成 NPC 独占秘密。
-- requiredBeats.instruction 只写节拍类别意图，不写含秘密的台词草稿；必须用 draft.parts[].facts/requiredBeats.factIds 明确本单元要表达的事实，旁白和 NPC 不能自行决定关键内容。`
+- 必须用 draft.parts[].facts/requiredBeats.factIds 明确本单元要表达的事实，旁白和 NPC 不能自行决定关键内容。`
     : `- opening 必须为 null；决策链路禁止重跑开局结构编译。`;
 
   return `你是 RPG 的剧情规划 AI。本次调用产出完整 PlanProposal JSON，包含完整旁白、NPC 台词和两个玩家选项初稿；后续只润色正文。

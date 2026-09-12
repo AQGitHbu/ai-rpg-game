@@ -59,7 +59,7 @@ Prompt 只接收编译后的公开事实、当前位置、焦点 NPC 的有限�
 
 旁白每个 `part` 最多引用一个节拍，无节拍的氛围段使用空数组；全部段落必须覆盖必选节拍，事实和证据保持逐段归属。当前决策旁白的 `narrationLayout` 要求同一节拍连续，独立氛围只允许在最后一个当前旁白单元末尾。开局与未来场景不套用当前回合布局。初稿先按独立 SafeContext 通过 `approveUnit`；归属观察（含同序隐式 witness/self-speech）的事实引用与 certainty 在等待上游之前机械检查，缺项或升级均退回尚未接受的规划，不能靠后续纯文本润色补元数据。requiredObservationKeys 表示本单元的呈现/披露责任，不是前文输入依赖；不依赖实际观察的非法引用、节拍、动作或布局在规划接受前拒绝。依赖披露的初稿等实际上游获批后再投影，不伪造观察回执。获批规划后的权限或润色失败保留规划、请求及尝试次数，不重做世界。
 
-新 live 规划以每个 `unit.draft` 为唯一正文来源，不生成 task、brief、inquiries、answers 或 taskFactIds。普通候选的 `publicIntent` 仅包含 facts/evidence/beatIds；机械适配器从唯一匹配的初稿 label 派生内部 text，从段落引用派生 taskFactIds，再交给原有领域解析器。图、必选节拍、观察和动作仍独立声明与批准，不能从初稿反推授权。开局必须显式声明 player.knownFactKeys。开局 response 的 fact topic 与 thread 的 questionFactKey 可取 NPC 公开已知或玩家显式已知的现有事实，并排除 NPC 私密事实；这是选题资格，NPC 知识和熟人关系依据仍只取 NPC 自身已知，玩家选项需通过实际披露后的独立权限。旧字段只用于历史解析；未完成的旧无初稿缓存撤销规划与依赖表达，沿原请求和尝试预算重新规划，不把旧 brief 转成初稿。已发布旧数据保持可读。
+新 live 规划以每个 `unit.draft` 为唯一正文来源，不生成 task、brief、inquiries、answers 或 taskFactIds。新鲜 `requiredBeats` 每项只提交 beatId/kind/factIds/evidence；严格机械适配器补入中性内部 instruction，再交给原有领域解析器。普通候选的 `publicIntent` 仅包含 facts/evidence/beatIds；适配器从唯一匹配的初稿 label 派生内部 text，从段落引用派生 taskFactIds。图、必选节拍、观察和动作仍独立声明与批准，不能从初稿反推授权；安全视角按服务端节拍类型和授权事实重建实际表达 instruction，不使用模型说明。开局必须显式声明 player.knownFactKeys。开局 response 的 fact topic 与 thread 的 questionFactKey 可取 NPC 公开已知或玩家显式已知的现有事实，并排除 NPC 私密事实；这是选题资格，NPC 知识和熟人关系依据仍只取 NPC 自身已知，玩家选项需通过实际披露后的独立权限。旧字段只用于历史解析；旧 PlanProposal 的 instruction 保持可读。未完成的旧无初稿缓存撤销规划与依赖表达，沿原请求和尝试预算重新规划，不把旧 brief 转成初稿。已发布旧数据保持可读。
 
 安全编译先隐藏原始初稿，按角色、时点和真实知识/披露状态构建 SafeContext，再用 `approveUnit` 核验初稿引用。只有成功后才附上该单元的初稿。初稿不授予额外知识，候选的 publicIntent 引用也须通过独立玩家权限。润色输出仍经过原有引用、行动、节拍与披露门禁；引用合法不证明任意自然语言安全，最终复核还检查无权主张，即使该主张来自初稿且被忠实照抄。
 

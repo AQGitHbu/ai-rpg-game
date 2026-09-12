@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { buildPolishPrompt } from "./polishPrompt";
-import { buildPlanningPrompt, renderPlanProposalContract, PLANNING_BEAT_KINDS, PLANNING_TRIGGER_KINDS, PLANNING_ROUTE_TARGET_KINDS, PLANNING_TOPIC_KINDS } from "./planningPrompt";
+import { buildPlanningPrompt, renderPlanProposalContract, PLANNING_BEAT_KINDS, PLANNING_TRIGGER_KINDS, PLANNING_TOPIC_KINDS } from "./planningPrompt";
 import { asGenerationId } from "@/game/domain/worldEntity";
 import { DIALOGUE_ACTS } from "@/game/domain/action";
 import { dialogueReviewHarness } from "@/game/application/narrativeGeneration/dialogueConsistencyFixture.testutil";
@@ -10,7 +10,7 @@ import type { UnitOutput } from "@/game/domain/narrativeUnit";
 const opening = { kind: "opening" as const, input: { gameType: "wuxia" as const, gameLength: "short" as const, seed: "schema" }, generation: { generationId: asGenerationId("schema"), seed: "schema", templateVersion: "v2" as const, inputDigest: "", gameType: "wuxia" as const } };
 it("planning preserves all structural enum contracts and fixed opening identities", () => {
   const prompt = renderPlanProposalContract(opening);
-  for (const entry of [...PLANNING_BEAT_KINDS, ...PLANNING_TRIGGER_KINDS, ...PLANNING_ROUTE_TARGET_KINDS, ...PLANNING_TOPIC_KINDS, ...DIALOGUE_ACTS]) expect(prompt).toContain(entry);
+  for (const entry of [...PLANNING_BEAT_KINDS, ...PLANNING_TRIGGER_KINDS, ...PLANNING_TOPIC_KINDS, ...DIALOGUE_ACTS]) expect(prompt).toContain(entry);
   const assembled = buildPlanningPrompt(opening);
   for (const id of ["player_0", "npc_0", "loc_0", "quest_0", "fact_0"]) expect(assembled).toContain(id);
   expect(assembled).toContain("knownFactKeys"); expect(assembled).not.toContain('"brief"');

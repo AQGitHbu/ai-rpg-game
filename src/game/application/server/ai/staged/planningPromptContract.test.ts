@@ -7,4 +7,7 @@ it("one complete draft schema removes duplicate tasks and keeps independent auth
   for (const key of ['"draft"', '"parts"', '"labels"', 'knownFactKeys', 'requiredObservationKeys', 'requiredBeats']) expect(prompt).toContain(key);
   for (const obsolete of ['"brief"', '"task"', 'inquiries', 'answers', '20–60']) expect(prompt + PLANNING_CONTENT_RULES).not.toContain(obsolete);
   expect(prompt).toContain('publicIntent 恰有 3 键'); expect(prompt).toContain('trust/doubt');
+  expect(prompt).toContain('requiredBeats：数组，每项恰有 4 键');
+  expect(prompt).not.toContain('requiredBeats.instruction');
+  expect(prompt).not.toContain('"instruction": 非空中文字符串');
 });
