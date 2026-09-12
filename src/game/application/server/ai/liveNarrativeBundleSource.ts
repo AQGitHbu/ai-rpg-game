@@ -327,7 +327,7 @@ type ParseOpeningBundleResult =
 function parseOpeningBundleProposal(value: unknown, targetActs: 3 | 5): ParseOpeningBundleResult {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return { ok: false, reason: "root_not_object" };
   const response = value as Record<string, unknown>;
-  const allowedResponseKeys = new Set(["opening", "interactionProposals", "currentScene", "continuationScenes", "terminal"]);
+  const allowedResponseKeys = new Set(["opening", "interactionProposals", "npcOutwardProposals", "currentScene", "continuationScenes", "terminal"]);
   if (Object.keys(response).some((key) => !allowedResponseKeys.has(key))) return { ok: false, reason: "unknown_keys" };
   if (!hasOnlyKnownOpeningCandidateKeys(response.opening)) return { ok: false, reason: "opening_unknown_keys" };
   const raw = normalizeOpeningCandidateShape(value, targetActs) as Record<string, unknown>;
@@ -336,6 +336,7 @@ function parseOpeningBundleProposal(value: unknown, targetActs: 3 | 5): ParseOpe
   const narrative = parseNarrativeBundleProposal({
     worldDelta: null,
     interactionProposals: response.interactionProposals,
+    npcOutwardProposals: response.npcOutwardProposals,
     currentScene: raw.currentScene,
     continuationScenes: raw.continuationScenes,
     terminal: raw.terminal,
@@ -364,6 +365,9 @@ function parseOpeningBundleProposal(value: unknown, targetActs: 3 | 5): ParseOpe
       ...(narrative.proposal.interactionProposals === undefined
         ? {}
         : { interactionProposals: narrative.proposal.interactionProposals }),
+      ...(narrative.proposal.npcOutwardProposals === undefined
+        ? {}
+        : { npcOutwardProposals: narrative.proposal.npcOutwardProposals }),
       currentScene: narrative.proposal.currentScene,
       continuationScenes: [],
       terminal: { kind: "next_decision", target: { kind: "current_scene" } },
@@ -420,6 +424,7 @@ export function createNarrativeBundleSource(
               : "initialization",
             jobId: context.kind === "decision" ? String(context.job.jobId) : String(context.jobId),
             turnNumber: context.kind === "decision" ? context.job.turnNumber : 0,
+            ...(context.candidateVersion === undefined ? {} : { revision: context.candidateVersion }),
             action: context.kind === "decision" ? context.job.actionSummary : undefined,
             ...(decisionCompilation === undefined
               ? {}

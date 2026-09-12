@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aiRepairAuditContext, createAiSourceFailure, persistedAiRepairReason, repairFromSourceFailure, renderAiRepairFeedback } from "./aiGenerationRetry";
+import { aiRepairAuditContext, createAiSourceFailure, persistedAiRepairReason, repairFromCandidateReview, repairFromSourceFailure, renderAiRepairFeedback } from "./aiGenerationRetry";
 
 describe("shared AI retry feedback", () => {
   it("persists allowlisted stable details but excludes model/entity identifiers even when ASCII", () => {
@@ -27,6 +27,17 @@ describe("shared AI retry feedback", () => {
     const result = createAiSourceFailure("scene", "timeout", undefined, "timeout");
     expect(repairFromSourceFailure(result, 1)).toEqual({ attempt: 1, reason: "provider_failure", detail: "timeout" });
     expect(result.repairReason).toBeUndefined();
+  });
+
+  it("renders semantic candidate defects as repair feedback without changing the candidate", () => {
+    expect(repairFromCandidateReview([
+      { code: "MISSED_INPUT", path: "currentScene", reason: "必须先核验" },
+      { code: "DISCLOSURE", path: "npcOutwardProposals[0]", reason: "身份受保护" },
+    ], 2)).toEqual({
+      attempt: 2,
+      reason: "approval_rejected",
+      detail: "MISSED_INPUT:currentScene:必须先核验 | DISCLOSURE:npcOutwardProposals[0]:身份受保护",
+    });
   });
 
   it("preserves manual origin and approval code, without putting free text into audit reason", () => {

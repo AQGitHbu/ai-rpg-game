@@ -23,6 +23,21 @@ export type AiContentRepair<Reason extends string = string, Rejection extends st
   readonly detail?: string;
 };
 
+/** Convert semantic review findings into bounded content-repair feedback. */
+export function repairFromCandidateReview(
+  defects: readonly Readonly<{ readonly code: string; readonly path: string; readonly reason: string }>[],
+  attempt: number,
+): AiContentRepair<"approval_rejected", never> {
+  if (!Number.isInteger(attempt) || attempt < 1 || defects.length === 0) {
+    throw new RangeError("candidate review requires a non-empty defect list and a positive attempt");
+  }
+  return {
+    attempt,
+    reason: "approval_rejected",
+    detail: defects.map((defect) => `${defect.code}:${defect.path}:${defect.reason}`).join(" | "),
+  };
+}
+
 export function createAiSourceFailure<Reason extends string = string>(
   phase: AiFailurePhase,
   category: AiFailureCategory,

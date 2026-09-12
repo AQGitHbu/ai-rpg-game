@@ -1,5 +1,5 @@
 import type { NarrativeEmotion } from "./narrative";
-import type { NarrativeJobId } from "./events";
+import { isWellFormedEventId, type NarrativeJobId } from "./events";
 import type {
   EnemyId,
   FactId,
@@ -93,10 +93,25 @@ export type NarrativeBundleProposal = {
   readonly worldDelta: unknown | null;
   /** Provider proposals; formal interaction ids are minted during approval. */
   readonly interactionProposals?: readonly StoryInteractionProposal[];
+  /** NPC deliberation output after private context has crossed the authority boundary. */
+  readonly npcOutwardProposals?: readonly NarrativeNpcOutwardProposal[];
   readonly currentScene: BundleSceneProposal;
   readonly continuationScenes: readonly BundleStepProposal[];
   readonly terminal: NarrativeBundleTerminal;
 };
+
+export const NARRATIVE_NPC_DELIBERATION_RESPONSES = [
+  "cooperate", "refuse", "question", "offer_condition",
+] as const;
+
+export type NarrativeNpcOutwardProposal = Readonly<{
+  readonly npcId: string;
+  readonly response: (typeof NARRATIVE_NPC_DELIBERATION_RESPONSES)[number];
+  readonly goalIds?: readonly string[];
+  readonly evidenceEventIds: readonly string[];
+  readonly discloseFactIds: readonly string[];
+  readonly interactionProposals: readonly StoryInteractionProposal[];
+}>;
 
 // ---------------------------------------------------------------------------
 // Replacement one-shot trigger union (additive — Task 7 migrates consumers)
@@ -151,6 +166,9 @@ export type NarrativeBundleStepState = {
 export type NarrativeBundleState = {
   readonly contractVersion: 2;
   readonly originJobId: NarrativeJobId;
+  /** Server-owned identity of the approved complete candidate. */
+  readonly candidateVersion?: number;
+  readonly candidateHash?: string;
   readonly steps: readonly NarrativeBundleStepState[];
   readonly activeStepIds: readonly string[];
   readonly terminal: NarrativeBundleTerminalState;
@@ -182,6 +200,7 @@ export const NARRATIVE_BUNDLE_PROPOSAL_REJECTION_REASONS = [
   "too_many_steps",
   "duplicate_step_keys",
   "interaction_proposals_invalid",
+  "npc_outward_proposals_invalid",
 ] as const;
 
 export type NarrativeBundleProposalRejectionReason = typeof NARRATIVE_BUNDLE_PROPOSAL_REJECTION_REASONS[number];
@@ -235,6 +254,22 @@ function isStringArray(value: unknown): value is readonly string[] {
 
 function hasUniqueStrings(values: readonly string[]): boolean {
   return new Set(values).size === values.length;
+}
+
+function isNarrativeNpcOutwardProposal(value: unknown): value is NarrativeNpcOutwardProposal {
+  if (!isRecord(value)) return false;
+  if (!hasOnlyKeys(value, [
+    "npcId", "response", "goalIds", "evidenceEventIds", "discloseFactIds", "interactionProposals",
+  ])) return false;
+  if (!isNonEmptyString(value.npcId)
+    || !NARRATIVE_NPC_DELIBERATION_RESPONSES.includes(value.response as NarrativeNpcOutwardProposal["response"])) return false;
+  if (value.goalIds !== undefined && (!isStringArray(value.goalIds) || !hasUniqueStrings(value.goalIds))) return false;
+  if (!isStringArray(value.evidenceEventIds)
+    || !hasUniqueStrings(value.evidenceEventIds)
+    || value.evidenceEventIds.some((id) => !isWellFormedEventId(id))) return false;
+  if (!isStringArray(value.discloseFactIds) || !hasUniqueStrings(value.discloseFactIds)) return false;
+  return Array.isArray(value.interactionProposals)
+    && value.interactionProposals.every((proposal, index) => parseStoryInteractionProposal(proposal, `npcOutwardProposals.interactionProposals[${index}]`).ok);
 }
 
 function hasExactlyTwoDistinctChoices(scene: BundleSceneProposal): boolean {
@@ -337,11 +372,15 @@ function isBundleStepProposal(value: unknown): value is BundleStepProposal {
 
 export function parseNarrativeBundleProposal(value: unknown): ParseNarrativeBundleProposalResult {
   if (!isRecord(value)) return invalidProposal("not_object");
-  if (!hasOnlyKeys(value, ["worldDelta", "interactionProposals", "currentScene", "continuationScenes", "terminal"])) return invalidProposal("unknown_keys");
+  if (!hasOnlyKeys(value, ["worldDelta", "interactionProposals", "npcOutwardProposals", "currentScene", "continuationScenes", "terminal"])) return invalidProposal("unknown_keys");
   if (value.interactionProposals !== undefined
     && (!Array.isArray(value.interactionProposals)
       || !value.interactionProposals.every((proposal, index) => parseStoryInteractionProposal(proposal, `interactionProposals[${index}]`).ok))) {
     return invalidProposal("interaction_proposals_invalid");
+  }
+  if (value.npcOutwardProposals !== undefined
+    && (!Array.isArray(value.npcOutwardProposals) || !value.npcOutwardProposals.every(isNarrativeNpcOutwardProposal))) {
+    return invalidProposal("npc_outward_proposals_invalid");
   }
   // worldDelta can be null or any object (approval validates it separately)
   if (!isBundleSceneProposal(value.currentScene)) return invalidProposal("current_scene_invalid");
@@ -566,9 +605,13 @@ function isAcyclic(steps: readonly NarrativeBundleStepState[]): boolean {
 
 export function parseNarrativeBundleState(value: unknown): ParseNarrativeBundleStateResult {
   if (!isRecord(value)) return INVALID_STATE;
-  if (!hasOnlyKeys(value, ["contractVersion", "originJobId", "steps", "activeStepIds", "terminal"])) return INVALID_STATE;
+  if (!hasOnlyKeys(value, ["contractVersion", "originJobId", "candidateVersion", "candidateHash", "steps", "activeStepIds", "terminal"])) return INVALID_STATE;
   if (value.contractVersion !== 2) return INVALID_STATE;
   if (!isNonEmptyString(value.originJobId)) return INVALID_STATE;
+  if ((value.candidateVersion !== undefined
+    && (!Number.isInteger(value.candidateVersion) || (value.candidateVersion as number) < 1))
+    || (value.candidateHash !== undefined && !isNonEmptyString(value.candidateHash))
+    || ((value.candidateVersion === undefined) !== (value.candidateHash === undefined))) return INVALID_STATE;
   if (!Array.isArray(value.steps) || !value.steps.every(isBundleStepState)) return INVALID_STATE;
   if (!isStringArray(value.activeStepIds) || !hasUniqueStrings(value.activeStepIds)) return INVALID_STATE;
   if (!isTerminalState(value.terminal)) return INVALID_STATE;

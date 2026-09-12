@@ -84,7 +84,7 @@ export type ApproveNarrativeBundleResult =
   | { readonly ok: true; readonly approved: ApprovedNarrativeBundle }
   | {
     readonly ok: false;
-    readonly code: NarrativeBundleRejection;
+    readonly code: NarrativeBundleRejection | "STALE_CANDIDATE_REVIEW";
     /** 规则引擎给出的细分拒绝理由（如 duplicate_name:enemy）；供修复重试提示使用。 */
     readonly detail?: string;
   };
@@ -104,6 +104,15 @@ export type ApproveNarrativeBundleInput = {
   readonly now: () => string;
   readonly eventContext?: import("@/game/domain/worldDelta").WorldDeltaEventContext;
   readonly auditLink?: AiTextAuditLink;
+  /** Server-owned identity of the candidate being approved. */
+  readonly candidateVersion?: number;
+  readonly candidateHash?: string;
+  /** A semantic pass is valid only for the exact candidate being committed. */
+  readonly candidateReview?: Readonly<{
+    readonly ok?: true;
+    readonly candidateVersion: number;
+    readonly candidateHash: string;
+  }>;
 };
 
 function eventForTrigger(trigger: NarrativeBundleTrigger): NarrativeEventState {
@@ -949,6 +958,13 @@ export function approveNarrativeBundle(
   input: ApproveNarrativeBundleInput,
 ): ApproveNarrativeBundleResult {
   const { proposal, worldState, storyState, transition, evolutionNeed, jobId, basedOnRevision, now } = input;
+  if (input.candidateReview !== undefined
+    && (input.candidateVersion === undefined
+      || input.candidateHash === undefined
+      || input.candidateReview.candidateVersion !== input.candidateVersion
+      || input.candidateReview.candidateHash !== input.candidateHash)) {
+    return { ok: false, code: "STALE_CANDIDATE_REVIEW" };
+  }
   const eventContext = input.eventContext ?? {
     turnId: asTurnId(String(jobId)),
     turnNumber: basedOnRevision,
@@ -1251,6 +1267,9 @@ export function approveNarrativeBundle(
   const bundle: NarrativeBundleState = {
     contractVersion: 2,
     originJobId: jobId,
+    ...(input.candidateVersion === undefined || input.candidateHash === undefined
+      ? {}
+      : { candidateVersion: input.candidateVersion, candidateHash: input.candidateHash }),
     steps: stepStates,
     activeStepIds: [...graph.activeStepKeys],
     terminal: terminalState,

@@ -15,6 +15,7 @@ import { asGameId } from "./server/persistence/gameRepository";
 import { projectGameSessionView } from "./gameSessionView";
 import { rebuildEpisodicMemory } from "@/game/domain/episodicMemory";
 import { retryNarrativeGeneration } from "./retryNarrativeGeneration";
+import type { NarrativeCandidateReviewer } from "./narrativeCandidateReview";
 
 const GENERATION: GenerationMetadata = {
   generationId: "gen_test" as never,
@@ -155,14 +156,14 @@ describe("generatePendingNarrativeBundle", () => {
       repairReason: "invalid_schema", repairDetail: "world_delta_invalid",
     });
     await generatePendingNarrativeBundle({ repository: repo, source: { generate }, now: () => "2026-01-01T00:00:00.000Z" });
-    expect(generate.mock.calls.map(([ctx]) => ctx.contentRepair?.attempt)).toEqual([undefined, 1, 2, 3]);
+    expect(generate.mock.calls.map(([ctx]) => ctx.contentRepair?.attempt)).toEqual([undefined, 1, 2]);
     expect(getRecord()?.storyState.narrative).toMatchObject({ status: "provider_failed", failure: { reason: "invalid_schema:world_delta_invalid" } });
     const retry = await retryNarrativeGeneration(repo, asGameId("manual-repair"), () => "2026-01-01T00:00:00.000Z");
     expect(retry).toMatchObject({ ok: true, result: "requeued" });
     generate.mockClear();
     await generatePendingNarrativeBundle({ repository: repo, source: { generate }, now: () => "2026-01-01T00:00:00.000Z", auditLink: { retry: { origin: "manual_failed_job", mechanism: "initial", attempt: 0 } } });
     expect(generate.mock.calls[0]?.[0]).toMatchObject({ job, contentRepair: { reason: "invalid_schema:world_delta_invalid" }, auditLink: { retry: { origin: "manual_failed_job", reason: "invalid_schema:world_delta_invalid" } } });
-    expect(generate.mock.calls.map(([ctx]) => ctx.contentRepair?.attempt)).toEqual([1, 2, 3, 4]);
+    expect(generate.mock.calls.map(([ctx]) => ctx.contentRepair?.attempt)).toEqual([1, 2, 3]);
   });
   it("returns NOT_PENDING when narrative is not provider_pending", async () => {
     const worldState = createMinimalWorldState();
@@ -255,7 +256,7 @@ describe("generatePendingNarrativeBundle", () => {
       expect(record.worldState).toEqual(worldState);
     }
     const contexts = vi.mocked(source.generate).mock.calls.map(([context]) => context);
-    expect(contexts.slice(1).map((context) => context.contentRepair?.reason)).toEqual(["provider_failure", "provider_failure", "provider_failure"]);
+    expect(contexts.slice(1).map((context) => context.contentRepair?.reason)).toEqual(["provider_failure", "provider_failure"]);
   });
 
   it("reports CAS conflict instead of claiming that the retryable failure was saved", async () => {
@@ -308,9 +309,8 @@ describe("generatePendingNarrativeBundle", () => {
       now: () => "2026-01-01",
     });
 
-    // The bundle coordinator keeps four bounded attempts so independent
-    // next-act entity-name collisions can be repaired in one job.
-    expect(generateMock).toHaveBeenCalledTimes(4);
+    // The bundle coordinator keeps three candidate versions per job.
+    expect(generateMock).toHaveBeenCalledTimes(3);
   });
 
   it("把 story_exit 的 B 结果提交为等待生成后的退出结局", async () => {
@@ -445,6 +445,105 @@ describe("generatePendingNarrativeBundle", () => {
     expect(saved.storyState.history?.entries.at(-1)?.kind).toBe("shown_choice");
   });
 
+  it("reviews each complete candidate before approval and lets the reviewer defect drive the next draft", async () => {
+    const { repo, getRecord } = createInMemoryRepo(null);
+    const opening = await createGame(
+      { gameId: asGameId("candidate-review-loop"), gameType: "wuxia", gameLength: "short", seed: "candidate-review-loop" },
+      { repository: repo, source: createFixtureOpeningSource(), now: () => "2026-01-01", aiEnabled: true },
+    );
+    expect(opening.ok).toBe(true);
+    const initialized = getRecord();
+    if (initialized === null || initialized.storyState.narrative.status !== "ready") throw new Error("opening fixture missing");
+    const npc = initialized.worldState.npcs[0]!;
+    const quest = initialized.worldState.quests[0]!;
+    const pendingJob: PendingNarrativeJob = {
+      ...createPendingJob(),
+      domainEventIds: [initialized.worldState.eventLedger[0]!.eventId],
+      focusNpcId: npc.id,
+      actionSummary: { kind: "talk", npcId: npc.id },
+      objectiveTransition: {
+        before: { questId: quest.id, objectiveIndex: 0, label: "与 NPC 交谈" },
+        completed: [],
+        after: { questId: quest.id, objectiveIndex: 0, label: "与 NPC 交谈" },
+        mode: "unchanged",
+      },
+    };
+    const pendingWrite = await repo.applyState({
+      gameId: initialized.gameId,
+      expectedRevision: initialized.revision,
+      nextWorldState: initialized.worldState,
+      nextStoryState: {
+        ...initialized.storyState,
+        narrative: {
+          status: "provider_pending",
+          mode: "ai",
+          job: pendingJob,
+          lastPresentedScene: initialized.storyState.narrative.currentScene,
+        },
+      },
+    });
+    expect(pendingWrite.ok).toBe(true);
+
+    const generate = vi.fn<NarrativeBundleSource["generate"]>(async (context) => {
+        const label = context.contentRepair === undefined ? "先核验身份" : "现在交付信筒";
+        return {
+          ok: true,
+          kind: "decision",
+          proposal: {
+            worldDelta: null,
+            currentScene: {
+              segments: [{ beatId: "atmosphere", text: "酒馆里有人压低声音。" }],
+              npcLine: {
+                npcId: String(npc.id), text: "这件事需要谨慎。", emotion: "guarded",
+                answeredBeatIds: [], usedFactIds: [], usedEventIds: [],
+              },
+              objectiveLink: { questId: String(quest.id), objectiveIndex: 0, mode: "progress" },
+              choices: [
+                { candidateId: "current_scene_choice_1", label },
+                { candidateId: "current_scene_choice_2", label: "暂时离开" },
+              ],
+            },
+            continuationScenes: [],
+            terminal: { kind: "next_decision", target: { kind: "current_scene" } },
+          },
+        };
+    });
+    const source: NarrativeBundleSource = { generate };
+    const reviewer: NarrativeCandidateReviewer = {
+      reviewNarrativeCandidate: vi.fn()
+        .mockImplementationOnce(async (input) => ({
+          ok: false,
+          candidateVersion: input.candidateVersion,
+          candidateHash: input.candidateHash,
+          defects: [{
+            candidateVersion: input.candidateVersion,
+            candidateHash: input.candidateHash,
+            scope: "scene",
+            code: "MISSED_INPUT",
+            path: "currentScene.expressions",
+            reason: "必须先核验再交付。",
+          }],
+        }))
+        .mockImplementationOnce(async (input) => ({
+          ok: true,
+          candidateVersion: input.candidateVersion,
+          candidateHash: input.candidateHash,
+        })),
+    };
+
+    const generated = await generatePendingNarrativeBundle({
+      repository: repo,
+      source,
+      reviewer,
+      now: () => "2026-01-01",
+    });
+
+    expect(generated.ok).toBe(true);
+    expect(reviewer.reviewNarrativeCandidate).toHaveBeenCalledTimes(2);
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(getRecord()?.storyState.narrative.status).toBe("ready");
+  });
+
   it("事件账本提交失败时持久化独立稳定码，不伪装成审批拒绝", async () => {
     const { repo, getRecord } = createInMemoryRepo(null);
     const opening = await createGame(
@@ -558,7 +657,7 @@ describe("generatePendingNarrativeBundle", () => {
 
     await generatePendingNarrativeBundle({ repository: repo, source: { generate: generateMock }, now: () => "2026-01-01" });
 
-    expect(generateMock).toHaveBeenCalledTimes(4);
+    expect(generateMock).toHaveBeenCalledTimes(3);
     const firstContext = generateMock.mock.calls[0]?.[0];
     const secondContext = generateMock.mock.calls[1]?.[0];
     expect(firstContext?.contentRepair).toBeUndefined();

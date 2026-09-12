@@ -62,12 +62,16 @@ export type NarrativeBundleSourceContext =
   | {
     readonly kind: "opening";
     readonly jobId: NarrativeJobId;
+    /** 1-based server-owned content version for this complete candidate. */
+    readonly candidateVersion?: number;
     readonly input: OpeningGenerationInput;
     readonly auditLink?: AiTextAuditLink;
     readonly contentRepair?: NarrativeBundleRepair;
   }
   | {
     readonly kind: "decision";
+    /** 1-based server-owned content version for this complete candidate. */
+    readonly candidateVersion?: number;
     readonly worldState: WorldState;
     readonly storyState: StoryState;
     readonly job: PendingNarrativeJob;

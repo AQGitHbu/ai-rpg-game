@@ -321,6 +321,15 @@ function actBoundaryFixture(overrides: WorldStateFixtureOverrides = {}) {
 }
 
 describe("approveNarrativeBundle", () => {
+  it("rejects a semantic pass whose candidate version or hash is stale", () => {
+    const result = approveNarrativeBundle(baseInput({
+      candidateVersion: 2,
+      candidateHash: "candidate_new",
+      candidateReview: { ok: true, candidateVersion: 1, candidateHash: "candidate_old" },
+    }));
+    expect(result).toEqual({ ok: false, code: "STALE_CANDIDATE_REVIEW" });
+  });
+
   it("approves a valid bundle with continuation_step terminal", () => {
     const result = approveNarrativeBundle(baseInput());
     expect(result.ok).toBe(true);

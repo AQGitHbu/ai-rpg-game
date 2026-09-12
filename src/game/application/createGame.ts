@@ -1,10 +1,10 @@
-import { repairFromSourceFailure, aiRepairAuditContext } from "./aiGenerationRetry";
+import { repairFromCandidateReview, repairFromSourceFailure, aiRepairAuditContext } from "./aiGenerationRetry";
 import type { GameRepository } from "./server/persistence/gameRepository";
 import type { GameId } from "./server/persistence/gameRepository";
 import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
 import type { NarrativeRuntimeState, NarrativeSceneState } from "@/game/domain/narrative";
 import type { WorldState } from "@/game/domain/worldState";
-import type { NarrativeBundleSource, NarrativeBundleRepair, OpeningNarrativeBundleProposal } from "./narrativeBundleSource";
+import type { NarrativeBundleSource, NarrativeBundleRepair, OpeningNarrativeBundleProposal, NarrativeBundleSourceContext } from "./narrativeBundleSource";
 import type { GameTypeId, GameLength, GameSetup, NewGameInput } from "@/game/domain/newGame";
 import { validateNewGameInput } from "@/game/domain/newGame";
 import type { OpeningGenerationCandidate } from "@/game/domain/openingGenerationCandidate";
@@ -37,6 +37,12 @@ import {
   validateNpcSpeechReferences,
 } from "./npcSpeechAuthority";
 import { installStoryInteractionProposals, validateNarrativeSceneExpressions } from "./approveNarrativeBundle";
+import {
+  candidateReviewMatches,
+  hashNarrativeCandidate,
+  type CandidateReviewResult,
+  type NarrativeCandidateReviewer,
+} from "./narrativeCandidateReview";
 
 // ---------------------------------------------------------------------------
 // Task 2：开局生成编排改为 source → parse → validate → compile。
@@ -154,6 +160,8 @@ export type CreateGameDeps = {
   readonly aiEnabled?: boolean;
   /** 仅用于关联 opening AI 审计事件，不进入游戏状态。 */
   readonly auditLink?: AiTextAuditLink;
+  /** Production composition injects the single semantic reviewer for openings. */
+  readonly reviewer?: NarrativeCandidateReviewer;
 };
 
 const OPENING_HISTORY_LOOKBACK = 12;
@@ -164,6 +172,8 @@ function compileOpeningNarrative(
   candidate: OpeningGenerationCandidate,
   jobId: ReturnType<typeof asNarrativeJobId>,
   mode: "ai" | "offline",
+  candidateVersion?: number,
+  candidateHash?: string,
 ): NarrativeRuntimeState | null {
   if (
     proposal.continuationScenes.length !== 0
@@ -262,6 +272,9 @@ function compileOpeningNarrative(
     narrativeBundle: {
       contractVersion: 2,
       originJobId: jobId,
+      ...(candidateVersion === undefined || candidateHash === undefined
+        ? {}
+        : { candidateVersion, candidateHash }),
       steps: [],
       activeStepIds: [],
       terminal: { kind: "next_decision", target: { kind: "current_scene" } },
@@ -344,39 +357,42 @@ export async function createGame(
     runAttempt: async (attempt, priorRepair) => {
       const openingAttempt = attempt - 1;
       const contentRepair = priorRepair === undefined ? undefined : { ...priorRepair, attempt: openingAttempt };
+      const candidateVersion = attempt;
+      const openingContext: Extract<NarrativeBundleSourceContext, { readonly kind: "opening" }> = {
+        kind: "opening" as const,
+        jobId,
+        candidateVersion,
+        ...(contentRepair === undefined ? {} : { contentRepair }),
+        input: {
+          gameType: input.gameType,
+          seed: input.seed,
+          gameLength: input.gameLength,
+          ...(input.setup === undefined ? {} : { setup: input.setup }),
+          novelty: {
+            recent: [...recentHistory, ...rejectedCandidates],
+            attempt: openingAttempt,
+          },
+          attempt: openingAttempt,
+          ...(deps.auditLink === undefined ? {} : {
+            auditLink: {
+              ...deps.auditLink,
+              gameId: String(input.gameId),
+              jobId: String(jobId),
+            },
+          }),
+        },
+        auditLink: {
+          ...(deps.auditLink ?? {}),
+          gameId: String(input.gameId),
+          jobId: String(jobId),
+          turnNumber: 0,
+          retry: contentRepair === undefined ? { origin: "normal", mechanism: "initial", attempt: 0 } : aiRepairAuditContext(contentRepair, deps.auditLink?.retry),
+        },
+      };
       let generated: OpeningGenerationCandidate;
       let generatedProposal: OpeningNarrativeBundleProposal;
       try {
-        const result = await deps.source.generate({
-          kind: "opening",
-          jobId,
-          ...(contentRepair === undefined ? {} : { contentRepair }),
-          input: {
-            gameType: input.gameType,
-            seed: input.seed,
-            gameLength: input.gameLength,
-            ...(input.setup === undefined ? {} : { setup: input.setup }),
-            novelty: {
-              recent: [...recentHistory, ...rejectedCandidates],
-              attempt: openingAttempt,
-            },
-            attempt: openingAttempt,
-            ...(deps.auditLink === undefined ? {} : {
-              auditLink: {
-                ...deps.auditLink,
-                gameId: String(input.gameId),
-                jobId: String(jobId),
-              },
-            }),
-          },
-          auditLink: {
-            ...(deps.auditLink ?? {}),
-            gameId: String(input.gameId),
-            jobId: String(jobId),
-            turnNumber: 0,
-            retry: contentRepair === undefined ? { origin: "normal", mechanism: "initial", attempt: 0 } : aiRepairAuditContext(contentRepair, deps.auditLink?.retry),
-          },
-        });
+        const result = await deps.source.generate(openingContext);
         if (result == null) {
           lastFailureKind = "AI_RESPONSE_INVALID";
           return { ok: false, retryable: true, reason: { attempt, reason: "invalid_schema", detail: "invalid_source_result" } };
@@ -411,6 +427,8 @@ export async function createGame(
         candidate,
         jobId,
         deps.aiEnabled === false ? "offline" : "ai",
+        candidateVersion,
+        hashNarrativeCandidate(generatedProposal),
       );
       if (narrative === null) return { ok: false, retryable: true, reason: { attempt, reason: "invalid_schema", detail: "opening_scene_invalid" } };
       const generation = {
@@ -439,6 +457,46 @@ export async function createGame(
       }
       if (!approveOpeningSpeech(narrative, installed.worldState)) {
         return { ok: false, retryable: true, reason: { attempt, reason: "approval_rejected", detail: "opening_speech_rejected" } };
+      }
+
+      if (deps.reviewer !== undefined) {
+        const candidateHash = hashNarrativeCandidate(generatedProposal);
+        let review: CandidateReviewResult;
+        try {
+          review = await deps.reviewer.reviewNarrativeCandidate({
+            context: openingContext,
+            proposal: generatedProposal,
+            candidateVersion,
+            candidateHash,
+          });
+        } catch {
+          review = { ok: false, candidateVersion, candidateHash, failure: "PROVIDER_FAILURE" };
+        }
+        if (!review.ok) {
+          if ("defects" in review) {
+            if (review.defects.length === 0
+              || review.defects.some((defect) => !candidateReviewMatches(defect, candidateVersion, candidateHash))) {
+              lastFailureKind = "AI_RESPONSE_INVALID";
+              return { ok: false, retryable: false, reason: { attempt, reason: "invalid_schema", detail: "candidate_review_invalid" } };
+            }
+            lastFailureKind = "AI_RESPONSE_INVALID";
+            return { ok: false, retryable: true, reason: repairFromCandidateReview(review.defects, attempt) };
+          }
+          lastFailureKind = review.failure === "PROVIDER_FAILURE" ? "AI_CALL_FAILED" : "AI_RESPONSE_INVALID";
+          return {
+            ok: false,
+            retryable: false,
+            reason: {
+              attempt,
+              reason: review.failure === "PROVIDER_FAILURE" ? "provider_failure" : "invalid_schema",
+              detail: review.failure === "PROVIDER_FAILURE" ? "candidate_review_provider_failure" : "candidate_review_uncertain",
+            },
+          };
+        }
+        if (!candidateReviewMatches(review, candidateVersion, candidateHash)) {
+          lastFailureKind = "AI_RESPONSE_INVALID";
+          return { ok: false, retryable: false, reason: { attempt, reason: "invalid_schema", detail: "candidate_review_invalid" } };
+        }
       }
 
       const comparableHistory = [...recentHistory, ...rejectedCandidates];

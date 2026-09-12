@@ -1,4 +1,4 @@
-import { repairFromSourceFailure, aiRepairAuditContext, persistedAiRepairReason } from "./aiGenerationRetry";
+import { repairFromCandidateReview, repairFromSourceFailure, aiRepairAuditContext, persistedAiRepairReason } from "./aiGenerationRetry";
 import type { GameRepository } from "./server/persistence/gameRepository";
 import type { NarrativeBundleSource, NarrativeBundleRepair } from "./narrativeBundleSource";
 import { approveNarrativeBundle, type ApprovedNarrativeBundle } from "./approveNarrativeBundle";
@@ -16,16 +16,23 @@ import { commitEventDrafts } from "@/game/domain/eventLedger";
 import { reconcileCommittedMemory } from "./reconcileCommittedMemory";
 import { appendHistory, narrativeSceneHistoryEntries } from "@/game/domain/narrativeHistory";
 import { asEndingId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
+import {
+  candidateReviewMatches,
+  hashNarrativeCandidate,
+  type CandidateReviewResult,
+  type NarrativeCandidateReviewer,
+} from "./narrativeCandidateReview";
 
 // A next-act package contains five independently unique world entities. A
 // provider repair may correct one named collision at a time, so leave room for
 // the complete bounded repair chain before exposing a manual retry to players.
-const MAX_NARRATIVE_BUNDLE_ATTEMPTS = 4;
+const MAX_NARRATIVE_BUNDLE_ATTEMPTS = 3;
 
 // ---------------------------------------------------------------------------
 // Task 7: Atomic pending-job generation orchestrator.
-// Calls NarrativeBundleSource once, calls approveNarrativeBundle once,
-// commits world+scene+choiceRegistry+bundle in one CAS.
+// Calls NarrativeBundleSource once per candidate version, performs a pure
+// preflight and (when injected) one semantic review plus a final approval,
+// then commits world+scene+choiceRegistry+bundle in one CAS.
 // When approval fails, performs no partial world/scene write.
 // ---------------------------------------------------------------------------
 
@@ -43,6 +50,8 @@ export type GeneratePendingNarrativeBundleDeps = {
   readonly now: () => string;
   readonly logger?: GameLogger;
   readonly auditLink?: AiTextAuditLink;
+  /** Optional semantic reviewer; production composition injects the live reviewer. */
+  readonly reviewer?: NarrativeCandidateReviewer;
 };
 
 function deriveEvolutionNeed(storyState: StoryState, worldState: WorldState): EvolutionNeed {
@@ -94,6 +103,7 @@ export async function generatePendingNarrativeBundle(
       try {
         sourceResult = await deps.source.generate({
           kind: "decision",
+          candidateVersion: attempt,
           worldState,
           storyState,
           job,
@@ -129,7 +139,9 @@ export async function generatePendingNarrativeBundle(
         lastRepair = { attempt, reason: "invalid_schema", detail: "unexpected_source_kind" };
         return { ok: false, retryable: true, reason: lastRepair };
       }
-      const approvalResult = approveNarrativeBundle({
+      const candidateVersion = attempt;
+      const candidateHash = hashNarrativeCandidate(sourceResult.proposal);
+      const approvalInput = {
         proposal: sourceResult.proposal,
         worldState,
         storyState,
@@ -152,10 +164,19 @@ export async function generatePendingNarrativeBundle(
         },
         now: deps.now,
         ...(deps.auditLink === undefined ? {} : { auditLink: deps.auditLink }),
-      });
+        candidateVersion,
+        candidateHash,
+      };
+      // The first approval is a pure structural/rule preflight. It ensures a
+      // malformed candidate never consumes a semantic-review request.
+      const preflight = approveNarrativeBundle(approvalInput);
 
-      if (!approvalResult.ok) {
-        lastRepair = { attempt, reason: "approval_rejected", rejectionCode: approvalResult.code, ...(approvalResult.detail === undefined ? {} : { detail: approvalResult.detail }) };
+      if (!preflight.ok) {
+        if (preflight.code === "STALE_CANDIDATE_REVIEW") {
+          lastRepair = { attempt, reason: "invalid_schema", detail: "stale_candidate_review" };
+          return { ok: false, retryable: false, reason: lastRepair };
+        }
+        lastRepair = { attempt, reason: "approval_rejected", rejectionCode: preflight.code, ...(preflight.detail === undefined ? {} : { detail: preflight.detail }) };
         return {
           ok: false,
           retryable: true,
@@ -163,7 +184,84 @@ export async function generatePendingNarrativeBundle(
         };
       }
 
-      return { ok: true, value: approvalResult.approved };
+      let approved = preflight.approved;
+      if (deps.reviewer !== undefined) {
+        let review: CandidateReviewResult;
+        try {
+          review = await deps.reviewer.reviewNarrativeCandidate({
+            context: {
+              kind: "decision",
+              candidateVersion,
+              worldState,
+              storyState,
+              job,
+              auditLink: {
+                ...(deps.auditLink ?? {}),
+                gameId: String(record.gameId),
+                jobId: String(job.jobId),
+                turnNumber: job.turnNumber,
+              },
+              ...(repairHint === undefined ? {} : { contentRepair: repairHint }),
+            },
+            proposal: sourceResult.proposal,
+            candidateVersion,
+            candidateHash,
+          });
+        } catch {
+          review = {
+            ok: false,
+            candidateVersion,
+            candidateHash,
+            failure: "PROVIDER_FAILURE",
+          };
+        }
+
+        if (!review.ok) {
+          if ("defects" in review) {
+            if (review.defects.length === 0
+              || review.defects.some((defect) => !candidateReviewMatches(defect, candidateVersion, candidateHash))) {
+              lastFailureKind = "AI_RESPONSE_INVALID";
+              lastRepair = { attempt, reason: "invalid_schema", detail: "candidate_review_invalid" };
+              return { ok: false, retryable: false, reason: lastRepair };
+            }
+            lastFailureKind = "AI_RESPONSE_INVALID";
+            lastRepair = repairFromCandidateReview(review.defects, attempt);
+            return { ok: false, retryable: true, reason: lastRepair };
+          }
+          lastFailureKind = review.failure === "PROVIDER_FAILURE" ? "AI_CALL_FAILED" : "AI_RESPONSE_INVALID";
+          lastRepair = {
+            attempt,
+            reason: review.failure === "PROVIDER_FAILURE" ? "provider_failure" : "invalid_schema",
+            detail: review.failure === "PROVIDER_FAILURE" ? "candidate_review_provider_failure" : "candidate_review_uncertain",
+          };
+          return { ok: false, retryable: false, reason: lastRepair };
+        }
+        if (!candidateReviewMatches(review, candidateVersion, candidateHash)) {
+          lastFailureKind = "AI_RESPONSE_INVALID";
+          lastRepair = { attempt, reason: "invalid_schema", detail: "candidate_review_invalid" };
+          return { ok: false, retryable: false, reason: lastRepair };
+        }
+        const finalApproval = approveNarrativeBundle({
+          ...approvalInput,
+          candidateReview: review,
+        });
+        if (!finalApproval.ok) {
+          if (finalApproval.code === "STALE_CANDIDATE_REVIEW") {
+            lastRepair = { attempt, reason: "invalid_schema", detail: "stale_candidate_review" };
+            return { ok: false, retryable: false, reason: lastRepair };
+          }
+          lastRepair = {
+            attempt,
+            reason: "approval_rejected",
+            rejectionCode: finalApproval.code,
+            ...(finalApproval.detail === undefined ? {} : { detail: finalApproval.detail }),
+          };
+          return { ok: false, retryable: true, reason: lastRepair };
+        }
+        approved = finalApproval.approved;
+      }
+
+      return { ok: true, value: approved };
     },
   });
 

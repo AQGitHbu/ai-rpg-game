@@ -6,6 +6,7 @@ import type { GameLength, GameTypeId } from "@/game/domain/newGame";
 import { asEndingId } from "@/game/domain/worldEntity";
 import { createOpeningNoveltyRecord } from "@/game/domain/openingNovelty";
 import type { NarrativeBundleSourceContext } from "./narrativeBundleSource";
+import type { NarrativeCandidateReviewer } from "./narrativeCandidateReview";
 
 function createInMemoryRepo(): { repo: GameRepository; getRecord: () => GameRecord | null } {
   let record: GameRecord | null = null;
@@ -652,6 +653,35 @@ describe("createGame", () => {
       expect(narrative.currentScene.npcLine?.npcId).toBe("npc_0");
       expect(narrative.currentScene.choices).toHaveLength(2);
       expect(narrative.choiceRegistry).toHaveLength(2);
+    }
+  });
+
+  it("reviews the complete opening candidate before publishing it", async () => {
+    const { repo, getRecord } = createInMemoryRepo();
+    const reviewer: NarrativeCandidateReviewer = {
+      reviewNarrativeCandidate: vi.fn().mockImplementation(async (input) => ({
+        ok: true,
+        candidateVersion: input.candidateVersion,
+        candidateHash: input.candidateHash,
+      })),
+    };
+    const result = await createGame(
+      { gameId: asGameId("opening-candidate-review"), gameType: "wuxia", gameLength: "short", seed: "opening-candidate-review" },
+      {
+        repository: repo,
+        source: createFixtureOpeningSource(),
+        reviewer,
+        now: () => "2026-01-01",
+        aiEnabled: true,
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(reviewer.reviewNarrativeCandidate).toHaveBeenCalledTimes(1);
+    const narrative = getRecord()!.storyState.narrative;
+    expect(narrative.status).toBe("ready");
+    if (narrative.status === "ready") {
+      expect(narrative.narrativeBundle).toMatchObject({ candidateVersion: 1, candidateHash: expect.stringMatching(/^candidate_/) });
     }
   });
 
