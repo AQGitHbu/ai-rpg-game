@@ -1,0 +1,162 @@
+{
+  "fixtureVersion": 1,
+  "sourceRound": "20260912-r3",
+  "status": "observed_disclosure_failure_not_semantically_repaired",
+  "purpose": "真实原稿认领复合事实但缺少关键时间/数量内容；原样负例。离线结构/门控测试与 mock verdict 不证明模型语义已修复。",
+  "provenance": {
+    "frozenHead": "be1029431c0c23d5e87f29aea3e5fd1c25bda3f2",
+    "auditPath": "tmp/staged-draft-live-20260912-r3/b1-science_fiction-opening-audit/2026-09-12T10-10-58.260Z/events.jsonl",
+    "auditSha256": "2c0a44af22e4b5dcd43ab2f6b277b0146ac15982a84511ed6d46b8bb3bad22d7",
+    "jobId": "init_e2a005169d91043b29bb29b0633b03e9",
+    "planningCallId": "c370d580-0ace-4dbb-83c2-b5e90a081b94",
+    "planningOutputSha256": "8962a5fd6c436a1efead1aa494116d230a9e5ba93d98f5f031198f6b3dfde0fd",
+    "unitKey": "unit_character"
+  },
+  "originalDraft": {
+    "stage": "character",
+    "speakerId": "npc_0",
+    "emotion": "guarded",
+    "parts": [
+      {
+        "text": "别急着启动。三号环的磁锁还没完全咬合，你的船再喷一次尾焰，我们俩都得飘出去。",
+        "facts": [],
+        "evidence": [],
+        "beatIds": []
+      },
+      {
+        "text": "我是薇拉·奥凯德，忒修斯站只剩我管通信和调度。跃迁事故之后，母站「赫斯珀里得斯」就再没有常规信号进来。我们这儿也快空了，补给船走了最后一班。",
+        "facts": [
+          {
+            "factId": "fact_0",
+            "certainty": "known"
+          },
+          {
+            "factId": "fact_2",
+            "certainty": "known"
+          }
+        ],
+        "evidence": [],
+        "beatIds": [
+          "beat_npc_situation"
+        ]
+      },
+      {
+        "text": "但通讯阵列截到一段加密脉冲，权限段是母站的，跟你的跃迁出点几乎重合。我解不开——那需要领航员级密钥。你是领航员，对吧？",
+        "facts": [
+          {
+            "factId": "fact_1",
+            "certainty": "known"
+          },
+          {
+            "factId": "fact_3",
+            "certainty": "known"
+          }
+        ],
+        "evidence": [],
+        "beatIds": [
+          "beat_npc_key"
+        ]
+      }
+    ],
+    "actions": [
+      {
+        "key": "act_wait",
+        "actorId": "npc_0",
+        "point": {
+          "stepKey": "current",
+          "order": 1
+        },
+        "kind": "pause",
+        "objectId": null,
+        "audienceIds": [
+          "player_0"
+        ]
+      }
+    ],
+    "answeredBeatIds": [
+      "beat_npc_situation",
+      "beat_npc_key"
+    ]
+  },
+  "claims": [
+    {
+      "factId": "fact_2",
+      "text": "忒修斯边境站的储备只够再维持数周，大部分人员已随最后一班补给船撤离，站内只剩少数留守者。",
+      "certainty": "known",
+      "audienceIds": [
+        "player_0"
+      ]
+    },
+    {
+      "factId": "fact_3",
+      "text": "那封加密求救使用母站最高权限段，只有持有领航员级密钥的人才能解开。",
+      "certainty": "known",
+      "audienceIds": [
+        "player_0"
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "texts": [
+        "别急着启动。三号环的磁锁还没完全咬合。你的船再喷一次尾焰，我们俩都得飘出去。",
+        "我是薇拉·奥凯德。忒修斯站只剩我管通信和调度。跃迁事故之后，母站「赫斯珀里得斯」就再没有常规信号进来。我们这儿也快空了，补给船走了最后一班。",
+        "但通讯阵列截到一段加密脉冲。权限段是母站的，跟你的跃迁出点几乎重合。我解不开——那需要领航员级密钥。你是领航员，对吧？"
+      ]
+    }
+  ],
+  "attempts": [
+    {
+      "outputIndex": 0,
+      "characterCallId": "ace7d805-d567-47ac-9f7c-f30b85d74576",
+      "characterSequence": 3,
+      "characterOutputSha256": "59dba20d378d3991022b148746eda2e45aef4c53aa85ba95b18185f4c982919b",
+      "reviewCallId": "4a8ffc3d-1374-45d3-b276-0b410c6211bf",
+      "reviewSequence": 4,
+      "reviewRequestSha256": "4a354b59b148c87eecfc9a33111dab9611cd50ed42372ae35bb37156cb09513d",
+      "reviewInputDigest": "2cbb39bb8f7bb1fceb1db81b65aa68038e83bf1ba0b4a92e8ad62656be348dd6",
+      "observedVerdict": "reject"
+    },
+    {
+      "outputIndex": 0,
+      "characterCallId": "7fb2bca9-07ec-4c93-87cd-36fc7d5abd73",
+      "characterSequence": 5,
+      "characterOutputSha256": "59dba20d378d3991022b148746eda2e45aef4c53aa85ba95b18185f4c982919b",
+      "reviewCallId": "b5fd1da2-6ce8-42f4-9865-3d11bdbb269a",
+      "reviewSequence": 6,
+      "reviewRequestSha256": "4a354b59b148c87eecfc9a33111dab9611cd50ed42372ae35bb37156cb09513d",
+      "reviewInputDigest": "2cbb39bb8f7bb1fceb1db81b65aa68038e83bf1ba0b4a92e8ad62656be348dd6",
+      "observedVerdict": "reject"
+    },
+    {
+      "outputIndex": 0,
+      "characterCallId": "3f5b5535-6ff8-4540-a8c5-1d50b1bd445b",
+      "characterSequence": 7,
+      "characterOutputSha256": "59dba20d378d3991022b148746eda2e45aef4c53aa85ba95b18185f4c982919b",
+      "reviewCallId": "69d04c54-e667-4393-8572-e2d32123d475",
+      "reviewSequence": 8,
+      "reviewRequestSha256": "4a354b59b148c87eecfc9a33111dab9611cd50ed42372ae35bb37156cb09513d",
+      "reviewInputDigest": "2cbb39bb8f7bb1fceb1db81b65aa68038e83bf1ba0b4a92e8ad62656be348dd6",
+      "observedVerdict": "reject"
+    },
+    {
+      "outputIndex": 0,
+      "characterCallId": "f01f36df-3ab1-4a55-a895-abe4b007f939",
+      "characterSequence": 9,
+      "characterOutputSha256": "59dba20d378d3991022b148746eda2e45aef4c53aa85ba95b18185f4c982919b",
+      "reviewCallId": "33076310-8d56-425e-a26e-ad1a80da2318",
+      "reviewSequence": 10,
+      "reviewRequestSha256": "4a354b59b148c87eecfc9a33111dab9611cd50ed42372ae35bb37156cb09513d",
+      "reviewInputDigest": "2cbb39bb8f7bb1fceb1db81b65aa68038e83bf1ba0b4a92e8ad62656be348dd6",
+      "observedVerdict": "reject"
+    }
+  ],
+  "expected": {
+    "verdict": "reject",
+    "missingContent": [
+      "fact_2：储备只够再维持数周",
+      "fact_2：大部分人员已随最后一班补给船撤离，站内只剩少数留守者"
+    ],
+    "scope": "完整 claims 的事实 ID 已引用不代表正文实际披露；与首段无据设备细节、较早旁白越权分开。无法从仅 verdict 推断模型内部拒绝理由。"
+  }
+}

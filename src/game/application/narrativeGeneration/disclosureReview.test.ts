@@ -5,16 +5,21 @@ import { asFactId } from "@/game/domain/worldEntity";
 import type { StageSource } from "./stageSource";
 import { validateJobDisclosureReviews } from "./disclosureReview";
 import { approvePlanningContext } from "./approvePlanningContext";
+import r3Disclosure from "../../../../scripts/fixtures/staged-disclosure-r3-v1.json";
 
-async function disclosureHarness(verdict: "pass" | "reject" | "uncertain" = "pass") {
+async function disclosureHarness(verdict: "pass" | "reject" | "uncertain" = "pass", sample?: {
+  readonly factId: string; readonly factText: string; readonly draftText: string; readonly polishedText: string;
+}) {
   const h = createStagedHarness();
   await h.startDecision();
   const stored = await h.readJob();
   if (!stored.ok || stored.value.input.kind !== "decision") throw Error("job");
   const world = stored.value.input.world;
-  const factId = asFactId("fact_new_disclosure");
+  const factId = asFactId(sample?.factId ?? "fact_new_disclosure");
+  const draftText = sample?.draftText ?? (verdict === "pass" ? "官差藏身义庄。" : "我不会告诉你这件事。");
+  const polishedText = sample?.polishedText ?? draftText;
   const nextWorld = createWorldStateFixtureWith({ generation: world.generation, base: {
-    ...world, worldFacts: [{ factId, text: "官差藏身义庄。", source: "generated", discovered: false }],
+    ...world, worldFacts: [{ factId, text: sample?.factText ?? "官差藏身义庄。", source: "generated", discovered: false }],
     npcs: world.npcs.map((npc, index) => index === 0 ? { ...npc,
       memory: { ...npc.memory, knownFactIds: [factId], hiddenFactIds: [] } } : npc),
   } });
@@ -31,11 +36,11 @@ async function disclosureHarness(verdict: "pass" | "reject" | "uncertain" = "pas
       units: response.value.units.map(u => u.key === "character_npc_0"
         ? { ...u, taskFactIds: [factId], requiredObservationKeys: ["heard_new"], draft: {
           stage: "character", speakerId: "npc_0", emotion: "neutral", actions: [], answeredBeatIds: [],
-          parts: [{ text: verdict === "pass" ? "官差藏身义庄。" : "我不会告诉你这件事。", facts: [{ factId, certainty: "known" }], evidence: [], beatIds: [] }],
+          parts: [{ text: draftText, facts: [{ factId, certainty: "known" }], evidence: [], beatIds: [] }],
         } } : u),
     } };
     if (response.stage === "character" && response.value.stage === "character" && response.value.speakerId === "npc_0")
-      return { ...response, value: { ...response.value, parts: [{ text: verdict === "pass" ? "官差藏身义庄。" : "我不会告诉你这件事。",
+      return { ...response, value: { ...response.value, parts: [{ text: polishedText,
         facts: [{ factId, certainty: "known" }], evidence: [], beatIds: [] }] } };
     return response;
   };
@@ -51,6 +56,31 @@ describe("disclosure review gate", () => {
     expect(result).toMatchObject({ ok: false, code: `disclosure_review_${verdict}` });
     expect(review).toHaveBeenCalledTimes(4);
     expect(h.calls.filter(c => c.stage === "choices")).toHaveLength(0);
+    expect(h.publications()).toHaveLength(0);
+  });
+  it("r3 复合事实的完整 claims 不被缺项初稿缩窄，reject 后不批准或发布", async () => {
+    const claim = r3Disclosure.claims[0]!;
+    // 原样取 r3 的第二段与所认领 fact_2。Mock 只验证请求和门控，不判定模型语义效果。
+    const { h, review } = await disclosureHarness("reject", {
+      factId: claim.factId, factText: claim.text,
+      draftText: r3Disclosure.originalDraft.parts[1]!.text,
+      polishedText: r3Disclosure.outputs[0]!.texts[1]!,
+    });
+    expect(await h.run()).toMatchObject({ ok: false, code: "disclosure_review_reject" });
+    expect(review).toHaveBeenCalledTimes(4);
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      expect(review).toHaveBeenNthCalledWith(attempt, {
+        speakerId: "npc_0", text: r3Disclosure.outputs[0]!.texts[1]!, claims: [claim],
+      }, expect.anything());
+    }
+    const stored = await h.readJob();
+    if (!stored.ok) throw Error("job");
+    expect(stored.value.units.find(u => u.key === "character_npc_0")).toMatchObject({
+      status: "failed", value: null, attempts: 4,
+    });
+    expect(h.calls.filter(c => c.stage === "planning")).toHaveLength(1);
+    expect(h.calls.filter(c => c.stage === "choices")).toHaveLength(0);
+    expect((await h.publish()).ok).toBe(false);
     expect(h.publications()).toHaveLength(0);
   });
   it("通过的审核单独计费、绑定正文并可重放验证", async () => {

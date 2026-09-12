@@ -30,7 +30,7 @@ EntityStore components + committed events
 
 NPC history 只保存结构化交互、主题和事件引用。交互的 fact topic 只要求引用真实 fact 实体，不表示 NPC 已知或已经披露；learnedFactIds 仍必须属于主体 NPC 自身知识，实际披露由对话规则裁决。玩家原话若需影响回应，作为当前 job 输入并受审计策略约束，不写成长期 NPC 私密历史。
 
-分阶段链路下，角色单元还有一条**观察披露**约束：单元通过 `SafeContext.requiredObservations` 收到本单元必须披露的观察（`key` / `factId` / `certainty` 安全投影），必须写进某个 part 的 `facts`——写进 `beatIds` 或 `evidence` 不满足结构约束；合法引用本身不证明正文已披露。新增知识对白还须通过[独立语义审核](./运行时AI导演与场景表演.md#统一重试反馈)才能传播给下游。输出 certainty 不得高于观察声明的 certainty（标 `known` 可降级为 `suspected`，标 `suspected` 绝不可写成 `known`）。观察与单元的归属必须同 `stepKey` 且观察 `order ≤` 单元 `order`，跨 step 引用一律被拒。
+分阶段链路下，角色单元还有一条**观察披露**约束：单元通过 `SafeContext.requiredObservations` 收到本单元必须披露的观察（`key` / `factId` / `certainty` 安全投影），必须写进某个 part 的 `facts`——写进 `beatIds` 或 `evidence` 不满足结构约束。合法引用本身不证明正文已披露。同一次规划必须在初稿中实际表达所认领观察事实的关键内容、范围、数量与条件，不能只写 ID 或含糊概括。此义务不要求复述全部授权事实。新增知识对白还须通过[独立语义审核](./运行时AI导演与场景表演.md#统一重试反馈)才能传播给下游。输出 certainty 不得高于观察声明的 certainty（标 `known` 可降级为 `suspected`，标 `suspected` 绝不可写成 `known`）。观察与单元的归属必须同 `stepKey` 且观察 `order ≤` 单元 `order`，跨 step 引用一律被拒。
 
 ## 代码与测试入口
 

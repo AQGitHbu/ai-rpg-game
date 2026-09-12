@@ -83,9 +83,9 @@ export const PLANNING_COSMETIC_ACTION_KINDS = ["pause", "look", "gesture"] as co
 
 /** 内容职责只在系统消息中定义一次；用户消息提供结构契约和本轮资料。 */
 export const PLANNING_CONTENT_RULES = `你是 RPG 的完整场景作者。一次写出本轮旁白、NPC 完整回应和两个有意义的玩家直接回复，保存为 unit.draft；三个润色器只改变措辞。
-先保留玩家明确输入与已发生的原因。开局拟使用的具体可验证新细节先写入公开事实并分配玩家/NPC 已知，再按各自时点写完整场景和两个回应；续接只用已有权限，不补造过去经历、精确资源或设备原因。后续问答以玩家实际选中的 label 原句为准；历史仅用于连贯和避免重复，不授予新事实。
+先保留玩家明确输入与已发生的原因。开局拟使用的具体可验证新细节先写入公开事实并分配玩家/NPC 已知；准备披露的每条事实尽量只含一个能完整表达的状态，避免拼接多个独立状态，再按各自时点写完整场景和两个回应；续接只用已有权限，不补造过去经历、精确资源或设备原因。后续问答以玩家实际选中的 label 原句为准；历史仅用于连贯和避免重复，不授予新事实。
 character.parts 只写 NPC 第一人称直接台词，自然回答真实问题，长度服从内容与角色语气；不夹第三人称动作说明或旁白。获批表演动作只放 actions，不写未提交的递物、转移或身体结果；同场同 NPC 恰好一次完整回应。缺答案时只说明所问答案未知，不用没见过、没听过、未发生或未留下姓名等具体经历替代，不改为失忆或拒答；不编理由或设备。NPC 自己的问句保持是问句。
-旁白交代获批变化和必选节拍，NPC 承担回答与态度，避免无意义复述。无新状态时可以一句自然衔接。不能为风格编造天气、见闻、行动结果或进展。
+旁白交代获批变化和必选节拍，NPC 承担回答与态度，避免无意义复述。无新状态时可以一句自然衔接。不能为风格编造天气、见闻、行动结果或进展；合理的成因不等于已知成因，不把可能原因写成已证实的原因；事实的数量、时间和范围不得改写。
 两个候选均是玩家可直接说出的第一人称台词，回应本轮 NPC 内容，保留实质差异和条件，不写“询问/告诉某人”等指令。人物身份、事实、知识和规则图仍独立限制正文。
 事实表是授权范围，不是逐条复述的提纲。隐藏动机不进入正文；不能从职业或语气推导新能力、经历、线索与承诺。只返回完整 JSON。`;
 
@@ -235,7 +235,7 @@ export function renderPlanProposalContract(context: PlanningContext, includeWorl
 - speech 来源的 certainty 不得高于说话人自身的认知；key 不得重复。
 
 **观察归属与初稿义务**：requiredObservationKeys 声明本单元负责向受众实际呈现/披露的观察，不是读取前文的输入依赖。旁白只认领 witness；NPC 只认领 speakerId 为自己的 speech，且自身须在 audienceIds 中；choices 必须写 []。
-观察 key 必须存在、同 step、order 不晚于本单元。同序的本角色来源观察即使未列入 requiredObservationKeys，仍属于该单元。每条归属观察的 fact 必须出现于本单元 draft.parts[].facts，certainty 不得升级；写进 evidence/beatIds 不算呈现事实。
+观察 key 必须存在、同 step、order 不晚于本单元。同序的本角色来源观察即使未列入 requiredObservationKeys，仍属于该单元。每条归属观察须在 draft.parts[].facts 引用，certainty 不得升级；所认领事实的关键内容、范围、数量和条件须已完整实际写入本单元 draft.parts[].text，事实 ID、beatIds/evidence 或含糊概括不代替披露。此义务仅针对归属观察，不要求复述全部授权事实。
 读取上游观察仍依靠 DAG 依赖和真实已批准披露，不靠填 requiredObservationKeys 授权。没有本单元新披露时 observations/requiredObservationKeys 可以为空；不得伪造 witness 或改成虚假 NPC speech 绕过权限。
 
 ## actions[] —— 无规则后果的表演动作
