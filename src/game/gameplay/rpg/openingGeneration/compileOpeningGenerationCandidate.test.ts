@@ -11,6 +11,7 @@ import { makeOpeningQualityCandidate } from "@/game/domain/openingSituation.test
 import { rebuildEpisodicMemory } from "@/game/domain/episodicMemory";
 import { INITIAL_RELATIONSHIP_SEED_POLICY } from "@/game/gameplay/rpg/npcMemory";
 import type { NarrativeRuntimeState } from "@/game/domain/narrative";
+import { makeLostConvoyOpening } from "@/game/domain/testing/lostConvoyOpening.testutil";
 
 function validCandidate(): OpeningGenerationCandidate {
   return {
@@ -79,6 +80,23 @@ function compile(
 }
 
 describe("compileOpeningGenerationCandidate", () => {
+  it("玩家亲历失镖可见，陌生掌柜仍不知情，私密事实不向玩家公开", () => {
+    const candidate = makeLostConvoyOpening();
+    expect(validateOpeningGenerationCandidate(candidate, { gameLength: "short", targetActs: 3 }).ok).toBe(true);
+    const { worldState } = compile(candidate);
+    expect(worldState.worldFacts.find(fact => fact.factId === "fact_0")?.discovered).toBe(true);
+    expect(worldState.npcs[0]?.memory.knownFactIds).not.toContain("fact_0");
+    expect(worldState.worldFacts.find(fact => fact.factId === "fact_2")?.discovered).toBe(false);
+  });
+
+  it("显式空玩家知识不继承 NPC 已知，旧候选缺省保持原行为", () => {
+    const candidate = validCandidate();
+    const empty = compile({ ...candidate, player: { ...candidate.player, knownFactKeys: [] } });
+    expect(empty.worldState.worldFacts.every(fact => !fact.discovered)).toBe(true);
+    expect(empty.worldState.npcs[0]?.memory.knownFactIds).toContain("fact_0");
+    expect(compile(candidate).worldState.worldFacts.map(fact => fact.discovered)).toEqual([true, false]);
+  });
+
   it("commits opening history and thread into the initialization episode", () => {
     const compiled = compile(makeOpeningQualityCandidate());
     const history = compiled.worldState.eventLedger.find((event) => event.kind === "opening_history_established")!;

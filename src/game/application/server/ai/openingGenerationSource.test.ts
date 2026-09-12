@@ -1,11 +1,19 @@
 import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { repairOpeningGenerationCandidate, createOpeningGenerationSource, sanitizeOpeningFactReferences } from "./openingGenerationSource";
+import { repairOpeningGenerationCandidate, createOpeningGenerationSource, sanitizeOpeningFactReferences, hasOnlyKnownOpeningCandidateKeys } from "./openingGenerationSource";
 import type { OpeningGenerationCandidate } from "@/game/domain/openingGenerationCandidate";
 import type { AiTransport } from "@ai-game/ai-transport";
 import { buildStylePolicy } from "../../stylePolicy";
 import { createFixtureOpeningCandidateSource } from "../../createGame";
+
+it("live 开局字段白名单与修复保留显式玩家知识，同时拒绝额外玩家字段", () => {
+  const base = validCandidate();
+  const candidate = { ...base, player: { ...base.player, knownFactKeys: ["fact_inn"] } };
+  expect(hasOnlyKnownOpeningCandidateKeys(candidate)).toBe(true);
+  expect(repairOpeningGenerationCandidate(candidate).candidate?.player).toMatchObject({ knownFactKeys: ["fact_inn"] });
+  expect(hasOnlyKnownOpeningCandidateKeys({ ...candidate, player: { ...candidate.player, invented: [] } })).toBe(false);
+});
 
 function validCandidate(): OpeningGenerationCandidate {
   return {

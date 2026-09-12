@@ -36,6 +36,8 @@ export type OpeningGenerationCandidate = {
     readonly identity: string;
     readonly backgroundSummary: string;
     readonly baseStats: StatBlock;
+    /** 玩家初始发现的事实；缺省仅兼容旧候选的 NPC 公开已知集合。 */
+    readonly knownFactKeys?: readonly string[];
   };
   readonly prologue: string;
   readonly storyContract: StoryContract;
@@ -177,6 +179,9 @@ export function parseOpeningGenerationCandidate(
     return { ok: false, code: "INVALID_PLAYER_TEXT" };
   }
   if (!isStatBlock(player.baseStats)) return { ok: false, code: "INVALID_PLAYER_STATS" };
+  if (player.knownFactKeys !== undefined && !isStringArray(player.knownFactKeys)) {
+    return { ok: false, code: "INVALID_PLAYER_KNOWN_FACTS" };
+  }
 
   if (typeof prologue !== "string") return { ok: false, code: "INVALID_PROLOGUE" };
 
@@ -294,6 +299,7 @@ export function parseOpeningGenerationCandidate(
       name: player.name as string,
       identity: player.identity as string,
       backgroundSummary: typeof player.backgroundSummary === "string" ? player.backgroundSummary : "",
+      ...(player.knownFactKeys === undefined ? {} : { knownFactKeys: [...player.knownFactKeys as readonly string[]] }),
       baseStats: {
         hp: isNumber(player.baseStats.hp) ? player.baseStats.hp : 0,
         attack: isNumber(player.baseStats.attack) ? player.baseStats.attack : 0,

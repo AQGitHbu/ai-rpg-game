@@ -6,7 +6,7 @@ import type { EvolutionNeed } from "@/game/domain/worldDelta";
 import type { StoryState } from "@/game/domain/storyState";
 import type { Unit } from "@/game/domain/narrativeUnit";
 import type { PlanningContext } from "./stageSource";
-import { approvePlan, approvePlanDecision, observationsForUnit } from "@/game/gameplay/rpg/narrativePlanning";
+import { approvePlan, approvePlanDecision, observationsForUnit, type ApprovedPlan } from "@/game/gameplay/rpg/narrativePlanning";
 import { approveWorldDelta, materializeWorldDelta } from "@/game/gameplay/rpg/worldEvolution";
 import { buildNarrativeBundleDescriptors } from "@/game/gameplay/rpg/narrativeBundle";
 import { buildEntityContextProjection, buildWorldDeltaEntityContextClosure } from "../entityContextProjection";
@@ -70,6 +70,24 @@ function preflightObservationBindings(
   return null;
 }
 
+/** 逐单元检查静态权限；上游真实披露可能改变的视角留到运行时重新投影。 */
+function preflightStaticAuthority(plan: ApprovedPlan, detail?: string): { ok: false; code: string; detail?: string } | null {
+  for (const unit of plan.units) {
+    const waitsForObservation = plan.units.some(owner => unit.dependencies.includes(owner.key)
+      && (owner.point.stepKey !== unit.point.stepKey || owner.point.order < unit.point.order)
+      && observationsForUnit(owner, plan.proposal.observations).some(observation =>
+        owner.requiredObservationKeys.includes(observation.key)
+        && observation.audienceIds.includes(unit.speakerId ?? "player_0")
+        && observation.audienceIds.includes("player_0")));
+    if (waitsForObservation) continue;
+    const context = projectUnitContext({ plan, unit, approved: new Map(), purpose: "planning" });
+    if (!context.ok && (context.code === "beat_authority_conflict" || context.code === "choice_intent_authority_conflict")) {
+      return { ...context, detail: JSON.stringify({ ...JSON.parse(detail ?? "{}"), ...JSON.parse(context.detail ?? "{}") }) };
+    }
+  }
+  return null;
+}
+
 /** 所有结构审批发生在表达请求之前；世界增量只预览，发布时仍在单次 CAS 中提交。 */
 export function approvePlanningContext(input: PlanningContext, proposal: PlanProposal): ReturnType<typeof approvePlan> & { readonly detail?: string } {
   const repeatedResponseUnits = repeatedNpcResponseUnits(proposal);
@@ -82,7 +100,7 @@ export function approvePlanningContext(input: PlanningContext, proposal: PlanPro
     if (!approved.ok) return approved;
     const result = approvePlanDecision(approved.value);
     if (!result.ok) return result;
-    return preflightObservationBindings(proposal, result.value.units) ?? result;
+    return preflightObservationBindings(proposal, result.value.units) ?? preflightStaticAuthority(result.value) ?? result;
   }
   let world = input.world;
   let story = input.story;
@@ -198,13 +216,5 @@ export function approvePlanningContext(input: PlanningContext, proposal: PlanPro
   }) };
   const observationBindingFailure = preflightObservationBindings(proposal, result.value.units);
   if (observationBindingFailure !== null) return observationBindingFailure;
-  // 无条件观察时，知识权限已可确定；不必先花费表达调用再发现规划分配错误。
-  // 有观察依赖的计划仍等待真实上游输出，绝不合成“已经披露”的回执来通过预检。
-  if (proposal.observations.length === 0) {
-    for (const unit of result.value.units) {
-      const context = projectUnitContext({ plan: result.value, unit, approved: new Map() });
-      if (!context.ok && context.code === "beat_authority_conflict") return { ...context, detail: JSON.stringify({ ...JSON.parse(detail), ...JSON.parse(context.detail ?? "{}") }) };
-    }
-  }
-  return result;
+  return preflightStaticAuthority(result.value, detail) ?? result;
 }

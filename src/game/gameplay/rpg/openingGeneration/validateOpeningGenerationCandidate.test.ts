@@ -51,6 +51,16 @@ function validCandidate(): OpeningGenerationCandidate {
 }
 
 describe("validateOpeningGenerationCandidate", () => {
+  it.each([
+    { keys: ["fact_inn", "fact_inn"], code: "duplicate_player_fact_key" },
+    { keys: ["missing"], code: "unknown_fact_key" },
+    { keys: ["fact_pact"], code: "private_player_fact_key" },
+  ])("拒绝玩家知识中的重复、未知和私密引用：$code", ({ keys, code }) => {
+    const candidate = validCandidate();
+    const result = validateOpeningGenerationCandidate({ ...candidate,
+      player: { ...candidate.player, knownFactKeys: keys } }, { gameLength: "short", targetActs: 3 });
+    expect(result).toMatchObject({ ok: false, issues: expect.arrayContaining([expect.objectContaining({ code })]) });
+  });
   it("拒绝绕过 parser 的缺失或非法 anchors/goals，且不凭空补默认值", () => {
     const candidate = {
       ...validCandidate(),

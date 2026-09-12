@@ -75,7 +75,7 @@ it.each(["fresh", "cached", "conditional", "exhausted"])("规划修复不授予�
     if (request.stage === "planning") {
       if (mode === "exhausted" || (!cached && calls.length === 1)) return { ok: true, stage: "planning", value: invalid };
       expect(execution.repair).toMatchObject({ rejectionCode: "beat_authority_conflict" });
-      expect(calls.filter(stage => stage !== "planning")).toEqual(mode === "conditional" ? ["narration"] : []);
+      expect(calls.filter(stage => stage !== "planning")).toEqual([]);
       return { ok: true, stage: "planning", value: fixed };
     }
     const here = input.world.locations.find(location => location.id === input.world.currentLocationId)!;
@@ -106,13 +106,8 @@ it.each(["fresh", "cached", "conditional", "exhausted"])("规划修复不授予�
     ] } };
   };
   const result = await h.run();
-  if (mode === "conditional") {
-    // The witness is player-only: it cannot authorize the NPC, even after narration.
-    expect(result).toMatchObject({ ok: false, code: "beat_authority_conflict" });
-    expect(calls).toEqual(["planning"]);
-    expect(h.publications()).toHaveLength(0);
-    return;
-  }
+  // A player-only witness cannot authorize the NPC. Static preflight rejects it
+  // before any expression and the existing bounded planning repair can fix it.
   if (mode === "exhausted") {
     expect(result).toMatchObject({ ok: false, code: "beat_authority_conflict" });
     expect(calls).toEqual(["planning", "planning", "planning", "planning"]);

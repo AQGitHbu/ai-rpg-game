@@ -30,7 +30,7 @@
 
 **Interfaces:** `OpeningGenerationCandidate.player.knownFactKeys?: readonly string[]`。显式字段决定玩家初始 discovered，不依赖 NPC 已知集合；缺省只保留旧存档/fixture 的原行为，不改变 NPC knowledge。新 live prompt 在 Task 2 要求提供该字段。
 
-- [ ] **Step 1: 固化真实权限失败并先验证 RED。** 来源为 `tmp/staged-semantic-retest-20260912/publication-failure-review.json` 的武侠首次原稿。构造玩家亲历失镖、陌生掌柜不知道该事实的最小候选，玩家 knownFactKeys 包含该公开事实、NPC knownFactKeys 不含；旁白可用，NPC不可用，私密事实不可进入玩家集合。
+- [x] **Step 1: 固化真实权限失败并先验证 RED。** 来源为 `tmp/staged-semantic-retest-20260912/publication-failure-review.json` 的武侠首次原稿。构造玩家亲历失镖、陌生掌柜不知道该事实的最小候选，玩家 knownFactKeys 包含该公开事实、NPC knownFactKeys 不含；旁白可用，NPC不可用，私密事实不可进入玩家集合。
 
 ```ts
 expect(compiled.worldState.worldFacts.find(f => f.factId === playerFact)?.discovered).toBe(true);
@@ -38,7 +38,7 @@ expect(compiled.worldState.npcs[0].memory.knownFactIds).not.toContain(playerFact
 expect(approvePlanningContext(openingInput, invalidNpcPlan).ok).toBe(false);
 ```
 
-- [ ] **Step 2: 最小实现。** parser 逐字段保留 knownFactKeys；validator 拒绝重复、未知和 NPC privateFactKeys 的交集；compiler 使用显式玩家集合，缺省使用旧集合。开局与 decision 共用对无观察依赖单元的静态权限预检；有条件观察的部分仍等待真实上游输出，不编造观察回执。
+- [x] **Step 2: 最小实现。** parser 逐字段保留 knownFactKeys；validator 拒绝重复、未知和 NPC privateFactKeys 的交集；compiler 使用显式玩家集合，缺省使用旧集合。开局与 decision 共用对无观察依赖单元的静态权限预检；有条件观察的部分仍等待真实上游输出，不编造观察回执。
 
 ```ts
 const playerKnown = candidate.player.knownFactKeys === undefined
@@ -47,7 +47,7 @@ const playerKnown = candidate.player.knownFactKeys === undefined
 // NPC knowledge construction remains based on npc.knownFactKeys/privateFactKeys.
 ```
 
-- [ ] **Step 3: 回归、文档、提交。** 覆盖显式空玩家集合、旧候选缺省、私密引用失败、旁白/NPC分离、开局预检先于表达。运行 affected openingGeneration/approvePlanningContext 测试、typecheck、boundaries；文档原位解释知识集合各自归属。root review 后提交 `fix(narrative): separate opening player knowledge from npc knowledge`。
+- [x] **Step 3: 回归、文档、提交。** 覆盖显式空玩家集合、旧候选缺省、私密引用失败、旁白/NPC分离、开局预检先于表达。运行 affected openingGeneration/approvePlanningContext 测试、typecheck、boundaries；文档原位解释知识集合各自归属。root review 后提交 `fix(narrative): separate opening player knowledge from npc knowledge`。
 
 ## Task 2: 完整初稿与纯文本润色，移除重复内容裁决
 
@@ -147,3 +147,6 @@ const frozen = { batches: 2, intendedPublications: 18,
 ## Evidence
 
 Baseline `96bc0215`. Prior real sample root: `tmp/staged-semantic-retest-20260912/`; contract inventory: `tmp/staged-draft-convergence/contract-inventory.md`. Execution evidence is recorded per task in this Plan's SDD ledger; planned behavior is not yet implementation.
+
+
+Task 1 evidence: real lost-convoy regression RED 14/117; final scoped regression 129/129, typecheck and boundaries 127/127 pass. Root reviewed knowledge isolation, strict provider field handling and earlier permission rejection. Detailed report: tmp/staged-draft-convergence/task-1-report.md. Main comparison: tmp/staged-draft-convergence/main-planner-reference.md; Task 2 provider contract incorporates its reduction of duplicated content fields.

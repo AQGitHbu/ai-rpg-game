@@ -122,6 +122,9 @@ export function compileOpeningStructure(
 
   const knownFactIds = candidate.opening.npc.knownFactKeys.map((key) => factIds.find((fact) => fact.key === key)!.factId);
   const privateFactIds = candidate.opening.npc.privateFactKeys.map((key) => factIds.find((fact) => fact.key === key)!.factId);
+  const playerKnownFactIds = candidate.player.knownFactKeys === undefined
+    ? knownFactIds
+    : candidate.player.knownFactKeys.map((key) => factIds.find((fact) => fact.key === key)!.factId);
 
   const privateFactIdSet = new Set(privateFactIds);
   const knowledgeFactIds = [...new Set([...knownFactIds, ...privateFactIds])];
@@ -225,7 +228,7 @@ export function compileOpeningStructure(
     factId: fact.factId,
     text: fact.text,
     source: "generated",
-    discovered: knownFactIds.includes(fact.factId),
+    discovered: playerKnownFactIds.includes(fact.factId),
     // 只复制已审批（validated）候选携带的方式；缺省/空保持自动揭示。
     ...(fact.investigationApproaches === undefined || fact.investigationApproaches.length === 0
       ? {}

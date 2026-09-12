@@ -9,6 +9,85 @@ import { buildPlanningPrompt, PLANNING_CONTENT_RULES } from "../server/ai/staged
 import { approvePlanningContext } from "./approvePlanningContext";
 import { createPendingDecisionRecord, makeDecisionPlan, FIXTURE_DECISION_NPC } from "@/game/domain/testing/stagedNarrativeFixture.testutil";
 import type { PlanningContext } from "./stageSource";
+import { asGenerationId } from "@/game/domain/worldEntity";
+import { makeLostConvoyOpening } from "@/game/domain/testing/lostConvoyOpening.testutil";
+import { makeOpeningStagedPlan } from "@/game/domain/testing/stagedNarrativeFixture.testutil";
+
+function lostConvoyContext(): PlanningContext {
+  return { kind: "opening", input: { gameType: "wuxia", gameLength: "short", seed: "lost-convoy" },
+    generation: { generationId: asGenerationId("lost-convoy"), seed: "lost-convoy", gameType: "wuxia", templateVersion: "v2", inputDigest: "" } };
+}
+
+function lostConvoyPlan() {
+  const opening = makeLostConvoyOpening();
+  const base = makeOpeningStagedPlan(opening);
+  if (base.decision?.kind !== "ordinary") throw Error("ordinary opening fixture");
+  const [first, second] = base.decision.options;
+  return { ...base, opening, decision: { ...base.decision,
+    options: [{ ...first, target: null, deferredLocation: null },
+      { ...second, target: null, deferredLocation: null }] as const } };
+}
+
+it("真实失镖原稿：玩家亲历可交给旁白，陌生掌柜引用时在表达前拒绝", () => {
+  const base = lostConvoyPlan();
+  const task = { intent: "describe" as const, brief: "交代玩家亲历的失镖与现场留下的令牌。",
+    focusFactIds: ["fact_0"], contentFactIds: ["fact_0"], prerequisiteFactIds: [] };
+  const valid = { ...base, units: base.units.map(unit => unit.stage === "narration" ? { ...unit, task } : unit) };
+  const approved = approvePlanningContext(lostConvoyContext(), valid);
+  expect(approved.ok).toBe(true);
+  if (!approved.ok) throw Error(approved.code);
+  const narration = approved.value.units.find(unit => unit.stage === "narration")!;
+  const projected = projectUnitContext({ plan: approved.value, unit: narration, approved: new Map(), purpose: "planning" });
+  expect(projected.ok && projected.value.visibleFacts.map(fact => fact.id)).toContain("fact_0");
+  const invalid = { ...base, units: base.units.map(unit => unit.stage === "character"
+    ? { ...unit, task: { ...task, intent: "inform" as const } } : unit) };
+  expect(approvePlanningContext(lostConvoyContext(), invalid)).toMatchObject({ ok: false, code: "beat_authority_conflict" });
+});
+
+it("独立单元的静态权限预检不被其他单元的观察跳过", () => {
+  const base = lostConvoyPlan();
+  const character = base.units.find(unit => unit.stage === "character")!;
+  const proposal = { ...base, observations: [{ key: "guilds_speech", point: character.point,
+    audienceIds: ["player_0", "npc_0"], fact: { factId: "fact_1", certainty: "known" as const },
+    source: { kind: "speech" as const, speakerId: "npc_0" } }],
+    units: base.units.map(unit => unit.stage === "narration" ? { ...unit,
+      task: { intent: "describe" as const, brief: "不应提前披露掌柜私密事实。",
+        focusFactIds: ["fact_2"], contentFactIds: ["fact_2"], prerequisiteFactIds: [] } }
+      : unit.stage === "character" ? { ...unit, requiredObservationKeys: ["guilds_speech"] } : unit) };
+  expect(approvePlanningContext(lostConvoyContext(), proposal)).toMatchObject({ ok: false, code: "beat_authority_conflict" });
+});
+
+it("合法开局观察依赖等真实上游披露，审批不伪造玩家知识", () => {
+  const base = lostConvoyPlan();
+  const opening = { ...base.opening, player: { ...base.opening.player, knownFactKeys: ["he_shan_token"] } };
+  const character = base.units.find(unit => unit.stage === "character")!;
+  const proposal = { ...base, opening, observations: [{ key: "guilds_speech", point: character.point,
+    audienceIds: ["player_0", "npc_0"], fact: { factId: "fact_1", certainty: "known" as const },
+    source: { kind: "speech" as const, speakerId: "npc_0" } }],
+    units: base.units.map(unit => unit.stage === "character" ? { ...unit, requiredObservationKeys: ["guilds_speech"] }
+      : unit.stage === "choices" ? { ...unit, task: { intent: "ask" as const, brief: "追问刚刚听到的镖局处境。",
+        focusFactIds: ["fact_1"], contentFactIds: [], prerequisiteFactIds: [] } } : unit) };
+  const approved = approvePlanningContext(lostConvoyContext(), proposal);
+  expect(approved.ok).toBe(true);
+  if (!approved.ok) throw Error(approved.code);
+  expect(approved.value.world.worldFacts.find(fact => fact.factId === "fact_1")?.discovered).toBe(false);
+  const choices = approved.value.units.find(unit => unit.stage === "choices")!;
+  expect(projectUnitContext({ plan: approved.value, unit: choices, approved: new Map(), purpose: "planning" }))
+    .toMatchObject({ ok: false, code: "beat_authority_conflict" });
+});
+
+it("失镖原稿的自身 witness 声明不能替代玩家已知事实", () => {
+  const base = lostConvoyPlan();
+  const narration = base.units.find(unit => unit.stage === "narration")!;
+  const proposal = { ...base, opening: { ...base.opening,
+    player: { ...base.opening.player, knownFactKeys: ["guilds_falling"] } },
+    observations: [{ key: "lost_convoy", point: narration.point, audienceIds: ["player_0"],
+      fact: { factId: "fact_0", certainty: "known" as const }, source: { kind: "witness" as const } }],
+    units: base.units.map(unit => unit.stage === "narration" ? { ...unit, requiredObservationKeys: ["lost_convoy"],
+      task: { intent: "describe" as const, brief: "交代失镖现场留下的令牌。",
+        focusFactIds: ["fact_0"], contentFactIds: ["fact_0"], prerequisiteFactIds: [] } } : unit) };
+  expect(approvePlanningContext(lostConvoyContext(), proposal)).toMatchObject({ ok: false, code: "beat_authority_conflict" });
+});
 
 function context(): PlanningContext {
   const record = createPendingDecisionRecord();

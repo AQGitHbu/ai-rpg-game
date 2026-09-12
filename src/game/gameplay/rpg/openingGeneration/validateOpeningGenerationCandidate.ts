@@ -20,6 +20,8 @@ export type OpeningGenerationIssueCode =
   | "contract_target_acts_mismatch"
   | "duplicate_fact_key"
   | "unknown_fact_key"
+  | "duplicate_player_fact_key"
+  | "private_player_fact_key"
   | "invalid_investigation_approaches"
   | "invalid_npc_anchors"
   | "invalid_npc_goals"
@@ -84,6 +86,15 @@ export function validateOpeningGenerationCandidate(
     if (!factKeys.has(key)) {
       issues.push({ code: "unknown_fact_key", params: { key } });
     }
+  }
+
+  const playerFactKeys = new Set<string>();
+  const privateFactKeys = new Set(candidate.opening.npc.privateFactKeys);
+  for (const key of candidate.player.knownFactKeys ?? []) {
+    if (playerFactKeys.has(key)) issues.push({ code: "duplicate_player_fact_key", params: { key } });
+    playerFactKeys.add(key);
+    if (!factKeys.has(key)) issues.push({ code: "unknown_fact_key", params: { key } });
+    if (privateFactKeys.has(key)) issues.push({ code: "private_player_fact_key", params: { key } });
   }
 
   for (const fact of candidate.world.publicFacts) {

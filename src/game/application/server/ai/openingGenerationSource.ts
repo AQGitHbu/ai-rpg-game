@@ -59,7 +59,7 @@ export function hasOnlyKnownOpeningCandidateKeys(value: unknown): boolean {
   }
 
   const player = value.player;
-  if (isRecord(player) && !hasOnlyKeys(player, ["name", "identity", "backgroundSummary", "baseStats"])) return false;
+  if (isRecord(player) && !hasOnlyKeys(player, ["name", "identity", "backgroundSummary", "baseStats", "knownFactKeys"])) return false;
   if (isRecord(player) && isRecord(player.baseStats)
     && !hasOnlyKeys(player.baseStats, ["hp", "attack", "defense"])) return false;
 

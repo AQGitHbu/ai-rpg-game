@@ -1,6 +1,18 @@
 import { describe, it, expect } from "vitest";
 import { parseOpeningGenerationCandidate, type OpeningGenerationCandidate } from "./openingGenerationCandidate";
 
+it.each([{ keys: ["fact_inn"] }, { keys: [] }])("parser 逐字段保留玩家 knownFactKeys：$keys", ({ keys }) => {
+  const candidate = validCandidate();
+  const parsed = parseOpeningGenerationCandidate({ ...candidate, player: { ...candidate.player, knownFactKeys: keys } });
+  expect(parsed.ok && parsed.value.player).toMatchObject({ knownFactKeys: keys });
+});
+
+it.each([{ value: null }, { value: "fact_inn" }, { value: [1] }])("parser 拒绝非法玩家 knownFactKeys：$value", ({ value }) => {
+  const candidate = validCandidate();
+  expect(parseOpeningGenerationCandidate({ ...candidate, player: { ...candidate.player, knownFactKeys: value } }))
+    .toEqual({ ok: false, code: "INVALID_PLAYER_KNOWN_FACTS" });
+});
+
 // 模拟 AI 原始 unknown 输入：保持 key 可读写、子对象可展开，但值仍是 unknown。
 type RawCandidate = Record<string, unknown> & {
   readonly world: Record<string, unknown>;
