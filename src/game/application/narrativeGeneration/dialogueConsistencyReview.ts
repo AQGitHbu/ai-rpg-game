@@ -13,7 +13,7 @@ import { compileDialogueReviewChecks, type CompiledDialogueReview, type Dialogue
 
 export const DIALOGUE_REVIEW_VERSION = 1;
 /** Bump whenever review policy/prompt changes; storage schema remains readable. */
-export const DIALOGUE_REVIEW_POLICY_REVISION = 5;
+export const DIALOGUE_REVIEW_POLICY_REVISION = 6;
 export const DIALOGUE_REVIEW_MAX_ATTEMPTS = REVIEW_MAX_REQUESTS;
 export const DIALOGUE_REVIEW_CONTEXT_LIMIT = 16_000;
 export type DialogueViolation = Readonly<{

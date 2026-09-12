@@ -6,9 +6,23 @@ import type { DialogueConsistencyReviewRequest } from "@/game/application/narrat
 
 import { compileDialogueReviewChecks } from "@/game/application/narrativeGeneration/dialogueReviewChecks";
 import { realReviewSubjects } from "@/game/application/narrativeGeneration/dialogueReviewRealFailures.testutil";
+import { semanticReviewSamples } from "@/game/application/narrativeGeneration/dialogueReviewSemanticFailures.testutil";
+import { INQUIRY_SEMANTICS } from "./inquirySemantics";
 const request: DialogueConsistencyReviewRequest = compileDialogueReviewChecks(realReviewSubjects.missingSource).request;
 const execution = { signal: new AbortController().signal, timeoutMs: 1000,
   audit: { purpose: "staged_narrative_generation" as const, trigger: "dialogue_consistency_review", jobId: "job" } };
+
+it("pure planning prompt carries shared semantics and preserves NPC fidelity review", () => {
+  const { request } = compileDialogueReviewChecks(semanticReviewSamples.flatMap(s => s.subjects)
+    .map(s => ({ ...s, text: "MUST_NOT_REVIEW_EXPRESSION" })), "planning");
+  const prompt = buildDialogueConsistencyReviewPrompt(request);
+  expect(prompt).toContain("本次只审核表达前的规划合同");
+  expect(prompt).toContain(INQUIRY_SEMANTICS);
+  expect(prompt).not.toContain("MUST_NOT_REVIEW_EXPRESSION");
+  expect(prompt).toContain("answer/plan_answer禁止extra_inquiry");
+  expect(prompt).toContain("NPC新增未获批话语用intent_mismatch核对brief/intent忠实度");
+  expect(prompt).toContain("NPC漏答仍用missing_response，回答结果不符仍用answer_mismatch");
+});
 
 it("独立审核prompt保留合同和实际文案，明确反例、自由输入与禁止改稿", () => {
   const prompt = buildDialogueConsistencyReviewPrompt(request);

@@ -63,7 +63,7 @@ export function compileDialogueReviewChecks(subjects: readonly DialogueReviewSub
         text: subject.selected.label }, "selected", "legacy");
     }
     if (phase !== "expression") add(subject, subject.kind === "answer" ? "plan_answer" : "plan_option", "planning");
-    if (subject.text !== undefined) add(subject, subject.kind, "expression");
+    if (phase !== "planning" && subject.text !== undefined) add(subject, subject.kind, "expression");
   }
   return { request: { version: 1, checks }, routes };
 }
@@ -98,6 +98,9 @@ export function validateDialogueReviewVerdict(value: unknown, request: DialogueR
     const check = request.checks.find(c => c.checkId === v.checkId);
     if (check === undefined) return invalid("unknown_checkId", `${path}.checkId`);
     if (!["extra_inquiry", "missing_response", "answer_mismatch", "intent_mismatch"].includes(v.type)) return invalid("invalid_type", `${path}.type`);
+    // Answer inquiries belong to the player; an NPC question cannot add a player obligation.
+    if (v.type === "extra_inquiry" && (check.kind === "answer" || check.kind === "plan_answer"))
+      return invalid("invalid_type", `${path}.type`);
     if (check.kind === "plan_answer" || check.kind === "plan_option") {
       if (planWitnesses.has(check.checkId)) return invalid("duplicate_plan_checkId", `${path}.checkId`);
       planWitnesses.add(check.checkId);

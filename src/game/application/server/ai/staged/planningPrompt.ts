@@ -8,6 +8,7 @@
 // 不写字面量：parser 白名单改了而这里没改，`planningPromptContract.test.ts`
 // 会立刻失败，避免「prompt 与 parser 漂移」这类静默缺陷再次出现。
 
+import { INQUIRY_SEMANTICS } from "./inquirySemantics";
 import { renderAiRepairFeedback, type AiContentRepair } from "@/game/application/aiGenerationRetry";
 import { renderOpeningSetupSection } from "../openingNarrativePrompt";
 import { MAX_PLAN_UNITS } from "@/game/domain/narrativePlan";
@@ -85,6 +86,7 @@ export const PLANNING_COSMETIC_ACTION_KINDS = ["pause", "look", "gesture"] as co
 
 /** 内容职责只在系统消息中定义一次；用户消息提供结构契约和本轮资料。 */
 export const PLANNING_CONTENT_RULES = `你是 RPG 的内容规划器。你决定本轮说什么，三个表达器只润色你给出的内容。你正在规划下一轮对话，不是续写一段小说。
+${INQUIRY_SEMANTICS}
 先读当前玩家所说的话，再写 NPC 的直接答复，接着设计两个新的玩家回应，最后按必选节拍安排旁白。完整含义写在 task.brief，不让润色器猜意思。
 
 NPC：连续对白的 brief 通常只需 20–60 字，只处理本次问题或态度。使用第一人称短句，不加人物介绍、旧背景、解释和场景描写。所有问题一次回应；没有事实支持的具体答案就说不知道哪个问题，未知不是“没发生”“没见过”或“没听说过”，也不是记不清自己的经历。纯未知的 focusFactIds/contentFactIds/taskFactIds=[]，所问维度只在 answers 绑定。不要因答案短再接一段已知背景。
@@ -212,8 +214,9 @@ export function renderPlanProposalContract(context: PlanningContext, includeWorl
 - focusFactIds 是本任务可用的话题背景范围；只引用本角色可知且可披露/玩家此时已知的事实。背景可以帮助措辞，不表示每项都必须复述。taskFactIds 同步这些授权事实，不靠 instruction/publicIntent.text 指派关键内容。
 - contentFactIds 必须是 focusFactIds 的无重复子集，只列正文必须明确表达的事实；条件事实和 outcome=answer 的 answerFactIds 也会分别强制表达，无需为了强制回答而重复塞入 contentFactIds。无必须事实时写 []，仍须用 brief 决定完整含义。
 - prerequisiteFactIds 表示先要求对方核实这些已知说法，然后才表达主意图（如先核实再协助）；不是已调查成功，不执行支付或移动。无需条件则 []。禁止为了保密直接删掉关键条件。
-- 无事实问询（例如征求意见、行动提议）时 inquiries 可省略或为空；有具体事实问询时必须逐项编码 inquiries=[{"factId":"fact_0","aspects":["direction","depth"]}]，表示针对已知脚印询问走向和深浅，不预设答案。维度枚举：${INQUIRY_ASPECTS.join(" | ")}。仅 ask/challenge 可提供非空 inquiries；最多4个不同 factId，每项1到4个不重复维度，factId 必须在 focusFactIds 中。
-- 询问谁、在哪里、方向、深浅、时间、原因、方式、数量、来源、可信度或目的时，必须编码相应 inquiries，不能只写在 publicIntent.text/instruction 后让投影丢掉。维度不得夹带实体名、答案或隐情；无法表达的额外含义退回规划，不用泛化提问冒充原意。
+- 以下 inquiries 编码约束用于玩家候选。NPC 主动问玩家由自身 brief/intent 承载，不混入其 answers 或 selectedDialogue 的玩家问询合同。
+- 玩家候选无事实问询（例如征求意见、行动提议）时 inquiries 可省略或为空；有具体事实问询时必须逐项编码 inquiries=[{"factId":"fact_0","aspects":["direction","depth"]}]，表示针对已知脚印询问走向和深浅，不预设答案。维度枚举：${INQUIRY_ASPECTS.join(" | ")}。仅 ask/challenge 可提供非空 inquiries；最多4个不同 factId，每项1到4个不重复维度，factId 必须在 focusFactIds 中。
+- 玩家候选询问谁、在哪里、方向、深浅、时间、原因、方式、数量、来源、可信度或目的时，必须编码相应 inquiries，不能只写在 publicIntent.text/instruction 后让投影丢掉。维度不得夹带实体名、答案或隐情；无法表达的额外含义退回规划，不用泛化提问冒充原意。
 - 事实 ID 数组各最多 12 项、无重复。无事实的现场描写用 describe + []；未知提问可用 admit_unknown、contentFactIds=[] 和完整 brief，不引用未知秘密 ID，也不把已知背景挂到 observation/contentFactIds 强制重讲。
 - 当前焦点 NPC 回应 selectedDialogue.task.inquiries 时，必须在其 task.answers 逐项编码 [{"factId":"fact_0","aspect":"source","outcome":"unknown","answerFactIds":[]}]。每个已问 factId/aspect 恰好一次，全部合并进同场该 NPC 的唯一 character 单元；不分配给旁白、未来 NPC 或候选。最多16项，outcome ∈ ${ANSWER_OUTCOMES.join(" | ")}。
 - outcome=answer 时 answerFactIds 非空且属于该任务 focusFactIds，内容必须确实回答该维度，不能拿“告示存在”冒充“哪个衙门发布”；保留事实 certainty。unknown/refuse 时 answerFactIds=[]；unknown 的 brief 明确说不知道哪个对象/维度，refuse 明确拒答且不暗示任何秘密答案。被问事实只作为问题索引，不因此授予 NPC 知识；unknown 不要求复述问题背景。
