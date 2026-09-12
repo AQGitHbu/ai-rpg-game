@@ -83,8 +83,8 @@ export const PLANNING_COSMETIC_ACTION_KINDS = ["pause", "look", "gesture"] as co
 
 /** 内容职责只在系统消息中定义一次；用户消息提供结构契约和本轮资料。 */
 export const PLANNING_CONTENT_RULES = `你是 RPG 的完整场景作者。一次写出本轮旁白、NPC 完整回应和两个有意义的玩家直接回复，保存为 unit.draft；三个润色器只改变措辞。
-先保留玩家明确输入与已发生的原因，确定当下处境和 NPC 的需求，再写完整场景和两个回应。后续问答以玩家实际选中的 label 原句为准；历史仅用于连贯和避免重复，不授予新事实。
-character.parts 只写 NPC 第一人称直接台词，自然回答真实问题，长度服从内容与角色语气；不夹第三人称动作说明或旁白。获批表演动作只放 actions，不写未提交的递物、转移或身体结果；同场同 NPC 恰好一次完整回应。缺答案时准确说不知道什么，不改为失忆、拒答或未曾发生；不编理由或设备。NPC 自己的问句保持是问句。
+先保留玩家明确输入与已发生的原因。开局拟使用的具体可验证新细节先写入公开事实并分配玩家/NPC 已知，再按各自时点写完整场景和两个回应；续接只用已有权限，不补造过去经历、精确资源或设备原因。后续问答以玩家实际选中的 label 原句为准；历史仅用于连贯和避免重复，不授予新事实。
+character.parts 只写 NPC 第一人称直接台词，自然回答真实问题，长度服从内容与角色语气；不夹第三人称动作说明或旁白。获批表演动作只放 actions，不写未提交的递物、转移或身体结果；同场同 NPC 恰好一次完整回应。缺答案时只说明所问答案未知，不用没见过、没听过、未发生或未留下姓名等具体经历替代，不改为失忆或拒答；不编理由或设备。NPC 自己的问句保持是问句。
 旁白交代获批变化和必选节拍，NPC 承担回答与态度，避免无意义复述。无新状态时可以一句自然衔接。不能为风格编造天气、见闻、行动结果或进展。
 两个候选均是玩家可直接说出的第一人称台词，回应本轮 NPC 内容，保留实质差异和条件，不写“询问/告诉某人”等指令。人物身份、事实、知识和规则图仍独立限制正文。
 事实表是授权范围，不是逐条复述的提纲。隐藏动机不进入正文；不能从职业或语气推导新能力、经历、线索与承诺。只返回完整 JSON。`;
@@ -199,11 +199,11 @@ export function renderPlanProposalContract(context: PlanningContext, includeWorl
 
 ## draft —— 完整可展示初稿，唯一正文来源
 - narration: {"stage":"narration","parts":[${textPart}],"actionKeys":已声明动作 key 数组}
-- character: {"stage":"character","speakerId":与单元相同 NPC ID,"parts":[${textPart}],"emotion":"neutral"|"warm"|"guarded"|"afraid"|"angry"|"sad","actions":已声明的本角色动作对象数组,"answeredBeatIds":实际承接的必选节拍 ID 数组}
+- character: {"stage":"character","speakerId":与单元相同 NPC ID,"parts":[${textPart}],"emotion":"neutral"|"warm"|"guarded"|"afraid"|"angry"|"sad","actions":完整动作对象数组（如 [{"key":"act_pause","actorId":"npc_0","point":{"stepKey":"current","order":1},"kind":"pause","objectId":null,"audienceIds":["player_0"]}]，必须与已声明动作一致；无动作填 []，不是动作 key 数组）, "answeredBeatIds":实际承接的必选节拍 ID 数组}
 - choices: {"stage":"choices","labels":[{"candidateId":第一个候选 ID,"label":完整玩家台词},{"candidateId":第二个候选 ID,"label":完整玩家台词}]}
 - parts 1–12 段，每段 1–500 字；labels 恰好两个，各 1–80 字，ID 与 decision.options 一一匹配；终幕使用 trust/doubt。原稿已是完整自然正文，不是待执行写作指令。
 - facts 为 {"factId":实体 ID,"certainty":"known"|"suspected"} 对象数组；evidence 为 committed/conditional 引用；beatIds 为已声明节拍 ID 数组。旁白每段至多一个 beatId，覆盖全部必选节拍，氛围段放在必选内容之后。
-- 原稿所有事实、证据、动作仍须通过角色/时间/知识权限，requiredBeats、observations、actions 独立声明，不能从正文反推授权。正文不可含未授权事实；不知道答案时 facts 可以为空。
+- 原稿所有事实、证据、动作须通过角色/时间/知识权限；每段事实断言在该段 facts 中引用，不能借其他段或其他角色的引用；选项断言由该项 publicIntent.facts 覆盖。requiredBeats、observations、actions 独立声明，不能从正文反推授权。不知道答案时 facts 可为空，但不得补造原因或亲历。
 
 ## units[] —— 表达单元
 每项恰有 {"key","stage","point","speakerId","dependencies","requiredObservationKeys","requiredBeats","draft"}。不得提供 task、taskFactIds 或额外正文副本。
@@ -332,7 +332,7 @@ function openingContractSection(context: PlanningContext): string {
 - world 恰有 4 键：summary、tone、themes、publicFacts。
   - themes 为字符串数组；publicFacts 每项恰有 key、text（可选 investigationApproaches）；key 必须唯一且满足 [a-z][a-z0-9_]*。
   - investigationApproaches 不需要时省略或写 []；非空时必须是 2–3 项**对象**数组（不能是字符串数组），每项恰含 approachId、label、evidenceQuality、tensionDelta，可选 hint；evidenceQuality 只能是 "clean" 或 "noisy"，tensionDelta 是 [-5,20] 内的有限数值；label 与 hint 不得包含完整事实正文。
-- player 恰有 5 键：name、identity、backgroundSummary、baseStats、knownFactKeys。knownFactKeys 必须显式列出玩家已知的公开事实 key，可为空；独立于 NPC 的已知集合，不包含 NPC 私密事实。
+- player 恰有 5 键：name、identity、backgroundSummary、baseStats、knownFactKeys。knownFactKeys 必须显式列出玩家开局已知的公开事实 key，可为空；独立于 NPC 的已知集合，不包含 NPC 私密事实。NPC 后续才披露的事实不能提前进入玩家旁白或初始已知。
   - baseStats 恰有 hp、attack、defense，均为有限数值（建议 {"hp":100,"attack":10,"defense":5}）。
   - name/identity/backgroundSummary 必须保留玩家输入含义，不补写玩家未做过的承诺或行动。
 - prologue 为字符串（简短）。

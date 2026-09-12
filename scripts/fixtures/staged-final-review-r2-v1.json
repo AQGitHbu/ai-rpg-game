@@ -1,0 +1,635 @@
+{
+  "fixtureVersion": 1,
+  "sourceRound": "20260912-r2",
+  "status": "known_unresolved_semantic_regressions",
+  "description": "真实已发布错稿的原样终检请求；预期来自人工逐项授权核对，现有终检尚未全部拒绝。离线读取或结构校验不证明语义已修复。只将 request 发送给终检，绝不发送 expected。",
+  "cases": [
+    {
+      "id": "r2-wuxia-opening",
+      "provenance": {
+        "frozenHead": "21afbbf0a349d51239512087ca6409ab67fa6241",
+        "auditPath": "tmp/staged-draft-live-20260912-r2/b1-wuxia-opening-audit/2026-09-12T09-26-47.921Z/events.jsonl",
+        "auditLine": 6,
+        "callId": "4412e7ae-5f47-480e-9e1a-4871c6dca2d9",
+        "timestamp": "2026-09-12T09:26:55.647Z"
+      },
+      "requestSha256": "ee23f1eef760d0fc81e47ae26861e97cf4c8e4a82dd51a49d351cd4ac5d2f04b",
+      "request": {
+        "items": [
+          {
+            "id": "polish_0",
+            "stage": "narration",
+            "draft": "雨没停。落雁城西市的灯灭了七成，只剩半盏棚还亮着。沈孤鸿推门进去，肩上没有镖车，只有一身雨水。\n五里坡那趟镖，货没了，人散了，弟兄们躺在泥里。他翻遍车辙，只捡回一枚青铜令牌——寒山派的内门牌子。\n炭火添了第三回。棚里只剩他们两个人。",
+            "text": "雨没停。落雁城西市的灯灭了七成，只剩半盏棚还亮着。沈孤鸿推门进去，肩上没有镖车，只有一身雨水。\n五里坡那趟镖，货没了，人散了，弟兄们躺在泥里。他翻遍车辙，只捡回一枚青铜令牌——寒山派的内门牌子。\n炭火添了第三回。棚里只剩他们两个人。",
+            "facts": [
+              {
+                "id": "fact_0",
+                "text": "沈孤鸿押的最后一趟镖在城西五里坡遭劫，随行镖师死散，货失车翻，现场只留下一枚寒山派青铜令牌。",
+                "certainty": "known"
+              }
+            ],
+            "scene": {
+              "locationId": "loc_0",
+              "locationName": "落雁城·西市半盏棚",
+              "playerName": "沈孤鸿",
+              "speakers": [
+                {
+                  "id": "npc_0",
+                  "name": "陆老九"
+                }
+              ]
+            },
+            "speaker": "沈孤鸿"
+          },
+          {
+            "id": "polish_1",
+            "stage": "character",
+            "draft": "坐吧。炭火收着，雨不那么冷。\n令牌给我看看……寒山派的东西。青铜的只给内门执事，寻常弟子摸都摸不到。\n三年前他们就封了山，不接镖也不下山。这牌子落在你车上，不是巧。\n这半月，西市来了几张生面孔，一趟一趟问镖局什么时候走镖、走哪条道。问得太细。\n还有一桩。捕快也在查你这案子，可他们问的不是贼，是镖局的旧账。\n你要先听哪一头？",
+            "text": "坐吧。炭火收着，雨不那么冷。\n令牌给我看看……寒山派的东西。青铜的只给内门执事，寻常弟子摸都摸不到。\n三年前他们就封了山，不接镖，也不下山。这牌子落在你车上，不是巧。\n这半月，西市来了几张生面孔，一趟一趟问镖局什么时候走镖、走哪条道。问得太细。\n还有一桩。捕快也在查你这案子，可他们问的不是贼，是镖局的旧账。\n你要先听哪一头？",
+            "authority": {
+              "publicRole": "半盏棚掌柜，昔年镖局趟子手",
+              "actions": [
+                {
+                  "actorId": "npc_0",
+                  "kind": "pause",
+                  "objectId": null
+                }
+              ]
+            },
+            "facts": [
+              {
+                "id": "fact_1",
+                "text": "寒山派三年前封山，门人不下山、不接镖。青铜令牌只发内门执事，寻常弟子摸不到。",
+                "certainty": "known"
+              },
+              {
+                "id": "fact_2",
+                "text": "近半月，西市来了几张生面孔，一趟一趟打听镖局何时走镖、走哪条道。",
+                "certainty": "known"
+              },
+              {
+                "id": "fact_3",
+                "text": "城中捕快也在查这桩劫案，问的却不是贼，是镖局的旧账与旧人。",
+                "certainty": "known"
+              }
+            ],
+            "scene": {
+              "locationId": "loc_0",
+              "locationName": "落雁城·西市半盏棚",
+              "playerName": "沈孤鸿",
+              "speakers": [
+                {
+                  "id": "npc_0",
+                  "name": "陆老九"
+                }
+              ]
+            },
+            "speaker": "陆老九"
+          },
+          {
+            "id": "polish_2",
+            "stage": "choices",
+            "draft": "寒山派的令牌，外人拿不到。这半月，城里可有过寒山派的人？",
+            "text": "寒山派的令牌，外人拿不到。这半月，城里可有过寒山派的人？",
+            "authority": {
+              "addresseeRole": {
+                "id": "npc_0",
+                "name": "陆老九",
+                "role": "半盏棚掌柜，昔年镖局趟子手"
+              }
+            },
+            "facts": [
+              {
+                "id": "fact_0",
+                "text": "沈孤鸿押的最后一趟镖在城西五里坡遭劫，随行镖师死散，货失车翻，现场只留下一枚寒山派青铜令牌。",
+                "certainty": "known"
+              },
+              {
+                "id": "fact_1",
+                "text": "寒山派三年前封山，门人不下山、不接镖。青铜令牌只发内门执事，寻常弟子摸不到。",
+                "certainty": "known"
+              }
+            ],
+            "scene": {
+              "locationId": "loc_0",
+              "locationName": "落雁城·西市半盏棚",
+              "playerName": "沈孤鸿",
+              "speakers": [
+                {
+                  "id": "npc_0",
+                  "name": "陆老九"
+                }
+              ]
+            },
+            "speaker": "沈孤鸿"
+          },
+          {
+            "id": "polish_3",
+            "stage": "choices",
+            "draft": "捕快问旧账，不问贼。老九，是谁在打听我走镖的道？",
+            "text": "捕快问旧账，不问贼。老九，是谁在打听我走镖的道？",
+            "authority": {
+              "addresseeRole": {
+                "id": "npc_0",
+                "name": "陆老九",
+                "role": "半盏棚掌柜，昔年镖局趟子手"
+              }
+            },
+            "facts": [
+              {
+                "id": "fact_0",
+                "text": "沈孤鸿押的最后一趟镖在城西五里坡遭劫，随行镖师死散，货失车翻，现场只留下一枚寒山派青铜令牌。",
+                "certainty": "known"
+              },
+              {
+                "id": "fact_2",
+                "text": "近半月，西市来了几张生面孔，一趟一趟打听镖局何时走镖、走哪条道。",
+                "certainty": "known"
+              }
+            ],
+            "scene": {
+              "locationId": "loc_0",
+              "locationName": "落雁城·西市半盏棚",
+              "playerName": "沈孤鸿",
+              "speakers": [
+                {
+                  "id": "npc_0",
+                  "name": "陆老九"
+                }
+              ]
+            },
+            "speaker": "沈孤鸿"
+          }
+        ]
+      },
+      "expected": {
+        "verdict": "reject",
+        "mustRejectFailedIds": [
+          "polish_0",
+          "polish_3"
+        ],
+        "itemReasons": {
+          "polish_0": "寒山派的内门牌子：本项 fact_0 只有青铜令牌；内门身份在后续 NPC 的 fact_1，不得跨项或提前授权。",
+          "polish_3": "捕快问旧账，不问贼：本项 fact_0/2 未含该断言的 fact_3；后续已公开不等于本项已声明引用。"
+        },
+        "matching": "Expected IDs are a minimum required subset, not an exhaustive failedIds oracle. Annotation is never part of the model request."
+      }
+    },
+    {
+      "id": "r2-wuxia-branch0",
+      "provenance": {
+        "frozenHead": "21afbbf0a349d51239512087ca6409ab67fa6241",
+        "auditPath": "tmp/staged-draft-live-20260912-r2/b1-wuxia-branch0-audit/2026-09-12T09-27-24.630Z/events.jsonl",
+        "auditLine": 5,
+        "callId": "7b933682-7457-4233-b9a1-ff3c497ecaba",
+        "timestamp": "2026-09-12T09:27:29.376Z"
+      },
+      "requestSha256": "beb233635ccc0bbcf794c521972c8b52c5bf53a40b026767d74a093126bdc459",
+      "request": {
+        "items": [
+          {
+            "id": "polish_0",
+            "stage": "narration",
+            "draft": "话问出去，半盏棚里静了一息。",
+            "text": "话问出去，半盏棚里静了一息。",
+            "facts": [],
+            "scene": {
+              "locationId": "loc_0",
+              "locationName": "落雁城·西市半盏棚",
+              "playerName": "沈孤鸿",
+              "speakers": [
+                {
+                  "id": "npc_0",
+                  "name": "陆老九"
+                }
+              ]
+            },
+            "speaker": "沈孤鸿",
+            "selectedLabel": "寒山派的令牌，外人拿不到。这半月，城里可有过寒山派的人？"
+          },
+          {
+            "id": "polish_1",
+            "stage": "character",
+            "draft": "寒山派的人。这半月，棚里棚外，我一个没见着。\n穿青布短打的不见，挂他们牌子的更不见。封了山的门派，真要有人下山，也不会把牌子亮在明处——这句是我猜的，你别当成话。\n我知道的到此为止。城里到底有没有，我不敢替你打包票。",
+            "text": "寒山派的人。这半月，棚里棚外，我一个没见着。\n穿青布短打的不见，挂他们牌子的更不见。封了山的门派，真要有人下山，也不会把牌子亮在明处——这句是我猜的，你别当成话。\n我知道的到此为止。城里到底有没有，我不敢替你打包票。",
+            "authority": {
+              "publicRole": "半盏棚掌柜，昔年镖局趟子手"
+            },
+            "facts": [],
+            "scene": {
+              "locationId": "loc_0",
+              "locationName": "落雁城·西市半盏棚",
+              "playerName": "沈孤鸿",
+              "speakers": [
+                {
+                  "id": "npc_0",
+                  "name": "陆老九"
+                }
+              ]
+            },
+            "speaker": "陆老九",
+            "selectedLabel": "寒山派的令牌，外人拿不到。这半月，城里可有过寒山派的人？"
+          },
+          {
+            "id": "polish_2",
+            "stage": "choices",
+            "draft": "镖局一家接一家关张，散了的镖师总得找口饭吃。老九，那些还留在城里的旧人，如今都在哪儿落脚？",
+            "text": "镖局一家接一家关张，散了的镖师总得找口饭吃。老九，那些还留在城里的旧人，如今都在哪儿落脚？",
+            "authority": {
+              "addresseeRole": {
+                "id": "npc_0",
+                "name": "陆老九",
+                "role": "半盏棚掌柜，昔年镖局趟子手"
+              }
+            },
+            "facts": [
+              {
+                "id": "fact_4",
+                "text": "落雁城几家镖局接连关张，走得动的镖师都散了，只剩零星的散镖和旧账。",
+                "certainty": "known"
+              }
+            ],
+            "scene": {
+              "locationId": "loc_0",
+              "locationName": "落雁城·西市半盏棚",
+              "playerName": "沈孤鸿",
+              "speakers": [
+                {
+                  "id": "npc_0",
+                  "name": "陆老九"
+                }
+              ]
+            },
+            "speaker": "沈孤鸿",
+            "selectedLabel": "寒山派的令牌，外人拿不到。这半月，城里可有过寒山派的人？"
+          },
+          {
+            "id": "polish_3",
+            "stage": "choices",
+            "draft": "你在西市守了半辈子夜棚，谁进谁出比捕快还清楚。“没见着”这三个字，你说得也太顺了。",
+            "text": "你在西市守了半辈子夜棚，谁进谁出比捕快还清楚。“没见着”这三个字，你说得也太顺了。",
+            "authority": {
+              "addresseeRole": {
+                "id": "npc_0",
+                "name": "陆老九",
+                "role": "半盏棚掌柜，昔年镖局趟子手"
+              }
+            },
+            "facts": [],
+            "scene": {
+              "locationId": "loc_0",
+              "locationName": "落雁城·西市半盏棚",
+              "playerName": "沈孤鸿",
+              "speakers": [
+                {
+                  "id": "npc_0",
+                  "name": "陆老九"
+                }
+              ]
+            },
+            "speaker": "沈孤鸿",
+            "selectedLabel": "寒山派的令牌，外人拿不到。这半月，城里可有过寒山派的人？"
+          }
+        ]
+      },
+      "expected": {
+        "verdict": "reject",
+        "mustRejectFailedIds": [
+          "polish_1",
+          "polish_3"
+        ],
+        "itemReasons": {
+          "polish_1": "这半月，棚里棚外，我一个没见着／穿青布短打的不见：facts=[] 和公开职业不证明指定时段的否定亲历或服饰识别。",
+          "polish_3": "守了半辈子夜棚／谁进谁出比捕快还清楚：facts=[] 和掌柜、昔年趟子手身份不证明任职年数或比较能力。"
+        },
+        "matching": "Expected IDs are a minimum required subset, not an exhaustive failedIds oracle. Annotation is never part of the model request."
+      }
+    },
+    {
+      "id": "r2-wuxia-branch1",
+      "provenance": {
+        "frozenHead": "21afbbf0a349d51239512087ca6409ab67fa6241",
+        "auditPath": "tmp/staged-draft-live-20260912-r2/b1-wuxia-branch1-audit/2026-09-12T09-28-02.254Z/events.jsonl",
+        "auditLine": 6,
+        "callId": "c0d48221-b62b-4269-a62a-6f1f44a033b0",
+        "timestamp": "2026-09-12T09:28:43.117Z"
+      },
+      "requestSha256": "ec891756af0b5b2a96012fb732cf70ff36e1e73f4875b0531242a635880d9791",
+      "request": {
+        "items": [
+          {
+            "id": "polish_0",
+            "stage": "narration",
+            "draft": "雨声压在棚顶上，棚里只剩他们两个。",
+            "text": "雨声压在棚顶上，棚里就剩他们两个。",
+            "facts": [],
+            "scene": {
+              "locationId": "loc_0",
+              "locationName": "落雁城·西市半盏棚",
+              "playerName": "沈孤鸿",
+              "speakers": [
+                {
+                  "id": "npc_0",
+                  "name": "陆老九"
+                }
+              ]
+            },
+            "speaker": "沈孤鸿",
+            "selectedLabel": "捕快问旧账，不问贼。老九，是谁在打听我走镖的道？"
+          },
+          {
+            "id": "polish_1",
+            "stage": "character",
+            "draft": "名字我说不出。几张生面孔，是在西市转着问的，问完就走，没留下名姓。\n落雁城这几个月的模样你也看见了：镖局一家一家关张，走得动的镖师都散了，剩下的只有零星散镖和几笔旧账。\n雨没停，今夜别往西市去钻。那牌子的事，你敢摊在西市上给人看吗？",
+            "text": "名字我说不出。几张生面孔，在西市转着问，问完就走，没留下名姓。\n落雁城这几个月的模样你也看见了：镖局一家一家关张，走得动的镖师都散了，剩下的只有零星散镖和几笔旧账。\n雨没停，今夜别往西市去钻。那牌子的事，你敢摊在西市上给人看吗？",
+            "authority": {
+              "publicRole": "半盏棚掌柜，昔年镖局趟子手",
+              "actions": [
+                {
+                  "actorId": "npc_0",
+                  "kind": "pause",
+                  "objectId": null
+                }
+              ]
+            },
+            "facts": [
+              {
+                "id": "fact_4",
+                "text": "落雁城几家镖局接连关张，走得动的镖师都散了，只剩零星的散镖和旧账。",
+                "certainty": "known"
+              }
+            ],
+            "scene": {
+              "locationId": "loc_0",
+              "locationName": "落雁城·西市半盏棚",
+              "playerName": "沈孤鸿",
+              "speakers": [
+                {
+                  "id": "npc_0",
+                  "name": "陆老九"
+                }
+              ]
+            },
+            "speaker": "陆老九",
+            "selectedLabel": "捕快问旧账，不问贼。老九，是谁在打听我走镖的道？"
+          },
+          {
+            "id": "polish_2",
+            "stage": "choices",
+            "draft": "镖局一家家关张，散镖也走了。老九，这城里眼下还有人敢接镖吗？",
+            "text": "镖局一家家关张，散镖也走了。老九，这城里眼下还有人敢接镖吗？",
+            "authority": {
+              "addresseeRole": {
+                "id": "npc_0",
+                "name": "陆老九",
+                "role": "半盏棚掌柜，昔年镖局趟子手"
+              }
+            },
+            "facts": [
+              {
+                "id": "fact_4",
+                "text": "落雁城几家镖局接连关张，走得动的镖师都散了，只剩零星的散镖和旧账。",
+                "certainty": "known"
+              }
+            ],
+            "scene": {
+              "locationId": "loc_0",
+              "locationName": "落雁城·西市半盏棚",
+              "playerName": "沈孤鸿",
+              "speakers": [
+                {
+                  "id": "npc_0",
+                  "name": "陆老九"
+                }
+              ]
+            },
+            "speaker": "沈孤鸿",
+            "selectedLabel": "捕快问旧账，不问贼。老九，是谁在打听我走镖的道？"
+          },
+          {
+            "id": "polish_3",
+            "stage": "choices",
+            "draft": "你嘴紧，我不逼你。那几张生面孔再来问哪条道，你递个话给我——这份人情我记着。",
+            "text": "你嘴紧，我不逼你。那几张生面孔再来问哪条道，递个话给我——这份人情我记着。",
+            "authority": {
+              "addresseeRole": {
+                "id": "npc_0",
+                "name": "陆老九",
+                "role": "半盏棚掌柜，昔年镖局趟子手"
+              }
+            },
+            "facts": [
+              {
+                "id": "fact_2",
+                "text": "近半月，西市来了几张生面孔，一趟一趟打听镖局何时走镖、走哪条道。",
+                "certainty": "known"
+              }
+            ],
+            "scene": {
+              "locationId": "loc_0",
+              "locationName": "落雁城·西市半盏棚",
+              "playerName": "沈孤鸿",
+              "speakers": [
+                {
+                  "id": "npc_0",
+                  "name": "陆老九"
+                }
+              ]
+            },
+            "speaker": "沈孤鸿",
+            "selectedLabel": "捕快问旧账，不问贼。老九，是谁在打听我走镖的道？"
+          }
+        ]
+      },
+      "expected": {
+        "verdict": "reject",
+        "mustRejectFailedIds": [
+          "polish_1"
+        ],
+        "itemReasons": {
+          "polish_1": "问完就走，没留下名姓：本项只有 fact_4 镖局衰落，未引用生面孔打听路线的 fact_2；即使借用 fact_2 也不证明离开时点或未留姓名。"
+        },
+        "matching": "Expected IDs are a minimum required subset, not an exhaustive failedIds oracle. Annotation is never part of the model request."
+      }
+    },
+    {
+      "id": "r2-science_fiction-opening",
+      "provenance": {
+        "frozenHead": "21afbbf0a349d51239512087ca6409ab67fa6241",
+        "auditPath": "tmp/staged-draft-live-20260912-r2/b1-science_fiction-opening-audit/2026-09-12T09-29-45.038Z/events.jsonl",
+        "auditLine": 6,
+        "callId": "5c4f51a0-ac0a-4349-a9f3-4c0f6469c5ad",
+        "timestamp": "2026-09-12T09:29:51.050Z"
+      },
+      "requestSha256": "3fb01632f5fbb6e01a0fd778c49a6157aca136ba43bb1d7412c7a124aac1921e",
+      "request": {
+        "items": [
+          {
+            "id": "polish_0",
+            "stage": "narration",
+            "draft": "跃迁脱离后的第七秒，长夜号的驾驶舱只剩应急灯在呼吸。仪表盘整片暗下去，玻璃上残留着一层冷绿色的光痕，像退潮后留在岸上的荧光。\n凯伦把手按在导航台上。惯导还在跑，坐标却缓慢漂移；主引擎、姿态控制、外部传感器，一排排指示灯全黑。整艘船上唯一还在闪的，是通信台角落那枚橙色信标。\n信标每九十秒跳一次。解出来的是失联母站的加密行政码——很远的地方，有人用最后一格电，在敲这扇门。",
+            "text": "跃迁脱离后的第七秒，长夜号的驾驶舱里只剩应急灯，一明一暗，像在呼吸。仪表盘整片暗下去，玻璃上残留着一层冷绿色的光痕，像退潮后留在岸上的荧光。\n凯伦把手按在导航台上。惯导还在跑，坐标却缓慢漂移；主引擎、姿态控制、外部传感器，一排排指示灯全黑。整艘船上唯一还在闪的，是通信台角落那枚橙色信标。\n信标每九十秒跳一次。解出来的是失联母站的加密行政码——很远的地方，有人用最后一格电，在敲这扇门。",
+            "facts": [
+              {
+                "id": "fact_0",
+                "text": "一次跃迁事故切断了边境站与殖民网络的联系，母站与多艘货船被列为失联。",
+                "certainty": "known"
+              },
+              {
+                "id": "fact_1",
+                "text": "凯伦的货船脱离跃迁后仪表全灭，唯一还在闪的是一封来自失联母站的加密求救。",
+                "certainty": "known"
+              }
+            ],
+            "scene": {
+              "locationId": "loc_0",
+              "locationName": "长夜号·主驾驶舱",
+              "playerName": "凯伦",
+              "speakers": [
+                {
+                  "id": "npc_0",
+                  "name": "伊莎·雷耶"
+                }
+              ]
+            },
+            "speaker": "凯伦"
+          },
+          {
+            "id": "polish_1",
+            "stage": "character",
+            "draft": "别指望仪表了，凯伦。我是伊莎——跃迁核心把整块配电板烧穿了，能动的只剩惯导和这台通信机。\n那封信标是真的，用的是母站的老行政码，九十秒一次脉冲。我只能确认它从母站方向来——站里现在什么情况，我读不出来。\n还有件事你得先知道：母站要是真断了补给，它撑不了多久。备用电源和生命维持都是有数的，我们不能假装自己还有余力。",
+            "text": "别指望仪表了，凯伦。我是伊莎——跃迁核心把整块配电板烧穿了，能动的只剩惯导和这台通信机。\n那封信标是真的，用的是母站的老行政码，九十秒一次脉冲。我只能确认它从母站方向来——站里现在什么情况，我读不出来。\n还有件事你得先知道：母站要是真断了补给，它撑不了多久。备用电源和生命维持都是有数的，我们不能假装自己还有余力。",
+            "authority": {
+              "publicRole": "长夜号通信官",
+              "actions": [
+                {
+                  "actorId": "npc_0",
+                  "kind": "pause",
+                  "objectId": null
+                }
+              ]
+            },
+            "facts": [
+              {
+                "id": "fact_0",
+                "text": "一次跃迁事故切断了边境站与殖民网络的联系，母站与多艘货船被列为失联。",
+                "certainty": "known"
+              },
+              {
+                "id": "fact_1",
+                "text": "凯伦的货船脱离跃迁后仪表全灭，唯一还在闪的是一封来自失联母站的加密求救。",
+                "certainty": "known"
+              },
+              {
+                "id": "fact_2",
+                "text": "失联边境站的补给储备有限，备用电源与生命维持都撑不了太久。",
+                "certainty": "known"
+              }
+            ],
+            "scene": {
+              "locationId": "loc_0",
+              "locationName": "长夜号·主驾驶舱",
+              "playerName": "凯伦",
+              "speakers": [
+                {
+                  "id": "npc_0",
+                  "name": "伊莎·雷耶"
+                }
+              ]
+            },
+            "speaker": "伊莎·雷耶"
+          },
+          {
+            "id": "polish_2",
+            "stage": "choices",
+            "draft": "这封信是谁发的？母站里还有人在维持信号吗？",
+            "text": "这封信是谁发的？母站里……还有人撑着信号吗？",
+            "authority": {
+              "addresseeRole": {
+                "id": "npc_0",
+                "name": "伊莎·雷耶",
+                "role": "长夜号通信官"
+              }
+            },
+            "facts": [
+              {
+                "id": "fact_1",
+                "text": "凯伦的货船脱离跃迁后仪表全灭，唯一还在闪的是一封来自失联母站的加密求救。",
+                "certainty": "known"
+              }
+            ],
+            "scene": {
+              "locationId": "loc_0",
+              "locationName": "长夜号·主驾驶舱",
+              "playerName": "凯伦",
+              "speakers": [
+                {
+                  "id": "npc_0",
+                  "name": "伊莎·雷耶"
+                }
+              ]
+            },
+            "speaker": "凯伦"
+          },
+          {
+            "id": "polish_3",
+            "stage": "choices",
+            "draft": "我们的燃料和氧气只够跑一次。你确定要把长夜号押在一个断了联的站上？",
+            "text": "我们的燃料和氧气只够跑一趟。你确定，要把长夜号押在一个断了联的站上？",
+            "authority": {
+              "addresseeRole": {
+                "id": "npc_0",
+                "name": "伊莎·雷耶",
+                "role": "长夜号通信官"
+              }
+            },
+            "facts": [
+              {
+                "id": "fact_2",
+                "text": "失联边境站的补给储备有限，备用电源与生命维持都撑不了太久。",
+                "certainty": "known"
+              }
+            ],
+            "scene": {
+              "locationId": "loc_0",
+              "locationName": "长夜号·主驾驶舱",
+              "playerName": "凯伦",
+              "speakers": [
+                {
+                  "id": "npc_0",
+                  "name": "伊莎·雷耶"
+                }
+              ]
+            },
+            "speaker": "凯伦"
+          }
+        ]
+      },
+      "expected": {
+        "verdict": "reject",
+        "mustRejectFailedIds": [
+          "polish_1",
+          "polish_3"
+        ],
+        "itemReasons": {
+          "polish_1": "跃迁核心把整块配电板烧穿了，能动的只剩惯导和这台通信机：fact_0/1 不证明设备毁损原因及剩余能力；公开通信官身份不补授权。",
+          "polish_3": "我们的燃料和氧气只够跑一次：fact_2 说母站补给/备用电源/生命维持有限，不证明货船资源及单次航程上限。"
+        },
+        "matching": "Expected IDs are a minimum required subset, not an exhaustive failedIds oracle. Annotation is never part of the model request."
+      },
+      "contextCaveats": [
+        {
+          "itemId": "polish_0",
+          "claim": "信标每九十秒",
+          "finding": "Root verified opening.opening.location.description explicitly contains ninety seconds. This is globally supported public scene context absent from current reviewer scene projection, not an invented global fact. Not included in minimum required failed IDs.",
+          "scope": "No authority projection change proposed in this preparation."
+        },
+        {
+          "itemId": "polish_0",
+          "claim": "惯导还在跑、坐标漂移",
+          "finding": "Separately unsupported equipment-state detail identified by root; retained unchanged in original request, but minimum rejection IDs focus on the two unambiguous requested items."
+        }
+      ]
+    }
+  ]
+}
