@@ -44,18 +44,19 @@ expect(result.ok).toBe(false);
 
 **Interfaces:** 复用 Task 1 check 协议，在表达请求前只提交安全投影的 plan checks；以规划摘要保存批准凭证。最终审核只复核表达/历史，不重复将未来问题当当前回答。缺少/无效前置凭证不能调对应表达或发布。普通无条件任务在任何表达前完成；依赖真实上游披露才可投影的任务允许延后到该单元执行前，必须逐项记账并在发布时确认全部覆盖，不伪造 approved outputs 或学习回执。
 
-- [ ] 武侠两个具体问询缺 inquiries 的固定 fixture，断言规划审核 reject 时 narration/character/choices 请求数均为零；保留征求意见、行动提议、prerequisite 核实条件的正确反例。
+- [x] 武侠两个具体问询缺 inquiries 的固定 fixture，断言规划审核 reject 时 narration/character/choices 请求数均为零；保留征求意见、行动提议、prerequisite 核实条件的正确反例。
 
 ```ts
 expect(expressionCalls).toEqual([]);
 expect(job.failureCode).toBe('dialogue_consistency_planning_contract');
 ```
 
-- [ ] 将 planning prompt 的可选说明明确为：无事实问询可为空，有事实问询必须逐项编码；不可用 ask 非空或关键词正则冒充语义检查。若增加显式分类字段，必须同步新 live 必填与旧存档兼容，不能默认为已通过。
-- [ ] 接入前置审核、摘要与预算；计划失败继续显式失败，本轮不强行增加自动重规划。通过后的表达须沿用原契约，前置审核不得授予知识或输出剧情。
-- [ ] 条件观察回归：上游实际披露前不将新知识或私密 brief 发给审核器；披露后才检查下游规划，未完成的延后检查不能发布。优先复用现有视角权限投影，不能以空占位输出冒充真实生成。
-- [ ] 运行新增前置审核测试、`runJob.test.ts`、`jobBudget.test.ts`、Task 1 回归与 `npm run typecheck`。
-- [ ] 记录红绿测试与 review，提交 `fix(narrative): validate dialogue plans before expression`。
+- [x] 将 planning prompt 的可选说明明确为：无事实问询可为空，有事实问询必须逐项编码；不可用 ask 非空或关键词正则冒充语义检查。若增加显式分类字段，必须同步新 live 必填与旧存档兼容，不能默认为已通过。
+- [x] 接入前置审核、摘要与预算；计划失败继续显式失败，本轮不强行增加自动重规划。通过后的表达须沿用原契约，前置审核不得授予知识或输出剧情。
+- [x] 每个 plan check 最多报告一个足以确认拒绝的维度，避免为了列全问题而过报；重复 plan checkId 是协议错误，不静默过滤。不同检查项可各报告一项，expression 检查仍允许多个真实漏答。规划重做后全部重新审核，不把单项反馈当全部问题清单。条件 choices 单元整体延后，不引入部分候选绕过权限的投影。
+- [x] 条件观察回归：上游实际披露前不将新知识或私密 brief 发给审核器；披露后才检查下游规划，未完成的延后检查不能发布。优先复用现有视角权限投影，不能以空占位输出冒充真实生成。
+- [x] 运行新增前置审核测试、`runJob.test.ts`、`jobBudget.test.ts`、Task 1 回归与 `npm run typecheck`。
+- [x] 记录红绿测试与 review，提交 `fix(narrative): validate dialogue plans before expression`。
 
 ### Task 3: 可操作反馈及有界修复闭环
 
@@ -63,7 +64,7 @@ expect(job.failureCode).toBe('dialogue_consistency_planning_contract');
 
 **Interfaces:** 复用既有 AiContentRepair.detail，输出安全字段路径、允许键和错误类型；协议修复传给下一次审核请求。审核首次、协议修复、表达修复后复审有独立受控状态；总请求预算不重置。纯审计 retry 不是模型反馈。
 
-- [ ] 固化都市 character 多余 `type` 输出，断言反馈包含字段路径和 `type`，不带原始私密文本；协议错误后重试输入含具体错误定位。
+- [x] 固化都市 character 多余 `type` 输出，断言反馈包含字段路径和 `type`，不带原始私密文本；协议错误后重试输入含具体错误定位。
 
 ```ts
 expect(repair.detail).toContain('type');
@@ -71,10 +72,10 @@ expect(secondReviewPrompt).toContain('checkId');
 expect(saved.usedRequests).toBeGreaterThan(initial.usedRequests);
 ```
 
-- [ ] 协议纠正最多一次，内容修复后复审最多一次；各审核阶段最多三次实际请求（首次、协议纠正、内容复审），仍受 job 全局预算/deadline。无效结果不清表达；有效 expression reject 只清相关依赖，planning reject 显式失败。每次重试有具体受控反馈，不复制任意 reviewer 指令。
-- [ ] 测试第一次协议错、第二次有效拒绝、表达修复、第三次通过；同 cycle 重启不恢复额度，摘要变化不洗计数，耗尽/超时/取消均不能发布。格式错误与内容失败保持不同诊断分类。
-- [ ] 运行 `dialogueConsistencyRetry.test.ts`、真实失败回归、`jobBudget.test.ts`、source 反馈测试、persistence 测试及 `npm run typecheck`。
-- [ ] 记录红绿测试与 review，提交 `fix(narrative): make review recovery actionable and bounded`。
+- [x] 协议纠正最多一次，内容修复后复审最多一次；各审核阶段最多三次实际请求（首次、协议纠正、内容复审），仍受 job 全局预算/deadline。无效结果不清表达；有效 expression reject 只清相关依赖，planning reject 显式失败。每次重试有具体受控反馈，不复制任意 reviewer 指令。
+- [x] 测试第一次协议错、第二次有效拒绝、表达修复、第三次通过；同 cycle 重启不恢复额度，摘要变化不洗计数，耗尽/超时/取消均不能发布。格式错误与内容失败保持不同诊断分类。
+- [x] 运行 `dialogueConsistencyRetry.test.ts`、真实失败回归、`jobBudget.test.ts`、source 反馈测试、persistence 测试及 `npm run typecheck`。
+- [x] 记录红绿测试与 review，提交 `fix(narrative): make review recovery actionable and bounded`。
 
 ### Task 4: 规划内容分工与公开风格
 
@@ -82,23 +83,22 @@ expect(saved.usedRequests).toBeGreaterThan(initial.usedRequests);
 
 **Interfaces:** 不新增世界权限；规划为旁白/NPC 指定互补内容，公开受控 delivery 继续独立于主角标签。表达只能润色获批 brief，不能自行删掉必须内容。
 
-- [ ] 固化科幻仪表/定位/第二跳在旁白与 NPC 重复的素材，作为真实模型风格回归输入；离线测试只证明职责和安全提示投影，不假称证明自然语言去重。
-- [ ] 规划规则明确可观察变化归旁白、回答/态度归 NPC；同一事实重复仅用于有目的的强调或争论。规划器不得先给双方完整重复 brief 再让表达器删改。无公开人格锚点时用受控职业/语气，不能泄露隐藏目标或把主角性格套给 NPC。
-- [ ] 原位替换 `PLANNING_CONTENT_RULES` 中强制“你……”复述玩家问题的规则及冲突示例：无新状态时只做极短对话衔接，不展开问题细节，不杜撰环境、动作或进展。保留 mandatory beats/contentFactIds 的必需覆盖，不以去重删除权威规则结果。
+- [x] 固化科幻仪表/定位/第二跳在旁白与 NPC 重复的素材，作为真实模型风格回归输入；离线测试只证明职责和安全提示投影，不假称证明自然语言去重。
+- [x] 规划规则明确可观察变化归旁白、回答/态度归 NPC；同一事实重复仅用于有目的的强调或争论。规划器不得先给双方完整重复 brief 再让表达器删改。无公开人格锚点时用受控职业/语气，不能泄露隐藏目标或把主角性格套给 NPC。
+- [x] 原位替换 `PLANNING_CONTENT_RULES` 中强制“你……”复述玩家问题的规则及冲突示例：无新状态时只做极短对话衔接，不展开问题细节，不杜撰环境、动作或进展。保留 mandatory beats/contentFactIds 的必需覆盖，不以去重删除权威规则结果。
 
 ```ts
 expect(characterPrompt).not.toContain(secretSentinel);
 expect(narrationPrompt).toContain('旁白');
 ```
 
-- [ ] 运行表达职责、style 安全、Task 1–3 全部回归；真实成稿差异留待真实模型验证，不以提示快照作质量证明。
-- [ ] 记录测试与 review，提交 `fix(narrative): separate planned narration and dialogue content`。
+- [x] 运行表达职责、style 安全、Task 1–3 全部回归；真实成稿差异留待真实模型验证，不以提示快照作质量证明。
+- [x] 记录测试与 review，提交 `fix(narrative): separate planned narration and dialogue content`。
 
 ### Task 5: 集成回归与交付
 
 **Files:** 更新 `docs/agent/运行时AI导演与场景表演.md` 的失效契约；按引用需要更新既有系统文档。报告保存在 ignored tmp，计划保留任务验证结果。
 
 - [ ] 逐项审阅完整 diff，修复可复现问题；运行 `npm run accept`，不以定向测试代替集成验收。
-- [ ] 沿用真实失败的最小对照并增加未用于调试的反例，真实 API 回归预算最多 24 HTTP，调用前固定样本与配置，失败不重抽。记录协议有效率、语义误报/漏报与路由；真实模型失败继续定位，未解决则如实记录，不宣称质量通过。
+- [x] 沿用真实失败的最小对照并增加未用于调试的反例，真实 API 回归预算最多 30 HTTP，调用前固定样本与配置，失败不重抽。原 24 次额度内发现“认识令牌”被附加 reliability 的诊断错误，增加 4 次固定识别/可信度配对回归；该批仍有多报 location，因此仅再增加 2 次验证单项充分拒绝契约。各批证据独立保留，不改成绩。记录协议有效率、逐维误报/漏报与路由；真实模型失败继续定位，未解决则如实记录，不宣称质量通过。
 - [ ] 对齐系统文档，运行 `npm run check:docs`、`git diff --check`，报告逐项修复、验证与仍需九包复测的质量限制，不合并 main。
-
