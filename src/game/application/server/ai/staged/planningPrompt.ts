@@ -13,6 +13,7 @@ import { renderOpeningSetupSection } from "../openingNarrativePrompt";
 import { MAX_PLAN_UNITS } from "@/game/domain/narrativePlan";
 import { MAX_NARRATIVE_BUNDLE_STEPS } from "@/game/domain/narrativeBundle";
 import { DIALOGUE_ACTS } from "@/game/domain/action";
+import { OPENING_SCENE_FRAMES, OPENING_NPC_ARCHETYPES, OPENING_LEAD_TYPES, OPENING_CONFLICT_MODES } from "@/game/domain/openingNovelty";
 import { buildNarrativeBundleDescriptors } from "@/game/gameplay/rpg/narrativeBundle";
 import { buildEntityContextProjection } from "@/game/application/entityContextProjection";
 import { stagedEvolutionNeed } from "@/game/application/narrativeGeneration/approvePlanningContext";
@@ -327,7 +328,14 @@ function openingContractSection(context: PlanningContext): string {
 - storyContract 恰有 4 键：version、targetActs、centralConflict、endingDirections。
   - version 固定为 1；targetActs 固定为 ${targetActs}（由本局长度决定）。
   - endingDirections 恰好 2 项且顺序固定：[{"key":"trust","theme":"..."},{"key":"doubt","theme":"..."}]。
-- opening 恰有 6 键：location、npc、quest、situation（可选 firstScene、variationProfile）。
+- opening 必须包含 4 键：location、npc、quest、situation；仅可额外提供 variationProfile，省略时共 4 键，提供时共 5 键。
+  - 本次不生成 firstScene；首场旁白、NPC 台词和玩家选项统一写在 units[].draft，不重复生成场景正文。
+  - variationProfile 可省略；提供时必须是恰含 sceneFrame、npcArchetype、leadType、conflictMode 四键的对象，不是字符串或 null，只记录开局结构分类。
+    - sceneFrame ∈ ${OPENING_SCENE_FRAMES.join(" | ")}
+    - npcArchetype ∈ ${OPENING_NPC_ARCHETYPES.join(" | ")}
+    - leadType ∈ ${OPENING_LEAD_TYPES.join(" | ")}
+    - conflictMode ∈ ${OPENING_CONFLICT_MODES.join(" | ")}
+    - variationProfile 示例：{"sceneFrame":"station","npcArchetype":"witness","leadType":"message","conflictMode":"concealment"}
   - location 恰有 4 键：name、description、buildingName、scale；scale 固定为 "town"（town 指聚居地，不等于古镇或客栈）。
   - npc 恰有 7 键：name、role、description、knownFactKeys、privateFactKeys、anchors、goals。
     - knownFactKeys 与 privateFactKeys 只能引用 world.publicFacts 的 key，且两者不得相交。
