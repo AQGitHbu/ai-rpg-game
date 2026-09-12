@@ -1,6 +1,7 @@
 import {
   entitiesOfKind,
   getEntity,
+  type EntityId,
   type EntityKind,
   type EntityRecord,
 } from "@/game/domain/entity";
@@ -9,6 +10,8 @@ import type { StoryState } from "@/game/domain/storyState";
 import type { WorldDeltaEntityContextClosure } from "@/game/domain/worldDelta";
 import type { QuestObjective } from "@/game/domain/worldEntries";
 import type { WorldState } from "@/game/domain/worldState";
+import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
+import { retrieveStoryEvidence } from "@/game/gameplay/rpg/narrativeMemory";
 
 export type NarrativeEntitySummary = Readonly<{
   id: string;
@@ -177,6 +180,14 @@ export function buildEntityContextProjection(input: {
     ? quest.quest.objectives[after.objectiveIndex]
     : undefined;
   const objectiveId = objectiveEntityId(currentObjective);
+  const storyEvidence = retrieveStoryEvidence({
+    worldState: input.worldState,
+    storyState: input.storyState,
+    observerId: PLAYER_ENTITY_ID,
+    text: input.job.utterance ?? input.job.selectedDialogue?.label ?? "",
+    actionEntityIds: actionEntityIds(input.job.actionSummary) as readonly EntityId[],
+    focusEntityIds: input.job.focusNpcId === undefined ? [] : [input.job.focusNpcId],
+  });
 
   const mandatoryIds = new Set<string>([
     "player_0",
@@ -186,6 +197,7 @@ export function buildEntityContextProjection(input: {
     ...(input.job.focusNpcId === undefined ? [] : [String(input.job.focusNpcId)]),
     ...(quest === undefined ? [] : [String(quest.core.id)]),
     ...(objectiveId === undefined ? [] : [objectiveId]),
+    ...storyEvidence.entityIds.map(String),
     ...entitiesOfKind(entityStore, "item")
       .filter((record) => record.possession.owner.kind === "player")
       .map((record) => String(record.core.id)),

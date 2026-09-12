@@ -13,6 +13,7 @@ export type NarrativeMemoryManifestRefs = Readonly<{
   readonly eventIds: readonly CommittedNarrativeEvent["eventId"][];
   readonly episodeIds: readonly import("@/game/domain/events").EpisodeId[];
   readonly sceneEventIds: readonly CommittedNarrativeEvent["eventId"][];
+  readonly historyIds?: readonly string[];
 }>;
 
 export type RenderedNarrativeMemory = Readonly<{
@@ -20,6 +21,7 @@ export type RenderedNarrativeMemory = Readonly<{
   readonly relevantEpisodesText: string;
   readonly relevantEventsText: string;
   readonly recentScenesText: string;
+  readonly historyText?: string;
   readonly manifestRefs: NarrativeMemoryManifestRefs;
 }>;
 
@@ -148,6 +150,13 @@ function sceneCard(
   return `sceneEventId=${scene.sceneEventId}; sceneId=${scene.sceneId}; turn=${scene.turnNumber}; thenLocation=${locationName(entityStore, String(scene.locationId))}; focusNpc=${focus}; pacing=${scene.pacing}; beatIds=[${scene.beatIds.join(", ") || "无"}]; publicFactIds=[${facts.join(", ") || "无"}]`;
 }
 
+function historyLine(entry: import("@/game/domain/narrativeHistory").HistoryEntry, entityStore: EntityStore): string {
+  const speaker = entry.speakerId === null
+    ? "旁白"
+    : entityName(entityStore, String(entry.speakerId)) ?? String(entry.speakerId);
+  return `historyId=${entry.id}; sequence=${entry.sequence}; kind=${entry.kind}; speaker=${speaker}; text=${entry.text}`;
+}
+
 /** Render only bounded, structural cards; prose and private component history stay out. */
 export function renderNarrativeMemory(input: Readonly<{
   readonly retrieved: RetrievedNarrativeMemory;
@@ -160,11 +169,16 @@ export function renderNarrativeMemory(input: Readonly<{
     ...match.relatedItemEvents.map((event) => eventCard(event, input.entityStore, safeFactIds)),
   ]);
   const sceneCards = input.retrieved.recentScenes.map((scene) => sceneCard(scene, input.entityStore, safeFactIds));
+  const historyText = input.retrieved.historyEntries
+    .filter((entry) => entry.kind !== "shown_choice")
+    .map((entry) => historyLine(entry, input.entityStore))
+    .join("\n");
   return {
     requiredEventsText: eventCards.join("\n"),
     relevantEpisodesText: episodeCards.join("\n"),
     relevantEventsText: [...eventCards, ...episodeCards].join("\n"),
     recentScenesText: sceneCards.join("\n"),
+    historyText,
     manifestRefs: {
       eventIds: [...new Set([
         ...input.retrieved.requiredEvents.map((event) => event.eventId),
@@ -172,6 +186,7 @@ export function renderNarrativeMemory(input: Readonly<{
       ])],
       episodeIds: input.retrieved.relevantEpisodes.map((match) => match.episode.episodeId),
       sceneEventIds: input.retrieved.recentScenes.map((scene) => scene.sceneEventId),
+      historyIds: input.retrieved.historyEntries.map((entry) => entry.id),
     },
   };
 }

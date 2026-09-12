@@ -307,6 +307,7 @@ export function startBattle(
       entityStore: ws.entityStore,
       eventLedger: ws.eventLedger,
       ...(storyState === undefined ? {} : { threads: storyState.threads }),
+      ...(storyState === undefined ? {} : { dialogueFocus: storyState.dialogueFocus ?? null }),
     };
     const nextWs: WorldState = {
       ...ws,
@@ -343,6 +344,7 @@ export function startBattle(
     entityStore: ws.entityStore,
     eventLedger: ws.eventLedger,
     ...(storyState === undefined ? {} : { threads: storyState.threads }),
+    ...(storyState === undefined ? {} : { dialogueFocus: storyState.dialogueFocus ?? null }),
   };
 
   const nextWs: WorldState = {

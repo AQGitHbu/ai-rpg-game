@@ -4,7 +4,7 @@ import type { NarrativeSceneState } from "@/game/domain/narrative";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { StoryState } from "@/game/domain/storyState";
 import type { WorldState } from "@/game/domain/worldState";
-import { entitiesOfKind, projectEntityStore } from "@/game/domain/entity";
+import { entitiesOfKind, projectEntityStore, type EntityId } from "@/game/domain/entity";
 import { buildStylePolicy } from "@/game/application/stylePolicy";
 import { buildEntityContextProjection, type EntityContextProjection } from "@/game/application/entityContextProjection";
 import { buildNpcSpeechAuthority } from "@/game/application/npcSpeechAuthority";
@@ -24,6 +24,7 @@ import { createNarrativePromptCompilation } from "./renderNarrativeContext";
 import {
   renderNarrativeMemory,
   retrieveNarrativeMemory,
+  retrieveStoryEvidence,
 } from "@/game/gameplay/rpg/narrativeMemory";
 import { renderAiRepairFeedback } from "../../../aiGenerationRetry";
 import { buildOpeningHandoffContext } from "./openingHandoffContext";
@@ -239,6 +240,14 @@ export function buildDecisionNarrativeContextBlocks(
   );
   const activeQuest = worldState.quests.find((quest) => quest.status === "active" && quest.kind === "main");
   const openingHandoff = buildOpeningHandoffContext({ worldState, job });
+  const storyEvidence = retrieveStoryEvidence({
+    worldState,
+    storyState,
+    observerId: PLAYER_ENTITY_ID,
+    text: job.utterance ?? job.selectedDialogue?.label ?? "",
+    actionEntityIds: actionSummaryEntityIds(job.actionSummary) as readonly EntityId[],
+    focusEntityIds: job.focusNpcId === undefined ? [] : [job.focusNpcId],
+  });
   const narrativeMemory = renderNarrativeMemory({
     retrieved: retrieveNarrativeMemory({
       memory: storyState.memory,
@@ -261,6 +270,8 @@ export function buildDecisionNarrativeContextBlocks(
       relevantFactIds: job.resolvedEvent.facts.map((entry) => entry.factId),
       currentLocationId: worldState.currentLocationId,
       focusNpcId: job.focusNpcId,
+      storyEvidence,
+      history: storyState.history,
     }),
     entityStore: worldState.entityStore,
   });
@@ -448,6 +459,14 @@ export function buildDecisionNarrativeContextBlocks(
       authority: "memory", retention: "optional", priority: 700,
       source: { kind: "episodic_memory", refs: narrativeMemory.manifestRefs.episodeIds.map(String) },
       content: narrativeMemory.relevantEpisodesText,
+    }));
+  }
+  if (narrativeMemory.historyText !== undefined && narrativeMemory.historyText !== "") {
+    blocks.push(block({
+      id: "bundle:historical-expressions", slot: "relevant_events", title: "可引用的历史原话",
+      authority: "event", retention: "mandatory", priority: 965,
+      source: { kind: "narrative_history", refs: narrativeMemory.manifestRefs.historyIds ?? [] },
+      content: narrativeMemory.historyText ?? "",
     }));
   }
   if (narrativeMemory.recentScenesText !== "") {

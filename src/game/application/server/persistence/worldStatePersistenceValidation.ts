@@ -1,6 +1,6 @@
 import { entitiesOfKind, parseEntityStore, projectEntityStore, validateEntityCompatibilityProjection, validateEntityReferences, validateEntityStoreProvenance } from "@/game/domain/entity";
 import type { EntityCompatibilityProjection, EntityStore } from "@/game/domain/entity";
-import { parseCommittedEventLedger, type CommittedNarrativeEvent } from "@/game/domain/events";
+import { isWellFormedEventId, parseCommittedEventLedger, type CommittedNarrativeEvent } from "@/game/domain/events";
 import type { GenerationMetadata } from "@/game/domain/worldEntity";
 import { classifyWorldStateSchemaVersion, WORLD_STATE_SCHEMA_VERSION, type BattleState, type EndingState, type WorldState } from "@/game/domain/worldState";
 import type { EndingEntry } from "@/game/domain/worldEntries";
@@ -62,8 +62,20 @@ function isGeneration(value: unknown): value is GenerationMetadata {
     && (setup.contentIntensity === "normal" || setup.contentIntensity === "dark");
 }
 
+function isDialogueFocus(value: unknown): value is { readonly eventIds: readonly string[] } | null {
+  if (value === null) return true;
+  if (!isObject(value) || !hasExactKeys(value, ["npcId", "entityIds", "eventIds"])) return false;
+  return typeof value.npcId === "string"
+    && isStringArray(value.entityIds)
+    && value.entityIds.length === new Set(value.entityIds).size
+    && value.entityIds.every((id) => id.trim() !== "")
+    && isStringArray(value.eventIds)
+    && value.eventIds.length === new Set(value.eventIds).size
+    && value.eventIds.every((id) => isWellFormedEventId(id));
+}
+
 function isBattleSnapshot(value: unknown): boolean {
-  if (!isObject(value) || !hasRequiredAndOptionalKeys(value, ["entityStore", "eventLedger"], ["history", "threads"]) || !Array.isArray(value.eventLedger)) return false;
+  if (!isObject(value) || !hasRequiredAndOptionalKeys(value, ["entityStore", "eventLedger"], ["history", "threads", "dialogueFocus"]) || !Array.isArray(value.eventLedger)) return false;
   const store = parseEntityStore(value.entityStore);
   const ledger = parseCommittedEventLedger(value.eventLedger);
   if (!store.ok || !ledger.ok) return false;
@@ -71,6 +83,12 @@ function isBattleSnapshot(value: unknown): boolean {
   if (value.threads !== undefined
     && (!Array.isArray(value.threads)
       || !value.threads.every((thread, index) => parseStoryThread(thread, `battle.preBattleSnapshot.threads[${index}]`).ok))) return false;
+  const dialogueFocus = value.dialogueFocus;
+  if (dialogueFocus !== undefined && !isDialogueFocus(dialogueFocus)) return false;
+  if (dialogueFocus !== undefined && dialogueFocus !== null) {
+    const eventIds = new Set(ledger.value.map((event) => String(event.eventId)));
+    if (dialogueFocus.eventIds.some((eventId) => !eventIds.has(String(eventId)))) return false;
+  }
   return validateWorldStateEventLedger(ledger.value, store.store).length === 0
     && validateEntityStoreProvenance(store.store, ledger.value).length === 0;
 }

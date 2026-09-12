@@ -6,7 +6,9 @@ import type { EventCandidate } from "./candidateEvent";
 import type { StoryContract } from "./storyContract";
 import { createStoryContract } from "./storyContract";
 import type { StoryEvolutionState } from "./worldDelta";
-import type { QuestId } from "./worldEntity";
+import type { EntityId } from "./entity/entityCore";
+import type { EventId } from "./events";
+import type { NpcId, QuestId } from "./worldEntity";
 import { createEmptyEpisodicMemory, type EpisodicMemoryState } from "./episodicMemory";
 import type { NarrativeHistory } from "./narrativeHistory";
 import { createMainStoryThread, unresolvedStoryThreadIds, type StoryThread } from "./storyThreads";
@@ -55,6 +57,12 @@ export type StoryRevealState = {
   readonly visibleObjectiveIndex: number;
 };
 
+export type DialogueFocus = Readonly<{
+  readonly npcId: NpcId;
+  readonly entityIds: readonly EntityId[];
+  readonly eventIds: readonly EventId[];
+}>;
+
 export type StoryState = {
   readonly version: typeof STORY_STATE_SCHEMA_VERSION;
   /** 已提交的玩家回合数；不等于 event ledger 长度或 DB revision。 */
@@ -78,6 +86,8 @@ export type StoryState = {
   readonly memory: EpisodicMemoryState;
   /** 已实际发布/提交的原文表达；候选和未消费续接不得进入此集合。 */
   readonly history: NarrativeHistory;
+  /** 当前对话话题的结构化引用；每轮读取实体当前状态，不冻结旧状态。 */
+  readonly dialogueFocus?: DialogueFocus | null;
   /** 开局生成的故事契约：只含抽象方向，不含未来实体 ID（Task 2 起由开局生成写入）。 */
   readonly contract: StoryContract;
   /** 运行时具象化账本：实体序号与演化状态（Task 3 起由世界演化推进）。 */
@@ -126,6 +136,7 @@ export function createInitialStoryState(input: CreateInitialStoryStateInput): St
     prologueText: "",
     memory: createEmptyEpisodicMemory(),
     history: { entries: [] },
+    dialogueFocus: null,
     contract,
     evolution: {
       nextLocationOrdinal: 0,

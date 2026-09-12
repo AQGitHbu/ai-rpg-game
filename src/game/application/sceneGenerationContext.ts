@@ -12,6 +12,7 @@ import type {
 import type { NarrativeEmotion } from "@/game/domain/narrative";
 import type { MandatoryNarrativeBeat, ObjectiveRef, ObjectiveTransition } from "@/game/domain/narrativeBeat";
 import type { WorldState } from "@/game/domain/worldState";
+import type { EntityId } from "@/game/domain/entity";
 import { entitiesOfKind, projectEntityStore } from "@/game/domain/entity";
 import type { RelationshipStage, RelationshipTrend } from "@/game/domain/entity";
 import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
@@ -33,6 +34,7 @@ import type { NarrativeGenerationRepairReason } from "@/game/domain/narrativeGen
 import {
   renderNarrativeMemory,
   retrieveNarrativeMemory,
+  retrieveStoryEvidence,
   type RenderedNarrativeMemory,
 } from "@/game/gameplay/rpg/narrativeMemory";
 
@@ -735,6 +737,14 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
   })();
 
   const objectiveTarget = resolveObjectiveTarget(ws, transition.after);
+  const storyEvidence = retrieveStoryEvidence({
+    worldState: ws,
+    storyState: ss,
+    observerId: PLAYER_ENTITY_ID,
+    text: job.utterance ?? job.selectedDialogue?.label ?? "",
+    actionEntityIds: actionSummaryEntityIds(job.actionSummary) as readonly EntityId[],
+    focusEntityIds: focusNpcId === undefined ? [] : [focusNpcId],
+  });
   const narrativeMemory = renderNarrativeMemory({
     retrieved: retrieveNarrativeMemory({
       memory: ss.memory,
@@ -755,6 +765,8 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
       relevantFactIds: job.resolvedEvent.facts.map((entry) => entry.factId),
       currentLocationId: ws.currentLocationId,
       focusNpcId,
+      storyEvidence,
+      history: ss.history,
     }),
     entityStore: ws.entityStore,
   });

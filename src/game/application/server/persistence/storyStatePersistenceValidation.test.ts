@@ -60,4 +60,22 @@ describe("parsePersistableStoryState", () => {
       code: "INVALID_STORY_STATE",
     });
   });
+
+  it("persists dialogue focus as references and rejects malformed focus entries", () => {
+    const event = makeCommittedEvent({ type: "player_intent_expressed", intentCode: "unmapped_freeform" });
+    const value = {
+      ...storyState(),
+      memory: rebuildEpisodicMemory([event]),
+      dialogueFocus: {
+        npcId: "npc:focus",
+        entityIds: ["player_0", "npc:focus"],
+        eventIds: [event.eventId],
+      },
+    };
+    expect(parsePersistableStoryState(value, [event])).toMatchObject({ ok: true });
+    expect(parsePersistableStoryState({
+      ...value,
+      dialogueFocus: { ...value.dialogueFocus, eventIds: ["missing-event"] },
+    }, [event])).toMatchObject({ ok: false, code: "INVALID_STORY_STATE" });
+  });
 });

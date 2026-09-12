@@ -174,6 +174,9 @@ export async function performBattleRound(
               threads: preBattleSnapshot.threads,
               unresolvedThreads: unresolvedStoryThreadIds(preBattleSnapshot.threads),
             }),
+        ...(preBattleSnapshot?.dialogueFocus === undefined
+          ? {}
+          : { dialogueFocus: preBattleSnapshot.dialogueFocus }),
         narrative: restoredNarrative,
       };
 

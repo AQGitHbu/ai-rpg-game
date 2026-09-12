@@ -15,6 +15,8 @@ import type {
   NpcId,
   QuestId,
 } from "@/game/domain/worldEntity";
+import type { HistoryEntry, NarrativeHistory } from "@/game/domain/narrativeHistory";
+import type { EvidenceSelection } from "./retrieveStoryEvidence";
 
 export type NarrativeMemoryQuery = Readonly<{
   readonly memory: EpisodicMemoryState;
@@ -27,6 +29,9 @@ export type NarrativeMemoryQuery = Readonly<{
   readonly relevantQuestIds?: readonly QuestId[];
   readonly relevantFactIds?: readonly FactId[];
   readonly causeEventIds?: readonly EventId[];
+  /** Optional bidirectional evidence selection; its index is derived, never persisted. */
+  readonly storyEvidence?: EvidenceSelection;
+  readonly history?: NarrativeHistory;
   readonly currentLocationId?: LocationId | null;
   readonly focusNpcId?: NpcId | null;
   readonly maxEpisodes?: number;
@@ -55,6 +60,7 @@ export type RetrievedNarrativeMemory = Readonly<{
   readonly requiredEvents: readonly CommittedNarrativeEvent[];
   readonly relevantEpisodes: readonly NarrativeMemoryEpisodeMatch[];
   readonly recentScenes: readonly RecentSceneMemory[];
+  readonly historyEntries: readonly HistoryEntry[];
 }>;
 
 function stringSet(values: readonly (string | undefined)[] | undefined): ReadonlySet<string> {
@@ -99,6 +105,7 @@ function stableRequiredEvents(
 export function retrieveNarrativeMemory(
   query: NarrativeMemoryQuery,
 ): RetrievedNarrativeMemory {
+  const evidenceEventIds = query.storyEvidence?.eventIds ?? [];
   const requiredEventIds = stringSet(query.requiredEventIds?.map(String));
   const requiredEvents = stableRequiredEvents(query.ledger, query.requiredEventIds);
   const memory = query.beforeSequenceExclusive === undefined
@@ -107,12 +114,14 @@ export function retrieveNarrativeMemory(
   const requiredEpisodeIds = stringSet(query.requiredEpisodeIds?.map(String));
   const relevantEntityIds = new Set<string>([
     ...(query.relevantEntityIds ?? []).map(String),
+    ...(query.storyEvidence?.entityIds ?? []).map(String),
     ...(query.focusNpcId === undefined || query.focusNpcId === null ? [] : [String(query.focusNpcId)]),
   ]);
   const relevantQuestIds = stringSet(query.relevantQuestIds?.map(String));
   const relevantFactIds = stringSet(query.relevantFactIds?.map(String));
   const causeEventIds = new Set<string>([
     ...(query.causeEventIds ?? []).map(String),
+    ...evidenceEventIds.map(String),
     ...requiredEventIds,
     ...requiredEvents.flatMap((event) => event.causeEventIds.map(String)),
   ]);
@@ -175,5 +184,10 @@ export function retrieveNarrativeMemory(
     requiredEvents,
     relevantEpisodes: matches.sort(compareRank).slice(0, maxEpisodes),
     recentScenes: maxRecentScenes === 0 ? [] : memory.recentScenes.slice(-maxRecentScenes),
+    historyEntries: query.history === undefined || query.storyEvidence === undefined
+      ? []
+      : query.history.entries
+        .filter((entry) => query.storyEvidence!.historyIds.includes(entry.id))
+        .sort((left, right) => left.sequence - right.sequence),
   };
 }

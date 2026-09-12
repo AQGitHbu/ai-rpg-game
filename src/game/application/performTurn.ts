@@ -224,7 +224,8 @@ export async function performTurn(
 
   const worldStateWithBattleHistory = resolution.nextWorldState.battle.status !== "active"
     || resolution.nextWorldState.battle.preBattleSnapshot === undefined
-    || resolution.nextWorldState.battle.preBattleSnapshot.history !== undefined
+    || (resolution.nextWorldState.battle.preBattleSnapshot.history !== undefined
+      && resolution.nextWorldState.battle.preBattleSnapshot.dialogueFocus !== undefined)
     ? resolution.nextWorldState
     : {
         ...resolution.nextWorldState,
@@ -233,6 +234,7 @@ export async function performTurn(
           preBattleSnapshot: {
             ...resolution.nextWorldState.battle.preBattleSnapshot,
             history: record.storyState.history ?? { entries: [] },
+            dialogueFocus: record.storyState.dialogueFocus ?? null,
           },
         },
       };

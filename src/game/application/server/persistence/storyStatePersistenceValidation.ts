@@ -1,5 +1,6 @@
 import { parseEpisodicMemory, rebuildEpisodicMemory, type EpisodicMemoryState } from "@/game/domain/episodicMemory";
 import type { CommittedNarrativeEvent } from "@/game/domain/events";
+import { isWellFormedEventId } from "@/game/domain/events";
 import { parseNarrativeRuntimeState } from "@/game/domain/narrative";
 import { parseNarrativeHistory } from "@/game/domain/narrativeHistory";
 import {
@@ -19,6 +20,7 @@ const REQUIRED_STORY_KEYS = [
   "version", "turnNumber", "currentAct", "targetActs", "storyProgress", "tension", "nextPacingNeed",
   "budget", "threads", "unresolvedThreads", "candidateEventPool", "endingAllowed", "endingProposed", "narrative",
   "prologueShown", "prologueText", "memory", "history", "contract", "evolution",
+  "dialogueFocus",
 ] as const;
 const ALL_STORY_KEYS = [...REQUIRED_STORY_KEYS, "history", "reveal"] as const;
 const PACING_NEEDS: readonly PacingNeed[] = ["reveal", "develop", "complicate", "escalate", "climax", "resolve"];
@@ -48,6 +50,18 @@ function isReveal(value: unknown): boolean {
     && Object.keys(value).length === 2
     && typeof value.questId === "string"
     && isNonNegativeInteger(value.visibleObjectiveIndex);
+}
+
+function isDialogueFocus(value: unknown): value is { readonly eventIds: readonly string[] } | null {
+  if (value === null) return true;
+  if (!isObject(value) || Object.keys(value).length !== 3) return false;
+  return typeof value.npcId === "string"
+    && Array.isArray(value.entityIds)
+    && value.entityIds.every((id) => typeof id === "string" && id.trim() !== "")
+    && new Set(value.entityIds).size === value.entityIds.length
+    && Array.isArray(value.eventIds)
+    && value.eventIds.every((id) => typeof id === "string" && isWellFormedEventId(id))
+    && new Set(value.eventIds).size === value.eventIds.length;
 }
 
 function isStoryShape(value: JsonObject): value is JsonObject & {
@@ -80,6 +94,7 @@ function isStoryShape(value: JsonObject): value is JsonObject & {
     && typeof value.prologueText === "string"
     && isObject(value.evolution)
     && parseNarrativeHistory(value.history).ok
+    && isDialogueFocus(value.dialogueFocus)
     && (!('reveal' in value) || isReveal(value.reveal));
 }
 
@@ -115,6 +130,13 @@ export function parsePersistableStoryState(
   if (!history.ok) return { ok: false, code: "INVALID_STORY_STATE" };
   const rebuilt = rebuildEpisodicMemory(ledger);
   if (!sameJson(memory.value, rebuilt)) return { ok: false, code: "INVALID_STORY_STATE" };
+  const focus = value.dialogueFocus;
+  if (focus !== null && focus !== undefined && isDialogueFocus(focus)) {
+    const eventIds = new Set(ledger.map((event) => String(event.eventId)));
+    if (focus.eventIds.some((eventId) => !eventIds.has(String(eventId)))) {
+      return { ok: false, code: "INVALID_STORY_STATE" };
+    }
+  }
 
   return {
     ok: true,

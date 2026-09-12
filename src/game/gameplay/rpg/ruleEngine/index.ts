@@ -2,10 +2,11 @@ import { resolveNpcGift } from "./resolveNpcGift";
 import { locationScaleOf } from "@/game/domain/worldEntity";
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
+import type { EntityId } from "@/game/domain/entity";
 import type { Action, Interaction } from "@/game/domain/action";
 import type { ResolvedEvent } from "@/game/domain/resolvedEvent";
 import type { NarrativeEventKind } from "@/game/domain/narrative";
-import type { NarrativeEventDraft, TurnId, CommittedNarrativeEvent } from "@/game/domain/events";
+import type { NarrativeEventDraft, TurnId, CommittedNarrativeEvent, EventId } from "@/game/domain/events";
 import { asTurnId, eventIdFor } from "@/game/domain/events";
 import { commitEventDrafts, type EventCommitSource } from "@/game/domain/eventLedger";
 import type { TurnResolution } from "@/game/domain/turnResolution";
@@ -24,6 +25,7 @@ import { validateEntityStoreProvenance } from "@/game/domain/entity";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 import { advanceStoryThreads } from "@/game/gameplay/rpg/storyThreads";
 import { unresolvedStoryThreadIds } from "@/game/domain/storyThreads";
+import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 
 const DIALOGUE_REQUIRED_TURNS = 2;
 
@@ -83,6 +85,41 @@ function advanceDialogueSession(
   return {
     ...storyState,
     narrative: { ...storyState.narrative, dialogueSession },
+  };
+}
+
+function dialogueTopicEntityIds(action: Extract<Action, { readonly type: "talk" }>): readonly EntityId[] {
+  if (action.topic === undefined || action.topic.kind === "general") return [];
+  if (action.topic.kind === "fact") return [action.topic.factId];
+  if (action.topic.kind === "quest") return [action.topic.questId];
+  return [];
+}
+
+function updateDialogueFocus(
+  storyState: StoryState,
+  action: Action,
+  eventIds: readonly EventId[],
+): StoryState {
+  const previous = storyState.dialogueFocus ?? null;
+  if (action.type === "move") return { ...storyState, dialogueFocus: null };
+  if (action.type !== "talk") return storyState;
+
+  const sameNpc = previous !== null && String(previous.npcId) === String(action.npcId);
+  const topicIsUnspecified = action.topic === undefined;
+  const entityIds: readonly EntityId[] = previous !== null && sameNpc && topicIsUnspecified
+    ? previous.entityIds
+    : [PLAYER_ENTITY_ID, action.npcId, ...dialogueTopicEntityIds(action)]
+      .filter((id, index, all) => all.findIndex((candidate) => String(candidate) === String(id)) === index);
+  const retainedEventIds = previous !== null && sameNpc && topicIsUnspecified ? previous.eventIds : [];
+  const nextEventIds = [...retainedEventIds, ...eventIds]
+    .filter((id, index, all) => all.findIndex((candidate) => String(candidate) === String(id)) === index);
+  return {
+    ...storyState,
+    dialogueFocus: {
+      npcId: action.npcId,
+      entityIds,
+      eventIds: nextEventIds,
+    },
   };
 }
 
@@ -348,11 +385,11 @@ export function resolveTurn(
     threads: ending.nextStoryState.threads,
     eventIds: committedEvents.map((event) => event.eventId),
   });
-  const finalStoryState: StoryState = {
+  const finalStoryState: StoryState = updateDialogueFocus({
     ...ending.nextStoryState,
     threads,
     unresolvedThreads: unresolvedStoryThreadIds(threads),
-  };
+  }, action, committedEvents.map((event) => event.eventId));
 
   // 构建最终 ResolvedEvent（作为 TurnResolution.primaryResult）
   const primaryResult: ResolvedEvent = {

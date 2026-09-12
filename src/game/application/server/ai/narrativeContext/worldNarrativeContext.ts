@@ -2,7 +2,7 @@ import { renderAiRepairFeedback } from "../../../aiGenerationRetry";
 import type { Action } from "@/game/domain/action";
 import type { EvolutionNeed } from "@/game/domain/worldDelta";
 import type { QuestObjective, WorldState } from "@/game/domain/worldState";
-import { entitiesOfKind, projectEntityStore } from "@/game/domain/entity";
+import { entitiesOfKind, projectEntityStore, type EntityId } from "@/game/domain/entity";
 import type { WorldEvolutionSourceContext } from "@/game/application/worldEvolutionSource";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 import { compileNarrativeContext } from "./compileNarrativeContext";
@@ -11,6 +11,7 @@ import { createNarrativePromptCompilation } from "./renderNarrativeContext";
 import {
   renderNarrativeMemory,
   retrieveNarrativeMemory,
+  retrieveStoryEvidence,
 } from "@/game/gameplay/rpg/narrativeMemory";
 
 export const WORLD_CONTEXT_MAX_ESTIMATED_TOKENS = 8_000;
@@ -196,6 +197,9 @@ export function buildWorldNarrativeContextBlocks(
     ? "无活动任务。"
     : `任务=${activeQuest.name}；status=${activeQuest.status}；当前目标=${safeCurrentObjectiveLabel ?? "无"}。`;
   const narrativeMemory = renderNarrativeMemory({
+    // World evolution receives the same bounded evidence selection as scene
+    // generation; the world provider may use references but never gains prose
+    // outside the observer's published history.
     retrieved: retrieveNarrativeMemory({
       memory: story.memory,
       ledger: world.eventLedger,
@@ -213,6 +217,15 @@ export function buildWorldNarrativeContextBlocks(
         ? [currentQuestObjective.factId]
         : [],
       currentLocationId: world.currentLocationId,
+      storyEvidence: retrieveStoryEvidence({
+        worldState: world,
+        storyState: story,
+        observerId: "player_0" as EntityId,
+        text: "",
+        actionEntityIds: actionEntityIds(context.action) as readonly EntityId[],
+        focusEntityIds: [],
+      }),
+      history: story.history,
     }),
     entityStore: world.entityStore,
   });
@@ -343,6 +356,13 @@ export function buildWorldNarrativeContextBlocks(
       id: "world:episodic-memory", slot: "relevant_events", title: "相关历史经历", sourceKind: "episodic_memory", sourceRefs: narrativeMemory.manifestRefs.episodeIds.map(String),
       authority: "memory", retention: "optional", priority: 700,
       content: narrativeMemory.relevantEpisodesText,
+    }));
+  }
+  if (narrativeMemory.historyText !== undefined && narrativeMemory.historyText !== "") {
+    blocks.push(worldBlock({
+      id: "world:historical-expressions", slot: "relevant_events", title: "可引用的历史原话", sourceKind: "narrative_history",
+      sourceRefs: narrativeMemory.manifestRefs.historyIds ?? [], authority: "event", retention: "mandatory", priority: 965,
+      content: narrativeMemory.historyText ?? "",
     }));
   }
   if (narrativeMemory.recentScenesText !== "") {

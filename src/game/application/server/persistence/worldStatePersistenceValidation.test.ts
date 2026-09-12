@@ -325,6 +325,27 @@ describe("validatePersistableWorldState", () => {
     })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
   });
 
+  it("rejects a dialogue focus that points at an event outside the battle snapshot ledger", () => {
+    const valid = stateWithEnemy();
+    const battle = {
+      status: "active" as const,
+      enemyId: asEnemyId("enemy_1"),
+      playerHp: 100,
+      enemyHp: 30,
+      round: 1,
+      preBattleSnapshot: {
+        entityStore: valid.entityStore,
+        eventLedger: valid.eventLedger,
+        dialogueFocus: {
+          npcId: "npc_focus",
+          entityIds: ["player_0", "npc_focus"],
+          eventIds: ["turn:missing:dialogue"],
+        },
+      },
+    };
+    expect(validatePersistableWorldState({ ...valid, battle })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
+  });
+
   it("rejects unknown or malformed ending requirements without throwing", () => {
     const valid = state();
     expect(() => validatePersistableWorldState({

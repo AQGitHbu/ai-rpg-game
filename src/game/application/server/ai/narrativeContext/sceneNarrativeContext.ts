@@ -344,6 +344,13 @@ export function buildSceneNarrativeContextBlocks(
       content: memory.relevantEpisodesText,
     }));
   }
+  if (memory !== undefined && memory.historyText !== undefined && memory.historyText !== "") {
+    blocks.push(sceneBlock({
+      id: "scene:historical-expressions", slot: "relevant_events", title: "可引用的历史原话",
+      sourceKind: "narrative_history", sourceRefs: memory.manifestRefs.historyIds ?? [],
+      authority: "event", retention: "mandatory", priority: 965, content: memory.historyText,
+    }));
+  }
   if (memory !== undefined && memory.recentScenesText !== "") {
     blocks.push(sceneBlock({
       id: "scene:recent-scenes", slot: "recent_scenes", title: "近期场景节拍",
