@@ -2,6 +2,7 @@ import type { EndingId, EnemyId, FactId, GenerationMetadata, ItemId, LocationId,
 import type { CombatActionResult, CombatActionKind } from "./combat";
 import type { DialogueAct } from "./action";
 import type { RelationshipSignal } from "./entity/npcComponents";
+import type { EntityId } from "./entity/entityCore";
 import { isNarrativeEventPayload } from "./eventPayloadValidation";
 
 export type StoryPacing = "setup" | "develop" | "turn" | "climax" | "resolution";
@@ -300,6 +301,16 @@ export type NpcRelationshipChangedPayload = Readonly<{
   readonly signal: RelationshipSignal;
 }>;
 
+export type StoryInteractionResolvedPayload = Readonly<{
+  readonly type: "story_interaction_resolved";
+  readonly interactionId: string;
+  readonly npcId: NpcId;
+  readonly operation: "promise_confidentiality" | "request_introduction" | "request_verification" | "share_known_fact";
+  readonly factIds: readonly FactId[];
+  readonly audienceIds: readonly EntityId[];
+  readonly evidenceEventIds: readonly EventId[];
+}>;
+
 /**
  * 新 payload union：保留仍有生产语义的封闭变体，新增 NPC payload，
  * 收口遗留变体（删除 narrative_choice / narrative_dialogue_choice /
@@ -336,7 +347,8 @@ export type NarrativeEventPayload =
   | CandidateEventActivatedPayload
   | NpcInteractionRecordedPayload
   | NpcKnowledgeChangedPayload
-  | NpcRelationshipChangedPayload;
+  | NpcRelationshipChangedPayload
+  | StoryInteractionResolvedPayload;
 
 // ---------------------------------------------------------------------------
 // Committed Event Envelope 与 Draft
@@ -418,6 +430,7 @@ const PAYLOAD_TYPE_KEYS: ReadonlySet<string> = new Set<NarrativeEventPayload["ty
   "npc_interaction_recorded",
   "npc_knowledge_changed",
   "npc_relationship_changed",
+  "story_interaction_resolved",
 ]);
 
 export type ParseCommittedEventLedgerResult =

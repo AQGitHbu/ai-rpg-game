@@ -51,6 +51,7 @@ export type NarrativeBundleRepair = AiContentRepair<NarrativeBundleRepairReason,
 
 export type OpeningNarrativeBundleProposal = {
   readonly opening: OpeningGenerationCandidate;
+  readonly interactionProposals?: readonly import("@/game/domain/storyInteraction").StoryInteractionProposal[];
   readonly currentScene: BundleSceneProposal;
   readonly continuationScenes: readonly [];
   readonly terminal: { readonly kind: "next_decision"; readonly target: { readonly kind: "current_scene" } };

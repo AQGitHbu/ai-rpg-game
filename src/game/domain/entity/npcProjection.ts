@@ -11,6 +11,7 @@ import type {
   NpcIdentityAnchors, NpcKnowledgeComponent, NpcKnowledgeDisclosure, NpcKnowledgeEntry,
   NpcKnowledgeSource, NpcRelationshipComponent,
 } from "./npcComponents";
+import type { StoryInteraction } from "../storyInteraction";
 
 // ---------------------------------------------------------------------------
 // NPC 分层组件 ↔ legacy NpcEntry 的唯一投影通道（Plan 3 / Task 2）。
@@ -41,6 +42,7 @@ export type NpcImportedLayers = Readonly<{
   knowledge: NpcKnowledgeComponent;
   relationships: NpcRelationshipComponent;
   history: NpcHistoryComponent;
+  interactions?: readonly StoryInteraction[];
 }>;
 
 // ---------------------------------------------------------------------------
@@ -280,6 +282,7 @@ function buildLayers(input: Readonly<{
       freshImport: previous === undefined,
     }),
     history: { interactions: [...memory.interactionHistory] },
+    ...(previous?.interactions === undefined ? {} : { interactions: [...previous.interactions] }),
   };
 }
 

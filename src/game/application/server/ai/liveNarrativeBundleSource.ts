@@ -325,7 +325,7 @@ type ParseOpeningBundleResult =
 function parseOpeningBundleProposal(value: unknown, targetActs: 3 | 5): ParseOpeningBundleResult {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return { ok: false, reason: "root_not_object" };
   const response = value as Record<string, unknown>;
-  const allowedResponseKeys = new Set(["opening", "currentScene", "continuationScenes", "terminal"]);
+  const allowedResponseKeys = new Set(["opening", "interactionProposals", "currentScene", "continuationScenes", "terminal"]);
   if (Object.keys(response).some((key) => !allowedResponseKeys.has(key))) return { ok: false, reason: "unknown_keys" };
   if (!hasOnlyKnownOpeningCandidateKeys(response.opening)) return { ok: false, reason: "opening_unknown_keys" };
   const raw = normalizeOpeningCandidateShape(value, targetActs) as Record<string, unknown>;
@@ -333,6 +333,7 @@ function parseOpeningBundleProposal(value: unknown, targetActs: 3 | 5): ParseOpe
   if (!opening.ok) return { ok: false, reason: `opening_${opening.code}` };
   const narrative = parseNarrativeBundleProposal({
     worldDelta: null,
+    interactionProposals: response.interactionProposals,
     currentScene: raw.currentScene,
     continuationScenes: raw.continuationScenes,
     terminal: raw.terminal,
@@ -345,7 +346,10 @@ function parseOpeningBundleProposal(value: unknown, targetActs: 3 | 5): ParseOpe
   ) return { ok: false, reason: "invalid_terminal" };
   const responses = resolveOpeningResponses(opening.value);
   if (responses === null) return { ok: false, reason: "invalid_response_reference" };
-  const declaredKeys = new Set(responses.map((response) => response.candidateId));
+  const declaredKeys = new Set([
+    ...responses.map((response) => response.candidateId),
+    ...(narrative.proposal.interactionProposals ?? []).map((proposal) => `interaction:${proposal.proposalKey}`),
+  ]);
   const choiceKeys = narrative.proposal.currentScene.choices.map((choice) => choice.candidateId);
   if (choiceKeys.length !== 2 || new Set(choiceKeys).size !== 2
     || choiceKeys.some((key) => !declaredKeys.has(key))) {
@@ -355,6 +359,9 @@ function parseOpeningBundleProposal(value: unknown, targetActs: 3 | 5): ParseOpe
     ok: true,
     proposal: {
       opening: opening.value,
+      ...(narrative.proposal.interactionProposals === undefined
+        ? {}
+        : { interactionProposals: narrative.proposal.interactionProposals }),
       currentScene: narrative.proposal.currentScene,
       continuationScenes: [],
       terminal: { kind: "next_decision", target: { kind: "current_scene" } },

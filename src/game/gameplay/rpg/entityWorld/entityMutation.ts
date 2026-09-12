@@ -1,6 +1,7 @@
 import {
   EntityStoreInvariantError,
   NPC_HISTORY_CAP,
+  NPC_GOAL_STATUSES,
   createEntityStore,
   projectEntityStore,
   validateEntityReferences,
@@ -19,6 +20,7 @@ import {
 import type { NpcInteraction, WorldState } from "@/game/domain/worldState";
 import { PLAYER_ENTITY_ID, type EnemyId, type FactId, type ItemId, type LocationId, type NpcId, type QuestId } from "@/game/domain/worldEntity";
 import type { EventId } from "@/game/domain/events";
+import type { StoryInteraction } from "@/game/domain/storyInteraction";
 import {
   applyRelationshipCommitment,
   applyRelationshipSignalToComponent,
@@ -87,6 +89,8 @@ export type EntityMutation =
   | { readonly kind: "set_quest_status"; readonly questId: QuestId; readonly status: "locked" | "active" | "completed" | "failed" | "closed" }
   | { readonly kind: "set_enemy_defeated"; readonly enemyId: EnemyId; readonly defeated: boolean }
   | { readonly kind: "set_npc_lifecycle"; readonly npcId: NpcId; readonly lifecycle: "active" | "inactive" }
+  /** NPC 目标只允许按状态窄更新；描述、优先级与目标集合不在运行时动作语言内。 */
+  | { readonly kind: "set_npc_goal_status"; readonly npcId: NpcId; readonly goalId: string; readonly status: NpcDynamicStateComponent["goals"][number]["status"]; readonly source: Extract<RelationshipMutationSource, { readonly kind: "action" }>; readonly supportingEventId: EventId }
   /**
    * 交互历史追加：载荷就是「存下来的那条 NpcInteraction 减去两个由实体层盖章的字段」。
    * 少写的两支正好是 `relationshipDelta` 与 `summary`（R5-2）：整批里唯一知道裁剪后真实
@@ -104,7 +108,8 @@ export type EntityMutation =
    */
   | { readonly kind: "set_npc_met"; readonly npcId: NpcId; readonly met: true }
   | { readonly kind: "replace_location_component"; readonly locationId: LocationId; readonly location: LocationComponent }
-  | { readonly kind: "create_entities"; readonly records: readonly EntityRecord[] };
+  | { readonly kind: "create_entities"; readonly records: readonly EntityRecord[] }
+  | { readonly kind: "install_story_interaction"; readonly npcId: NpcId; readonly interaction: StoryInteraction };
 
 /**
  * `record_npc_interaction` 的载荷形状：**派生自** domain 的 NpcInteraction，
@@ -200,6 +205,10 @@ export type EntityMutationErrorCode =
   // 最终只以 structure_invalid + entityId 见客——调用方就分不出「这条行动已记过」与「形状不合法」。
   // 本层要在任何写入之前失败并给出可判别的指令（换一个已铸造的 actionId），所以自持一个码。
   | "duplicate_npc_interaction"
+  | "duplicate_story_interaction"
+  | "unknown_npc_goal"
+  | "invalid_npc_goal_status"
+  | "illegal_npc_goal_transition"
   // met 的唯一合法取值就是 true：false / 非布尔都表达「撤销初遇」，而这条通道刻意不存在。
   // 同样不能借 structure_invalid 表达——那是「数据形状不对」，这是「这个意图没有写入语言」。
   | "invalid_npc_met_value";
@@ -681,8 +690,23 @@ function applyOne(records: readonly EntityRecord[], mutation: EntityMutation, ba
     case "discover_fact": {
       const fact = recordOfKind(records, mutation.factId, "fact");
       if (!fact.ok) return fact;
-      if (fact.record.fact.discovered) return { ok: true, records };
-      return { ok: true, records: replaceRecord(records, mutation.factId, { ...fact.record, fact: { ...fact.record.fact, discovered: true } }) };
+      const player = recordOfKind(records, PLAYER_ENTITY_ID, "player_character");
+      if (!player.ok) return player;
+      const knownFactIds = player.record.knowledge.knownFactIds.includes(mutation.factId)
+        ? player.record.knowledge.knownFactIds
+        : [...player.record.knowledge.knownFactIds, mutation.factId];
+      if (fact.record.fact.discovered && knownFactIds === player.record.knowledge.knownFactIds) return { ok: true, records };
+      let nextRecords = records;
+      if (!fact.record.fact.discovered) {
+        nextRecords = replaceRecord(nextRecords, mutation.factId, { ...fact.record, fact: { ...fact.record.fact, discovered: true } });
+      }
+      if (knownFactIds !== player.record.knowledge.knownFactIds) {
+        nextRecords = replaceRecord(nextRecords, PLAYER_ENTITY_ID, {
+          ...player.record,
+          knowledge: { knownFactIds },
+        });
+      }
+      return { ok: true, records: nextRecords };
     }
     case "record_npc_knowledge": {
       // 三道边界（主体存活 / 来源支 / 引用上下文）先过，entry 语义一条都不在这里重算：
@@ -772,6 +796,29 @@ function applyOne(records: readonly EntityRecord[], mutation: EntityMutation, ba
         return failure("invalid_lifecycle_transition", mutation.npcId);
       }
       return { ok: true, records: replaceRecord(records, mutation.npcId, { ...npc.record, core: { ...npc.record.core, lifecycle: mutation.lifecycle } }) };
+    }
+    case "set_npc_goal_status": {
+      const subject = activeNpcSubject(records, mutation.npcId);
+      if (!subject.ok) return failure(subject.code, subject.entityId);
+      const checkedSource = checkRelationshipSource(mutation.source);
+      if (!checkedSource.ok) return failure(checkedSource.code, mutation.npcId);
+      if (!NPC_GOAL_STATUSES.includes(mutation.status)) return failure("invalid_npc_goal_status", mutation.goalId);
+      const goal = subject.npc.dynamicState.goals.find((entry) => entry.goalId === mutation.goalId);
+      if (goal === undefined) return failure("unknown_npc_goal", mutation.goalId);
+      if (goal.status === mutation.status) return { ok: true, records };
+      if (goal.status === "completed" || goal.status === "abandoned") {
+        return failure("illegal_npc_goal_transition", mutation.goalId);
+      }
+      const goals = subject.npc.dynamicState.goals.map((entry) => (
+        entry.goalId === mutation.goalId ? { ...entry, status: mutation.status } : entry
+      ));
+      return {
+        ok: true,
+        records: replaceRecord(records, mutation.npcId, {
+          ...subject.npc,
+          dynamicState: { ...subject.npc.dynamicState, goals },
+        }),
+      };
     }
     case "record_npc_interaction": {
       // 主体闸门与知识两支同一道门；地点必须是 store 里真实的 location 实体，
@@ -873,6 +920,24 @@ function applyOne(records: readonly EntityRecord[], mutation: EntityMutation, ba
         seen.add(record.core.id);
       }
       return { ok: true, records: [...records, ...mutation.records] };
+    }
+    case "install_story_interaction": {
+      const subject = activeNpcSubject(records, mutation.npcId);
+      if (!subject.ok) return failure(subject.code, subject.entityId);
+      if (mutation.interaction.npcId !== mutation.npcId) return failure("invalid_reference", mutation.npcId);
+      const existing = subject.npc.interactions?.find((entry) => entry.id === mutation.interaction.id);
+      if (existing !== undefined) {
+        return JSON.stringify(existing) === JSON.stringify(mutation.interaction)
+          ? { ok: true, records }
+          : failure("duplicate_story_interaction", mutation.npcId);
+      }
+      return {
+        ok: true,
+        records: replaceRecord(records, mutation.npcId, {
+          ...subject.npc,
+          interactions: [...(subject.npc.interactions ?? []), mutation.interaction],
+        }),
+      };
     }
   }
 }

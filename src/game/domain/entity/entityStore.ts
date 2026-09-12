@@ -14,6 +14,7 @@ import {
   validateNpcRelationships,
   type NpcComponentValidationIssue,
 } from "./npcComponents";
+import { parseStoryInteraction } from "../storyInteraction";
 import { PLAYER_ENTITY_ID } from "../worldEntity";
 import { isWellFormedEventId } from "../events";
 import type { CommittedNarrativeEvent, EventId } from "../events";
@@ -26,7 +27,7 @@ import type { NpcEntityRecord } from "./entityRecord";
 // ---------------------------------------------------------------------------
 
 export type EntityStore = Readonly<{
-  version: 2;
+  version: 3;
   records: readonly EntityRecord[];
 }>;
 
@@ -106,7 +107,7 @@ const OBJECTIVE_ID_FIELDS: Readonly<Record<QuestObjective["kind"], string>> = {
 
 /** 每个 kind 唯一合法的组件集合；缺成员是 invalid_record_shape，整体换了另一套是 kind_id_mismatch。 */
 const REQUIRED_COMPONENTS: Readonly<Record<EntityKind, readonly string[]>> = {
-  player_character: ["identity", "position"],
+  player_character: ["identity", "knowledge", "position"],
   npc: ["identity", "position", "dynamicState", "knowledge", "relationships", "history"],
   location: ["location"],
   item: ["possession", "presentation"],
@@ -128,6 +129,7 @@ const KIND_BY_SIGNATURE: Readonly<Record<string, EntityKind>> = Object.fromEntri
 );
 
 const CORE_KEYS = ["id", "kind", "name", "createdAtTurn", "lifecycle"] as const;
+const CORE_ALLOWED_KEYS = [...CORE_KEYS, "aliases"] as const;
 
 // ---------------------------------------------------------------------------
 // shape 原语
@@ -238,6 +240,14 @@ function isPlayerIdentityValue(value: unknown): boolean {
   return component(value, ["identity", "stats"]) && isString(value.identity) && isStatsValue(value.stats);
 }
 
+function isPlayerKnowledgeValue(value: unknown): boolean {
+  if (!component(value, ["knownFactIds"])) return false;
+  const knownFactIds = value.knownFactIds;
+  if (!isStringArray(knownFactIds)) return false;
+  const ids = knownFactIds as readonly string[];
+  return new Set(ids).size === ids.length;
+}
+
 function isNpcIdentityValue(value: unknown): boolean {
   return (
     component(value, ["role", "description", "tags", "anchors"]) &&
@@ -269,6 +279,13 @@ function npcComponentIssues(record: UnknownRecord, entityId: string | undefined)
   }
   for (const [name, validate] of NPC_LAYERED_VALIDATORS) {
     for (const entry of validate(record[name])) push(entry.path);
+  }
+  if ("interactions" in record) {
+    const interactions = record.interactions;
+    if (!Array.isArray(interactions)) push("interactions");
+    else interactions.forEach((entry, index) => {
+      if (!parseStoryInteraction(entry, `interactions[${index}]`).ok) push(`interactions[${index}]`);
+    });
   }
   return issues;
 }
@@ -483,8 +500,11 @@ function isFactValue(value: unknown): boolean {
 }
 
 const COMPONENT_CHECKS: Readonly<Partial<Record<EntityKind, (raw: UnknownRecord) => boolean>>> = {
-  player_character: (raw) => isPlayerIdentityValue(raw.identity) && isPositionValue(raw.position),
-  npc: (raw) => isNpcIdentityValue(raw.identity) && isPositionValue(raw.position),
+  player_character: (raw) => isPlayerIdentityValue(raw.identity)
+    && isPlayerKnowledgeValue(raw.knowledge)
+    && isPositionValue(raw.position),
+  npc: (raw) => isNpcIdentityValue(raw.identity) && isPositionValue(raw.position)
+    && (!('interactions' in raw) || (Array.isArray(raw.interactions) && raw.interactions.every((entry) => parseStoryInteraction(entry).ok))),
   location: (raw) => isLocationValue(raw.location),
   item: (raw) => isPresentationValue(raw.presentation) && isPossessionValue(raw.possession),
   enemy: (raw) => isEnemyValue(raw.enemy) && isPositionValue(raw.position),
@@ -503,14 +523,31 @@ function coreIdOf(core: UnknownRecord): string | undefined {
 
 function validateCore(core: UnknownRecord): readonly EntityStoreValidationIssue[] {
   const entityId = coreIdOf(core);
-  if (!hasExactKeys(core, CORE_KEYS, CORE_KEYS)) return [issue("invalid_record_shape", entityId)];
+  if (!hasExactKeys(core, CORE_KEYS, CORE_ALLOWED_KEYS)) return [issue("invalid_record_shape", entityId)];
   if (!isString(core.id) || !isString(core.name) || !isString(core.kind)) {
     return [issue("invalid_record_shape", entityId)];
   }
   const issues: EntityStoreValidationIssue[] = [];
   if (!isNonNegativeInteger(core.createdAtTurn)) issues.push(issue("invalid_created_turn", entityId));
   if (!matchesEnum(core.lifecycle, ENTITY_LIFECYCLES)) issues.push(issue("invalid_lifecycle", entityId));
+  if (core.aliases !== undefined && (!Array.isArray(core.aliases) || !core.aliases.every(isAliasValue))) {
+    issues.push(issue("invalid_record_shape", entityId, "aliases"));
+  }
   return issues;
+}
+
+function isAliasValue(value: unknown): boolean {
+  if (!isRecord(value) || !hasExactKeys(value, ["text", "observerIds", "evidenceEventIds"], ["text", "observerIds", "evidenceEventIds"])) return false;
+  const observerIds = value.observerIds;
+  const evidenceEventIds = value.evidenceEventIds;
+  if (!isStringArray(observerIds)) return false;
+  const ids = observerIds as readonly string[];
+  return isString(value.text)
+    && value.text.trim().length > 0
+    && new Set(ids).size === ids.length
+    && Array.isArray(evidenceEventIds)
+    && evidenceEventIds.every((eventId) => isString(eventId) && isWellFormedEventId(eventId))
+    && new Set(evidenceEventIds).size === evidenceEventIds.length;
 }
 
 function questDrift(quest: unknown, lifecycle: unknown): boolean {
@@ -541,7 +578,9 @@ function validateRecord(record: unknown): readonly EntityStoreValidationIssue[] 
     .filter((key) => key !== "core")
     .sort();
   const required = REQUIRED_COMPONENTS[kind];
-  if (signatureOf(present) !== signatureOf(required)) {
+  const npcShape = kind === "npc"
+    && (signatureOf(present) === signatureOf(required) || signatureOf(present) === signatureOf([...required, "interactions"]));
+  if (!npcShape && signatureOf(present) !== signatureOf(required)) {
     // 组件集合与声明 kind 不符时：整套恰好命中另一个 kind 的签名、且含本 kind 不合法的
     // 组件名，才算 kind 说错；只是缺成员（present ⊆ 本 kind 组件集）算 record shape 问题。
     const otherKind: EntityKind | undefined = KIND_BY_SIGNATURE[signatureOf(present)];
@@ -650,7 +689,7 @@ export function validateEntityStoreProvenance(
 export function validateEntityStoreStructure(value: unknown): readonly EntityStoreValidationIssue[] {
   if (!component(value, ["version", "records"])) return [issue("invalid_record_shape")];
   const issues: EntityStoreValidationIssue[] = [];
-  if (value.version !== 2) issues.push(issue("invalid_store_version"));
+  if (value.version !== 3) issues.push(issue("invalid_store_version"));
   if (!Array.isArray(value.records)) return [...issues, issue("invalid_record_shape")];
   const seen = new Set<string>();
   let playerCount = 0;
@@ -669,7 +708,7 @@ export function validateEntityStoreStructure(value: unknown): readonly EntitySto
 }
 
 export function createEntityStore(records: readonly EntityRecord[]): EntityStore {
-  const store: EntityStore = { version: 2, records: [...records] };
+  const store: EntityStore = { version: 3, records: [...records] };
   const [first] = validateEntityStoreStructure(store);
   if (first !== undefined) throw new EntityStoreInvariantError(first);
   return store;
@@ -678,10 +717,10 @@ export function createEntityStore(records: readonly EntityRecord[]): EntityStore
 export function parseEntityStore(value: unknown): ParseEntityStoreResult {
   const issues = validateEntityStoreStructure(value);
   if (issues.length > 0) return { ok: false, issues };
-  // 通过全量 exact-key/值域检查后，value 的形状必为 { version: 2, records: 合法 record }；
+  // 通过全量 exact-key/值域检查后，value 的形状必为 { version: 3, records: 合法 record }；
   // 这里只做公开类型收敛，不跳过任何一项校验。
   const { records } = value as Readonly<{ records: readonly EntityRecord[] }>;
-  return { ok: true, store: { version: 2, records } };
+  return { ok: true, store: { version: 3, records } };
 }
 
 export function getEntity(store: EntityStore, id: string): EntityRecord | undefined {

@@ -20,8 +20,14 @@ import type {
   QuestId,
 } from "@/game/domain/worldEntity";
 import type { PreparedChoiceCandidate, PreparedArrivalNpcContext } from "@/game/gameplay/rpg/preparedContinuation";
+import { getEntity, type EntityRecord, type NpcEntityRecord } from "@/game/domain/entity";
+import { evaluateStoryCondition } from "@/game/gameplay/rpg/storyInteraction";
 
 export type { PreparedChoiceCandidate, PreparedArrivalNpcContext };
+
+function npcRecord(record: EntityRecord | undefined): NpcEntityRecord | undefined {
+  return record?.core.kind === "npc" ? record as NpcEntityRecord : undefined;
+}
 
 export type BundleStepDescriptor = {
   readonly stepKey: string;
@@ -89,6 +95,13 @@ function preparedNpcContext(
     .filter((fact) => fact.discovered)
     .map((fact) => fact.factId);
 
+  const record = npcRecord(getEntity(worldState.entityStore, npc.id));
+  const interactionIds = record
+    ? record.interactions
+      ?.filter((entry) => entry.condition.every((condition) => evaluateStoryCondition(worldState, condition)))
+      .map((entry) => entry.id)
+    : undefined;
+
   return {
     id: npc.id,
     name: npc.name,
@@ -97,6 +110,7 @@ function preparedNpcContext(
     knownFactCards,
     sceneVisibleFactIds,
     goals: [...npc.memory.goals],
+    ...(interactionIds === undefined || interactionIds.length === 0 ? {} : { interactionIds }),
   };
 }
 
@@ -136,6 +150,25 @@ function authorizedFactIdsForArrivalNpc(
 
 function choicesForNpc(npc: PreparedArrivalNpcContext | undefined, stepKey: string): readonly PreparedChoiceCandidate[] {
   if (npc === undefined) return [];
+  const interactionIds = npc.interactionIds ?? [];
+  if (interactionIds.length >= 2) {
+    return interactionIds.slice(0, 2).map((interactionId, index) => ({
+      candidateId: `${stepKey}_interaction_${index + 1}`,
+      action: { type: "talk", npcId: npc.id, dialogueAct: "ask", interactionId },
+    }));
+  }
+  if (interactionIds.length === 1) {
+    return [
+      {
+        candidateId: `${stepKey}_interaction_1`,
+        action: { type: "talk", npcId: npc.id, dialogueAct: "ask", interactionId: interactionIds[0] },
+      },
+      {
+        candidateId: `${stepKey}_choice_2`,
+        action: { type: "talk", npcId: npc.id, dialogueAct: "challenge" },
+      },
+    ];
+  }
   return [
     {
       candidateId: `${stepKey}_choice_1`,

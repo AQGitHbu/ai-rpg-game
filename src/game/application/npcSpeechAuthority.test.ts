@@ -123,7 +123,7 @@ function npcRecord(): NpcEntityRecord {
 
 function records(): readonly EntityRecord[] {
   return [
-    { core: { id: PLAYER_ENTITY_ID, kind: "player_character", name: "玩家", createdAtTurn: 0, lifecycle: "active" }, identity: { identity: "行者", stats: { hp: 10, attack: 2, defense: 1 } }, position: { locationId: LOCATION, locationOrder: 0 } },
+    { core: { id: PLAYER_ENTITY_ID, kind: "player_character", name: "玩家", createdAtTurn: 0, lifecycle: "active" }, identity: { identity: "行者", stats: { hp: 10, attack: 2, defense: 1 } }, knowledge: { knownFactIds: [] }, position: { locationId: LOCATION, locationOrder: 0 } },
     npcRecord(),
     { core: { id: NPC_B, kind: "npc", name: "旅人", createdAtTurn: 0, lifecycle: "active" }, identity: { role: "旅人", description: "", tags: [], anchors: ANCHORS }, position: { locationId: LOCATION, locationOrder: 1 }, dynamicState: { isCompanion: false, met: true, emotion: "neutral", goals: [] }, knowledge: { entries: [] }, relationships: { outgoing: [] }, history: { interactions: [] } },
     factRecord(FACT_PUBLIC, "桥下留有新鲜脚印"),
@@ -133,7 +133,7 @@ function records(): readonly EntityRecord[] {
 
 function authority(): NpcSpeechAuthority {
   return buildNpcSpeechAuthority({
-    store: { version: 2, records: records() },
+    store: { version: 3, records: records() },
     speakerNpcId: NPC_A,
     sceneVisibleFactIds: [FACT_PUBLIC, FACT_PUBLIC, FACT_SECRET],
     targetContext: { targetId: PLAYER_ENTITY_ID, interactionEventIds: [asEventId("evt:test:action_2:2")] },
@@ -178,7 +178,7 @@ describe("NpcSpeechAuthority", () => {
 
   it("does not read a legacy memory block because the input is the entity store", () => {
     const result = buildNpcSpeechAuthority({
-      store: { version: 2, records: records() },
+    store: { version: 3, records: records() },
       speakerNpcId: NPC_A,
       sceneVisibleFactIds: [FACT_PUBLIC],
     })!;
@@ -189,7 +189,7 @@ describe("NpcSpeechAuthority", () => {
 
   it("crops relations and evidence to an explicitly requested NPC target", () => {
     const result = buildNpcSpeechAuthority({
-      store: { version: 2, records: records() },
+    store: { version: 3, records: records() },
       speakerNpcId: NPC_A,
       sceneVisibleFactIds: [FACT_PUBLIC],
       targetContext: { targetId: NPC_B },
@@ -202,7 +202,7 @@ describe("NpcSpeechAuthority", () => {
 
   it("returns no relation or evidence when target is absent", () => {
     const result = buildNpcSpeechAuthority({
-      store: { version: 2, records: records() },
+      store: { version: 3, records: records() },
       speakerNpcId: NPC_A,
       sceneVisibleFactIds: [FACT_PUBLIC],
     })!;
@@ -219,7 +219,7 @@ describe("NpcSpeechAuthority", () => {
       relationships: { outgoing: [edge(unknownTarget), edge(NPC_B), edge(PLAYER_ENTITY_ID)] },
     };
     const result = buildNpcSpeechAuthority({
-      store: { version: 2, records: records().map((record) => record.core.id === NPC_A ? speaker : record) },
+    store: { version: 3, records: records().map((record) => record.core.id === NPC_A ? speaker : record) },
       speakerNpcId: NPC_A,
       sceneVisibleFactIds: [FACT_PUBLIC],
       targetContext: { targetId: unknownTarget },
@@ -238,7 +238,7 @@ describe("NpcSpeechAuthority", () => {
       },
     };
     const result = buildNpcSpeechAuthority({
-      store: { version: 2, records: records().map((record) => record.core.id === NPC_A ? speaker : record) },
+    store: { version: 3, records: records().map((record) => record.core.id === NPC_A ? speaker : record) },
       speakerNpcId: NPC_A,
       sceneVisibleFactIds: [FACT_PUBLIC],
       targetContext: { targetId: PLAYER_ENTITY_ID },
@@ -250,13 +250,13 @@ describe("NpcSpeechAuthority", () => {
   it("keeps empty history empty and returns null for an unknown speaker", () => {
     const speaker = { ...npcRecord(), history: { interactions: [] } };
     const result = buildNpcSpeechAuthority({
-      store: { version: 2, records: records().map((record) => record.core.id === NPC_A ? speaker : record) },
+    store: { version: 3, records: records().map((record) => record.core.id === NPC_A ? speaker : record) },
       speakerNpcId: NPC_A,
       sceneVisibleFactIds: [FACT_PUBLIC],
     })!;
     expect(result.recentInteractions).toEqual([]);
     expect(buildNpcSpeechAuthority({
-      store: { version: 2, records: records() },
+    store: { version: 3, records: records() },
       speakerNpcId: asNpcId("npc_missing"),
       sceneVisibleFactIds: [],
     })).toBeNull();
@@ -273,7 +273,7 @@ describe("NpcSpeechAuthority", () => {
       },
     };
     const result = buildNpcSpeechAuthority({
-      store: { version: 2, records: records().map((record) => record.core.id === NPC_A ? speaker : record) },
+      store: { version: 3, records: records().map((record) => record.core.id === NPC_A ? speaker : record) },
       speakerNpcId: NPC_A,
       sceneVisibleFactIds: [FACT_PUBLIC, FACT_ORPHAN, asFactId("fact_scene_unknown")],
       targetContext: { targetId: PLAYER_ENTITY_ID },
@@ -306,7 +306,7 @@ describe("NpcSpeechAuthority", () => {
       targetIds: [PLAYER_ENTITY_ID],
     });
     const result = buildNpcSpeechAuthority({
-      store: { version: 2, records: records() },
+    store: { version: 3, records: records() },
       speakerNpcId: NPC_A,
       sceneVisibleFactIds: [FACT_PUBLIC],
       eventLedger: [validInteraction, unrelatedEvent],
@@ -334,7 +334,7 @@ describe("NpcSpeechAuthority", () => {
       targetIds: [PLAYER_ENTITY_ID],
     });
     const authority = buildNpcSpeechAuthority({
-      store: { version: 2, records: records() },
+      store: { version: 3, records: records() },
       speakerNpcId: NPC_A,
       sceneVisibleFactIds: [FACT_PUBLIC],
       eventLedger: [unrelatedEvent],

@@ -44,7 +44,7 @@ export type CreateApprovedChoiceInput = {
 
 export type CreateApprovedChoiceResult =
   | { readonly ok: true; readonly choice: ApprovedChoice }
-  | { readonly ok: false; readonly reason: "empty_label" | "invalid_revision" | "empty_scene" };
+  | { readonly ok: false; readonly reason: "empty_label" | "invalid_revision" | "empty_scene" | "invalid_interaction_id" };
 
 /** 逐字段重建批准选项：禁止原引用直达注册表。 */
 export function createApprovedChoice(input: CreateApprovedChoiceInput): CreateApprovedChoiceResult {
@@ -53,6 +53,11 @@ export function createApprovedChoice(input: CreateApprovedChoiceInput): CreateAp
   if (input.sceneId.trim() === "") return { ok: false, reason: "empty_scene" };
   if (!Number.isInteger(input.basedOnRevision) || input.basedOnRevision < 0) {
     return { ok: false, reason: "invalid_revision" };
+  }
+  if (input.action.type === "talk"
+    && input.action.interactionId !== undefined
+    && (typeof input.action.interactionId !== "string" || input.action.interactionId.trim() === "")) {
+    return { ok: false, reason: "invalid_interaction_id" };
   }
   return {
     ok: true,
@@ -78,6 +83,7 @@ function rebuildAction(action: Action): Action {
       return {
         type: "talk",
         npcId: action.npcId,
+        ...(action.interactionId === undefined ? {} : { interactionId: action.interactionId }),
         dialogueAct: action.dialogueAct,
         ...(action.topic === undefined ? {} : { topic: action.topic }),
       };
@@ -121,7 +127,7 @@ function rebuildAction(action: Action): Action {
  */
 export function semanticSummaryOf(action: Action): string {
   switch (action.type) {
-    case "talk": return `talk:${escapeSummaryPart(action.npcId)}:${escapeSummaryPart(action.dialogueAct)}:${escapeSummaryPart(dialogueTopicKey(action.topic))}`;
+    case "talk": return `talk:${escapeSummaryPart(action.npcId)}:${escapeSummaryPart(action.dialogueAct)}:${escapeSummaryPart(dialogueTopicKey(action.topic))}${action.interactionId === undefined ? "" : `:${escapeSummaryPart(action.interactionId)}`}`;
     case "move": return `move:${escapeSummaryPart(action.locationId)}`;
     case "explore": return "explore";
     case "investigate": return `investigate:${escapeSummaryPart(action.factId)}${action.approachId === undefined ? "" : `:${escapeSummaryPart(action.approachId)}`}`;
@@ -160,7 +166,7 @@ function fnv1a(data: string): number {
 function serializeAction(action: Action): string {
   const part = (value: string): string => String(value).replaceAll("\\", "\\\\").replaceAll("|", "\\|");
   switch (action.type) {
-    case "talk": return `talk|${part(action.npcId)}|${part(action.dialogueAct)}|${part(dialogueTopicKey(action.topic))}`;
+    case "talk": return `talk|${part(action.npcId)}|${part(action.dialogueAct)}|${part(dialogueTopicKey(action.topic))}${action.interactionId === undefined ? "" : `|${part(action.interactionId)}`}`;
     case "move": return `move|${part(action.locationId)}`;
     case "explore": return "explore";
     case "investigate": return `investigate|${part(action.factId)}${action.approachId === undefined ? "" : `|${part(action.approachId)}`}`;

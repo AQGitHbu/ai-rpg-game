@@ -196,6 +196,7 @@ function playerRecord(): PlayerEntityRecord {
       id: PLAYER_ENTITY_ID, kind: "player_character", name: "侠客", createdAtTurn: 0, lifecycle: "active",
     },
     identity: { identity: "镖师", stats: { hp: 100, attack: 10, defense: 5 } },
+    knowledge: { knownFactIds: [] },
     position: { locationId: LOC, locationOrder: 0 },
   };
 }

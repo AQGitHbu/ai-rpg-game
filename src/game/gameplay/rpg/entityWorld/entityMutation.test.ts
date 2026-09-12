@@ -31,6 +31,7 @@ import {
 import type { FactId, LocationId, NpcId } from "@/game/domain/worldEntity";
 import type { RelationshipSignal } from "@/game/domain/entity";
 import type { RelationshipCommitmentOperation, RelationshipTargetId } from "@/game/gameplay/rpg/npcMemory";
+import type { StoryInteraction } from "@/game/domain/storyInteraction";
 
 // ---------------------------------------------------------------------------
 // 规则可信 mutation 闭包：store 是唯一写入目标，兼容投影一律由 projector 重建。
@@ -1291,7 +1292,7 @@ describe("知识写入通道唯一性", () => {
         return /\bknowledge\s*[:,}]/.test(body.slice(entry.at, next === undefined ? body.length : next.at));
       })
       .map((entry) => entry.name);
-    expect(writers.sort()).toEqual(["record_npc_knowledge", "set_npc_knowledge_disclosure"]);
+    expect(writers.sort()).toEqual(["discover_fact", "record_npc_knowledge", "set_npc_knowledge_disclosure"]);
   });
 });
 
@@ -1835,6 +1836,50 @@ describe("applyEntityMutations — set_npc_met", () => {
   });
 });
 
+describe("applyEntityMutations — story interaction 与 NPC 目标状态", () => {
+  const installedInteraction: StoryInteraction = {
+    id: "interaction:one",
+    npcId: NPC_1,
+    operation: "share_known_fact",
+    condition: [],
+    factIds: [FACT_1],
+    goalIds: [],
+    promiseId: null,
+    audienceIds: [PLAYER_ENTITY_ID],
+    evidenceEventIds: [],
+  };
+
+  it("安装互动定义是幂等的，并拒绝同 ID 的不同定义", () => {
+    const once = okApply(world(), [{ kind: "install_story_interaction", npcId: NPC_1, interaction: installedInteraction }]);
+    const twice = okApply(once, [{ kind: "install_story_interaction", npcId: NPC_1, interaction: installedInteraction }]);
+    expect(npcRecord(twice, NPC_1).interactions).toEqual([installedInteraction]);
+
+    const conflict = applyEntityMutations(once, [{
+      kind: "install_story_interaction",
+      npcId: NPC_1,
+      interaction: { ...installedInteraction, operation: "request_verification" },
+    }]);
+    expect(conflict).toEqual({ ok: false, code: "duplicate_story_interaction", entityId: NPC_1 });
+  });
+
+  it("只允许通过窄 mutation 改变 NPC 目标状态", () => {
+    const current = world({
+      npcs: [{ ...npcEntry(NPC_1, LOC_1), memory: { ...memoryOf(NPC_1), goals: ["送达信筒"] } }],
+    });
+    const goal = npcRecord(current, NPC_1).dynamicState.goals[0];
+    if (goal === undefined) throw new Error("missing goal fixture");
+    const blocked = okApply(current, [{
+      kind: "set_npc_goal_status",
+      npcId: NPC_1,
+      goalId: goal.goalId,
+      status: "blocked",
+      source: { kind: "action", actionId: "act:goal", turnNumber: 1 },
+      supportingEventId: asEventId("evt:goal-change"),
+    }]);
+    expect(npcRecord(blocked, NPC_1).dynamicState.goals[0]?.status).toBe("blocked");
+  });
+});
+
 describe("NPC 组件与历史写入通道唯一性", () => {
   it("entityMutation.ts 里把 history 组件写回 record 的 case 只有两个", () => {
     const file = resolve(process.cwd(), "src/game/gameplay/rpg/entityWorld/entityMutation.ts");
@@ -1867,6 +1912,6 @@ describe("NPC 组件与历史写入通道唯一性", () => {
         return /\bdynamicState\s*[:,}]/.test(body.slice(entry.at, next === undefined ? body.length : next.at));
       })
       .map((entry) => entry.name);
-    expect(writers.sort()).toEqual(["set_npc_emotion", "set_npc_met"]);
+    expect(writers.sort()).toEqual(["set_npc_emotion", "set_npc_goal_status", "set_npc_met"]);
   });
 });

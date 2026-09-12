@@ -30,7 +30,7 @@ import {
  */
 type NpcRecordKeys = keyof NpcEntityRecord;
 type LayeredRecordLock = NpcRecordKeys extends
-  "core" | "identity" | "position" | "dynamicState" | "knowledge" | "relationships" | "history"
+  "core" | "identity" | "position" | "dynamicState" | "knowledge" | "relationships" | "history" | "interactions"
   ? ("" extends NpcRecordKeys ? false : true)
   : false;
 const layeredRecord: LayeredRecordLock = true;
@@ -179,6 +179,7 @@ function playerRecord(): EntityRecord {
   return {
     core: { id: asPlayerEntityId(PLAYER_ENTITY_ID), kind: "player_character", name: "沈希", createdAtTurn: 0, lifecycle: "active" },
     identity: { identity: "走镖人", stats: { hp: 20, attack: 5, defense: 3 } },
+    knowledge: { knownFactIds: [] },
     position: { locationId: LOC, locationOrder: 0 },
   };
 }

@@ -44,6 +44,8 @@ export type Interaction =
 export type TalkAction = {
   readonly type: "talk";
   readonly npcId: NpcId;
+  /** Server-approved interaction definition; absent means ordinary talk. */
+  readonly interactionId?: string;
   readonly dialogueAct: DialogueAct;
   readonly topic?: DialogueTopic;
   readonly utterance?: string;

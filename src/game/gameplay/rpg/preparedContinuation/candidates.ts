@@ -16,11 +16,17 @@ import type {
   QuestId,
 } from "@/game/domain/worldEntity";
 import { preparedContinuationTriggerKey as domainPreparedTriggerKey } from "@/game/domain/preparedContinuation";
+import { getEntity, type EntityRecord, type NpcEntityRecord } from "@/game/domain/entity";
+import { evaluateStoryCondition } from "@/game/gameplay/rpg/storyInteraction";
 
 export type PreparedChoiceCandidate = {
   readonly candidateId: string;
   readonly action: Action;
 };
+
+function npcRecord(record: EntityRecord | undefined): NpcEntityRecord | undefined {
+  return record?.core.kind === "npc" ? record as NpcEntityRecord : undefined;
+}
 
 export type PreparedArrivalNpcContext = {
   readonly id: NpcId;
@@ -30,6 +36,7 @@ export type PreparedArrivalNpcContext = {
   readonly knownFactCards: readonly { readonly factId: FactId; readonly text: string }[];
   readonly sceneVisibleFactIds: readonly FactId[];
   readonly goals: readonly string[];
+  readonly interactionIds?: readonly string[];
 };
 
 export type PreparedStepDescriptor = {
@@ -114,6 +121,13 @@ function preparedNpcContext(
     .filter((fact) => fact.discovered)
     .map((fact) => fact.factId);
 
+  const record = npcRecord(getEntity(worldState.entityStore, npc.id));
+  const interactionIds = record
+    ? record.interactions
+      ?.filter((entry) => entry.condition.every((condition) => evaluateStoryCondition(worldState, condition)))
+      .map((entry) => entry.id)
+    : undefined;
+
   return {
     id: npc.id,
     name: npc.name,
@@ -122,6 +136,7 @@ function preparedNpcContext(
     knownFactCards,
     sceneVisibleFactIds,
     goals: [...npc.memory.goals],
+    ...(interactionIds === undefined || interactionIds.length === 0 ? {} : { interactionIds }),
   };
 }
 
@@ -158,6 +173,25 @@ function finalEndingNpcFor(
 
 function choicesForNpc(npc: PreparedArrivalNpcContext | undefined, stepId: string): readonly PreparedChoiceCandidate[] {
   if (npc === undefined) return [];
+  const interactionIds = npc.interactionIds ?? [];
+  if (interactionIds.length >= 2) {
+    return interactionIds.slice(0, 2).map((interactionId, index) => ({
+      candidateId: `${stepId}_interaction_${index + 1}`,
+      action: { type: "talk", npcId: npc.id, dialogueAct: "ask", interactionId },
+    }));
+  }
+  if (interactionIds.length === 1) {
+    return [
+      {
+        candidateId: `${stepId}_interaction_1`,
+        action: { type: "talk", npcId: npc.id, dialogueAct: "ask", interactionId: interactionIds[0] },
+      },
+      {
+        candidateId: `${stepId}_choice_2`,
+        action: { type: "talk", npcId: npc.id, dialogueAct: "challenge" },
+      },
+    ];
+  }
   return [
     {
       candidateId: `${stepId}_choice_1`,

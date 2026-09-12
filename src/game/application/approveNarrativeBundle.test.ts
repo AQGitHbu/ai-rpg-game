@@ -25,6 +25,7 @@ import {
   PLAYER_ENTITY_ID,
 } from "@/game/domain/worldEntity";
 import { asNarrativeJobId, CommittedNarrativeEvent } from "@/game/domain/events";
+import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
 
 const locTown = asLocationId("loc_0");
 const locDyn1 = asLocationId("loc_dyn_1");
@@ -922,5 +923,59 @@ describe("approveNarrativeBundle", () => {
     }));
 
     expect(result).toEqual({ ok: false, code: "dialogue_focus_line_missing", detail: "npc_dyn_1" });
+  });
+
+  it("mints and installs an interaction before binding its approved choice", () => {
+    const evidence = makeCommittedEvent({ type: "fact_discovered", factId: factTracks }, {
+      actorIds: [npcDyn1],
+      factIds: [factTracks],
+      locationId: locTown,
+    });
+    const current = currentSceneProposal();
+    const proposal: NarrativeBundleProposal = {
+      ...current,
+      interactionProposals: [{
+        proposalKey: "verify_identity",
+        npcId: String(npcDyn1) as never,
+        operation: "request_verification",
+        condition: [],
+        factIds: [String(factTracks) as never],
+        goalIds: [],
+        promiseId: null,
+        audienceIds: [String(PLAYER_ENTITY_ID) as never],
+        evidenceEventIds: [String(evidence.eventId) as never],
+      }],
+      currentScene: {
+        ...current.currentScene,
+        choices: [
+          { candidateId: "current_scene_interaction_1", label: "先核验身份" },
+          { candidateId: "current_scene_choice_2", label: "继续试探" },
+        ],
+      },
+    };
+    const result = approveNarrativeBundle(baseInput({
+      proposal,
+      worldState: buildWorld({
+        eventLedger: [evidence],
+        worldFacts: [{ ...tracksFact, discovered: true }],
+        npcs: [{ ...templeNpc, locationId: locTown, memory: { ...templeNpc.memory, knownFactIds: [factTracks] } }],
+        locations: [
+          { ...townLocation, npcIds: [npcDyn1] },
+          { ...templeLocation, npcIds: [] },
+        ],
+        quests: [{ ...mainQuest, objectives: [{ kind: "talk_to_npc", npcId: npcDyn1 }] }],
+      }),
+      transition: { ...transition(0), mode: "progressed" },
+    }));
+
+    if (!result.ok) throw new Error(JSON.stringify(result));
+    const choice = result.approved.choiceRegistry.find((entry) => entry.label === "先核验身份");
+    expect(choice?.action).toMatchObject({
+      type: "talk",
+      npcId: npcDyn1,
+      interactionId: "interaction:job_1:verify_identity",
+    });
+    const npc = result.approved.nextWorldState.npcs.find((entry) => entry.id === npcDyn1);
+    expect(npc).toBeDefined();
   });
 });

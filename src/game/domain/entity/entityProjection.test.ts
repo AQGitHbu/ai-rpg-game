@@ -195,7 +195,7 @@ function tamperRecord(
     mutate(copy as Record<string, unknown>);
     return copy as typeof record;
   });
-  return { version: 2, records };
+  return { version: 3, records };
 }
 
 function inactiveNpcRecord(id: string, order: number, createdAtTurn: number): EntityStore["records"][number] {
@@ -220,7 +220,7 @@ function inactiveNpcRecord(id: string, order: number, createdAtTurn: number): En
 }
 
 function withRecords(store: EntityStore, extra: EntityStore["records"]): EntityStore {
-  return { version: 2, records: [...store.records, ...extra] };
+  return { version: 3, records: [...store.records, ...extra] };
 }
 
 /** 强类型取 record：嵌套判别式不收窄联合，组件字段只能经 entitiesOfKind 读取。 */
@@ -526,6 +526,23 @@ describe("entity 兼容投影：legacy → store → legacy", () => {
       expect(record.core.name).toBe(`fact:${record.core.id}`);
       expect(record.core.name).not.toContain(record.fact.text);
     }
+  });
+
+  it("retains scoped aliases when the legacy projection is rebuilt", () => {
+    const withAlias = tamperRecord(compile(singleNpcProjection()), NPC_0, (record) => {
+      const core = record.core as Record<string, unknown>;
+      core.aliases = [{
+        text: "灰衣客",
+        observerIds: [PLAYER_ENTITY_ID],
+        evidenceEventIds: [asEventId("turn:alias")],
+      }];
+    });
+    const rebuilt = requireRecord(compile(projectEntityStore(withAlias), withAlias), "npc", NPC_0);
+    expect(rebuilt.core.aliases).toEqual([{
+      text: "灰衣客",
+      observerIds: [PLAYER_ENTITY_ID],
+      evidenceEventIds: [asEventId("turn:alias")],
+    }]);
   });
 
   it("keeps the read-model faction id plain while the store id is branded", () => {

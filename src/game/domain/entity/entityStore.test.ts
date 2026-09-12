@@ -41,6 +41,7 @@ function playerRecord(overrides: { id?: string; lifecycle?: EntityLifecycle } = 
       lifecycle: overrides.lifecycle ?? "active",
     },
     identity: { identity: "走镖人", stats: STATS },
+    knowledge: { knownFactIds: [] },
     position: { locationId: asLocationId("loc_0"), locationOrder: 0 },
   };
 }
@@ -262,7 +263,7 @@ function tamperStore(store: unknown, mutate: (records: TamperRecord[]) => void):
 describe("entity store identity 与结构", () => {
   it("accepts one record per kind with globally unique IDs", () => {
     const store = createEntityStore(fullStoreRecords());
-    expect(store.version).toBe(2);
+    expect(store.version).toBe(3);
     expect(store.records).toHaveLength(9);
   });
 
@@ -280,7 +281,7 @@ describe("entity store identity 与结构", () => {
 
   it("reports duplicate_entity_id as a structure issue without throwing", () => {
     const issues = validateEntityStoreStructure(
-      untrusted({ version: 2, records: [...fullStoreRecords(), itemRecord("npc_0")] }),
+      untrusted({ version: 3, records: [...fullStoreRecords(), itemRecord("npc_0")] }),
     );
     expect(issues.some((issue) => issue.code === "duplicate_entity_id")).toBe(true);
   });
@@ -363,17 +364,17 @@ describe("entity store identity 与结构", () => {
   });
 
   it("requires exactly one player record", () => {
-    const withoutPlayer = untrusted({ version: 2, records: fullStoreRecords().filter((r) => r.core.kind !== "player_character") });
+    const withoutPlayer = untrusted({ version: 3, records: fullStoreRecords().filter((r) => r.core.kind !== "player_character") });
     expect(issueCodesOf(withoutPlayer)).toContain("missing_player");
 
-    const withTwo = untrusted({ version: 2, records: [...fullStoreRecords(), playerRecord({ id: asLocationId("dup_player") })] });
+    const withTwo = untrusted({ version: 3, records: [...fullStoreRecords(), playerRecord({ id: asLocationId("dup_player") })] });
     const codes = issueCodesOf(withTwo);
     expect(codes).toContain("multiple_players");
   });
 
-  it("rejects a store version other than 2", () => {
+  it("rejects a store version other than 3", () => {
     expect(issueCodesOf(untrusted({ version: 1, records: fullStoreRecords() }))).toContain("invalid_store_version");
-    expect(issueCodesOf(untrusted({ version: 3, records: fullStoreRecords() }))).toContain("invalid_store_version");
+    expect(issueCodesOf(untrusted({ version: 4, records: fullStoreRecords() }))).toContain("invalid_store_version");
   });
 });
 
@@ -565,7 +566,7 @@ describe("entity store 读取与序列化", () => {
   });
 
   it("parseEntityStore reports the same issues and yields no store", () => {
-    const result = parseEntityStore({ version: 2, records: "not-an-array" });
+    const result = parseEntityStore({ version: 3, records: "not-an-array" });
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.issues.length).toBeGreaterThan(0);
@@ -585,6 +586,7 @@ describe("entity store 类型面拒绝任意 patch 与动态组件", () => {
         lifecycle: "active",
       },
       identity: { identity: "走镖人", stats: STATS },
+      knowledge: { knownFactIds: [] },
       position: { locationId: asLocationId("loc_0"), locationOrder: 0 },
       // @ts-expect-error 组件必须是命名字段，EntityRecord 不接受 components 动态字典
       components: dynamic,

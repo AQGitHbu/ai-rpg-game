@@ -2,6 +2,11 @@ import type { WorldState } from "@/game/domain/worldState";
 import { findLocation, findNpc, findItem, findQuest, isTravelTarget } from "@/game/domain/worldState";
 import type { Action } from "@/game/domain/action";
 import { DIALOGUE_ACTS } from "@/game/domain/action";
+import { getEntity, type EntityRecord, type NpcEntityRecord } from "@/game/domain/entity";
+
+function isNpcRecord(record: EntityRecord | undefined): record is NpcEntityRecord {
+  return record?.core.kind === "npc";
+}
 
 export type ValidationCode =
   | "UNKNOWN_LOCATION" | "LOCATION_NOT_CURRENT" | "LOCATION_ALREADY_CURRENT"
@@ -10,7 +15,7 @@ export type ValidationCode =
   | "UNKNOWN_FACT" | "FACT_NOT_INVESTIGABLE" | "FACT_ALREADY_DISCOVERED"
   | "INVESTIGATION_APPROACH_REQUIRED" | "UNKNOWN_INVESTIGATION_APPROACH"
   | "UNKNOWN_QUEST"
-  | "UNKNOWN_DIALOGUE_ACT"
+  | "UNKNOWN_DIALOGUE_ACT" | "UNKNOWN_STORY_INTERACTION"
   | "UNKNOWN_ITEM" | "ITEM_NOT_AVAILABLE_HERE" | "ITEM_ALREADY_OWNED" | "ITEM_NOT_OWNED"
   | "UNKNOWN_ENEMY" | "ENEMY_NOT_AT_LOCATION" | "BATTLE_ALREADY_ACTIVE"
   | "ENEMY_ALREADY_DEFEATED" | "NO_ACTIVE_BATTLE" | "INTENT_NOT_ROUTED"
@@ -45,6 +50,13 @@ export function validateAction(ws: WorldState, action: Action): ValidateResult {
       }
       if (topic?.kind === "quest") {
         if (findQuest(ws, topic.questId) === undefined) return { ok: false, code: "UNKNOWN_QUEST", params: { questId: String(topic.questId) } };
+      }
+      if (action.interactionId !== undefined) {
+        const interaction = getEntity(ws.entityStore, action.npcId);
+        if (action.interactionId.trim() === "" || !isNpcRecord(interaction)
+          || !interaction.interactions?.some((entry) => entry.id === action.interactionId)) {
+          return { ok: false, code: "UNKNOWN_STORY_INTERACTION", params: { interactionId: action.interactionId } };
+        }
       }
       return { ok: true };
     }

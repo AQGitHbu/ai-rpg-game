@@ -6,9 +6,9 @@ NPC 的人格锚点、动态目标、知识、关系、承诺与结构化交互�
 
 ## 当前契约
 
-- `EntityStore` 的 NPC record 必须包含 `identity`、`position`、`dynamicState`、`knowledge`、`relationships`、`history` 六类组件。组件 exact-key、值域、实体 ID、生命周期和事件 provenance 均在解析期校验。
+- `EntityStore` 的 NPC record 必须包含 `identity`、`position`、`dynamicState`、`knowledge`、`relationships`、`history` 六类组件，并可带服务端安装的 `interactions` 定义。组件 exact-key、值域、实体 ID、生命周期和事件 provenance 均在解析期校验。
 - 人格 `identity.anchors` 包含 self concept、values、speech style、capability boundaries 和 taboos；goalId、关系 commitment ID 等由服务端按实体和序号铸造，AI 不能自定义权威 ID 或完成状态。
-- knowledge 按 FactId 去重，记录 certainty、disclosure 与 initial_world 或真实 Event 来源；关系边有方向，记录 affinity/trust/fear/hostility、stage/trend、evidence 和 commitments。封闭 signal 表与限速规则决定关系变化和相邻 stage 迁移；事实仅向显式 audience 传播，关系不自动反向成立。AI 不提交数值 delta 或任意 patch。
+- knowledge 按 FactId 去重，记录 certainty、disclosure 与 initial_world 或真实 Event 来源；关系边有方向，记录 affinity/trust/fear/hostility、stage/trend、evidence 和 commitments。封闭 signal 表与限速规则决定关系变化和相邻 stage 迁移；事实仅向显式 audience 传播，关系不自动反向成立。AI 不提交数值 delta 或任意 patch。NPC 故事互动由四种封闭 operation 与四类条件组成，缺少来源、依据、实际听众或条件不满足时不结算；目标状态只能由窄 mutation 改写。
 - `NpcSpeechAuthority` 从 speaker components、当前 scene-visible facts、目标和该 NPC history 计算 allowed/withheld facts、allowed Event 引用、anchors 和 evidence。secret fact 不因 NPC 已知就自动可说；conditional fact 需要关系条件。
 - 每条 NPC line/dialogue 必须提供 `usedFactIds` 与 `usedEventIds`；缺失、重复、非 speaker 所有或不在 allowlist 的引用会拒绝整包。
 - prompt 不带其他 NPC 私密正文、其他 NPC history、玩家自由文本历史或裸关系数字。focus context 只投影最近五条结构化交互、active goals、关系 stage/trend/open commitments 和有限 evidence。

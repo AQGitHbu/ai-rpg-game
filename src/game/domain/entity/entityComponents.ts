@@ -5,6 +5,7 @@ import type {
 import type { InvestigationApproach, QuestObjective, QuestOutcome, QuestEntry } from "../worldEntries";
 import type { NpcIdentityAnchors } from "./npcComponents";
 import type { TownRuntimeState } from "../townState";
+import type { StoryInteraction } from "../storyInteraction";
 
 // ---------------------------------------------------------------------------
 // 固定组件：字段一律命名，不存在动态组件字典、任意 patch 或未信任 JSON 直通。
@@ -20,6 +21,11 @@ export type PositionComponent = Readonly<{
 
 export type PlayerIdentityComponent = Readonly<{ identity: string; stats: StatBlock }>;
 
+/** Minimal player-side knowledge index; never inferred from another actor's knowledge. */
+export type PlayerKnowledgeComponent = Readonly<{
+  knownFactIds: readonly import("../worldEntity").FactId[];
+}>;
+
 export type NpcIdentityComponent = Readonly<{
   role: string;
   description: string;
@@ -27,6 +33,9 @@ export type NpcIdentityComponent = Readonly<{
   /** Plan 3：长期人格锚点，不随回合漂移；validator 见 npcComponents.validateNpcIdentityAnchors。 */
   anchors: NpcIdentityAnchors;
 }>;
+
+/** Server-approved finite interaction definitions; runtime state remains in the other NPC components. */
+export type NpcInteractionsComponent = readonly StoryInteraction[];
 
 export type LocationComponent = Readonly<{
   description: string;

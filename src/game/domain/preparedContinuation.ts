@@ -127,8 +127,9 @@ function isAction(value: unknown): value is Action {
   if (!isRecord(value) || typeof value.type !== "string") return false;
   switch (value.type) {
     case "talk":
-      return hasOnlyKeys(value, ["type", "npcId", "dialogueAct", "topic", "utterance"])
+      return hasOnlyKeys(value, ["type", "npcId", "interactionId", "dialogueAct", "topic", "utterance"])
         && isNonEmptyString(value.npcId)
+        && (value.interactionId === undefined || isNonEmptyString(value.interactionId))
         && ["ask", "support", "challenge", "threaten", "deceive", "offer", "refuse", "reassure"]
           .includes(value.dialogueAct as string)
         && (value.topic === undefined || isDialogueTopic(value.topic))

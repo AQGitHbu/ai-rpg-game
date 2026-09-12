@@ -175,6 +175,11 @@ export const EVENT_POLICY = {
     defaultSalience: 65,
     summaryKeys: ["relationship_changed"],
   },
+  story_interaction_resolved: {
+    defaultOutcome: "success" as const,
+    defaultSalience: 60,
+    summaryKeys: ["story_interaction_resolved"],
+  },
 } satisfies Record<NarrativeEventPayload["type"], EventPolicyEntry>;
 
 /** 查询某 payload type 的固定 metadata policy。 */

@@ -45,8 +45,8 @@ import {
 } from "@/game/gameplay/rpg/narrativeBundle";
 import type { NarrativeBundleRejection } from "./narrativeBundleSource";
 import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
-import { entitiesOfKind, getEntity, type EntityId } from "@/game/domain/entity";
-import { asFactId, PLAYER_ENTITY_ID, type FactId } from "@/game/domain/worldEntity";
+import { entitiesOfKind, getEntity, type EntityId, type NpcEntityRecord } from "@/game/domain/entity";
+import { asFactId, asItemId, asNpcId, PLAYER_ENTITY_ID, type FactId } from "@/game/domain/worldEntity";
 import {
   buildNpcSpeechAuthority,
   isValidNpcSpeechTarget,
@@ -54,6 +54,13 @@ import {
 } from "./npcSpeechAuthority";
 import { buildNarrativeScenePresentedDraft } from "./approveAndWriteScene";
 import { sceneExpressionsOf, type SceneExpressionProposal, type ApprovedSceneExpression } from "@/game/domain/sceneExpression";
+import {
+  parseStoryInteractionProposal,
+  type StoryCondition,
+  type StoryInteraction,
+  type StoryInteractionProposal,
+} from "@/game/domain/storyInteraction";
+import { applyEntityMutations, type EntityMutation } from "@/game/gameplay/rpg/entityWorld";
 
 // ---------------------------------------------------------------------------
 // Task 4：原子审批叙事生成包。
@@ -172,6 +179,165 @@ function sceneSymbolBindings(
 function resolveSceneReference(raw: string, bindings: ReadonlyMap<string, string>): string | null {
   if (!raw.startsWith("@")) return raw;
   return bindings.get(raw) ?? null;
+}
+
+type InteractionCompilation =
+  | { readonly ok: true; readonly interactions: readonly StoryInteraction[]; readonly mutations: readonly EntityMutation[] }
+  | { readonly ok: false; readonly detail: string };
+
+function activeEntity(worldState: WorldState, id: string): EntityId | null {
+  const record = getEntity(worldState.entityStore, id);
+  return record?.core.lifecycle === "active" ? record.core.id : null;
+}
+
+function activeNpc(worldState: WorldState, id: string): EntityId | null {
+  const record = getEntity(worldState.entityStore, id);
+  return record?.core.kind === "npc" && record.core.lifecycle === "active" ? record.core.id : null;
+}
+
+function activeAudience(worldState: WorldState, id: string): EntityId | null {
+  const record = getEntity(worldState.entityStore, id);
+  if (record?.core.lifecycle !== "active") return null;
+  return record.core.kind === "player_character" || record.core.kind === "npc" ? record.core.id : null;
+}
+
+function resolveInteractionCondition(
+  condition: StoryCondition,
+  bindings: ReadonlyMap<string, string>,
+  worldState: WorldState,
+): StoryCondition | null {
+  const resolve = (raw: string): string | null => resolveSceneReference(raw, bindings);
+  switch (condition.kind) {
+    case "has_item": {
+      const itemId = resolve(String(condition.itemId));
+      const ownerId = resolve(String(condition.ownerId));
+      if (itemId === null || ownerId === null
+        || getEntity(worldState.entityStore, itemId)?.core.kind !== "item"
+        || activeEntity(worldState, ownerId) === null) return null;
+      return { kind: "has_item", itemId: asItemId(itemId), ownerId: ownerId as EntityId };
+    }
+    case "knows_fact": {
+      const actorId = resolve(String(condition.actorId));
+      const factId = resolve(String(condition.factId));
+      if (actorId === null || factId === null
+        || activeEntity(worldState, actorId) === null
+        || getEntity(worldState.entityStore, factId)?.core.kind !== "fact") return null;
+      return { kind: "knows_fact", actorId: actorId as EntityId, factId: asFactId(factId) };
+    }
+    case "promise_status": {
+      const npcId = resolve(String(condition.npcId));
+      if (npcId === null || activeNpc(worldState, npcId) === null) return null;
+      return { ...condition, npcId: asNpcId(npcId) };
+    }
+    case "goal_status": {
+      const npcId = resolve(String(condition.npcId));
+      if (npcId === null || activeNpc(worldState, npcId) === null) return null;
+      return { ...condition, npcId: asNpcId(npcId) };
+    }
+  }
+}
+
+function compileInteractionProposals(input: {
+  readonly worldState: WorldState;
+  readonly proposals: readonly StoryInteractionProposal[];
+  readonly jobId: NarrativeJobId;
+  readonly bindings: ReadonlyMap<string, string>;
+}): InteractionCompilation {
+  const { worldState, proposals, jobId, bindings } = input;
+  const interactions: StoryInteraction[] = [];
+  const mutations: EntityMutation[] = [];
+  const seenKeys = new Set<string>();
+  for (const [index, rawProposal] of proposals.entries()) {
+    const parsed = parseStoryInteractionProposal(rawProposal, `interactionProposals[${index}]`);
+    if (!parsed.ok) return { ok: false, detail: parsed.path };
+    const proposal = parsed.value;
+    if (seenKeys.has(proposal.proposalKey)) return { ok: false, detail: `duplicate:${proposal.proposalKey}` };
+    seenKeys.add(proposal.proposalKey);
+
+    const npcId = resolveSceneReference(String(proposal.npcId), bindings);
+    if (npcId === null || activeNpc(worldState, npcId) === null) return { ok: false, detail: `npc:${String(proposal.npcId)}` };
+    const condition: StoryCondition[] = [];
+    for (const entry of proposal.condition) {
+      const resolved = resolveInteractionCondition(entry, bindings, worldState);
+      if (resolved === null) return { ok: false, detail: `condition:${entry.kind}` };
+      condition.push(resolved);
+    }
+    const factIds: FactId[] = [];
+    for (const rawFactId of proposal.factIds) {
+      const factId = resolveSceneReference(String(rawFactId), bindings);
+      const fact = factId === null ? undefined : getEntity(worldState.entityStore, factId);
+      if (factId === null || fact?.core.kind !== "fact" || fact.core.lifecycle !== "active") {
+        return { ok: false, detail: `fact:${String(rawFactId)}` };
+      }
+      factIds.push(asFactId(factId));
+    }
+    const audienceIds: EntityId[] = [];
+    const audienceSet = new Set<string>();
+    for (const rawAudienceId of proposal.audienceIds) {
+      const audienceId = resolveSceneReference(String(rawAudienceId), bindings);
+      const audience = audienceId === null ? null : activeAudience(worldState, audienceId);
+      if (audienceId === null || audience === null || audienceSet.has(audienceId) || audienceId === npcId) {
+        return { ok: false, detail: `audience:${String(rawAudienceId)}` };
+      }
+      audienceSet.add(audienceId);
+      audienceIds.push(audience);
+    }
+    const evidenceEventIds = proposal.evidenceEventIds.map((rawEventId) => {
+      const eventId = resolveSceneReference(String(rawEventId), bindings);
+      return eventId === null || !worldState.eventLedger.some((event) => String(event.eventId) === eventId)
+        ? null
+        : asEventId(eventId);
+    });
+    if (evidenceEventIds.some((eventId) => eventId === null)) return { ok: false, detail: "evidence" };
+    if (audienceIds.length === 0) return { ok: false, detail: "audience_required" };
+    if (proposal.operation !== "promise_confidentiality" && factIds.length === 0) {
+      return { ok: false, detail: "facts_required" };
+    }
+    if (proposal.operation === "request_verification" && evidenceEventIds.length === 0) {
+      return { ok: false, detail: "verification_requires_evidence" };
+    }
+    const npcRecord = getEntity(worldState.entityStore, npcId);
+    if (npcRecord?.core.kind !== "npc") return { ok: false, detail: `npc:${npcId}` };
+    const npc = npcRecord as NpcEntityRecord;
+    if (!factIds.every((factId) => npc.knowledge.entries.some((entry) => entry.factId === factId))) {
+      return { ok: false, detail: "npc_knowledge" };
+    }
+    const id = `interaction:${String(jobId)}:${proposal.proposalKey}`;
+    const interaction: StoryInteraction = {
+      id,
+      npcId: asNpcId(npcId),
+      operation: proposal.operation,
+      condition,
+      factIds,
+      goalIds: [...proposal.goalIds],
+      promiseId: proposal.promiseId,
+      audienceIds,
+      evidenceEventIds: evidenceEventIds as import("@/game/domain/events").EventId[],
+    };
+    interactions.push(interaction);
+    mutations.push({ kind: "install_story_interaction", npcId: interaction.npcId, interaction });
+  }
+  return { ok: true, interactions, mutations };
+}
+
+/** Opening and decision approvals share one installation gate. */
+export function installStoryInteractionProposals(input: {
+  readonly worldState: WorldState;
+  readonly proposals: readonly StoryInteractionProposal[];
+  readonly jobId: NarrativeJobId;
+  readonly focusNpcId?: string;
+}): { readonly ok: true; readonly worldState: WorldState } | { readonly ok: false; readonly detail: string } {
+  const compiled = compileInteractionProposals({
+    worldState: input.worldState,
+    proposals: input.proposals,
+    jobId: input.jobId,
+    bindings: sceneSymbolBindings(input.worldState, undefined, input.focusNpcId),
+  });
+  if (!compiled.ok) return compiled;
+  const applied = applyEntityMutations(input.worldState, compiled.mutations);
+  return applied.ok
+    ? applied
+    : { ok: false, detail: applied.code };
 }
 
 /** Resolve and fail closed before any approved expression is materialized. */
@@ -845,6 +1011,36 @@ export function approveNarrativeBundle(
     previewStoryState = approvedDelta.previewStoryState;
     worldEventDrafts = approvedDelta.eventDrafts;
   }
+
+  // Interaction definitions are compiled against the candidate preview, then
+  // installed through the same atomic entity mutation language as all runtime
+  // consequences. Provider ids remain local proposal keys until this point.
+  const interactionFocusNpcId = (() => {
+    const after = transition.after;
+    if (after === null) return undefined;
+    const quest = previewWorldState.quests.find((entry) => entry.id === after.questId);
+    const objective = quest?.objectives[after.objectiveIndex];
+    return objective?.kind === "talk_to_npc" ? String(objective.npcId) : undefined;
+  })();
+  const interactionBindings = sceneSymbolBindings(
+    previewWorldState,
+    approvedDelta,
+    interactionFocusNpcId,
+  );
+  const interactionCompilation = compileInteractionProposals({
+    worldState: previewWorldState,
+    proposals: proposal.interactionProposals ?? [],
+    jobId,
+    bindings: interactionBindings,
+  });
+  if (!interactionCompilation.ok) {
+    return { ok: false, code: "bundle_invalid_reference", detail: interactionCompilation.detail };
+  }
+  const installedInteractions = applyEntityMutations(previewWorldState, interactionCompilation.mutations);
+  if (!installedInteractions.ok) {
+    return { ok: false, code: "bundle_invalid_reference", detail: installedInteractions.code };
+  }
+  previewWorldState = installedInteractions.worldState;
 
   // Step 3: Build descriptors from preview state.  At a natural act boundary
   // the rule turn has no `after` objective yet; materializing the approved

@@ -77,6 +77,13 @@ describe("createApprovedChoice", () => {
 });
 
 describe("deriveChoiceToken", () => {
+  it("interactionId 进入 token 与语义摘要，避免不同互动碰撞", () => {
+    const first = { ...TALK_ACTION, interactionId: "interaction:private" };
+    const second = { ...TALK_ACTION, interactionId: "interaction:public" };
+    expect(deriveChoiceToken({ sceneId: "scene-abc", basedOnRevision: 7, action: first }))
+      .not.toBe(deriveChoiceToken({ sceneId: "scene-abc", basedOnRevision: 7, action: second }));
+    expect(semanticSummaryOf(first)).not.toBe(semanticSummaryOf(second));
+  });
   it("相同输入 → 相同 token（确定性）", () => {
     const a = deriveChoiceToken({ sceneId: "scene-abc", basedOnRevision: 7, action: TALK_ACTION });
     const b = deriveChoiceToken({ sceneId: "scene-abc", basedOnRevision: 7, action: TALK_ACTION });

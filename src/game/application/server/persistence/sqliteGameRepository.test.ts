@@ -14,7 +14,7 @@ import { createWorldStateFixtureWith, emptyProjection, type WorldStateFixtureOve
 import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { rebuildEpisodicMemory } from "@/game/domain/episodicMemory";
-import { asLocationId, asGenerationId, asFactId, type GenerationMetadata } from "@/game/domain/worldEntity";
+import { asLocationId, asGenerationId, asFactId, asPlayerEntityId, type GenerationMetadata } from "@/game/domain/worldEntity";
 import { asEventId, asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
 import type { WorldState } from "@/game/domain/worldState";
@@ -179,7 +179,7 @@ describe("sqliteGameRepository", () => {
       expect(current.record.gameId).toBe(gameId);
       expect(current.record.revision).toBe(0);
       expect(current.record.worldState.version).toBe(WORLD_STATE_SCHEMA_VERSION);
-      expect(current.record.worldState.entityStore.version).toBe(2);
+      expect(current.record.worldState.entityStore.version).toBe(3);
       expect(current.record.storyState.version).toBe(10);
     }
   });
@@ -210,9 +210,9 @@ describe("sqliteGameRepository", () => {
             turnNumber: 0,
             kind: "player_choice",
             text: "我检查门口的脚印。",
-            speakerId: "player_0",
-            audienceIds: ["player_0"],
-            entityIds: ["player_0"],
+            speakerId: asPlayerEntityId("player_0"),
+            audienceIds: [asPlayerEntityId("player_0")],
+            entityIds: [asPlayerEntityId("player_0")],
             factIds: [],
             eventIds: [asEventId("turn-0:event-opening")],
             choiceToken: "choice-1",
@@ -643,7 +643,7 @@ describe("sqliteGameRepository", () => {
     await raw.execute({
       sql: `INSERT INTO game_records (game_id, record_version, world_state_json, story_state_json, created_at, revision)
             VALUES (?, ?, ?, ?, ?, ?)`,
-      args: ["legacy_world_v2", 1, JSON.stringify({ version: 2 }), JSON.stringify(storyState), "2025-01-01", 0],
+      args: ["legacy_world_v2", 1, JSON.stringify({ version: 3 }), JSON.stringify(storyState), "2025-01-01", 0],
     });
     await raw.execute({ sql: "INSERT INTO current_game (slot, game_id) VALUES (1, ?)", args: ["legacy_world_v2"] });
 
@@ -674,7 +674,7 @@ describe("sqliteGameRepository", () => {
     await raw.execute({
       sql: `INSERT INTO game_records (game_id, record_version, world_state_json, story_state_json, created_at, revision)
             VALUES (?, ?, ?, ?, ?, ?)`,
-      args: ["unknown_v", 99, JSON.stringify({ version: 2 }), JSON.stringify({ version: 2 }), "2025-01-01", 0],
+      args: ["unknown_v", 99, JSON.stringify({ version: 3 }), JSON.stringify({ version: 3 }), "2025-01-01", 0],
     });
     await raw.execute({ sql: "INSERT INTO current_game (slot, game_id) VALUES (1, ?)", args: ["unknown_v"] });
 

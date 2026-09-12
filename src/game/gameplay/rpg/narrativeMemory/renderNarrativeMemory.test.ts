@@ -18,7 +18,7 @@ const PUBLIC_FACT = asFactId("fact:public");
 const SECRET_FACT = asFactId("fact:secret");
 
 const entityStore = {
-  version: 2,
+  version: 3,
   records: [
     { core: { id: "player_0", kind: "player_character", name: "玩家", createdAtTurn: 0, lifecycle: "active" }, position: { locationId: CURRENT_LOCATION, locationOrder: 0 } },
     { core: { id: NPC, kind: "npc", name: "阿月", createdAtTurn: 0, lifecycle: "active" }, position: { locationId: CURRENT_LOCATION, locationOrder: 0 }, knowledge: { entries: [{ factId: SECRET_FACT, disclosure: "secret" }] } },

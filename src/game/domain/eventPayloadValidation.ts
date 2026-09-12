@@ -79,6 +79,11 @@ const PAYLOAD_CHECKS = {
   npc_interaction_recorded: shape({ type: text, npcId: id, dialogueAct: (value) => oneOf([...DIALOGUE_ACTS, "freeform"])(value) }),
   npc_knowledge_changed: shape({ type: text, npcId: id, factId: id, change: oneOf(["learned", "certainty_upgraded", "disclosure_changed"]) }),
   npc_relationship_changed: shape({ type: text, fromNpcId: id, targetId: id, signal: (value) => oneOf(RELATIONSHIP_SIGNALS)(value) }),
+  story_interaction_resolved: shape({
+    type: text, interactionId: id, npcId: id,
+    operation: oneOf(["promise_confidentiality", "request_introduction", "request_verification", "share_known_fact"]),
+    factIds: ids, audienceIds: ids, evidenceEventIds: ids,
+  }),
 } satisfies Record<NarrativeEventPayload["type"], Check>;
 
 export function isNarrativeEventPayload(value: unknown): value is NarrativeEventPayload {

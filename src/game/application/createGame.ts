@@ -36,7 +36,7 @@ import {
   isValidNpcSpeechTarget,
   validateNpcSpeechReferences,
 } from "./npcSpeechAuthority";
-import { validateNarrativeSceneExpressions } from "./approveNarrativeBundle";
+import { installStoryInteractionProposals, validateNarrativeSceneExpressions } from "./approveNarrativeBundle";
 
 // ---------------------------------------------------------------------------
 // Task 2：开局生成编排改为 source → parse → validate → compile。
@@ -184,6 +184,14 @@ function compileOpeningNarrative(
   const responses = resolveOpeningResponses(candidate);
   if (responses === null) return null;
   const responseById = new Map(responses.map((response) => [response.candidateId, response.action]));
+  for (const interactionProposal of proposal.interactionProposals ?? []) {
+    responseById.set(`interaction:${interactionProposal.proposalKey}`, {
+      type: "talk",
+      npcId: OPENING_NPC_ID,
+      dialogueAct: "ask",
+      interactionId: `interaction:${String(jobId)}:${interactionProposal.proposalKey}`,
+    });
+  }
   const choiceIds = scene.choices.map((choice) => choice.candidateId);
   if (choiceIds.length !== 2 || new Set(choiceIds).size !== 2
     || choiceIds.some((candidateId) => !responseById.has(candidateId))) return null;
@@ -420,7 +428,16 @@ export async function createGame(
         gameLength: input.gameLength,
         initialNarrative: narrative,
       });
-      if (!approveOpeningSpeech(narrative, preview.worldState)) {
+      const installed = installStoryInteractionProposals({
+        worldState: preview.worldState,
+        proposals: generatedProposal.interactionProposals ?? [],
+        jobId,
+        focusNpcId: String(OPENING_NPC_ID),
+      });
+      if (!installed.ok) {
+        return { ok: false, retryable: true, reason: { attempt, reason: "approval_rejected", detail: installed.detail } };
+      }
+      if (!approveOpeningSpeech(narrative, installed.worldState)) {
         return { ok: false, retryable: true, reason: { attempt, reason: "approval_rejected", detail: "opening_speech_rejected" } };
       }
 
@@ -441,7 +458,7 @@ export async function createGame(
           narrative,
           novelty,
           attempt: openingAttempt,
-          worldState: preview.worldState,
+          worldState: installed.worldState,
           storyState: preview.storyState,
         },
       };

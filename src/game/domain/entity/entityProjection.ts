@@ -13,6 +13,7 @@ import type {
 import { createEntityStore, entitiesOfKind, type EntityStore } from "./entityStore";
 import { normalizeLegacyNpcEntry, projectNpcEntry } from "./npcProjection";
 import type { NpcImportedLayers } from "./npcProjection";
+import { parseStoryInteraction } from "../storyInteraction";
 import {
   validateNpcDynamicState,
   validateNpcHistory,
@@ -295,12 +296,14 @@ function previousOfKind<K extends EntityKind>(
 function validNpcCreationComponents(value: unknown): value is NpcImportedLayers {
   if (!isRecord(value)) return false;
   const keys = ["anchors", "dynamicState", "knowledge", "relationships", "history"];
-  if (Object.keys(value).length !== keys.length || keys.some((key) => !(key in value))) return false;
+  const allowed = new Set([...keys, "interactions"]);
+  if (Object.keys(value).some((key) => !allowed.has(key)) || keys.some((key) => !(key in value))) return false;
   return validateNpcIdentityAnchors(value.anchors).length === 0
     && validateNpcDynamicState(value.dynamicState).length === 0
     && validateNpcKnowledge(value.knowledge).length === 0
     && validateNpcRelationships(value.relationships).length === 0
-    && validateNpcHistory(value.history).length === 0;
+    && validateNpcHistory(value.history).length === 0
+    && (!('interactions' in value) || (Array.isArray(value.interactions) && value.interactions.every((entry) => parseStoryInteraction(entry).ok)));
 }
 
 function coreOf<Id extends EntityId, Kind extends EntityKind>(input: {
@@ -387,6 +390,9 @@ function compilePlayer(
       createdAtTurn: turnOf(previous, createdAtTurn),
     }),
     identity: { identity: projection.player.identity, stats: { ...projection.player.stats } },
+    knowledge: {
+      knownFactIds: projection.worldFacts.filter((fact) => fact.discovered).map((fact) => fact.factId),
+    },
     position: { locationId: projection.currentLocationId, locationOrder: 0 },
   };
 }
@@ -484,6 +490,9 @@ function compileNpcs(
       knowledge: previous?.knowledge ?? layers!.knowledge,
       relationships: previous?.relationships ?? layers!.relationships,
       history: previous?.history ?? layers!.history,
+      ...(previous?.interactions === undefined && layers?.interactions === undefined
+        ? {}
+        : { interactions: [...(previous?.interactions ?? layers?.interactions ?? [])] }),
     };
   });
 }
@@ -656,7 +665,7 @@ export function compileEntityStoreFromCompatibilityProjection(input: {
   const { projection, createdAtTurn, previousStore, npcCreationComponentsById } = input;
   // 歧义输入绝不在编译时“选一个”消解：先拒非法成员关系，再建立 store。
   throwOnFirstIssue(validateCompatibilityProjectionInput(projection));
-  const store = createEntityStore([
+  const compiledRecords = [
     compilePlayer(projection, createdAtTurn, previousStore),
     ...compileLocations(projection, createdAtTurn, previousStore),
     ...compileNpcs(projection, createdAtTurn, previousStore, npcCreationComponentsById),
@@ -665,7 +674,20 @@ export function compileEntityStoreFromCompatibilityProjection(input: {
     ...compileFactions(projection, createdAtTurn, previousStore),
     ...compileQuests(projection, createdAtTurn, previousStore),
     ...compileFacts(projection, createdAtTurn, previousStore),
-  ]);
+  ];
+  // aliases are scoped store data, not part of the legacy projection. Carry them
+  // forward only for the same entity kind; a reused ID with a different kind
+  // must not inherit an unrelated name claim.
+  const aliasesById = new Map(
+    previousStore?.records
+      .filter((record) => record.core.aliases !== undefined)
+      .map((record) => [record.core.id, record] as const) ?? [],
+  );
+  const store = createEntityStore(compiledRecords.map((record) => {
+    const previous = aliasesById.get(record.core.id);
+    if (previous === undefined || previous.core.kind !== record.core.kind || previous.core.aliases === undefined) return record;
+    return { ...record, core: { ...record.core, aliases: [...previous.core.aliases] } } as EntityRecord;
+  }));
   throwOnFirstIssue(validateEntityReferences(store));
   // 旧 fixture 允许只在 NpcEntry.locationId 表达位置、遗漏 location.npcIds；编译器
   // 将这一处兼容输入规范化为 roster。除此之外不得补齐、丢弃或重新挂载事实。

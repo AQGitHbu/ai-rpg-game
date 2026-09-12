@@ -1095,6 +1095,52 @@ describe("createNarrativeBundleSource", () => {
     expect(prompt).toContain("opening.opening.situation.responses");
   });
 
+  it("preserves structurally valid opening interaction proposals and candidate bindings", async () => {
+    const opening = await createFixtureOpeningCandidateSource().generate({
+      gameType: "wuxia", gameLength: "short", seed: "opening-interaction-source",
+    });
+    const complete = vi.fn().mockResolvedValue({
+      ok: true,
+      content: JSON.stringify({
+        opening,
+        interactionProposals: [{
+          proposalKey: "verify_identity",
+          npcId: "npc_0",
+          operation: "request_verification",
+          condition: [],
+          factIds: ["fact_0"],
+          goalIds: [],
+          promiseId: null,
+          audienceIds: ["player_0"],
+          evidenceEventIds: ["turn:existing-evidence"],
+        }],
+        currentScene: {
+          segments: [{ beatId: "opening", text: "客栈里风声低沉。" }],
+          npcLine: { npcId: "npc_0", text: "先核对这份证词。", emotion: "guarded", answeredBeatIds: [], usedFactIds: ["fact_0"], usedEventIds: [] },
+          objectiveLink: null,
+          choices: [
+            { candidateId: "interaction:verify_identity", label: "先核验身份。" },
+            { candidateId: "challenge_lead", label: "先说清楚缘由。" },
+          ],
+        },
+        continuationScenes: [],
+        terminal: { kind: "next_decision", target: { kind: "current_scene" } },
+      }),
+    });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+
+    const result = await source.generate({
+      kind: "opening",
+      jobId: asNarrativeJobId("job-opening-interaction"),
+      input: { gameType: "wuxia", gameLength: "short", seed: "opening-interaction-source" },
+    });
+
+    expect(result).toMatchObject({ ok: true, kind: "opening" });
+    if (!result.ok || result.kind !== "opening") return;
+    expect(result.proposal.interactionProposals?.[0]?.proposalKey).toBe("verify_identity");
+    expect(result.proposal.currentScene.choices[0]?.candidateId).toBe("interaction:verify_identity");
+  });
+
   it("passes the full opening setup and bounded latest novelty through the actual AI messages", async () => {
     const opening = await createFixtureOpeningCandidateSource().generate({
       gameType: "science_fiction", gameLength: "short", seed: "opening-context-transport",

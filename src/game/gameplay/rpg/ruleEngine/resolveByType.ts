@@ -10,6 +10,7 @@ import { resolveDialogue } from "@/game/gameplay/rpg/dialogue";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 import { applyEntityMutations, type EntityMutation } from "@/game/gameplay/rpg/entityWorld";
 import { PLAYER_ENTITY_ID, RETURN_REQUIRED_ITEM_TAG } from "@/game/domain/worldEntity";
+import { resolveStoryInteraction } from "../storyInteraction";
 
 export type ResolveResult = {
   readonly ok: true;
@@ -115,6 +116,9 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
       return { ok: true, nextWorldState: nextWs, drafts: [draft], feedback: `你来到了${locName}。`, status: "success", stateChanges, facts: [] };
     }
     case "talk": {
+      if (action.interactionId !== undefined) {
+        return resolveStoryInteraction(ws, action, deps);
+      }
       const npc = findNpc(ws, action.npcId);
       if (npc === undefined) return { ok: false, feedback: "未知角色。" };
       // 旧构造器可能缺失 dialogueAct（Task 9 交割前）：回退 ask

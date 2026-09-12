@@ -5,7 +5,7 @@ import type { EntityCore } from "./entityCore";
 import type {
   EnemyComponent, FactionComponent, FactComponent, ItemPresentationComponent, LocationComponent,
   NpcIdentityComponent, PlayerIdentityComponent, PossessionComponent,
-  PositionComponent, QuestComponent,
+  PositionComponent, QuestComponent, NpcInteractionsComponent, PlayerKnowledgeComponent,
 } from "./entityComponents";
 import type {
   NpcDynamicStateComponent, NpcHistoryComponent, NpcKnowledgeComponent, NpcRelationshipComponent,
@@ -19,6 +19,7 @@ import type {
 export type PlayerEntityRecord = Readonly<{
   core: EntityCore<PlayerEntityId, "player_character">;
   identity: PlayerIdentityComponent;
+  knowledge: PlayerKnowledgeComponent;
   position: PositionComponent;
 }>;
 
@@ -30,6 +31,8 @@ export type NpcEntityRecord = Readonly<{
   knowledge: NpcKnowledgeComponent;
   relationships: NpcRelationshipComponent;
   history: NpcHistoryComponent;
+  /** Optional for legacy-compatible NPC records; present when story choices are installed. */
+  interactions?: NpcInteractionsComponent;
 }>;
 
 export type LocationEntityRecord = Readonly<{

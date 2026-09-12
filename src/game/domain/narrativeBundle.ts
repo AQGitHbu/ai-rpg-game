@@ -10,6 +10,7 @@ import type {
 import type { PreparedSceneSeedState } from "./preparedContinuation";
 import { areUniqueNpcSpeechReferenceIds } from "./npcSpeechReferences";
 import { parseSceneExpressionProposal, type SceneExpressionProposal } from "./sceneExpression";
+import { parseStoryInteractionProposal, type StoryInteractionProposal } from "./storyInteraction";
 
 // ---------------------------------------------------------------------------
 // Pure value types moved from application/sceneSource.ts so domain code does
@@ -90,6 +91,8 @@ export type BundleStepProposal = {
 
 export type NarrativeBundleProposal = {
   readonly worldDelta: unknown | null;
+  /** Provider proposals; formal interaction ids are minted during approval. */
+  readonly interactionProposals?: readonly StoryInteractionProposal[];
   readonly currentScene: BundleSceneProposal;
   readonly continuationScenes: readonly BundleStepProposal[];
   readonly terminal: NarrativeBundleTerminal;
@@ -178,6 +181,7 @@ export const NARRATIVE_BUNDLE_PROPOSAL_REJECTION_REASONS = [
   "ending_terminal_requires_empty_bundle",
   "too_many_steps",
   "duplicate_step_keys",
+  "interaction_proposals_invalid",
 ] as const;
 
 export type NarrativeBundleProposalRejectionReason = typeof NARRATIVE_BUNDLE_PROPOSAL_REJECTION_REASONS[number];
@@ -333,7 +337,12 @@ function isBundleStepProposal(value: unknown): value is BundleStepProposal {
 
 export function parseNarrativeBundleProposal(value: unknown): ParseNarrativeBundleProposalResult {
   if (!isRecord(value)) return invalidProposal("not_object");
-  if (!hasOnlyKeys(value, ["worldDelta", "currentScene", "continuationScenes", "terminal"])) return invalidProposal("unknown_keys");
+  if (!hasOnlyKeys(value, ["worldDelta", "interactionProposals", "currentScene", "continuationScenes", "terminal"])) return invalidProposal("unknown_keys");
+  if (value.interactionProposals !== undefined
+    && (!Array.isArray(value.interactionProposals)
+      || !value.interactionProposals.every((proposal, index) => parseStoryInteractionProposal(proposal, `interactionProposals[${index}]`).ok))) {
+    return invalidProposal("interaction_proposals_invalid");
+  }
   // worldDelta can be null or any object (approval validates it separately)
   if (!isBundleSceneProposal(value.currentScene)) return invalidProposal("current_scene_invalid");
   if (!Array.isArray(value.continuationScenes) || !value.continuationScenes.every(isBundleStepProposal)) return invalidProposal("continuation_scenes_invalid");
