@@ -12,6 +12,7 @@ import type {
   NarrativeBundleRepairReason,
 } from "../../narrativeBundleSource";
 import type { RpgAiClient } from "./rpgAiClient";
+import type { NarrativeRequestClient } from "./narrativeRequestClient";
 import type { ProviderJsonMode } from "./providerRequestOptions";
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
@@ -32,6 +33,7 @@ import { buildOpeningNarrativePrompt } from "./openingNarrativePrompt";
 
 export type LiveNarrativeBundleSourceDeps = {
   readonly aiClient?: RpgAiClient;
+  readonly requestClient?: NarrativeRequestClient;
   readonly logger?: GameLogger;
   readonly jsonMode?: ProviderJsonMode;
 };
@@ -378,7 +380,7 @@ function parseOpeningBundleProposal(value: unknown, targetActs: 3 | 5): ParseOpe
 export function createNarrativeBundleSource(
   deps: LiveNarrativeBundleSourceDeps = {},
 ): NarrativeBundleSource {
-  const { logger, aiClient } = deps;
+  const { logger, aiClient, requestClient } = deps;
 
   return {
     async generate(context: NarrativeBundleSourceContext): Promise<NarrativeBundleSourceResult> {
@@ -412,25 +414,30 @@ export function createNarrativeBundleSource(
           { role: "user", content: context.kind === "decision" ? "生成决策叙事包" : "生成初始化叙事包" },
         ];
 
-        const result = await aiClient.complete(
-          "narrative_bundle",
-          messages,
-          {
-            ...(context.auditLink ?? {}),
-            ...(context.contentRepair === undefined ? {} : { retry: aiRepairAuditContext(context.contentRepair, context.auditLink?.retry) }),
-            purpose: "narrative_bundle_generation",
-            trigger: context.kind === "decision"
-              ? context.job.utterance === undefined ? "narrative_choice" : "npc_free_text"
-              : "initialization",
-            jobId: context.kind === "decision" ? String(context.job.jobId) : String(context.jobId),
-            turnNumber: context.kind === "decision" ? context.job.turnNumber : 0,
-            ...(context.candidateVersion === undefined ? {} : { revision: context.candidateVersion }),
-            action: context.kind === "decision" ? context.job.actionSummary : undefined,
-            ...(decisionCompilation === undefined
-              ? {}
-              : { narrativeContext: decisionCompilation.manifest }),
-          },
-        );
+        const auditContext = {
+          ...(context.auditLink ?? {}),
+          ...(context.contentRepair === undefined ? {} : { retry: aiRepairAuditContext(context.contentRepair, context.auditLink?.retry) }),
+          purpose: "narrative_bundle_generation" as const,
+          trigger: context.kind === "decision"
+            ? context.job.utterance === undefined ? "narrative_choice" : "npc_free_text"
+            : "initialization",
+          jobId: context.kind === "decision" ? String(context.job.jobId) : String(context.jobId),
+          turnNumber: context.kind === "decision" ? context.job.turnNumber : 0,
+          ...(context.candidateVersion === undefined ? {} : { revision: context.candidateVersion }),
+          action: context.kind === "decision" ? context.job.actionSummary : undefined,
+          ...(decisionCompilation === undefined
+            ? {}
+            : { narrativeContext: decisionCompilation.manifest }),
+        };
+        const result = requestClient === undefined
+          ? await aiClient.complete("narrative_bundle", messages, auditContext)
+          : await requestClient.completeNarrativeRequest({
+              purpose: "author",
+              messages,
+              auditContext,
+              signal: context.signal ?? new AbortController().signal,
+              ...(context.reserveHttpAttempt === undefined ? {} : { reserveHttpAttempt: context.reserveHttpAttempt }),
+            });
 
         if (!result.ok) {
           logger?.warn("narrative_bundle_ai_failed", { code: result.code });

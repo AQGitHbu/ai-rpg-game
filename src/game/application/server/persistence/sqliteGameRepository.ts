@@ -15,6 +15,9 @@ import type {
   GameRecord,
   GameRepository,
   GetCurrentGameResult,
+  ClaimNarrativeJobInput,
+  NarrativeJobAttemptMutationInput,
+  NarrativeAttemptMutationResult,
 } from "./gameRepository";
 import {
   classifyStoryStateSchemaVersion,
@@ -27,6 +30,11 @@ import { validatePersistableWorldState } from "./worldStatePersistenceValidation
 import { parsePersistableStoryState } from "./storyStatePersistenceValidation";
 import type { GameTypeId } from "@/game/domain/newGame";
 import type { SqliteClient, SqliteClientFactory, SqliteStatement } from "./sqliteClient";
+import {
+  MAX_NARRATIVE_CANDIDATE_VERSIONS,
+  MAX_NARRATIVE_HTTP_ATTEMPTS,
+  reserveNextNarrativeCandidate,
+} from "@/game/domain/narrativeGenerationAttempt";
 
 // ---------------------------------------------------------------------------
 // SQLite adapter：GameRepository 端口的 libsql 实现。
@@ -45,6 +53,21 @@ const GAME_RECORD_VERSION = 1;
 /** 旧 v2 存档的表级 record_version：明确识别为 legacy，不迁移不伪装。 */
 const UNSUPPORTED_RECORD_VERSION = 0;
 const INITIAL_REVISION = 0;
+
+let narrativeAttemptLock: Promise<void> = Promise.resolve();
+
+async function withNarrativeAttemptLock<T>(work: () => Promise<T>): Promise<T> {
+  const previous = narrativeAttemptLock;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  narrativeAttemptLock = previous.then(() => gate);
+  await previous;
+  try {
+    return await work();
+  } finally {
+    release();
+  }
+}
 
 const SCHEMA_STATEMENTS: readonly SqliteStatement[] = [
   {
@@ -481,10 +504,35 @@ export function createSqliteGameRepository(
         }
 
         const incrementRevision = input.incrementRevision ?? true;
-        const narrativePredicate = input.expectedNarrativeJob === undefined
+        const expectedNarrativeJob = input.expectedNarrativeJob;
+        const narrativePredicates: string[] = [];
+        const narrativeArgs: Array<string | number | null> = [];
+        if (expectedNarrativeJob !== undefined) {
+          narrativePredicates.push(
+            "json_extract(story_state_json, '$.narrative.status') = ?",
+            "json_extract(story_state_json, '$.narrative.job.jobId') = ?",
+          );
+          narrativeArgs.push(expectedNarrativeJob.status, expectedNarrativeJob.jobId);
+          if (expectedNarrativeJob.epoch !== undefined) {
+            narrativePredicates.push("json_extract(story_state_json, '$.narrative.job.attempt.epoch') = ?");
+            narrativeArgs.push(expectedNarrativeJob.epoch);
+          }
+          if (expectedNarrativeJob.leaseId !== undefined) {
+            narrativePredicates.push("json_extract(story_state_json, '$.narrative.job.attempt.leaseId') IS ?");
+            narrativeArgs.push(expectedNarrativeJob.leaseId);
+          }
+          if (expectedNarrativeJob.candidateVersion !== undefined) {
+            narrativePredicates.push("json_extract(story_state_json, '$.narrative.job.attempt.candidateVersion') = ?");
+            narrativeArgs.push(expectedNarrativeJob.candidateVersion);
+          }
+          if (expectedNarrativeJob.candidateHash !== undefined) {
+            narrativePredicates.push("json_extract(story_state_json, '$.narrative.job.attempt.candidateHash') IS ?");
+            narrativeArgs.push(expectedNarrativeJob.candidateHash);
+          }
+        }
+        const narrativePredicate = narrativePredicates.length === 0
           ? ""
-          : ` AND json_extract(story_state_json, '$.narrative.status') = ?
-              AND json_extract(story_state_json, '$.narrative.job.jobId') = ?`;
+          : ` AND ${narrativePredicates.join(" AND ")}`;
         const updateResult = await tx.execute({
           sql: `UPDATE game_records SET world_state_json = ?, story_state_json = ?,
                 revision = CASE WHEN ? THEN revision + 1 ELSE revision END
@@ -495,9 +543,7 @@ export function createSqliteGameRepository(
             incrementRevision ? 1 : 0,
             input.gameId,
             input.expectedRevision,
-            ...(input.expectedNarrativeJob === undefined
-              ? []
-              : [input.expectedNarrativeJob.status, input.expectedNarrativeJob.jobId]),
+            ...narrativeArgs,
           ],
         });
         const rowsAffected = Number(updateResult.rowsAffected ?? 0);
@@ -556,6 +602,222 @@ export function createSqliteGameRepository(
     }, { preserveAcknowledgedPrologue: true });
   }
 
+  type ActiveNarrativeRecord = Extract<GetCurrentGameResult, { readonly ok: true; readonly status: "active" }>;
+  type PendingNarrative = Extract<GameRecord["storyState"]["narrative"], { readonly status: "provider_pending" }>;
+
+  function predicateFor(narrative: PendingNarrative | Extract<GameRecord["storyState"]["narrative"], { readonly status: "provider_failed" }>) {
+    return {
+      status: narrative.status,
+      jobId: String(narrative.job.jobId),
+      epoch: narrative.job.attempt.epoch,
+      leaseId: narrative.job.attempt.leaseId,
+      candidateVersion: narrative.job.attempt.candidateVersion,
+      candidateHash: narrative.job.attempt.candidateHash,
+    } as const;
+  }
+
+  async function readActiveNarrative(
+    gameId: GameRecord["gameId"],
+    expectedRevision: number,
+    jobId: string,
+  ): Promise<ActiveNarrativeRecord | null> {
+    const current = await getCurrentGame();
+    if (!current.ok || current.status !== "active"
+      || current.record.gameId !== gameId
+      || current.record.revision !== expectedRevision) return null;
+    const narrative = current.record.storyState.narrative;
+    if ((narrative.status !== "provider_pending" && narrative.status !== "provider_failed")
+      || String(narrative.job.jobId) !== jobId) return null;
+    return current;
+  }
+
+  function predicateMatches(
+    narrative: PendingNarrative | Extract<GameRecord["storyState"]["narrative"], { readonly status: "provider_failed" }>,
+    expected: NarrativeJobAttemptMutationInput["expectedNarrativeJob"],
+  ): boolean {
+    const actual = predicateFor(narrative);
+    return actual.status === expected.status
+      && actual.jobId === expected.jobId
+      && actual.epoch === expected.epoch
+      && actual.leaseId === expected.leaseId
+      && actual.candidateVersion === expected.candidateVersion
+      && actual.candidateHash === expected.candidateHash;
+  }
+
+  async function applyNarrativeAttemptState(input: ApplyStateInput): Promise<ApplyStateResult> {
+    // 两个恢复 worker 可能同时打开各自的 SQLite 写事务。libsql 在本地
+    // 文件锁竞争时返回 SQLITE_BUSY；短暂退避后重试，第二次会由完整 CAS
+    // 谓词把已经获胜的 worker 判定为 stale，而不是把正常竞争暴露成基础设施失败。
+    let result = await applyState(input);
+    for (let retry = 0; retry < 4 && !result.ok && result.code === "INFRASTRUCTURE_FAILURE"; retry += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50 * (retry + 1)));
+      result = await applyState(input);
+    }
+    return result;
+  }
+
+  async function claimNarrativeJob(input: ClaimNarrativeJobInput): Promise<ApplyStateResult> {
+    return withNarrativeAttemptLock(async () => {
+      try {
+        const current = await readActiveNarrative(input.gameId, input.expectedRevision, input.jobId);
+        if (current === null || current.record.storyState.narrative.status !== "provider_pending") {
+          return { ok: false, code: "STALE_GAME_REVISION" };
+        }
+        const narrative = current.record.storyState.narrative;
+        const oldExpiry = narrative.job.attempt.leaseExpiresAt;
+        if (narrative.job.attempt.leaseId !== null && oldExpiry !== null && Date.parse(oldExpiry) > Date.parse(input.now)) {
+          return { ok: false, code: "STALE_GAME_REVISION" };
+        }
+        return applyNarrativeAttemptState({
+          gameId: input.gameId,
+          expectedRevision: input.expectedRevision,
+          nextWorldState: current.record.worldState,
+          nextStoryState: {
+            ...current.record.storyState,
+            narrative: {
+              ...narrative,
+              job: {
+                ...narrative.job,
+                attempt: { ...narrative.job.attempt, leaseId: input.leaseId, leaseExpiresAt: input.leaseExpiresAt, status: "running" },
+              },
+            },
+          },
+          incrementRevision: false,
+          expectedNarrativeJob: predicateFor(narrative),
+        });
+      } catch (error) {
+        logError("claimNarrativeJob failed", error);
+        return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+      }
+    });
+  }
+
+  async function reserveNarrativeCandidate(input: NarrativeJobAttemptMutationInput): Promise<NarrativeAttemptMutationResult> {
+    return withNarrativeAttemptLock(async () => {
+      try {
+        const current = await readActiveNarrative(input.gameId, input.expectedRevision, input.expectedNarrativeJob.jobId);
+        if (current === null || current.record.storyState.narrative.status !== "provider_pending"
+          || !predicateMatches(current.record.storyState.narrative, input.expectedNarrativeJob)) {
+          return { ok: false, code: "STALE_GAME_REVISION" };
+        }
+        const narrative = current.record.storyState.narrative;
+        if (narrative.job.attempt.candidateVersion >= MAX_NARRATIVE_CANDIDATE_VERSIONS) {
+          return { ok: false, code: "NARRATIVE_CANDIDATES_EXHAUSTED" };
+        }
+        if (narrative.job.attempt.leaseId === null || narrative.job.attempt.leaseExpiresAt === null) {
+          return { ok: false, code: "STALE_GAME_REVISION" };
+        }
+        const attempt = reserveNextNarrativeCandidate(narrative.job.attempt, narrative.job.attempt.leaseId, narrative.job.attempt.leaseExpiresAt);
+        return applyNarrativeAttemptState({
+          gameId: input.gameId,
+          expectedRevision: input.expectedRevision,
+          nextWorldState: current.record.worldState,
+          nextStoryState: { ...current.record.storyState, narrative: { ...narrative, job: { ...narrative.job, attempt } } },
+          incrementRevision: false,
+          expectedNarrativeJob: input.expectedNarrativeJob,
+        });
+      } catch (error) {
+        logError("reserveNarrativeCandidate failed", error);
+        return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+      }
+    });
+  }
+
+  async function recordNarrativeCandidateHash(
+    input: NarrativeJobAttemptMutationInput & { readonly candidateHash: string },
+  ): Promise<ApplyStateResult> {
+    return withNarrativeAttemptLock(async () => {
+      try {
+        const current = await readActiveNarrative(input.gameId, input.expectedRevision, input.expectedNarrativeJob.jobId);
+        if (current === null || current.record.storyState.narrative.status !== "provider_pending"
+          || !predicateMatches(current.record.storyState.narrative, input.expectedNarrativeJob)
+          || input.candidateHash.trim() === "") return { ok: false, code: "STALE_GAME_REVISION" };
+        const narrative = current.record.storyState.narrative;
+        return applyNarrativeAttemptState({
+          gameId: input.gameId,
+          expectedRevision: input.expectedRevision,
+          nextWorldState: current.record.worldState,
+          nextStoryState: { ...current.record.storyState, narrative: { ...narrative, job: { ...narrative.job, attempt: { ...narrative.job.attempt, candidateHash: input.candidateHash } } } },
+          incrementRevision: false,
+          expectedNarrativeJob: input.expectedNarrativeJob,
+        });
+      } catch (error) {
+        logError("recordNarrativeCandidateHash failed", error);
+        return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+      }
+    });
+  }
+
+  async function reserveNarrativeHttpAttempt(input: NarrativeJobAttemptMutationInput): Promise<NarrativeAttemptMutationResult> {
+    return withNarrativeAttemptLock(async () => {
+      try {
+        const current = await readActiveNarrative(input.gameId, input.expectedRevision, input.expectedNarrativeJob.jobId);
+        if (current === null || current.record.storyState.narrative.status !== "provider_pending"
+          || !predicateMatches(current.record.storyState.narrative, input.expectedNarrativeJob)) return { ok: false, code: "STALE_GAME_REVISION" };
+        const narrative = current.record.storyState.narrative;
+        if (narrative.job.attempt.httpAttempts >= MAX_NARRATIVE_HTTP_ATTEMPTS) return { ok: false, code: "NARRATIVE_HTTP_BUDGET_EXHAUSTED" };
+        return applyNarrativeAttemptState({
+          gameId: input.gameId,
+          expectedRevision: input.expectedRevision,
+          nextWorldState: current.record.worldState,
+          nextStoryState: { ...current.record.storyState, narrative: { ...narrative, job: { ...narrative.job, attempt: { ...narrative.job.attempt, httpAttempts: narrative.job.attempt.httpAttempts + 1 } } } },
+          incrementRevision: false,
+          expectedNarrativeJob: input.expectedNarrativeJob,
+        });
+      } catch (error) {
+        logError("reserveNarrativeHttpAttempt failed", error);
+        return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+      }
+    });
+  }
+
+  async function renewNarrativeJobLease(
+    input: NarrativeJobAttemptMutationInput & { readonly now: string; readonly leaseExpiresAt: string },
+  ): Promise<ApplyStateResult> {
+    return withNarrativeAttemptLock(async () => {
+      try {
+      const current = await readActiveNarrative(input.gameId, input.expectedRevision, input.expectedNarrativeJob.jobId);
+      if (current === null || current.record.storyState.narrative.status !== "provider_pending"
+        || !predicateMatches(current.record.storyState.narrative, input.expectedNarrativeJob)) return { ok: false, code: "STALE_GAME_REVISION" };
+      const narrative = current.record.storyState.narrative;
+      if (narrative.job.attempt.leaseId === null || Date.parse(narrative.job.attempt.leaseExpiresAt ?? "") <= Date.parse(input.now)) return { ok: false, code: "STALE_GAME_REVISION" };
+      return applyNarrativeAttemptState({
+        gameId: input.gameId,
+        expectedRevision: input.expectedRevision,
+        nextWorldState: current.record.worldState,
+        nextStoryState: { ...current.record.storyState, narrative: { ...narrative, job: { ...narrative.job, attempt: { ...narrative.job.attempt, leaseExpiresAt: input.leaseExpiresAt } } } },
+        incrementRevision: false,
+        expectedNarrativeJob: input.expectedNarrativeJob,
+      });
+      } catch (error) {
+        logError("renewNarrativeJobLease failed", error);
+        return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+      }
+    });
+  }
+
+  async function releaseNarrativeJob(input: NarrativeJobAttemptMutationInput): Promise<ApplyStateResult> {
+    return withNarrativeAttemptLock(async () => {
+      try {
+      const current = await readActiveNarrative(input.gameId, input.expectedRevision, input.expectedNarrativeJob.jobId);
+      if (current === null || current.record.storyState.narrative.status !== "provider_pending"
+        || !predicateMatches(current.record.storyState.narrative, input.expectedNarrativeJob)) return { ok: false, code: "STALE_GAME_REVISION" };
+      const narrative = current.record.storyState.narrative;
+      return applyNarrativeAttemptState({
+        gameId: input.gameId,
+        expectedRevision: input.expectedRevision,
+        nextWorldState: current.record.worldState,
+        nextStoryState: { ...current.record.storyState, narrative: { ...narrative, job: { ...narrative.job, attempt: { ...narrative.job.attempt, leaseId: null, leaseExpiresAt: null, status: "idle" } } } },
+        incrementRevision: false,
+        expectedNarrativeJob: input.expectedNarrativeJob,
+      });
+      } catch (error) {
+        logError("releaseNarrativeJob failed", error);
+        return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+      }
+    });
+  }
+
   async function clearCurrentGame(): Promise<{ readonly ok: true } | { readonly ok: false; readonly code: "INFRASTRUCTURE_FAILURE" }> {
     try {
       await ensureSchema();
@@ -607,6 +869,12 @@ export function createSqliteGameRepository(
     getCurrentGame,
     applyState,
     applySceneWriteBack,
+    claimNarrativeJob,
+    reserveNarrativeCandidate,
+    recordNarrativeCandidateHash,
+    reserveNarrativeHttpAttempt,
+    renewNarrativeJobLease,
+    releaseNarrativeJob,
     clearCurrentGame,
     listOpeningHistory,
     async initializeSchema() {

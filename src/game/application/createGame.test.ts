@@ -727,6 +727,31 @@ describe("createGame", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe("ACTIVE_GAME_EXISTS");
   });
+
+  it("shares one 24-request budget across all opening candidate retries", async () => {
+    const { repo } = createInMemoryRepo();
+    let reserved = 0;
+    const generate = vi.fn(async (context: NarrativeBundleSourceContext) => {
+      if (context.kind === "opening") {
+        while (await context.reserveHttpAttempt?.()) reserved += 1;
+        return {
+          ok: false as const,
+          failure: { kind: "AI_RESPONSE_INVALID" as const, phase: "opening" as const },
+          repairReason: "invalid_schema" as const,
+        };
+      }
+      throw new Error("opening fixture received decision context");
+    });
+
+    const result = await createGame(
+      { gameId: asGameId("opening-http-budget"), gameType: "wuxia", gameLength: "short", seed: "opening-http-budget" },
+      { repository: repo, source: { generate }, now: () => "2026-01-01T00:00:00.000Z" },
+    );
+
+    expect(result).toMatchObject({ ok: false, code: "AI_GENERATION_FAILED" });
+    expect(reserved).toBe(24);
+    expect(generate).toHaveBeenCalledTimes(3);
+  });
 });
 
 describe("parseGameSetup", () => {

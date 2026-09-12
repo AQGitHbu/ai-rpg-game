@@ -79,8 +79,22 @@ export const RPG_AI_DEFAULT_POLICIES: Readonly<Record<RpgAiRole, RpgAiRolePolicy
 };
 
 export type RpgAiClient = Readonly<{
-  complete(role: RpgAiRole, messages: readonly AiMessage[], context?: AiTextAuditContext): Promise<AiCompletionResult>;
+  complete(
+    role: RpgAiRole,
+    messages: readonly AiMessage[],
+    context?: AiTextAuditContext,
+    options?: RpgAiCompleteOptions,
+  ): Promise<AiCompletionResult>;
   policy(role: RpgAiRole): RpgAiRolePolicy;
+}>;
+
+/** RPG-only controls used by the durable narrative request wrapper. */
+export type RpgAiCompleteOptions = Readonly<{
+  readonly signal?: AbortSignal;
+  /** Reserve one durable HTTP budget unit immediately before transport I/O. */
+  readonly beforeTransportAttempt?: () => Promise<boolean> | boolean;
+  /** Purpose-specific timeout/token/retry policy without changing shared transport. */
+  readonly policyOverride?: Partial<RpgAiRolePolicy>;
 }>;
 
 export type CreateRpgAiClientOptions = Readonly<{
@@ -168,8 +182,11 @@ export function createRpgAiClient(options: CreateRpgAiClientOptions): RpgAiClien
       return policies[role];
     },
 
-    async complete(role, messages, auditContext) {
-      const policy = policies[role];
+    async complete(role, messages, auditContext, completeOptions) {
+      const policy = {
+        ...policies[role],
+        ...(completeOptions?.policyOverride ?? {}),
+      };
       const maxAttempts = Math.max(1, Math.floor(policy.maxAttempts));
       const callId = typeof crypto !== "undefined" && crypto.randomUUID
         ? crypto.randomUUID()
@@ -181,12 +198,29 @@ export function createRpgAiClient(options: CreateRpgAiClientOptions): RpgAiClien
       let lastFailureCode: string | undefined;
 
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-        const providerOptions = createProviderRequestOptions(
+        if (completeOptions?.signal?.aborted === true) {
+          return { ok: false, code: "aborted", retryable: false, latencyMs: 0 };
+        }
+        if (completeOptions?.beforeTransportAttempt !== undefined) {
+          let reserved = false;
+          try {
+            reserved = await completeOptions.beforeTransportAttempt();
+          } catch {
+            return { ok: false, code: "service_error", retryable: false, latencyMs: 0 };
+          }
+          if (!reserved) {
+            return { ok: false, code: "rate_limited", retryable: false, latencyMs: 0 };
+          }
+        }
+        const providerOptions = {
+          ...createProviderRequestOptions(
           policy.timeoutMs,
           policy.maxTokens,
           policy.jsonMode,
           policy.thinking,
-        );
+          ),
+          ...(completeOptions?.signal === undefined ? {} : { signal: completeOptions.signal }),
+        };
         const result = await options.transport.complete(
           options.config,
           messages,

@@ -67,6 +67,8 @@ export type NarrativeBundleSourceContext =
     readonly input: OpeningGenerationInput;
     readonly auditLink?: AiTextAuditLink;
     readonly contentRepair?: NarrativeBundleRepair;
+    readonly signal?: AbortSignal;
+    readonly reserveHttpAttempt?: () => Promise<boolean> | boolean;
   }
   | {
     readonly kind: "decision";
@@ -77,6 +79,8 @@ export type NarrativeBundleSourceContext =
     readonly job: PendingNarrativeJob;
     readonly auditLink?: AiTextAuditLink;
     readonly contentRepair?: NarrativeBundleRepair;
+    readonly signal?: AbortSignal;
+    readonly reserveHttpAttempt?: () => Promise<boolean> | boolean;
   };
 
 export type NarrativeBundleSourceResult =

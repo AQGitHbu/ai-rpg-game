@@ -59,7 +59,40 @@ export type ApplyStateInput = {
   readonly expectedNarrativeJob?: {
     readonly status: "provider_pending" | "provider_failed";
     readonly jobId: string;
+    readonly epoch?: number;
+    readonly leaseId?: string | null;
+    readonly candidateVersion?: number;
+    readonly candidateHash?: string | null;
   };
+};
+
+export type NarrativeJobAttemptPredicate = Readonly<{
+  readonly status: "provider_pending" | "provider_failed";
+  readonly jobId: string;
+  readonly epoch: number;
+  readonly leaseId: string | null;
+  readonly candidateVersion: number;
+  readonly candidateHash: string | null;
+}>;
+
+export type ClaimNarrativeJobInput = Readonly<{
+  readonly gameId: GameId;
+  readonly expectedRevision: number;
+  readonly jobId: string;
+  readonly now: string;
+  readonly leaseId: string;
+  readonly leaseExpiresAt: string;
+}>;
+
+export type NarrativeJobAttemptMutationInput = Readonly<{
+  readonly gameId: GameId;
+  readonly expectedRevision: number;
+  readonly expectedNarrativeJob: NarrativeJobAttemptPredicate;
+}>;
+
+export type NarrativeAttemptMutationResult = ApplyStateResult | {
+  readonly ok: false;
+  readonly code: "NARRATIVE_CANDIDATES_EXHAUSTED" | "NARRATIVE_HTTP_BUDGET_EXHAUSTED";
 };
 
 /**
@@ -112,6 +145,13 @@ export interface GameRepository {
   replaceCurrentGame(input: ReplaceCurrentGameInput): Promise<ReplaceCurrentGameResult>;
   getCurrentGame(): Promise<GetCurrentGameResult>;
   applyState(input: ApplyStateInput): Promise<ApplyStateResult>;
+  /** Optional durable worker fencing primitives; lightweight fixtures may omit them. */
+  claimNarrativeJob?(input: ClaimNarrativeJobInput): Promise<ApplyStateResult>;
+  reserveNarrativeCandidate?(input: NarrativeJobAttemptMutationInput): Promise<NarrativeAttemptMutationResult>;
+  recordNarrativeCandidateHash?(input: NarrativeJobAttemptMutationInput & { readonly candidateHash: string }): Promise<ApplyStateResult>;
+  reserveNarrativeHttpAttempt?(input: NarrativeJobAttemptMutationInput): Promise<NarrativeAttemptMutationResult>;
+  renewNarrativeJobLease?(input: NarrativeJobAttemptMutationInput & { readonly now: string; readonly leaseExpiresAt: string }): Promise<ApplyStateResult>;
+  releaseNarrativeJob?(input: NarrativeJobAttemptMutationInput): Promise<ApplyStateResult>;
   applySceneWriteBack(input: ApplySceneWriteBackInput): Promise<ApplySceneWriteBackResult>;
   clearCurrentGame(): Promise<ClearCurrentGameResult>;
   /** 生产 SQLite 实现提供；轻量 fixture repository 可省略。 */

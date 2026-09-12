@@ -71,7 +71,7 @@ function isStoryShape(value: JsonObject): value is JsonObject & {
   readonly threads: unknown;
 } {
   return hasExactStoryKeys(value)
-    && value.version === 10
+    && value.version === 11
     && isNonNegativeInteger(value.turnNumber)
     && isNonNegativeInteger(value.currentAct)
     && isNonNegativeInteger(value.targetActs)
@@ -106,7 +106,7 @@ function sameJson(left: unknown, right: unknown): boolean {
   }
 }
 
-/** SQLite boundary parser for v10 StoryState. Memory is accepted only when it
+/** SQLite boundary parser for v11 StoryState. Memory is accepted only when it
  * is byte-for-byte equivalent to the read model rebuilt from the supplied world ledger. */
 export function parsePersistableStoryState(
   value: unknown,

@@ -52,7 +52,35 @@ export type GeneratePendingNarrativeBundleDeps = {
   readonly auditLink?: AiTextAuditLink;
   /** Optional semantic reviewer; production composition injects the live reviewer. */
   readonly reviewer?: NarrativeCandidateReviewer;
+  /** Server-owned lease identity; injected so recovery tests remain deterministic. */
+  readonly leaseId?: () => string;
 };
+
+const NARRATIVE_LEASE_DURATION_MS = 10 * 60 * 1000;
+
+function createLeaseId(deps: GeneratePendingNarrativeBundleDeps): string {
+  if (deps.leaseId !== undefined) return deps.leaseId();
+  if (typeof globalThis.crypto?.randomUUID === "function") return globalThis.crypto.randomUUID();
+  return `narrative-lease-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function leaseExpiresAt(now: string): string {
+  const timestamp = Date.parse(now);
+  return new Date((Number.isNaN(timestamp) ? Date.now() : timestamp) + NARRATIVE_LEASE_DURATION_MS).toISOString();
+}
+
+function narrativeAttemptPredicate(
+  narrative: Extract<StoryState["narrative"], { readonly status: "provider_pending" }>,
+) {
+  return {
+    status: "provider_pending" as const,
+    jobId: String(narrative.job.jobId),
+    epoch: narrative.job.attempt.epoch,
+    leaseId: narrative.job.attempt.leaseId,
+    candidateVersion: narrative.job.attempt.candidateVersion,
+    candidateHash: narrative.job.attempt.candidateHash,
+  } as const;
+}
 
 function deriveEvolutionNeed(storyState: StoryState, worldState: WorldState): EvolutionNeed {
   if (storyState.evolution.status === "needs_next_act") {
@@ -77,10 +105,154 @@ export async function generatePendingNarrativeBundle(
     return { ok: false, code: "NOT_PENDING" };
   }
 
-  const job = narrative.job;
+  let job = narrative.job;
   const lastPresentedScene = narrative.lastPresentedScene;
   const worldState = record.worldState;
   const storyState = record.storyState;
+
+  const durableRecovery = job.attempt !== undefined
+    && deps.repository.claimNarrativeJob !== undefined
+    && deps.repository.reserveNarrativeCandidate !== undefined
+    && deps.repository.recordNarrativeCandidateHash !== undefined
+    && deps.repository.reserveNarrativeHttpAttempt !== undefined;
+  let durableRecord = record;
+  let durableMutationFailure: string | undefined;
+  let leaseLost = false;
+  const requestController = new AbortController();
+  let leaseTimer: ReturnType<typeof setInterval> | undefined;
+  const stopLeaseHeartbeat = () => {
+    if (leaseTimer !== undefined) clearInterval(leaseTimer);
+    leaseTimer = undefined;
+  };
+  if (durableRecovery) {
+    const claim = await deps.repository.claimNarrativeJob!({
+      gameId: record.gameId,
+      expectedRevision: record.revision,
+      jobId: String(job.jobId),
+      now: deps.now(),
+      leaseId: createLeaseId(deps),
+      leaseExpiresAt: leaseExpiresAt(deps.now()),
+    });
+    if (!claim.ok) {
+      return { ok: false, code: claim.code === "STALE_GAME_REVISION" ? "STALE_GAME_REVISION" : "INFRASTRUCTURE_FAILURE" };
+    }
+    durableRecord = claim.record;
+    const claimedNarrative = durableRecord.storyState.narrative;
+    if (claimedNarrative.status !== "provider_pending") {
+      return { ok: false, code: "STALE_GAME_REVISION" };
+    }
+    job = claimedNarrative.job;
+    if (deps.repository.renewNarrativeJobLease !== undefined) {
+      const renewLease = async () => {
+        if (leaseLost) return;
+        const currentNarrative = durableRecord.storyState.narrative;
+        if (currentNarrative.status !== "provider_pending") return;
+        const renewed = await deps.repository.renewNarrativeJobLease!({
+          gameId: durableRecord.gameId,
+          expectedRevision: durableRecord.revision,
+          expectedNarrativeJob: narrativeAttemptPredicate(currentNarrative),
+          now: deps.now(),
+          leaseExpiresAt: leaseExpiresAt(deps.now()),
+        });
+        if (!renewed.ok) {
+          leaseLost = true;
+          durableMutationFailure = renewed.code;
+          requestController.abort();
+          return;
+        }
+        durableRecord = renewed.record;
+        const renewedNarrative = durableRecord.storyState.narrative;
+        if (renewedNarrative.status === "provider_pending") job = renewedNarrative.job;
+      };
+      leaseTimer = setInterval(() => { void renewLease(); }, 60_000);
+      // A heartbeat must never keep a CLI/test process alive after the caller
+      // has stopped awaiting this generation.
+      if (typeof leaseTimer === "object" && "unref" in leaseTimer) leaseTimer.unref();
+    }
+  }
+
+  const reserveDurableHttpAttempt = async (): Promise<boolean> => {
+    if (!durableRecovery) return false;
+    const currentNarrative = durableRecord.storyState.narrative;
+    if (currentNarrative.status !== "provider_pending") {
+      durableMutationFailure = "STALE_GAME_REVISION";
+      return false;
+    }
+    const httpAttempt = await deps.repository.reserveNarrativeHttpAttempt!({
+      gameId: durableRecord.gameId,
+      expectedRevision: durableRecord.revision,
+      expectedNarrativeJob: narrativeAttemptPredicate(currentNarrative),
+    });
+    if (!httpAttempt.ok) {
+      durableMutationFailure = httpAttempt.code;
+      return false;
+    }
+    durableRecord = httpAttempt.record;
+    const httpNarrative = durableRecord.storyState.narrative;
+    if (httpNarrative.status === "provider_pending") job = httpNarrative.job;
+    return true;
+  };
+
+  const source: NarrativeBundleSource = durableRecovery
+    ? {
+        generate: async (context) => {
+          if (context.kind !== "decision") {
+            return deps.source.generate(context);
+          }
+          if (leaseLost) {
+            return { ok: false, failure: { kind: "AI_CALL_FAILED", phase: "scene" }, repairReason: "provider_failure", repairDetail: "lease_lost" };
+          }
+          const currentNarrative = durableRecord.storyState.narrative;
+          if (currentNarrative.status !== "provider_pending") {
+            durableMutationFailure = "STALE_GAME_REVISION";
+            return { ok: false, failure: { kind: "AI_CALL_FAILED", phase: "scene" }, repairReason: "provider_failure", repairDetail: "lease_lost" };
+          }
+          const reserved = await deps.repository.reserveNarrativeCandidate!({
+            gameId: durableRecord.gameId,
+            expectedRevision: durableRecord.revision,
+            expectedNarrativeJob: narrativeAttemptPredicate(currentNarrative),
+          });
+          if (!reserved.ok) {
+            durableMutationFailure = reserved.code;
+            return { ok: false, failure: { kind: "AI_CALL_FAILED", phase: "scene" }, repairReason: "provider_failure", repairDetail: reserved.code };
+          }
+          durableRecord = reserved.record;
+          const reservedNarrative = durableRecord.storyState.narrative;
+          if (reservedNarrative.status !== "provider_pending") {
+            durableMutationFailure = "STALE_GAME_REVISION";
+            return { ok: false, failure: { kind: "AI_CALL_FAILED", phase: "scene" }, repairReason: "provider_failure", repairDetail: "lease_lost" };
+          }
+          job = reservedNarrative.job;
+          const generated = await deps.source.generate({
+            ...context,
+            candidateVersion: job.attempt.candidateVersion,
+            worldState: durableRecord.worldState,
+            storyState: durableRecord.storyState,
+            job,
+            reserveHttpAttempt: reserveDurableHttpAttempt,
+          });
+          if (generated.ok && generated.kind === "decision") {
+            const candidateHash = hashNarrativeCandidate(generated.proposal);
+            const recorded = await deps.repository.recordNarrativeCandidateHash!({
+              gameId: durableRecord.gameId,
+              expectedRevision: durableRecord.revision,
+              expectedNarrativeJob: narrativeAttemptPredicate(
+                durableRecord.storyState.narrative as Extract<StoryState["narrative"], { readonly status: "provider_pending" }>,
+              ),
+              candidateHash,
+            });
+            if (!recorded.ok) {
+              durableMutationFailure = recorded.code;
+              return { ok: false, failure: { kind: "AI_CALL_FAILED", phase: "scene" }, repairReason: "provider_failure", repairDetail: recorded.code };
+            }
+            durableRecord = recorded.record;
+            const hashedNarrative = durableRecord.storyState.narrative;
+            if (hashedNarrative.status === "provider_pending") job = hashedNarrative.job;
+          }
+          return generated;
+        },
+      }
+    : deps.source;
 
   const transition: ObjectiveTransition = job.objectiveTransition;
   const evolutionNeed = deriveEvolutionNeed(storyState, worldState);
@@ -91,7 +263,9 @@ export async function generatePendingNarrativeBundle(
   let lastFailureKind: AiFailureKind = "AI_RESPONSE_INVALID";
   let lastRepair: NarrativeBundleRepair | undefined;
   const bounded = await runBoundedAttempts<ApprovedNarrativeBundle, NarrativeBundleRepair>({
-    maxAttempts: MAX_NARRATIVE_BUNDLE_ATTEMPTS,
+    maxAttempts: durableRecovery
+      ? Math.max(1, MAX_NARRATIVE_BUNDLE_ATTEMPTS - job.attempt.candidateVersion)
+      : MAX_NARRATIVE_BUNDLE_ATTEMPTS,
     runAttempt: async (attempt, priorRepair) => {
       // 自动修复从 1 开始；本次循环若由手动重试启动，则以 retryContext
       // 的首次修复序号为偏移。该偏移不代表之前多次手动重试的累计次数。
@@ -101,9 +275,10 @@ export async function generatePendingNarrativeBundle(
 
       let sourceResult;
       try {
-        sourceResult = await deps.source.generate({
+        sourceResult = await source.generate({
           kind: "decision",
-          candidateVersion: attempt,
+          candidateVersion: durableRecovery ? job.attempt.candidateVersion : attempt,
+          signal: requestController.signal,
           worldState,
           storyState,
           job,
@@ -129,7 +304,7 @@ export async function generatePendingNarrativeBundle(
         lastRepair = repairFromSourceFailure(sourceResult, attempt);
         return {
           ok: false,
-          retryable: true,
+          retryable: durableMutationFailure === undefined,
           reason: lastRepair,
         };
       }
@@ -139,7 +314,7 @@ export async function generatePendingNarrativeBundle(
         lastRepair = { attempt, reason: "invalid_schema", detail: "unexpected_source_kind" };
         return { ok: false, retryable: true, reason: lastRepair };
       }
-      const candidateVersion = attempt;
+      const candidateVersion = durableRecovery ? job.attempt.candidateVersion : attempt;
       const candidateHash = hashNarrativeCandidate(sourceResult.proposal);
       const approvalInput = {
         proposal: sourceResult.proposal,
@@ -192,6 +367,7 @@ export async function generatePendingNarrativeBundle(
             context: {
               kind: "decision",
               candidateVersion,
+              signal: requestController.signal,
               worldState,
               storyState,
               job,
@@ -201,6 +377,7 @@ export async function generatePendingNarrativeBundle(
                 jobId: String(job.jobId),
                 turnNumber: job.turnNumber,
               },
+              reserveHttpAttempt: durableRecovery ? reserveDurableHttpAttempt : undefined,
               ...(repairHint === undefined ? {} : { contentRepair: repairHint }),
             },
             proposal: sourceResult.proposal,
@@ -266,11 +443,20 @@ export async function generatePendingNarrativeBundle(
   });
 
   async function failPendingJob(): Promise<GeneratePendingNarrativeBundleResult> {
+    stopLeaseHeartbeat();
     // Record provider_failed with same jobId
+    const currentNarrative = durableRecord.storyState.narrative;
+    const currentJob = currentNarrative.status === "provider_pending" ? currentNarrative.job : job;
+    const failedJob = durableRecovery
+      ? {
+          ...currentJob,
+          attempt: { ...currentJob.attempt, leaseId: null, leaseExpiresAt: null, status: "failed" as const },
+        }
+      : currentJob;
     const failedNarrative: NarrativeRuntimeState = {
       status: "provider_failed",
       mode: narrative.mode,
-      job,
+      job: failedJob,
       failure: {
         kind: lastFailureKind,
         reason: persistedAiRepairReason(lastRepair ?? { attempt: 1, reason: "invalid_schema" }),
@@ -282,15 +468,18 @@ export async function generatePendingNarrativeBundle(
     };
 
     const failedStoryState: StoryState = {
-      ...storyState,
+      ...(durableRecovery ? durableRecord.storyState : storyState),
       narrative: failedNarrative,
     };
 
     const savedFailure = await deps.repository.applyState({
       gameId: record.gameId,
-      expectedRevision: record.revision,
-      nextWorldState: worldState,
+      expectedRevision: durableRecord.revision,
+      nextWorldState: durableRecord.worldState,
       nextStoryState: failedStoryState,
+      ...(durableRecovery && currentNarrative.status === "provider_pending"
+        ? { expectedNarrativeJob: narrativeAttemptPredicate(currentNarrative) }
+        : {}),
     });
     if (!savedFailure.ok) {
       return {
@@ -410,17 +599,22 @@ export async function generatePendingNarrativeBundle(
 
   const commitResult = await deps.repository.applyState({
     gameId: record.gameId,
-    expectedRevision: record.revision,
+    expectedRevision: durableRecord.revision,
     nextWorldState,
     nextStoryState,
+    ...(durableRecovery && durableRecord.storyState.narrative.status === "provider_pending"
+      ? { expectedNarrativeJob: narrativeAttemptPredicate(durableRecord.storyState.narrative) }
+      : {}),
   });
 
   if (!commitResult.ok) {
+    stopLeaseHeartbeat();
     return {
       ok: false,
       code: commitResult.code === "STALE_GAME_REVISION" ? "STALE_GAME_REVISION" : "INFRASTRUCTURE_FAILURE",
     };
   }
 
+  stopLeaseHeartbeat();
   return { ok: true, revision: commitResult.record.revision };
 }

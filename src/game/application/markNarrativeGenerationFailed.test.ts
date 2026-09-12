@@ -8,6 +8,7 @@ import { asGenerationId, asLocationId } from "@/game/domain/worldEntity";
 import { asEventId, asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import type { GameRecord, GameRepository } from "./server/persistence/gameRepository";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
+import { createNarrativeGenerationAttempt } from "@/game/domain/narrativeGenerationAttempt";
 
 const gameId = asGameId("failed-game");
 
@@ -26,6 +27,7 @@ function fixture(): { record: GameRecord; repository: GameRepository } {
     actionSummary: { kind: "explore" }, resolvedEvent: { actionId: "action_failed", status: "success", eventKind: "observe", facts: [], stateChanges: [], costs: [], rewards: [], triggeredEvents: [], rejectedEffects: [] },
     domainEventIds: [asEventId("turn_failed:event")], requestedAt: "now", objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" }, mandatoryBeats: [],
     generationKind: "npc_fixed_choice", sceneRequestKind: "npc_response",
+    attempt: createNarrativeGenerationAttempt(),
   };
   const record: GameRecord = {
     gameId,

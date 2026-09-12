@@ -8,6 +8,7 @@ import { asNarrativeJobId, asTurnId, asEventId } from "@/game/domain/events";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { EntityCompatibilityProjection } from "@/game/domain/entity";
 import type { NpcEntry } from "@/game/domain/worldEntries";
+import { createNarrativeGenerationAttempt } from "@/game/domain/narrativeGenerationAttempt";
 import { describe, expect, it } from "vitest";
 import { buildEntityContextProjection } from "./entityContextProjection";
 
@@ -98,6 +99,7 @@ function job(overrides: Partial<PendingNarrativeJob> = {}): PendingNarrativeJob 
     objectiveTransition: { before: null, completed: [], after: { questId, objectiveIndex: 0, label: "询问线人" }, mode: "unchanged" },
     mandatoryBeats: [{ beatId: "item", kind: "item_obtained", subjectIds: ["item_nearby"], instruction: "获得铜钥" }],
     generationKind: "npc_fixed_choice", sceneRequestKind: "npc_response",
+    attempt: createNarrativeGenerationAttempt(),
     ...overrides,
   };
 }

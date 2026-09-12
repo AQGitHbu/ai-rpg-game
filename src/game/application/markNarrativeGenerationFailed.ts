@@ -1,6 +1,7 @@
 import type { NarrativeGenerationFailure } from "@/game/domain/narrativeGenerationFailure";
 import type { GameRecord, GameRepository } from "./server/persistence/gameRepository";
 import { commitState } from "./stateCommit";
+import { createNarrativeGenerationAttempt } from "@/game/domain/narrativeGenerationAttempt";
 
 export type MarkNarrativeGenerationFailedResult =
   | { readonly ok: true; readonly result: "failed" }
@@ -34,7 +35,15 @@ export async function markNarrativeGenerationFailed(
     narrative: {
       status: "provider_failed" as const,
       mode: generation.mode,
-      job: generation.job,
+      job: {
+        ...generation.job,
+        attempt: {
+          ...(generation.job.attempt ?? createNarrativeGenerationAttempt()),
+          leaseId: null,
+          leaseExpiresAt: null,
+          status: "failed" as const,
+        },
+      },
       failure,
       lastPresentedScene: generation.lastPresentedScene,
       ...(generation.dialogueSession === undefined ? {} : { dialogueSession: generation.dialogueSession }),
@@ -46,7 +55,16 @@ export async function markNarrativeGenerationFailed(
     nextWorldState: current.record.worldState,
     nextStoryState,
     incrementRevision: false,
-    expectedNarrativeJob: { status: "provider_pending", jobId: String(generation.job.jobId) },
+    expectedNarrativeJob: {
+      status: "provider_pending",
+      jobId: String(generation.job.jobId),
+      ...(generation.job.attempt === undefined ? {} : {
+        epoch: generation.job.attempt.epoch,
+        leaseId: generation.job.attempt.leaseId,
+        candidateVersion: generation.job.attempt.candidateVersion,
+        candidateHash: generation.job.attempt.candidateHash,
+      }),
+    },
   });
   if (committed === undefined || !committed.ok) {
     return { ok: false, code: committed?.code ?? "INFRASTRUCTURE_FAILURE" };

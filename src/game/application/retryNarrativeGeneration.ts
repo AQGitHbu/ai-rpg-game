@@ -3,6 +3,7 @@ import type { GameId } from "./server/persistence/gameRepository";
 import type { GameRepository } from "./server/persistence/gameRepository";
 import { commitState } from "./stateCommit";
 import { providerAllowedFor } from "@/game/gameplay/rpg/narrativeExecution";
+import { advanceNarrativeGenerationEpoch, createNarrativeGenerationAttempt } from "@/game/domain/narrativeGenerationAttempt";
 
 export type RetryNarrativeGenerationResult =
   | { readonly ok: true; readonly result: "requeued" | "already_pending" | "not_failed"; readonly jobId?: string }
@@ -32,6 +33,8 @@ export async function retryNarrativeGeneration(
   // 同一个 failed job 的下一次生成必须知道上一次失败的稳定原因；
   // 旧存档没有 reason 时使用安全兜底，仍保证一次自动内容修复预算。
   const repairReason = repairFromSourceFailure({ ok: false, failure: generation.failure, repairReason: generation.failure.reason }, 1).reason;
+  const nextAttempt = advanceNarrativeGenerationEpoch(generation.job.attempt ?? createNarrativeGenerationAttempt());
+  const failedAttempt = generation.job.attempt;
 
   const committed = await commitState(repository, {
     gameId,
@@ -42,14 +45,23 @@ export async function retryNarrativeGeneration(
       narrative: {
         status: "provider_pending",
         mode: generation.mode,
-        job: generation.job,
+        job: { ...generation.job, attempt: nextAttempt },
         lastPresentedScene: generation.lastPresentedScene,
         retryContext: { attempt: 1, reason: repairReason },
         ...(generation.dialogueSession === undefined ? {} : { dialogueSession: generation.dialogueSession }),
       },
     },
     incrementRevision: false,
-    expectedNarrativeJob: { status: "provider_failed", jobId: String(generation.job.jobId) },
+    expectedNarrativeJob: {
+      status: "provider_failed",
+      jobId: String(generation.job.jobId),
+      ...(failedAttempt === undefined ? {} : {
+        epoch: failedAttempt.epoch,
+        leaseId: failedAttempt.leaseId,
+        candidateVersion: failedAttempt.candidateVersion,
+        candidateHash: failedAttempt.candidateHash,
+      }),
+    },
   });
   if (!committed.ok) return { ok: false, code: committed.code };
   return { ok: true, result: "requeued", jobId: String(generation.job.jobId) };

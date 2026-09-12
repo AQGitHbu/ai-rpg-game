@@ -10,6 +10,11 @@ import type {
 } from "./worldEntity";
 import type { Action } from "./action";
 import { MAX_MANDATORY_BEATS, type MandatoryNarrativeBeat, type ObjectiveTransition } from "./narrativeBeat";
+import {
+  createNarrativeGenerationAttempt,
+  parseNarrativeGenerationAttempt,
+  type NarrativeGenerationAttempt,
+} from "./narrativeGenerationAttempt";
 
 /** 玩家原话（utterance）的长度上限：全链路统一引用的常量。 */
 export const PLAYER_UTTERANCE_MAX_LENGTH = 200 as const;
@@ -161,6 +166,8 @@ export type PendingNarrativeJob = {
   readonly generationKind: ProviderGenerationKind | null;
   /** 场景请求种类；必须与 generationKind 合法配对。 */
   readonly sceneRequestKind: NarrativeSceneRequestKind | null;
+  /** Durable candidate/lease/HTTP accounting for this logical job epoch. */
+  readonly attempt: NarrativeGenerationAttempt;
 };
 
 export type CreatePendingNarrativeJobInput = {
@@ -187,6 +194,7 @@ export type CreatePendingNarrativeJobInput = {
   readonly generationKind: ProviderGenerationKind | null;
   /** 场景请求种类；必须与 generationKind 合法配对。 */
   readonly sceneRequestKind: NarrativeSceneRequestKind | null;
+  readonly attempt?: NarrativeGenerationAttempt;
 };
 
 export type PendingNarrativeJobErrorCode =
@@ -198,7 +206,8 @@ export type PendingNarrativeJobErrorCode =
   | "MANDATORY_BEATS_OVER_CAP"
   | "INVALID_GENERATION_KIND"
   | "INVALID_SCENE_REQUEST_KIND"
-  | "INVALID_KIND_PAIR";
+  | "INVALID_KIND_PAIR"
+  | "ATTEMPT_INVALID";
 
 export type PendingNarrativeJobError = {
   readonly code: PendingNarrativeJobErrorCode;
@@ -302,6 +311,10 @@ export function createPendingNarrativeJob(
   ) {
     errors.push({ code: "MANDATORY_BEATS_OVER_CAP" });
   }
+  const attempt = input.attempt === undefined
+    ? { ok: true as const, value: createNarrativeGenerationAttempt() }
+    : parseNarrativeGenerationAttempt(input.attempt);
+  if (!attempt.ok) errors.push({ code: "ATTEMPT_INVALID" });
 
   if (errors.length > 0) return { ok: false, errors };
 
@@ -321,6 +334,7 @@ export function createPendingNarrativeJob(
       mandatoryBeats: input.mandatoryBeats,
       generationKind: input.generationKind,
       sceneRequestKind: input.sceneRequestKind,
+      attempt: attempt.ok ? attempt.value : createNarrativeGenerationAttempt(),
       ...(input.utterance !== undefined ? { utterance: input.utterance } : {}),
       ...(input.focusNpcId !== undefined ? { focusNpcId: input.focusNpcId } : {}),
       ...(input.selectedDialogue !== undefined ? { selectedDialogue: input.selectedDialogue } : {}),
@@ -336,6 +350,7 @@ export type ParsePendingNarrativeJobResult =
 export function parsePendingNarrativeJob(value: unknown): ParsePendingNarrativeJobResult {
   if (!value || typeof value !== "object") return { ok: false, code: "INVALID_PENDING_NARRATIVE_JOB" };
   const v = value as Record<string, unknown>;
+  if (!("attempt" in v)) return { ok: false, code: "INVALID_PENDING_NARRATIVE_JOB" };
   const result = createPendingNarrativeJob({
     jobId: v.jobId as NarrativeJobId,
     turnId: v.turnId as TurnId,
@@ -357,6 +372,7 @@ export function parsePendingNarrativeJob(value: unknown): ParsePendingNarrativeJ
     mandatoryBeats: v.mandatoryBeats as readonly MandatoryNarrativeBeat[],
     generationKind: v.generationKind as ProviderGenerationKind | null,
     sceneRequestKind: v.sceneRequestKind as NarrativeSceneRequestKind | null,
+    attempt: v.attempt as NarrativeGenerationAttempt,
   });
   if (!result.ok) return { ok: false, code: "INVALID_PENDING_NARRATIVE_JOB" };
   return { ok: true, job: result.job };

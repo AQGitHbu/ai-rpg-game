@@ -43,6 +43,7 @@ import {
   type CandidateReviewResult,
   type NarrativeCandidateReviewer,
 } from "./narrativeCandidateReview";
+import { MAX_NARRATIVE_HTTP_ATTEMPTS } from "@/game/domain/narrativeGenerationAttempt";
 
 // ---------------------------------------------------------------------------
 // Task 2：开局生成编排改为 source → parse → validate → compile。
@@ -64,6 +65,8 @@ export type OpeningGenerationInput = {
   attempt?: number;
   /** 仅用于关联 opening AI 审计事件，不进入游戏状态。 */
   auditLink?: AiTextAuditLink;
+  signal?: AbortSignal;
+  reserveHttpAttempt?: () => Promise<boolean> | boolean;
 };
 
 export type OpeningGenerationSource = {
@@ -339,6 +342,8 @@ export async function createGame(
   const recentHistory = [...historyResult.records];
   const rejectedCandidates: OpeningNoveltyRecord[] = [];
   let lastFailureKind: AiFailureKind | undefined;
+  let openingHttpAttempts = 0;
+  const openingRequestController = new AbortController();
   // The logical initialization job exists before the first provider attempt so
   // novelty/content/transport retries share the same audit identity.
   const jobId = asNarrativeJobId(`job_${input.seed}_0`);
@@ -361,6 +366,7 @@ export async function createGame(
       const openingContext: Extract<NarrativeBundleSourceContext, { readonly kind: "opening" }> = {
         kind: "opening" as const,
         jobId,
+        signal: openingRequestController.signal,
         candidateVersion,
         ...(contentRepair === undefined ? {} : { contentRepair }),
         input: {
@@ -387,6 +393,11 @@ export async function createGame(
           jobId: String(jobId),
           turnNumber: 0,
           retry: contentRepair === undefined ? { origin: "normal", mechanism: "initial", attempt: 0 } : aiRepairAuditContext(contentRepair, deps.auditLink?.retry),
+        },
+        reserveHttpAttempt: () => {
+          if (openingHttpAttempts >= MAX_NARRATIVE_HTTP_ATTEMPTS) return false;
+          openingHttpAttempts += 1;
+          return true;
         },
       };
       let generated: OpeningGenerationCandidate;

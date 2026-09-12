@@ -164,7 +164,7 @@ function makeWorldContext(need: EvolutionNeed) {
   return {
     worldState: createWorldStateFixture({ generation, projection }),
     storyState: {
-      version: 10,
+      version: 11,
       turnNumber: 7,
       currentAct: 2,
       targetActs: 3,

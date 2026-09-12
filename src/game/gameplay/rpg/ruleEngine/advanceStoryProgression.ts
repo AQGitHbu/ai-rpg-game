@@ -68,7 +68,7 @@ export function advanceStoryProgression(
   let endingAllowed = ss.endingAllowed;
   let threads = ss.threads;
   // Keep accepting legacy in-memory fixtures that override only the
-  // compatibility projection; persisted v10 records validate the projection
+  // compatibility projection; persisted v11 records validate the projection
   // against threads at the boundary.
   let unresolvedThreads = ss.unresolvedThreads;
   const thread = mainThreadId(ss);

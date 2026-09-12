@@ -14,6 +14,7 @@ import { classifyAiFailure } from "../../aiGenerationFailure";
 import type { AiGenerationFailure } from "@/game/domain/narrativeGenerationFailure";
 import { createNarrativeBundleSource } from "./liveNarrativeBundleSource";
 import type { NarrativeBundleSource } from "../../narrativeBundleSource";
+import type { NarrativeRequestClient } from "./narrativeRequestClient";
 
 // ---------------------------------------------------------------------------
 // 生产 AI source 工厂：根据运行时配置只注入 live 或 unavailable source。
@@ -35,6 +36,7 @@ export function createOpeningGenerationSource(
   env: Record<string, string | undefined> = process.env,
   logger?: GameLogger,
   aiClient?: RpgAiClient,
+  requestClient?: NarrativeRequestClient,
 ): OpeningGenerationSource {
   const runtime = parseAiRuntimeConfig(env);
   const client = aiClient ?? createServerRpgAiClient(env, logger);
@@ -42,6 +44,7 @@ export function createOpeningGenerationSource(
     logger?.info("opening_source_live", { model: runtime.config.model });
     return createValidatedOpeningGenerationSource({
       aiClient: client,
+      requestClient,
       jsonMode: providerJsonModeFor(runtime.outputFormat),
       logger,
     });
@@ -110,6 +113,7 @@ export function createNarrativeBundleSourceFactory(
   env: Record<string, string | undefined> = process.env,
   logger?: GameLogger,
   aiClient?: RpgAiClient,
+  requestClient?: NarrativeRequestClient,
 ): NarrativeBundleSource {
   const runtime = parseAiRuntimeConfig(env);
   const client = aiClient ?? createServerRpgAiClient(env, logger);
@@ -117,6 +121,7 @@ export function createNarrativeBundleSourceFactory(
     logger?.info("narrative_bundle_source_live", { model: runtime.config.model });
     return createNarrativeBundleSource({
       aiClient: client,
+      requestClient,
       jsonMode: providerJsonModeFor(runtime.outputFormat),
       logger,
     });

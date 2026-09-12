@@ -8,6 +8,7 @@ import { createInitialStoryState } from "@/game/domain/storyState";
 import { asGenerationId, asLocationId } from "@/game/domain/worldEntity";
 import { asEventId, asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
+import { createNarrativeGenerationAttempt } from "@/game/domain/narrativeGenerationAttempt";
 
 const gameId = asGameId("retry-game");
 
@@ -36,6 +37,7 @@ function makeJob(): PendingNarrativeJob {
     mandatoryBeats: [],
     generationKind: "npc_fixed_choice",
     sceneRequestKind: "npc_response",
+    attempt: createNarrativeGenerationAttempt(),
   };
 }
 
@@ -137,6 +139,9 @@ describe("retryNarrativeGeneration", () => {
       status: "provider_pending",
       job: { jobId: "job_retry" },
       retryContext: { attempt: 1, reason: "provider_failure" },
+    });
+    expect(fixture.record().storyState.narrative).toMatchObject({
+      job: { attempt: { epoch: 1, candidateVersion: 0, candidateHash: null, httpAttempts: 0, leaseId: null, leaseExpiresAt: null, status: "idle" } },
     });
     expect(vi.mocked(fixture.repository.applyState).mock.calls[0]?.[0]).toMatchObject({
       incrementRevision: false,

@@ -10,6 +10,7 @@ import type { OpeningNoveltyContext } from "@/game/domain/openingNovelty";
 import { TARGET_ACTS } from "@/game/domain/storyBudget";
 import { buildStylePolicy } from "../../stylePolicy";
 import { createRpgAiClient, RPG_AI_DEFAULT_POLICIES, type RpgAiClient } from "./rpgAiClient";
+import type { NarrativeRequestClient } from "./narrativeRequestClient";
 import type { ProviderJsonMode } from "./providerRequestOptions";
 import { AiGenerationError, classifyAiFailure, transportFailureCodeToCategory } from "../../aiGenerationFailure";
 import { parseStructuredJsonObject } from "@/game/core/json";
@@ -271,6 +272,7 @@ export type OpeningGenerationSourceDeps = {
   readonly config?: AiTransportConfig;
   /** Shared RPG client supplied by the server composition root. */
   readonly aiClient?: RpgAiClient;
+  readonly requestClient?: NarrativeRequestClient;
   readonly jsonMode?: ProviderJsonMode;
   readonly logger?: GameLogger;
 };
@@ -305,10 +307,11 @@ export function createOpeningGenerationSource(
 
       let result: Awaited<ReturnType<typeof aiClient.complete>>;
       try {
-        result = await aiClient.complete("opening", [
+        const messages = [
           { role: "system", content: buildOpeningPrompt(input) },
           { role: "user", content: `生成游戏类型 ${input.gameType} / 长度 ${input.gameLength} / 种子 ${input.seed} / 尝试 ${input.attempt ?? 0} 的开场切片。` },
-        ], {
+        ] as const;
+        const auditContext = {
           purpose: "opening_generation",
           trigger: "new_game",
           ...(input.auditLink ?? {}),
@@ -318,7 +321,16 @@ export function createOpeningGenerationSource(
             gameLength: input.gameLength,
             attempt: input.attempt ?? 0,
           },
-        });
+        } as const;
+        result = deps.requestClient === undefined
+          ? await aiClient.complete("opening", messages, auditContext)
+          : await deps.requestClient.completeNarrativeRequest({
+              purpose: "author",
+              messages,
+              auditContext,
+              signal: input.signal ?? new AbortController().signal,
+              ...(input.reserveHttpAttempt === undefined ? {} : { reserveHttpAttempt: input.reserveHttpAttempt }),
+            });
       } catch (error) {
         if (error instanceof AiGenerationError) throw error;
         logger?.warn("opening_generation_transport_failed", { message: (error as Error)?.message });

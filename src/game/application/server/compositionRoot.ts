@@ -12,6 +12,8 @@ import { performTurn } from "../performTurn";
 import { projectGameSessionView } from "../gameSessionView";
 import { createNarrativeBundleSourceFactory } from "../server/ai/sourceFactory";
 import { createServerRpgAiClient } from "../server/ai/rpgAiClient";
+import { createNarrativeRequestClient } from "../server/ai/narrativeRequestClient";
+import { createLiveNarrativeCandidateReview } from "../server/ai/liveNarrativeCandidateReview";
 import { parseAiRuntimeConfig } from "../server/ai/aiRuntimeConfig";
 import { createTextAuditRecorder } from "../server/ai/textAuditRecorder";
 import type {
@@ -237,8 +239,10 @@ export function createServerGameEntryPoints(
   // One provider transport/client per server composition root. Role policy,
   // thinking mode, budgets, and transient retries are centralized there.
   const aiClient = createServerRpgAiClient(env, logger, auditRecorder);
+  const narrativeRequestClient = createNarrativeRequestClient({ aiClient });
+  const narrativeCandidateReviewer = createLiveNarrativeCandidateReview({ aiClient, requestClient: narrativeRequestClient, logger });
   // Unified source is the only runtime AI entry point for opening and decisions.
-  const narrativeBundleSource = createNarrativeBundleSourceFactory(env, logger, aiClient);
+  const narrativeBundleSource = createNarrativeBundleSourceFactory(env, logger, aiClient, narrativeRequestClient);
   const narrativeCoordinator = new BackgroundEnsureCoordinator({
     loadPending: async () => {
       const current = await repository.getCurrentGame();
@@ -257,6 +261,7 @@ export function createServerGameEntryPoints(
       source: narrativeBundleSource,
       now,
       logger,
+      reviewer: narrativeCandidateReviewer,
       auditLink: {
         ...(traceId !== undefined ? { traceId } : {}),
         retry: { origin, mechanism: "initial", attempt: 0 },
@@ -452,6 +457,7 @@ export function createServerGameEntryPoints(
           source: narrativeBundleSource,
           now,
           aiEnabled,
+          reviewer: narrativeCandidateReviewer,
           ...(traceId === undefined ? {} : { auditLink: { traceId } }),
         },
       );

@@ -4,10 +4,12 @@ import type { GameLogger } from "@/game/logging";
 import { candidateReviewMatches, type CandidateDefect, type CandidateDefectCode, type CandidateReviewResult, type CandidateReviewScope, type NarrativeCandidateReviewer } from "../../narrativeCandidateReview";
 import type { NarrativeCandidateReviewInput } from "../../narrativeCandidateReview";
 import type { RpgAiClient } from "./rpgAiClient";
+import type { NarrativeRequestClient } from "./narrativeRequestClient";
 import { compileDecisionNarrativeContext } from "./narrativeContext";
 
 export type LiveNarrativeCandidateReviewDeps = Readonly<{
   readonly aiClient?: RpgAiClient;
+  readonly requestClient?: NarrativeRequestClient;
   readonly logger?: GameLogger;
 }>;
 
@@ -101,11 +103,12 @@ function resultFailure(input: NarrativeCandidateReviewInput, failure: "PROVIDER_
 
 function publicReviewContext(input: NarrativeCandidateReviewInput): unknown {
   if (input.context.kind === "opening") {
+    const { signal: _signal, reserveHttpAttempt: _reserveHttpAttempt, ...openingInput } = input.context.input;
     return {
       kind: "opening",
       jobId: input.context.jobId,
       candidateVersion: input.context.candidateVersion,
-      input: input.context.input,
+      input: openingInput,
     };
   }
   const compilation = compileDecisionNarrativeContext({
@@ -150,12 +153,21 @@ export function createLiveNarrativeCandidateReview(
             }),
           },
         ];
-        const result = await deps.aiClient.complete("narrative_bundle", messages, {
+        const auditContext = {
           purpose: "narrative_candidate_review",
           trigger: "narrative_candidate_review",
           revision: input.candidateVersion,
           ...metadata,
-        });
+        } as const;
+        const result = deps.requestClient === undefined
+          ? await deps.aiClient.complete("narrative_bundle", messages, auditContext)
+          : await deps.requestClient.completeNarrativeRequest({
+              purpose: "review",
+              messages,
+              auditContext,
+              signal: input.context.signal ?? new AbortController().signal,
+              ...(input.context.reserveHttpAttempt === undefined ? {} : { reserveHttpAttempt: input.context.reserveHttpAttempt }),
+            });
         if (!result.ok) return resultFailure(input, "PROVIDER_FAILURE");
         const parsed = parseStructuredJsonObject(result.content);
         if (!parsed.ok) return resultFailure(input, "UNCERTAIN");

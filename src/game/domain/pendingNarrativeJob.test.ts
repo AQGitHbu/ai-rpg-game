@@ -13,6 +13,7 @@ import {
   type StructuredActionSummary,
 } from "./pendingNarrativeJob";
 import { MAX_MANDATORY_BEATS, type MandatoryNarrativeBeat } from "./narrativeBeat";
+import { createNarrativeGenerationAttempt } from "./narrativeGenerationAttempt";
 
 function canonicalResolvedEvent(): ResolvedEvent {
   return {
@@ -67,6 +68,7 @@ describe("PendingNarrativeJob", () => {
     expect(Object.keys(job).sort()).toEqual([
       "actionId",
       "actionSummary",
+      "attempt",
       "basedOnRevision",
       "domainEventIds",
       "focusNpcId",
@@ -84,6 +86,7 @@ describe("PendingNarrativeJob", () => {
     expect(job.jobId).toBe("job-1");
     expect(job.turnId).toBe("turn-1");
     expect(job.actionId).toBe("action-1");
+    expect(job.attempt).toEqual(createNarrativeGenerationAttempt());
     expect(job.turnNumber).toBe(3);
     expect(job.actionSummary).toEqual({ kind: "talk", npcId: "npc_1" });
     expect(job.resolvedEvent).toEqual(canonicalResolvedEvent());

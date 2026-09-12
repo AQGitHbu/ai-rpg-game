@@ -9,6 +9,8 @@ export type NpcDeliberationInput = Readonly<{
   readonly candidateVersion: number;
   /** Private, NPC-scoped structured context. It is never a player-facing prompt. */
   readonly privateContext: string;
+  readonly signal?: AbortSignal;
+  readonly reserveHttpAttempt?: () => Promise<boolean> | boolean;
 }>;
 
 export const NPC_DELIBERATION_RESPONSES = [

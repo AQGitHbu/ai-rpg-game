@@ -15,9 +15,11 @@ import {
   RPG_AI_NPC_DELIBERATION_ROLE,
   type RpgAiClient,
 } from "./rpgAiClient";
+import type { NarrativeRequestClient } from "./narrativeRequestClient";
 
 export type LiveNpcDeliberationSourceDeps = Readonly<{
   readonly aiClient?: RpgAiClient;
+  readonly requestClient?: NarrativeRequestClient;
   readonly transport?: AiTransport;
   readonly config?: AiTransportConfig;
   readonly jsonMode?: ProviderJsonMode;
@@ -68,12 +70,21 @@ export function createLiveNpcDeliberationSource(deps: LiveNpcDeliberationSourceD
             content: `${input.privateContext}\n\n只返回以下 JSON 形状：${outputSchema()}`,
           },
         ];
-        const result = await aiClient.complete(RPG_AI_NPC_DELIBERATION_ROLE, messages, {
+        const auditContext = {
           purpose: RPG_AI_NPC_DELIBERATION_PURPOSE,
           trigger: "npc_deliberation",
           jobId: String(input.jobId),
           revision: input.candidateVersion,
-        });
+        } as const;
+        const result = deps.requestClient === undefined
+          ? await aiClient.complete(RPG_AI_NPC_DELIBERATION_ROLE, messages, auditContext)
+          : await deps.requestClient.completeNarrativeRequest({
+              purpose: "npc_deliberation",
+              messages,
+              auditContext,
+              signal: input.signal ?? new AbortController().signal,
+              ...(input.reserveHttpAttempt === undefined ? {} : { reserveHttpAttempt: input.reserveHttpAttempt }),
+            });
         if (!result.ok) {
           deps.logger?.warn("npc_deliberation_provider_failed", { code: result.code });
           return { ok: false, code: "PROVIDER_FAILURE" };
