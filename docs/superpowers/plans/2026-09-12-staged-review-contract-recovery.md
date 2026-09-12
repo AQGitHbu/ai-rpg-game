@@ -99,6 +99,17 @@ expect(narrationPrompt).toContain('旁白');
 
 **Files:** 更新 `docs/agent/运行时AI导演与场景表演.md` 的失效契约；按引用需要更新既有系统文档。报告保存在 ignored tmp，计划保留任务验证结果。
 
-- [ ] 逐项审阅完整 diff，修复可复现问题；运行 `npm run accept`，不以定向测试代替集成验收。
+- [x] 逐项审阅完整 diff，修复可复现问题；运行 `npm run accept`，不以定向测试代替集成验收。
 - [x] 沿用真实失败的最小对照并增加未用于调试的反例，真实 API 回归预算最多 30 HTTP，调用前固定样本与配置，失败不重抽。原 24 次额度内发现“认识令牌”被附加 reliability 的诊断错误，增加 4 次固定识别/可信度配对回归；该批仍有多报 location，因此仅再增加 2 次验证单项充分拒绝契约。各批证据独立保留，不改成绩。记录协议有效率、逐维误报/漏报与路由；真实模型失败继续定位，未解决则如实记录，不宣称质量通过。
-- [ ] 对齐系统文档，运行 `npm run check:docs`、`git diff --check`，报告逐项修复、验证与仍需九包复测的质量限制，不合并 main。
+- [x] 对齐系统文档，运行 `npm run check:docs`、`git diff --check`，报告逐项修复、验证与仍需九包复测的质量限制，不合并 main。
+
+## 验收证据
+
+- Task 1：`961b79ba`；真实错误路由夹具与独立检查项完成，主审和独立 review 通过。
+- Task 2：`f4fd9f3b`；规划前置审核、条件权限与发布凭据完成，独立 review 通过。
+- Task 3：`4c46ee9a`；review 复现规划拒绝写入后中断会再次规划，`8e25136a` 修复并通过红绿与复核；同周期零新增请求，显式新周期可重试。
+- Task 4：`2655ac91`；真实重复素材保留，完整连续对话提示中的残留复述规则修复，主审和独立 review 通过。
+- 完整 `npm run accept` 在 `4a32c9db` exit 0：3282 测试通过、4 个 live 测试按环境门控跳过；lint/typecheck/test:fast/shared/boundaries/build/phase:status 全部完成。54 条 lint 提醒均来自未修改文件；文档检查 0 错误、既有篇幅软提醒。
+- 最终独立跨项 review 的 133 项测试通过，无 P0–P2 发现。`2c7f6633` 仅清除夹具尾部空行，基线 `19af3daa` 到最终代码的 diff-check 通过。
+- 30 次真实审核调用按四批原样保留，逐项结果与限制记录于 `tmp/staged-contract-recovery/真实回归记录.md`；修复和验证汇总见同目录 `逐项修复报告.md`。不同策略批次不汇总为最终准确率；最后令牌样本为网络失败，无模型结论。本次未重跑 main 或九剧情包，不据离线验收宣称可以替换 main。
+- 保留 `staged-narrative-generation` 分支及现有 worktree，不合并、不推送、不修改阶段指针。
