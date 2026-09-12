@@ -32,7 +32,7 @@ it("首次规划语义拒绝原子撤销后只重做一次，修正骨架才表�
     }) } } });
   const decision = { ...baseDecision, options: baseDecision.options.map((o, i) => i !== 1 ? o : {
     ...o, dialogueAct: "challenge" as const, task: { ...o.task!, intent: "challenge" as const,
-      brief: "追问信号来自哪里，只询问来源。", focusFactIds: ["fact_3"],
+      brief: "追问这份无应答记录来自哪里，只询问记录来源。", focusFactIds: ["fact_3"],
       inquiries: [{ factId: "fact_3", aspects: ["source"] as const }] },
   }) as unknown as typeof baseDecision.options };
   const broken = { ...base, decision: { ...decision, options: decision.options.map((o, i) => i !== 0 ? o : {

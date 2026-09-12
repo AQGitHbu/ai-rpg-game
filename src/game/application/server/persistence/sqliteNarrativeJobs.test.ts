@@ -184,19 +184,38 @@ it("规划修复各持久化状态SQLite roundtrip，并阻止旧凭据发布和
       usedRequests: job.usedRequests, planningSemanticRepair: JSON.parse(JSON.stringify(job.planningSemanticRepair)),
     } });
   }
-  for (const state of ["pending", "running", "anchor"] as const) {
+  const publication = h.decisionPublication();
+  if (publication.kind !== "decision") throw Error("expected decision publication");
+  for (const state of ["control", "pending", "running", "anchor"] as const) {
     const stores = openStores(nextDbPath());
+    expect((await stores.games.createInitialGame({ gameId: publication.input.gameId,
+      worldState: publication.input.nextWorldState, storyState: publication.input.nextStoryState, createdAt: NOW })).ok).toBe(true);
+    const before = await stores.games.getCurrentGame();
+    if (!before.ok || before.status !== "active") throw Error("expected active game before publish");
+    expect(before.record.revision).toBe(publication.input.expectedRevision);
     const r = ready.value.planningSemanticRepair!;
     const job: StoredJob = { ...ready.value, version: 0, planningSemanticRepair: { ...r,
       ...(state === "pending" ? { status: "pending" } : state === "running" ? { reviewInFlight: true }
-        : { anchor: { ...r.anchor, actions: [{ key: "tampered_pause", actorId: "npc_0",
-          point: { stepKey: "current", order: 0 }, kind: "pause", objectId: null, audienceIds: ["player_0"] }] } }),
+        : state === "anchor" ? { anchor: { ...r.anchor, actions: [{ key: "tampered_pause", actorId: "npc_0",
+          point: { stepKey: "current", order: 0 }, kind: "pause", objectId: null, audienceIds: ["player_0"] }] } } : {}),
     } };
     await stores.jobs.start({ job, requestId: "tamper-semantic", digest: job.inputDigest });
     const lease = await stores.jobs.claim({ id: job.id, owner: OWNER_A, now: NOW, expiresAt: EXPIRES });
     if (!lease.ok) throw Error(lease.code);
     expect(await stores.jobs.get(job.id)).toMatchObject({ ok: true });
-    expect((await stores.jobs.publish({ lease: lease.value, expectedVersion: 0, publication: h.decisionPublication() })).ok).toBe(false);
+    const published = await stores.jobs.publish({ lease: lease.value, expectedVersion: 0, publication });
+    const after = await stores.games.getCurrentGame();
+    if (!after.ok || after.status !== "active") throw Error("expected active game after publish");
+    if (state === "control") {
+      expect(published).toMatchObject({ ok: true, value: { status: "published", version: 1 } });
+      expect(after.record.revision).toBe(before.record.revision + 1);
+    } else {
+      expect(published).toEqual({ ok: false, code: "JOB_CONFLICT" });
+      expect(after.record.revision).toBe(before.record.revision);
+      expect(after.record.worldState.eventLedger).toEqual(before.record.worldState.eventLedger);
+      expect(after.record).toEqual(before.record);
+      expect(await stores.jobs.get(job.id)).toMatchObject({ ok: true, value: { status: "pending", version: 0 } });
+    }
   }
   const stores = openStores(nextDbPath());
   await stores.jobs.start({ job: { ...ready.value, version: 0, status: "failed" }, requestId: "semantic-retry", digest: ready.value.inputDigest });
