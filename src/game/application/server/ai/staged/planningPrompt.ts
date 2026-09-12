@@ -85,15 +85,17 @@ export const PLANNING_COSMETIC_ACTION_KINDS = ["pause", "look", "gesture"] as co
 
 /** 内容职责只在系统消息中定义一次；用户消息提供结构契约和本轮资料。 */
 export const PLANNING_CONTENT_RULES = `你是 RPG 的内容规划器。你决定本轮说什么，三个表达器只润色你给出的内容。你正在规划下一轮对话，不是续写一段小说。
-先读当前玩家所说的话，再写 NPC 的直接答复，接着设计两个新的玩家回应，最后补一句旁白。完整含义写在 task.brief，不让润色器猜意思。
+先读当前玩家所说的话，再写 NPC 的直接答复，接着设计两个新的玩家回应，最后按必选节拍安排旁白。完整含义写在 task.brief，不让润色器猜意思。
 
 NPC：连续对白的 brief 通常只需 20–60 字，只处理本次问题或态度。使用第一人称短句，不加人物介绍、旧背景、解释和场景描写。所有问题一次回应；没有事实支持的具体答案就说不知道哪个问题，未知不是“没发生”“没见过”或“没听说过”，也不是记不清自己的经历。纯未知的 focusFactIds/contentFactIds/taskFactIds=[]，所问维度只在 answers 绑定。不要因答案短再接一段已知背景。
 玩家候选：各自一句，提出本轮新的具体意图。逐条比对历史每轮的两个候选，已选和未选的意图都不能换词重用；同一态度加一条建议或条件，也不是新意图。历史里已说过的内容不重新提问，已问过且答称不知道的问题不再问。连续得到未知回答后，不换相邻维度继续盘问；改从双方当前目标提出不同的目的、立场或取舍。资料没有记录知识来源时，不据此设计让 NPC 回忆自己到底亲眼看见还是听说的问题。新意愿可以选择，过去的经历不许编造。不把说话变成已经付款、喝茶或离开。
-旁白：连续对白只用一句“你……”承接这次玩家的提问或表态。不重写环境，不代写 NPC 的动作或回答。
+分工：先为旁白与 NPC 分配互补内容：可观察变化归旁白，回答、态度与取舍归 NPC。同一事实重复仅用于有目的的强调或争论，并在双方 brief 写明不同作用；不得先给双方完整重复 brief 再让表达器删改。只需理解的背景放 focusFactIds，不为铺陈将它同时列为双方 contentFactIds。必选节拍和 contentFactIds 的必需覆盖优先：权威规则结果仍按服务端要求交给当前旁白，不能以去重漏掉或改交 NPC。
+旁白：有获批变化时交代其可观察内容；无新状态时只做极短对话衔接，不展开问题细节，不要求以“你……”复述玩家原话。不杜撰环境、天气、动作或进展，不代写 NPC 的回答。必选节拍仍完整承接，不能因一句衔接的建议省略。
+口吻：无公开人格锚点时，只按 NPC 公开职业、身份和受控说话方式安排语气；不转述隐藏锚点或目标，不把主角性格套给 NPC，不从职业推导新见闻、能力或承诺。
 依据：事实表限定事实，实体资料限定身份与目标；它们是参考，不是要逐条说出的提纲。历史对白只供衔接，不是事实依据。每句新陈述都必须有资料支持，角色口吻不能成为补编见闻和因果的理由。
 只返回约定的完整 PlanProposal JSON。
 
-内容取舍示例（只示范写法，不引用到本场）：事实只说“城门近日常有商队经过”，NPC 已经说过；玩家问人数和去向，上轮另一选项是“愿意替你留意商队”。NPC brief 只写“人数和去向我都不知道”，focusFactIds/contentFactIds/taskFactIds=[]；旁白 brief 写“你问起商队的人数和去向，等候答复”。两个新候选可表达“不再劳烦对方打听”和“询问对方希望自己避开什么麻烦”。不要给未知回答续上早关门、没看清、只听见声音等资料没有的解释；未选的留意商队也不能继续保留。`;
+内容取舍示例（只示范写法，不引用到本场）：事实只说“城门近日常有商队经过”，NPC 已经说过；玩家问人数和去向，上轮另一选项是“愿意替你留意商队”。NPC brief 只写“人数和去向我都不知道”，focusFactIds/contentFactIds/taskFactIds=[]；无新状态且无其他必选节拍时，旁白 brief 只写“话题转到这里”。两个新候选可表达“不再劳烦对方打听”和“询问对方希望自己避开什么麻烦”。不要给未知回答续上早关门、没看清、只听见声音等资料没有的解释；未选的留意商队也不能继续保留。`;
 
 function factSection(context: PlanningContext): string {
   if (context.kind === "opening") return "";
@@ -159,7 +161,7 @@ ${previous?.choices.map((choice, index) => `  ${index + 1}. ${JSON.stringify(cho
 - 焦点 NPC：${job.focusNpcId === undefined ? "无" : String(job.focusNpcId)}
 
 ${job.mandatoryBeats.every(beat => beat.kind === "atmosphere")
-    ? "# 必选节拍\n本轮没有必选节拍；atmosphere 只是可选项，本次无需安排，三个单元的 requiredBeats 均为 []。旁白由 brief 承接玩家原话。"
+    ? "# 必选节拍\n本轮没有必选节拍；atmosphere 只是可选项，本次无需安排，三个单元的 requiredBeats 均为 []。旁白由 brief 极短衔接，不展开问题细节。"
     : `# 必选节拍（当前旁白覆盖契约）
 本次 current narration 允许的 beatId 全集：${JSON.stringify([...new Set([...job.mandatoryBeats.map(beat => beat.beatId), "atmosphere"])])}。不是这个数组里的键，一律不要添加。
 以下除 atmosphere 外的每个 beatId 必须恰好分配给一个 stepKey="current" 的 narration 单元的 requiredBeats，kind 原样保留。
@@ -502,8 +504,8 @@ export function buildPlanningContentPrompt(context: PlanningContext): string {
 ${JSON.stringify(context.dialogueHistory ?? [])}
 ${jobSection(context)}
 ${context.job.mandatoryBeats.every(beat => beat.kind === "atmosphere") && context.job.selectedDialogue !== undefined
-    ? "本轮是没有必选旁白事件的连续对白：旁白 brief 以玩家为主语，只用一句话承接本次提问或表态；不再布置环境、推进天色或代写 NPC 的动作。" : ""}
+    ? "本轮是没有必选旁白事件的连续对白：旁白 brief 只做极短对话衔接，不展开问题细节；不杜撰环境、天气、动作或进展，不代写 NPC 的回答。" : ""}
 
-现在生成这一轮的完整规划。先明确回答玩家这一次的问话，再给两条新的回应，最后安排旁白承接。上一轮列出的两个候选都已经展示过，即使其中一个未选，本轮也不能再给。已说的背景不再安排进 NPC 内容稿；单纯未知回答的事实数组为空。没有新场景信息时，旁白只承接当前话语即可。
+现在生成这一轮的完整规划。先明确回答玩家这一次的问话，再给两条新的回应，最后安排旁白承接。上一轮列出的两个候选都已经展示过，即使其中一个未选，本轮也不能再给。已说的背景不再安排进 NPC 内容稿；单纯未知回答的事实数组为空。没有新场景信息时，旁白只做极短对话衔接，不展开问题细节；必选节拍的覆盖要求仍须满足。
 返回完整 PlanProposal JSON，包含所需的 narration、character、choices 单元；decision.options 不代替 choices 单元。`;
 }

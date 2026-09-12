@@ -70,7 +70,7 @@ ${context.scene === undefined ? "（未提供）" : JSON.stringify(context.scene
 # 玩家可见事实（facts 里**只能**引用这里列出的 id；**一个都不许自己编**；不得泄露其他信息）
 ${facts}
 ${contestedNote}
-# 前文（已批准的可见表达，保持连贯，不得复述）
+# 前文（已批准的可见表达，保持连贯，不无故复述）
 ${prior}
 ${context.previousReply === undefined ? "" : `上一轮 NPC 已说过（仅用于衔接，不重复）：${context.previousReply}`}
 
@@ -97,6 +97,7 @@ ${context.narrationLayout === undefined ? "" : `- 同一 beatId 的正文必须�
 # 规划器给本单元的完整表达内容
 ${context.taskInstruction ?? "只表达批准节拍和本场内容，不新增剧情。"}
 只润色以上本轮内容；一句承接也足够，不另起环境铺垫，不从前文搬回旧描写，不为 NPC 补动作、神态或解释。
+不得为避免重复而删除本单元获批 brief、必选节拍、contentFactIds 或必须披露的观察；前文已表达过也不免除本单元覆盖义务。内容分工由规划器确定，表达器只调整措辞。
 ${context.unit.task === undefined ? "" : `必须覆盖的正文事实：${JSON.stringify(requiredExpressionFactIds(context.unit.task))}；只在实际表达该事实的 part.facts 回填引用。`}
 
 只返回一个 JSON 对象：{"stage":"narration","parts":[{"text":"...","facts":[],"evidence":[],"beatIds":[]}],"actionKeys":[]}

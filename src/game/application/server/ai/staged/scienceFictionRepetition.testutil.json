@@ -1,0 +1,169 @@
+{
+  "source": "tmp/staged-retest-20260912/science_fiction-opening-jobs.json",
+  "planUnits": [
+    {
+      "key": "n0",
+      "stage": "narration",
+      "task": {
+        "intent": "describe",
+        "brief": "镜头从熄灭的仪表台扫过，最后停在唯一还在闪的求救面板上；导航球停转，舷窗外是没有星图标记的星野，船体仍在缓慢自转。",
+        "focusFactIds": [
+          "fact_0",
+          "fact_2"
+        ],
+        "contentFactIds": [
+          "fact_0",
+          "fact_2"
+        ],
+        "prerequisiteFactIds": []
+      },
+      "requiredBeats": [
+        {
+          "beatId": "b_scene",
+          "kind": "atmosphere",
+          "factIds": [
+            "fact_0",
+            "fact_2"
+          ],
+          "evidence": [
+            {
+              "kind": "conditional",
+              "observationKey": "obs_signal"
+            }
+          ],
+          "instruction": "以电影镜头呈现仪表全灭与唯一闪烁的求救信号"
+        }
+      ]
+    },
+    {
+      "key": "c0",
+      "stage": "character",
+      "task": {
+        "intent": "inform",
+        "brief": "导航和传感器全瘫了，只剩母站那封加密求救还在重复发送，认证读不出来源；是否回应，等凯伦定。",
+        "focusFactIds": [
+          "fact_0",
+          "fact_1",
+          "fact_2",
+          "fact_3"
+        ],
+        "contentFactIds": [
+          "fact_0",
+          "fact_2",
+          "fact_3"
+        ],
+        "prerequisiteFactIds": []
+      },
+      "requiredBeats": [
+        {
+          "beatId": "b_npc_report",
+          "kind": "fact_discovered",
+          "factIds": [
+            "fact_0",
+            "fact_3"
+          ],
+          "evidence": [
+            {
+              "kind": "conditional",
+              "observationKey": "obs_npc_report"
+            }
+          ],
+          "instruction": "由薇拉说明求救信号仍在重复发送且内容为加密"
+        }
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "key": "n0",
+      "stage": "narration",
+      "parts": [
+        {
+          "text": "镜头从熄灭的仪表台扫过，最后停在唯一还在闪的求救面板上——『长夜号』脱离跃迁后仪表全灭，只剩来自失联母站的加密求救信号在重复发送。",
+          "facts": [
+            {
+              "factId": "fact_0",
+              "certainty": "known"
+            }
+          ],
+          "evidence": [
+            {
+              "kind": "conditional",
+              "observationKey": "obs_signal"
+            }
+          ],
+          "beatIds": [
+            "b_scene"
+          ]
+        },
+        {
+          "text": "导航球停转，舷窗外是没有星图标记的星野，船体仍在缓慢自转；货船的导航与传感器阵列在跃迁中报废，无法自行精确定位，也无法确认第二跳是否安全。",
+          "facts": [
+            {
+              "factId": "fact_2",
+              "certainty": "known"
+            }
+          ],
+          "evidence": [],
+          "beatIds": []
+        }
+      ]
+    },
+    {
+      "key": "c0",
+      "stage": "character",
+      "parts": [
+        {
+          "text": "脱离跃迁后，仪表全灭。唯一还有响应的，是母站那封加密求救，一直在重复发送。",
+          "facts": [
+            {
+              "factId": "fact_0",
+              "certainty": "known"
+            }
+          ],
+          "evidence": [],
+          "beatIds": [
+            "b_npc_report"
+          ]
+        },
+        {
+          "text": "导航和传感器阵列在跃迁里报废了。我们没法自行精确定位，也没法确认第二跳安不安全。",
+          "facts": [
+            {
+              "factId": "fact_2",
+              "certainty": "known"
+            }
+          ],
+          "evidence": [],
+          "beatIds": [
+            "b_npc_report"
+          ]
+        },
+        {
+          "text": "那段求救带一组重复的认证码，还有一段压缩坐标。认证格式，读不出来源。",
+          "facts": [
+            {
+              "factId": "fact_3",
+              "certainty": "known"
+            }
+          ],
+          "evidence": [
+            {
+              "kind": "conditional",
+              "observationKey": "obs_npc_report"
+            }
+          ],
+          "beatIds": [
+            "b_npc_report"
+          ]
+        },
+        {
+          "text": "是否回应，等凯伦定。",
+          "facts": [],
+          "evidence": [],
+          "beatIds": []
+        }
+      ]
+    }
+  ]
+}

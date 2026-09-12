@@ -3,6 +3,7 @@ import { projectUnitContext } from "./perspectiveContext";
 import { approvePlan, approvePlanDecision, collectDisclosures } from "@/game/gameplay/rpg/narrativePlanning";
 import { approveUnit } from "./approveUnit";
 import { buildCharacterPrompt } from "../server/ai/staged/characterPrompt";
+import { buildNarrationPrompt } from "../server/ai/staged/narrationPrompt";
 import { branchWorld, branchStory } from "@/game/gameplay/rpg/narrativePlanning/branchFixture.testutil";
 import {
   makeStagedPlan,
@@ -223,6 +224,22 @@ describe("projectUnitContext", () => {
     expect(first.ok && first.value.persona?.delivery).toEqual({ sentenceLength: "short", register: "neutral", tone: "restrained" });
     expect(second.ok && second.value.persona?.delivery).toEqual({ sentenceLength: "long", register: "formal", tone: "neutral" });
     expect(JSON.stringify([first, second])).not.toContain(SENTINEL);
+    if (!first.ok || !second.ok) throw new Error("style projection failed");
+    const prompt = buildCharacterPrompt(first.value);
+    expect(prompt).toContain("sentenceLength=short，register=neutral，tone=restrained");
+    expect(buildCharacterPrompt(second.value)).toContain("sentenceLength=long，register=formal，tone=neutral");
+    expect(prompt).not.toContain(SENTINEL);
+    expect(prompt).not.toContain("冷静");
+    expect(prompt).toContain("无公开人格锚点时");
+    const narration = contextOf(plan, FIXTURE_NARRATION_UNIT);
+    if (!narration.ok) throw new Error(narration.code);
+    expect(buildNarrationPrompt(narration.value)).toContain("冷静");
+    expect(buildNarrationPrompt(narration.value)).not.toContain(SENTINEL);
+    // 改主角特质只改变玩家刻画，不能改变 NPC prompt/delivery。
+    Object.assign(world.generation.setup!, { personalityTags: ["幽默"] });
+    const changed = contextOf(approvedPlanOf(world), FIXTURE_NPC_A_UNIT);
+    if (!changed.ok) throw new Error(changed.code);
+    expect(buildCharacterPrompt(changed.value)).toBe(prompt);
   });
 
   it("选项只保留已审批 task 的安全询问，不从自由 brief 推导问题", () => {
@@ -381,6 +398,7 @@ describe("projectUnitContext", () => {
     if (!result.ok) return;
     const context = result.value;
     expect(JSON.stringify(context)).not.toContain(SENTINEL);
+    expect(buildCharacterPrompt(context)).not.toContain(SENTINEL);
     // 人格保留公开身份与当前情绪，不被过滤成空壳
     expect(context.persona).not.toBeNull();
     if (context.persona === null) return;

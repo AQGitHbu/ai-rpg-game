@@ -14,6 +14,7 @@ import { buildNarrationPrompt } from "./narrationPrompt";
 import { buildCharacterPrompt } from "./characterPrompt";
 import { buildChoicePrompt } from "./choicePrompt";
 import { expressionBoundary } from "./expressionBoundary";
+import repetitionFixture from "./scienceFictionRepetition.testutil.json";
 import { projectUnitContext } from "@/game/application/narrativeGeneration/perspectiveContext";
 import { approvePlan, type ApprovedPlan } from "@/game/gameplay/rpg/narrativePlanning";
 import { branchWorld, branchStory } from "@/game/gameplay/rpg/narrativePlanning/branchFixture.testutil";
@@ -31,6 +32,46 @@ import { asEventId, asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { asFactId, asLocationId, asNpcId } from "@/game/domain/worldEntity";
 import type { NpcEntry } from "@/game/domain/worldEntries";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
+
+it("真实科幻重复保留规划双重分配根因；提示测试只验证分工契约，不证明成稿去重", () => {
+  const [narration, character] = repetitionFixture.planUnits;
+  expect(narration.task.contentFactIds.filter(id => character.task.contentFactIds.includes(id)))
+    .toEqual(["fact_0", "fact_2"]);
+  for (const output of repetitionFixture.outputs) {
+    expect(output.parts.flatMap(part => part.facts.map(fact => fact.factId))).toEqual(
+      expect.arrayContaining(["fact_0", "fact_2"]));
+    expect(output.parts.map(part => part.text).join("")).toContain("第二跳");
+  }
+  expect(PLANNING_CONTENT_RULES).toContain("可观察变化归旁白，回答、态度与取舍归 NPC");
+  expect(PLANNING_CONTENT_RULES).toContain("同一事实重复仅用于有目的的强调或争论");
+  expect(PLANNING_CONTENT_RULES).toContain("不得先给双方完整重复 brief 再让表达器删改");
+  expect(PLANNING_CONTENT_RULES).toContain("必选节拍和 contentFactIds 的必需覆盖优先");
+});
+
+it("无新状态时规划只做极短衔接，原位移除强制复述规则和商队问题复述示例", () => {
+  expect(PLANNING_CONTENT_RULES).not.toContain("只用一句“你……”");
+  expect(PLANNING_CONTENT_RULES).not.toContain("你问起商队的人数和去向");
+  expect(PLANNING_CONTENT_RULES).toContain("无新状态时只做极短对话衔接，不展开问题细节");
+  expect(PLANNING_CONTENT_RULES).toContain("不杜撰环境、天气、动作或进展");
+  expect(PLANNING_CONTENT_RULES).toContain("无公开人格锚点时");
+  const prompt = buildPlanningPrompt({ kind: "decision", world: personaWorld(), story: branchStory(),
+    job: { ...makeStagedJob(), mandatoryBeats: [], selectedDialogue: {
+      dialogueAct: "ask", topic: { kind: "general" }, label: "商队有多少人？" } } });
+  expect(prompt).not.toContain("旁白 brief 以玩家为主语");
+  expect(prompt).not.toContain("只用一句话承接本次提问或表态");
+  expect(prompt).toContain("本轮是没有必选旁白事件的连续对白：旁白 brief 只做极短对话衔接，不展开问题细节");
+});
+
+it.each(["narration", "character"] as const)("%s 润色不因前文重复而删除获批必需内容", stage => {
+  const plan = approvedPlan();
+  const base = contextFor(plan, stage === "narration" ? FIXTURE_NARRATION_UNIT : FIXTURE_NPC_A_UNIT);
+  const task = { intent: "describe" as const, brief: "必须说明获批事实", focusFactIds: [FACT_PUB],
+    contentFactIds: [FACT_PUB], prerequisiteFactIds: [] };
+  const safe = { ...base, unit: { ...base.unit, task }, taskInstruction: task.brief };
+  const prompt = stage === "narration" ? buildNarrationPrompt(safe) : buildCharacterPrompt(safe);
+  expect(prompt).toContain('必须覆盖的正文事实：["fact_pub"]');
+  expect(prompt).toContain("不得为避免重复而删除本单元获批 brief、必选节拍、contentFactIds 或必须披露的观察");
+});
 
 it("三个表达器不把措辞加工变成新经历、往日对白或现场证据", () => {
   const plan = approvedPlan();

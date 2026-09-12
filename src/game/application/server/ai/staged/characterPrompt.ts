@@ -83,7 +83,7 @@ ${tasks}
 # 你可说的事实（只能引用这些事实；certainty 只可降级，不可升级）
 ${facts}
 ${contestedNote}
-# 前文（已批准的可见表达，不得复述）
+# 前文（已批准的可见表达，不无故复述）
 ${prior}
 ${context.previousReply === undefined ? "" : `上一轮你实际说过的话（只用于衔接，不新增事实）：${JSON.stringify(context.previousReply)}`}
 
@@ -106,7 +106,7 @@ ${context.scene === undefined ? "（未提供）" : JSON.stringify(context.scene
 - 题材风格：${context.style}
 - 全局叙事风格：${stylePolicy.narration}（只影响句式与节奏）
 - 内容强度：${stylePolicy.intensityInstruction}
-主角性格标签只用于玩家刻画，不得据此改变当前 NPC 的人格或说话方式；NPC 只遵循上方受控说话方式。风格和强度不许可新增暴力情节、人物目标、事实、证据或规则结果。
+主角性格标签只用于玩家刻画，不得据此改变当前 NPC 的人格或说话方式；NPC 只遵循上方受控说话方式。无公开人格锚点时，按公开职业和受控语气表达，不从职业补造经历、能力或承诺，不猜测隐藏锚点和目标。风格和强度不许可新增暴力情节、人物目标、事实、证据或规则结果。
 - 玩家原话：${context.playerUtterance ?? "（无）"}
 
 # 输出契约
@@ -115,6 +115,7 @@ ${expressionBoundary()}
 # 规划器给本单元的完整表达内容
 ${context.taskInstruction ?? "只表达批准节拍和本场内容，不新增剧情。"}
 只润色以上内容，一次给出完整回应；正文全部是 NPC 第一人称台词，不把“他点头、他回答”等叙述写入台词。没有写入内容稿的背景或解释不补入正文。回答不知道时，只保留规划的未知对象和态度，不添加不知道的原因。
+不得为避免重复而删除本单元获批 brief、必选节拍、contentFactIds 或必须披露的观察；前文已表达过也不免除本单元覆盖义务。内容分工由规划器确定，表达器只调整措辞。
 ${context.unit.task === undefined ? "" : `必须覆盖的正文事实：${JSON.stringify(requiredExpressionFactIds(context.unit.task))}；只在实际表达该事实的 part.facts 回填引用。`}
 
 只返回一个 JSON 对象：{"stage":"character","speakerId":"${context.unit.speakerId ?? ""}","parts":[{"text":"...","facts":[],"evidence":[],"beatIds":[]}],"emotion":"...","actions":[],"answeredBeatIds":[]}
