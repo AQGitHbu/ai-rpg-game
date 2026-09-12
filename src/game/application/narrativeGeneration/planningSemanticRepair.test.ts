@@ -29,7 +29,11 @@ it("首次规划语义拒绝原子撤销后只重做一次，修正骨架才表�
       worldFacts: [...world.worldFacts, ...real.facts.map(f => ({ factId: asFactId(f.id), text: f.text,
         discovered: true, source: "generated" as const }))], eventLedger: world.eventLedger,
     }) } } });
-  const decision = base.decision;
+  const decision = { ...base.decision, options: base.decision.options.map((o, i) => i !== 1 ? o : {
+    ...o, dialogueAct: "challenge" as const, task: { ...o.task!, intent: "challenge" as const,
+      brief: "追问信号来自哪里，只询问来源。", focusFactIds: ["fact_3"],
+      inquiries: [{ factId: "fact_3", aspects: ["source"] as const }] },
+  }) as unknown as typeof base.decision.options };
   const broken = { ...base, decision: { ...decision, options: decision.options.map((o, i) => i !== 0 ? o : {
     ...o, dialogueAct: "offer" as const, task: { ...o.task!, intent: "offer" as const, brief: real.brief!,
       focusFactIds: real.topicFactIds, inquiries: [] },
@@ -53,9 +57,14 @@ it("首次规划语义拒绝原子撤销后只重做一次，修正骨架才表�
   let reviews = 0;
   h.source.reviewDialogueConsistency = async (request, execution) => {
     calls++;
-    if (++reviews === 1) return { ok: true, verdict: "reject", violations: [{ checkId: "unknown_check", type: "intent_mismatch", inquiryId: null }] };
+    if (++reviews === 1) {
+      const check = request.checks.find(c => c.kind === "plan_option" && c.inquiries.some(q => q.aspect === "source"))!;
+      return { ok: true, verdict: "reject", violations: [{ checkId: check.checkId, type: "extra_inquiry",
+        inquiryId: check.inquiries.find(q => q.aspect === "source")!.inquiryId }] };
+    }
     if (reviews === 2) {
-      expect(execution.repair?.detail).toContain("$.violations[0].checkId");
+      expect(execution.repair?.detail).toContain("$.violations[0].inquiryId");
+      expect(execution.repair?.detail).toContain("invalid_inquiryId");
       const check = request.checks.find(c => c.kind === "plan_option")!;
       return { ok: true, verdict: "reject", violations: [{ checkId: check.checkId, type: "extra_inquiry",
         inquiryId: check.inquiryTargets.find(q => q.factId === "fact_3" && q.aspect === "reliability")!.inquiryId }] };
