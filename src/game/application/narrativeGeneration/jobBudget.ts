@@ -1,7 +1,8 @@
+import { planningDialogueUnits } from "./planningDialogueReview";
 // 有界预算（Plan 2026-09-09 / Task 8 Step 4）。
 //
 // 固定决策数值：单单元最多 4 次 provider 尝试；每 job 在 baseline
-// （1 次规划 + 必需表达数 + 适用时 1 次对白一致性审核）之外最多 12 次额外请求；deadline 由任务
+// （1 次规划 + 必需表达数 + 适用时 1 次规划前置审核与 1 次最终对白审核）之外最多 12 次额外请求；deadline 由任务
 // 持久化字段给定。最坏单元数与关键路径容纳性在规划审批检查。
 
 import type { ApprovedPlan } from "@/game/gameplay/rpg/narrativePlanning";
@@ -10,7 +11,8 @@ import { fail, type Check } from "@/game/domain/narrativeUnit";
 import type { StoredJob } from "../server/persistence/narrativeJobRepository";
 
 export function baselineRequestsForPlan(plan: ApprovedPlan): number {
-  return 1 + plan.units.length + (shouldReviewDialogueConsistency(plan) ? 1 : 0);
+  return 1 + plan.units.length + (shouldReviewDialogueConsistency(plan) ? 1 : 0)
+    + (planningDialogueUnits(plan).length > 0 ? 1 : 0);
 }
 
 export const JOB_BUDGET = {

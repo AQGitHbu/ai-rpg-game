@@ -238,6 +238,7 @@ function priorTextOf(
   unit: Unit,
   approved: ReadonlyMap<string, UnitOutput>,
   visibleFacts: readonly SafeFact[],
+  allowMissing = false,
 ): Check<readonly TextPart[]> {
   const parts: TextPart[] = [];
   const dependencies = unit.dependencies
@@ -249,7 +250,10 @@ function priorTextOf(
         : left.point.stepKey < right.point.stepKey ? -1 : 1);
   for (const dependency of dependencies) {
     const output = approved.get(dependency.key);
-    if (output === undefined) return fail("dependency_output_missing");
+    if (output === undefined) {
+      if (allowMissing) continue;
+      return fail("dependency_output_missing");
+    }
     if (output.stage === "choices") continue;
     // 跨场景依赖只保证执行顺序；认知由 snapshot 的观察回执传播，不能继承整段旧对白。
     if (dependency.point.stepKey !== unit.point.stepKey) continue;
@@ -292,7 +296,8 @@ function optionsOf(plan: ApprovedPlan, prior: readonly TextPart[], facts: readon
     let topicText = "";
     if ("topic" in option && option.topic.kind === "fact") {
       const topicFact = facts.find(fact => fact.id === String(option.topic.kind === "fact" ? option.topic.factId : ""));
-      if (topicFact === undefined) return fail("choice_intent_authority_conflict");
+      if (topicFact === undefined) return { ok: false, code: "choice_intent_authority_conflict",
+        detail: JSON.stringify({ unavailableFactIds: [String(option.topic.factId)] }) };
       topicText = `；已知话题（${topicFact.certainty}）：${topicFact.text}`;
     }
     if ("topic" in option && option.topic.kind === "thread") {
@@ -301,7 +306,8 @@ function optionsOf(plan: ApprovedPlan, prior: readonly TextPart[], facts: readon
         && event.payload.threadId === threadId)?.payload;
       const fact = thread?.type === "opening_thread_established"
         ? facts.find(fact => fact.id === String(thread.questionFactId)) : undefined;
-      if (fact === undefined) return fail("choice_intent_authority_conflict");
+      if (fact === undefined) return { ok: false, code: "choice_intent_authority_conflict",
+        detail: JSON.stringify({ unavailableFactIds: thread?.type === "opening_thread_established" ? [String(thread.questionFactId)] : [] }) };
       topicText = `；当前问题（${fact.certainty}）：${fact.text}`;
     }
     if ("target" in option && option.target !== null) {
@@ -320,7 +326,8 @@ function optionsOf(plan: ApprovedPlan, prior: readonly TextPart[], facts: readon
       else if (name !== undefined && (plan.world.locations.some(l => String(l.id) === id)
         || plan.world.npcs.some(n => String(n.id) === id && (n.met || n.locationId === plan.world.currentLocationId))
         || disclosed.some(text => text.includes(name)))) subject = name;
-      else return fail("choice_intent_authority_conflict");
+      else return { ok: false, code: "choice_intent_authority_conflict",
+        detail: JSON.stringify({ unavailableTargetName: name }) };
     }
     if ("task" in option && option.task !== undefined && option.task.intent !== option.dialogueAct) {
       return fail("plan_task_intent_mismatch");
@@ -469,6 +476,8 @@ export type ProjectUnitContextInput = Readonly<{
   plan: ApprovedPlan;
   unit: Unit;
   approved: ReadonlyMap<string, UnitOutput>;
+  /** Planning checks need no prose; all knowledge and task gates remain active. */
+  purpose?: "planning";
 }>;
 
 /**
@@ -539,7 +548,7 @@ export function projectUnitContext(input: ProjectUnitContextInput): ContextCheck
   }) };
   // 历史按完整视角权限判断，不能用本轮选题把上一轮对白裁成碎片。
   const historyFacts = visibleFacts;
-  const priorText = priorTextOf(plan, unit, input.approved, historyFacts);
+  const priorText = priorTextOf(plan, unit, input.approved, historyFacts, input.purpose === "planning");
   if (!priorText.ok && priorText.code !== "dependency_output_missing") return priorText;
   // 新任务的可说内容局限于规划选定主题与必须表达的节拍/观察，不能遍历整个知识库另起话题。
   if (unit.task !== undefined && unit.stage !== "choices") {

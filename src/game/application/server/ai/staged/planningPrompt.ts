@@ -210,7 +210,7 @@ export function renderPlanProposalContract(context: PlanningContext, includeWorl
 - focusFactIds 是本任务可用的话题背景范围；只引用本角色可知且可披露/玩家此时已知的事实。背景可以帮助措辞，不表示每项都必须复述。taskFactIds 同步这些授权事实，不靠 instruction/publicIntent.text 指派关键内容。
 - contentFactIds 必须是 focusFactIds 的无重复子集，只列正文必须明确表达的事实；条件事实和 outcome=answer 的 answerFactIds 也会分别强制表达，无需为了强制回答而重复塞入 contentFactIds。无必须事实时写 []，仍须用 brief 决定完整含义。
 - prerequisiteFactIds 表示先要求对方核实这些已知说法，然后才表达主意图（如先核实再协助）；不是已调查成功，不执行支付或移动。无需条件则 []。禁止为了保密直接删掉关键条件。
-- 具体问询用可选 inquiries=[{"factId":"fact_0","aspects":["direction","depth"]}]，表示针对已知脚印询问走向和深浅，不预设答案。维度枚举：${INQUIRY_ASPECTS.join(" | ")}。仅 ask/challenge 可提供非空 inquiries；最多4个不同 factId，每项1到4个不重复维度，factId 必须在 focusFactIds 中。
+- 无事实问询（例如征求意见、行动提议）时 inquiries 可省略或为空；有具体事实问询时必须逐项编码 inquiries=[{"factId":"fact_0","aspects":["direction","depth"]}]，表示针对已知脚印询问走向和深浅，不预设答案。维度枚举：${INQUIRY_ASPECTS.join(" | ")}。仅 ask/challenge 可提供非空 inquiries；最多4个不同 factId，每项1到4个不重复维度，factId 必须在 focusFactIds 中。
 - 询问谁、在哪里、方向、深浅、时间、原因、方式、数量、来源、可信度或目的时，必须编码相应 inquiries，不能只写在 publicIntent.text/instruction 后让投影丢掉。维度不得夹带实体名、答案或隐情；无法表达的额外含义退回规划，不用泛化提问冒充原意。
 - 事实 ID 数组各最多 12 项、无重复。无事实的现场描写用 describe + []；未知提问可用 admit_unknown、contentFactIds=[] 和完整 brief，不引用未知秘密 ID，也不把已知背景挂到 observation/contentFactIds 强制重讲。
 - 当前焦点 NPC 回应 selectedDialogue.task.inquiries 时，必须在其 task.answers 逐项编码 [{"factId":"fact_0","aspect":"source","outcome":"unknown","answerFactIds":[]}]。每个已问 factId/aspect 恰好一次，全部合并进同场该 NPC 的唯一 character 单元；不分配给旁白、未来 NPC 或候选。最多16项，outcome ∈ ${ANSWER_OUTCOMES.join(" | ")}。

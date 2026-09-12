@@ -1,3 +1,4 @@
+import { runPlanningDialogueReview } from "./planningDialogueReview";
 import { expect, it, vi } from "vitest";
 import * as digestModule from "./narrativeInputDigest";
 import { approvePlanningContext } from "./approvePlanningContext";
@@ -59,6 +60,7 @@ it("审核合同保留已安全编译的候选与历史先核实条件ID，不�
       label: "先确认告示上的说法，我再支持你。", task: { intent: "support", brief: "先核实告示再支持。",
         focusFactIds: [], contentFactIds: [], prerequisiteFactIds: ["fact_notice"], inquiries: [] } } } } } });
   h.source.reviewDialogueConsistency = async request => {
+    if (request.checks.every(c => c.kind.startsWith("plan_"))) return { ok: true, verdict: "pass", violations: [] };
     const selected = request.checks.find(c => c.kind === "selected")!;
     expect(selected.prerequisiteFactIds).toEqual(["fact_notice"]);
     expect(selected.inquiries).toEqual([]);
@@ -88,6 +90,7 @@ it("历史brief经安全投影核对协助条件，只交给当前focus审核，
     return result;
   };
   h.source.reviewDialogueConsistency = async request => {
+    if (request.checks.every(c => c.kind.startsWith("plan_"))) return { ok: true, verdict: "pass", violations: [] };
     const current = request.checks.find(c => c.kind === "selected")!;
     expect(current.brief).toContain(brief);
     expect(current).not.toHaveProperty("focusFactIds");
@@ -111,7 +114,8 @@ it.each(["brief", "legacy_prerequisite"])("历史任务引用玩家不可见事�
         focusFactIds: variant === "brief" ? ["fact_private"] : [],
         prerequisiteFactIds: variant === "legacy_prerequisite" ? ["PRIVATE_PREREQUISITE_ID"] : [] } } } } } });
   let reviews = 0;
-  h.source.reviewDialogueConsistency = async () => { reviews++; return { ok: true, verdict: "pass", violations: [] }; };
+  h.source.reviewDialogueConsistency = async request => {
+    if (request.checks.every(c => c.kind.startsWith("plan_"))) return { ok: true, verdict: "pass", violations: [] }; reviews++; return { ok: true, verdict: "pass", violations: [] }; };
   expect(await h.run()).toMatchObject({ ok: false, code: "legacy_dialogue_contract_mismatch" });
   expect(reviews).toBe(0);
   expect(JSON.stringify(h.requests.filter(r => r.stage !== "planning"))).not.toContain("PRIVATE_HISTORICAL_BRIEF");
@@ -121,6 +125,7 @@ it.each(["brief", "legacy_prerequisite"])("历史任务引用玩家不可见事�
 it("逐场景绑定实际问题与unknown回应，安全投影不含完整世界/私密计划", async () => {
   const { h } = await dialogueReviewHarness();
   h.source.reviewDialogueConsistency = async request => {
+    if (request.checks.every(c => c.kind.startsWith("plan_"))) return { ok: true, verdict: "pass", violations: [] };
     const reply = request.checks.find(c => c.kind === "answer")!;
     expect(reply.selectedText).toBe("从哪儿听来的，消息可靠吗？");
     expect(reply.inquiries.map(q => q.aspect)).toEqual(["source", "reliability"]);
@@ -185,13 +190,17 @@ it.each(["ending", "null", "none"] as const)("无候选的审核执行与发布�
     calls++;
     return { ok: true as const, verdict: "pass" as const, violations: [] };
   } };
+  expect(await runPlanningDialogueReview({ plan, getJob: () => job, source,
+    now: () => h.clock.now(), signal: h.controller.signal,
+    persist: async mutate => { job = mutate(job); return true; },
+  })).toMatchObject({ ok: true });
   expect(await runDialogueConsistencyReview({ plan, getJob: () => job, source,
     now: () => h.clock.now(), signal: h.controller.signal,
     persist: async mutate => { job = mutate(job); return true; },
   })).toMatchObject({ ok: true });
-  expect(calls).toBe(kind === "none" ? 0 : 1);
+  expect(calls).toBe(kind === "none" ? 0 : 2);
   expect(validateJobDialogueConsistencyReview(job, plan).ok).toBe(true);
-  expect(job.usedRequests).toBe(ready.value.usedRequests + (kind === "none" ? 0 : 1));
+  expect(job.usedRequests).toBe(ready.value.usedRequests + (kind === "none" ? 0 : 2));
 });
 
 it.each([

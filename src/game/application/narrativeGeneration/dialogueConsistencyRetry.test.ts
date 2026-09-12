@@ -14,6 +14,7 @@ it.each([false, true])("free-text有selectedDialogue仍不是旧固定选项；�
       utterance: "消息是从哪儿来的？", selectedDialogue: { dialogueAct: "ask", label: "消息是从哪儿来的？" } } } } });
   let calls = 0;
   h.source.reviewDialogueConsistency = async request => {
+    if (request.checks.every(c => c.kind.startsWith("plan_"))) return { ok: true, verdict: "pass", violations: [] };
     calls++;
     const reply = request.checks.find(c => c.kind === "answer")!;
     expect(request.checks.some(c => c.kind === "selected")).toBe(false);
@@ -31,6 +32,7 @@ it("第二次审核拒绝即耗尽，重启不能再发审核或表达；手动�
   await h.startDecision();
   let reviews = 0;
   h.source.reviewDialogueConsistency = async request => {
+    if (request.checks.every(c => c.kind.startsWith("plan_"))) return { ok: true, verdict: "pass", violations: [] };
     reviews++;
     return { ok: true, verdict: "reject", violations: [{ checkId: request.checks.find(c => c.kind === "option")!.checkId, type: "intent_mismatch", inquiryId: null }] };
   };
@@ -54,7 +56,8 @@ it("剩余额度耗尽在审核发送前失败，baseline恢复不累加", async
   await h.jobs.save({ lease: h.lease(), expectedVersion: ready.value.version, job: { ...ready.value,
     usedRequests: ready.value.baselineRequests + 12, dialogueConsistencyReview: undefined } });
   const review = vi.fn(async () => ({ ok: true as const, verdict: "pass" as const, violations: [] }));
-  h.source.reviewDialogueConsistency = review;
+  h.source.reviewDialogueConsistency = async request => request.checks.every(c => c.kind.startsWith("plan_"))
+    ? { ok: true, verdict: "pass", violations: [] } : review();
   expect(await h.run()).toMatchObject({ ok: false, code: "job_budget_exhausted" });
   expect(review).not.toHaveBeenCalled();
   expect(await h.readJob()).toMatchObject({ ok: true, value: { baselineRequests: ready.value.baselineRequests } });
@@ -63,7 +66,8 @@ it("剩余额度耗尽在审核发送前失败，baseline恢复不累加", async
 it("审核在途发生另一个worker接管，旧fence不能写回pass", async () => {
   const h = createStagedHarness();
   await h.startDecision();
-  h.source.reviewDialogueConsistency = async () => {
+  h.source.reviewDialogueConsistency = async request => {
+    if (request.checks.every(c => c.kind.startsWith("plan_"))) return { ok: true, verdict: "pass", violations: [] };
     h.clock.advance(31_000);
     const takeover = await h.jobs.claim({ id: h.jobId(), owner: "other-worker", now: h.clock.now(),
       expiresAt: new Date(Date.parse(h.clock.now()) + 30_000).toISOString() });
@@ -92,6 +96,7 @@ it("reliability标签追加从哪儿听来：只重做choices，二次合并审�
   };
   let reviews = 0;
   h.source.reviewDialogueConsistency = async request => {
+    if (request.checks.every(c => c.kind.startsWith("plan_"))) return { ok: true, verdict: "pass", violations: [] };
     reviews++;
     const choice = request.checks.find(c => c.kind === "option")!;
     expect(choice.inquiries.map(q => q.aspect)).toEqual(["reliability"]);
@@ -104,7 +109,7 @@ it("reliability标签追加从哪儿听来：只重做choices，二次合并审�
     return { ok: true, verdict: "pass", violations: [] };
   };
   const result = await h.run();
-  expect(result).toMatchObject({ ok: true, value: { usedRequests: 7, baselineRequests: 5,
+  expect(result).toMatchObject({ ok: true, value: { usedRequests: 8, baselineRequests: 6,
     dialogueConsistencyReview: { attempts: 2, status: "approved" } } });
   expect(reviews).toBe(2);
   expect(requests.filter(r => r.stage === "planning")).toHaveLength(1);
@@ -123,6 +128,7 @@ it("source+reliability计划均unknown但实际只回应reliability：失效NPC�
   };
   let reviews = 0;
   h.source.reviewDialogueConsistency = async request => {
+    if (request.checks.every(c => c.kind.startsWith("plan_"))) return { ok: true, verdict: "pass", violations: [] };
     const reply = request.checks.find(c => c.kind === "answer")!;
     expect(reply.answers).toHaveLength(2);
     if (++reviews === 1) {
@@ -147,7 +153,8 @@ it.each(["来源并不重要，我只关心告示是否可信。", "劳驾，请
       labels: value.value.labels.map((l, i) => i === 0 ? { ...l, label } : l) } } : value;
   };
   const review = vi.fn(async () => ({ ok: true as const, verdict: "pass" as const, violations: [] }));
-  h.source.reviewDialogueConsistency = review;
+  h.source.reviewDialogueConsistency = async request => request.checks.every(c => c.kind.startsWith("plan_"))
+    ? { ok: true, verdict: "pass", violations: [] } : review();
   expect((await h.run()).ok).toBe(true);
   expect(review).toHaveBeenCalledTimes(1);
 });
@@ -160,10 +167,11 @@ it.each(["uncertain", "provider", "throw", "schema"])("审核%s最多两次；�
     if (failure === "provider") return createAiSourceFailure("scene", "timeout");
     return { ok: true as const, verdict: failure === "schema" ? "invalid" as never : "uncertain" as const, violations: [] };
   });
-  h.source.reviewDialogueConsistency = review;
+  h.source.reviewDialogueConsistency = async request => request.checks.every(c => c.kind.startsWith("plan_"))
+    ? { ok: true, verdict: "pass", violations: [] } : review();
   expect((await h.run()).ok).toBe(false);
   expect(review).toHaveBeenCalledTimes(2);
-  expect(await h.readJob()).toMatchObject({ ok: true, value: { status: "failed", usedRequests: 7,
+  expect(await h.readJob()).toMatchObject({ ok: true, value: { status: "failed", usedRequests: 8,
     dialogueConsistencyReview: { attempts: 2, status: "failed" } } });
   expect(h.publications()).toHaveLength(0);
 });
@@ -179,7 +187,8 @@ it("审核前保存running和预算，pass恢复复用；unknown恢复保留已�
   const h = createStagedHarness();
   await h.startDecision();
   let calls = 0;
-  h.source.reviewDialogueConsistency = async () => {
+  h.source.reviewDialogueConsistency = async request => {
+    if (request.checks.every(c => c.kind.startsWith("plan_"))) return { ok: true, verdict: "pass", violations: [] };
     const loaded = await h.readJob();
     expect(loaded).toMatchObject({ ok: true, value: { dialogueConsistencyReview: { status: "running", attempts: ++calls } } });
     return { ok: true, verdict: "pass", violations: [] };
@@ -191,7 +200,7 @@ it("审核前保存running和预算，pass恢复复用；unknown恢复保留已�
   const saved = await h.jobs.save({ lease: h.lease(), expectedVersion: first.value.version, job: { ...first.value,
     dialogueConsistencyReview: { ...first.value.dialogueConsistencyReview!, status: "running", passDigest: undefined } } });
   if (!saved.ok) throw Error(saved.code);
-  expect(await h.run()).toMatchObject({ ok: true, value: { usedRequests: 7, baselineRequests: 6,
+  expect(await h.run()).toMatchObject({ ok: true, value: { usedRequests: 8, baselineRequests: 7,
     dialogueConsistencyReview: { attempts: 2 } } });
   expect(calls).toBe(2);
 });
@@ -211,20 +220,22 @@ it("reject与DAG失效原子保存，保存后重启仍带安全反馈修复", a
     return result;
   };
   let reviews = 0;
-  h.source.reviewDialogueConsistency = async request => ++reviews === 1
+  h.source.reviewDialogueConsistency = async request => request.checks.every(c => c.kind.startsWith("plan_"))
+    ? { ok: true, verdict: "pass", violations: [] } : ++reviews === 1
     ? { ok: true, verdict: "reject", violations: [{ checkId: request.checks.find(c => c.kind === "option")!.checkId,
       type: "intent_mismatch", inquiryId: null }] }
     : { ok: true, verdict: "pass", violations: [] };
   expect((await h.run()).ok).toBe(false);
   const resumed = await runJob({ id: h.jobId(), lease: h.lease() }, { jobs: h.jobs, source: h.source,
     now: () => h.clock.now(), signal: new AbortController().signal });
-  expect(resumed).toMatchObject({ ok: true, value: { usedRequests: 8, dialogueConsistencyReview: { attempts: 2 } } });
+  expect(resumed).toMatchObject({ ok: true, value: { usedRequests: 9, dialogueConsistencyReview: { attempts: 2 } } });
   expect(h.calls.filter(c => c.stage === "choices").at(-1)?.repair?.detail).toContain('"type":"intent_mismatch"');
 });
 
 it.each(["planning", "legacy"] as const)("%s合同拒绝终止周期；planning手动重试不复用旧骨架", async scope => {
   const { h, requests } = await dialogueReviewHarness();
-  h.source.reviewDialogueConsistency = async request => ({ ok: true, verdict: "reject", violations: [{ checkId: request.checks.find(c => c.kind === (scope === "planning" ? "plan_answer" : "selected"))!.checkId,
+  h.source.reviewDialogueConsistency = async request => scope === "legacy" && request.checks.every(c => c.kind.startsWith("plan_"))
+    ? { ok: true, verdict: "pass", violations: [] } : ({ ok: true, verdict: "reject", violations: [{ checkId: request.checks.find(c => c.kind === (scope === "planning" ? "plan_answer" : "selected"))!.checkId,
     type: "intent_mismatch", inquiryId: null }] });
   expect(await h.run()).toMatchObject({ ok: false, code: scope === "legacy" ? "legacy_dialogue_contract_mismatch" : "dialogue_consistency_planning_contract" });
   if (scope !== "planning") return;
@@ -244,7 +255,8 @@ it.each(["planning", "legacy"] as const)("%s合同拒绝终止周期；planning�
 it("late审核被cancel fence拒绝，不能保存pass或发布", async () => {
   const h = createStagedHarness();
   await h.startDecision();
-  h.source.reviewDialogueConsistency = async () => {
+  h.source.reviewDialogueConsistency = async request => {
+    if (request.checks.every(c => c.kind.startsWith("plan_"))) return { ok: true, verdict: "pass", violations: [] };
     await h.cancel();
     return { ok: true, verdict: "pass", violations: [] };
   };
@@ -256,6 +268,7 @@ it("late审核被cancel fence拒绝，不能保存pass或发布", async () => {
 it("审核响应越过deadline不保存pass", async () => {
   const h = createStagedHarness();
   await h.startDecision();
-  h.source.reviewDialogueConsistency = async () => { h.clock.advance(600_000); return { ok: true, verdict: "pass", violations: [] }; };
+  h.source.reviewDialogueConsistency = async request => {
+    if (request.checks.every(c => c.kind.startsWith("plan_"))) return { ok: true, verdict: "pass", violations: [] }; h.clock.advance(600_000); return { ok: true, verdict: "pass", violations: [] }; };
   expect(await h.run()).toMatchObject({ ok: false, code: "job_deadline_exceeded" });
 });

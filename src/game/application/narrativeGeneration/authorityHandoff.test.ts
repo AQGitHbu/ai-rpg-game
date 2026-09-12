@@ -106,6 +106,13 @@ it.each(["fresh", "cached", "conditional", "exhausted"])("规划修复不授予�
     ] } };
   };
   const result = await h.run();
+  if (mode === "conditional") {
+    // The witness is player-only: it cannot authorize the NPC, even after narration.
+    expect(result).toMatchObject({ ok: false, code: "beat_authority_conflict" });
+    expect(calls).toEqual(["planning"]);
+    expect(h.publications()).toHaveLength(0);
+    return;
+  }
   if (mode === "exhausted") {
     expect(result).toMatchObject({ ok: false, code: "beat_authority_conflict" });
     expect(calls).toEqual(["planning", "planning", "planning", "planning"]);
@@ -116,7 +123,7 @@ it.each(["fresh", "cached", "conditional", "exhausted"])("规划修复不授予�
   }
   if (!result.ok) throw Error(result.code + ":" + calls.join(","));
   expect(result.ok).toBe(true);
-  expect(result.value.usedRequests).toBe(mode === "conditional" ? 7 : 6);
+  expect(result.value.usedRequests).toBe(7);
   const publication = buildDecisionPublication({ job: result.value, createdAt: h.clock.now() });
   expect(publication).toMatchObject({ ok: true });
   if (!publication.ok) return;

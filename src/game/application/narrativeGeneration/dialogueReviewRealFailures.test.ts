@@ -47,7 +47,7 @@ it("生产StageSource请求只发送checks并包含NPC自身获批intent", async
   const { h } = await dialogueReviewHarness();
   h.source.reviewDialogueConsistency = async request => {
     expect(request).not.toHaveProperty("conversations");
-    expect(request.checks.find(c => c.kind === "plan_answer")?.intent).toBe("admit_unknown");
+    expect(request.checks.find(c => c.kind === "plan_answer" || c.kind === "answer")?.intent).toBe("admit_unknown");
     return { ok: true, verdict: "pass", violations: [] };
   };
   expect((await h.run()).ok).toBe(true);
@@ -134,6 +134,7 @@ it.each(["unknown_check", "cross_inquiry", "old_dual_target"])("运行器把%s�
   const { dialogueReviewHarness } = await import("./dialogueConsistencyFixture.testutil");
   const { h, requests } = await dialogueReviewHarness(false);
   h.source.reviewDialogueConsistency = async request => {
+    if (request.checks.every(c => c.kind.startsWith("plan_"))) return { ok: true, verdict: "pass", violations: [] };
     const reply = request.checks.find(c => c.kind === "answer")!;
     const option = request.checks.find(c => c.kind === "option")!;
     const violation = failure === "old_dual_target" ? { scope: "expression", unitKey: "character_current",
@@ -175,4 +176,17 @@ it("每个检查只收到自己授权的话题/条件/答案事实，未知答�
   expect(compiled.request.checks.find(c => c.kind === "selected")!.facts.map(f => f.id)).toEqual(["fact_3"]);
   expect(JSON.stringify(compiled.request)).not.toContain("unrelated_fact");
   expect(compiled.request.checks.find(c => c.kind === "answer")!.inquiryTargets.some(q => q.factId === "fact_0")).toBe(false);
+});
+
+it("计划仅接受每项一个充分反例，表达审核仍允许多个实际遗漏", () => {
+  const subject = realReviewSubjects.unknown[0]!;
+  const compiled = compileDialogueReviewChecks([subject]);
+  const plan = compiled.request.checks.find(c => c.kind === "plan_answer")!;
+  const expression = compiled.request.checks.find(c => c.kind === "answer")!;
+  const verdict = (check: typeof plan) => ({ verdict: "reject", violations: check.inquiries.map(q => ({
+    checkId: check.checkId, type: "missing_response", inquiryId: q.inquiryId,
+  })) });
+  expect(parseDialogueReviewVerdict(verdict(plan), compiled.request)).toBeNull();
+  expect(parseDialogueReviewVerdict(verdict(expression), compiled.request)).not.toBeNull();
+  expect(parseDialogueReviewVerdict({ ...verdict(plan), violations: verdict(plan).violations.slice(0, 1) }, compiled.request)).not.toBeNull();
 });

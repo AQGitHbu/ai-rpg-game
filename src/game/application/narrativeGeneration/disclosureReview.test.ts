@@ -55,7 +55,7 @@ describe("disclosure review gate", () => {
     const result = await h.run();
     if (!result.ok) throw Error(result.code);
     expect(review).toHaveBeenCalledTimes(1);
-    expect(result.value.usedRequests).toBe(h.calls.length + 2);
+    expect(result.value.usedRequests).toBe(h.calls.length + 3);
     const plan = approvePlanningContext(result.value.input,
       result.value.units.find(u => u.key === "planning")!.value as import("@/game/domain/narrativePlan").PlanProposal);
     if (!plan.ok) throw Error(plan.code);

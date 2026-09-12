@@ -212,7 +212,7 @@ export const realReviewSubjects = {
       "prerequisiteFactIds": [],
       "topicFactIds": [
         "fact_0",
-        "fact_1"
+        "fact_3"
       ],
       "facts": [
         {
@@ -246,8 +246,8 @@ export const realReviewSubjects = {
       "answers": [],
       "prerequisiteFactIds": [],
       "topicFactIds": [
-        "fact_0",
-        "fact_1"
+        "fact_1",
+        "fact_3"
       ],
       "facts": [
         {

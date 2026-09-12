@@ -1,3 +1,4 @@
+import { isStoredPlanningDialogueReviews } from "../../narrativeGeneration/planningDialogueReview";
 import { isStoredDialogueReview, validateJobDialogueConsistencyReview } from "../../narrativeGeneration/dialogueConsistencyReview";
 import { approvePlanningContext } from "../../narrativeGeneration/approvePlanningContext";
 import type {
@@ -140,6 +141,7 @@ function parsePayloadJob(text: string, expectedId: string): JobCheck<StoredJob> 
     });
   }
 
+  if (!isStoredPlanningDialogueReviews(parsed["planningDialogueReviews"])) return { ok: false, code: "UNSUPPORTED_JOB" };
   if (!isStoredDialogueReview(parsed["dialogueConsistencyReview"])) return { ok: false, code: "UNSUPPORTED_JOB" };
   const job = { ...(parsed as unknown as StoredJob), units };
   return { ok: true, value: job };
@@ -517,6 +519,7 @@ export function createSqliteNarrativeJobs(
             deadline: nextDeadline,
             usedRequests: input.operation === "retry" ? 0 : parsed.value.usedRequests,
             units: nextUnits,
+            planningDialogueReviews: input.operation === "retry" ? undefined : parsed.value.planningDialogueReviews,
             dialogueConsistencyReview: input.operation === "retry" ? undefined : parsed.value.dialogueConsistencyReview,
           };
           await tx.execute({

@@ -217,7 +217,7 @@ it.each([undefined, { version: 1, cycle: 0, inputDigest: "a".repeat(64), attempt
   expect(loaded).toMatchObject(review === undefined ? { ok: true } : { ok: false, code: "UNSUPPORTED_JOB" });
 });
 
-it.each(["missing", "text", "stale"])("publish事务根据持久化内容重算审核门禁，拒绝%s且游戏零写入", async change => {
+it.each(["missing", "text", "stale", "planning_missing", "planning_stale", "planning_partial"])("publish事务根据持久化内容重算审核门禁，拒绝%s且游戏零写入", async change => {
   const h = createStagedHarness();
   await h.startDecision();
   const ready = await h.run();
@@ -226,6 +226,9 @@ it.each(["missing", "text", "stale"])("publish事务根据持久化内容重算�
   const created = await games.createInitialGame({ gameId: asGameId("game-1"), worldState: fixtureWorld(), storyState: fixtureStory(), createdAt: NOW });
   expect(created.ok).toBe(true);
   const job: StoredJob = { ...ready.value, version: 0, gameId: "game-1",
+    planningDialogueReviews: change === "planning_missing" ? undefined : change === "planning_partial" ? {}
+      : change === "planning_stale" ? Object.fromEntries(Object.entries(ready.value.planningDialogueReviews!).map(([key, receipt]) =>
+        [key, { ...receipt, inputDigest: "f".repeat(64), passDigest: "f".repeat(64) }])) : ready.value.planningDialogueReviews,
     dialogueConsistencyReview: change === "missing" ? undefined : { ...ready.value.dialogueConsistencyReview!,
       ...(change === "stale" ? { cycle: 99 } : {}) },
     units: ready.value.units.map(u => u.value !== null && "stage" in u.value && u.value.stage === "choices" && change === "text"
@@ -580,3 +583,12 @@ it.each([undefined, "fact_rumor"])("SQLite仍读取旧aspect-only及新factId定
     requestId: `req-${job.id}`, digest: job.inputDigest })).ok).toBe(true);
   expect(await stores.jobs.get(job.id)).toMatchObject({ ok: true, value: { dialogueConsistencyReview: review } });
 });
+
+it.each([null, [], { choices_current: { version: 1, cycle: 0, inputDigest: "a".repeat(64), attempts: 3, status: "approved" } }])(
+  "SQLite读取拒绝非法前置凭据，不能当作旧版已通过：%j", async planningDialogueReviews => {
+    const stores = openStores(nextDbPath());
+    const job = decisionJob();
+    await stores.jobs.start({ job: { ...job, planningDialogueReviews: planningDialogueReviews as never },
+      requestId: `planning-review-${job.id}`, digest: job.inputDigest });
+    expect(await stores.jobs.get(job.id)).toMatchObject({ ok: false, code: "UNSUPPORTED_JOB" });
+  });

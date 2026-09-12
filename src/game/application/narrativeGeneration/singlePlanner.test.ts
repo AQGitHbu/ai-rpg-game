@@ -7,7 +7,7 @@ import { approvePlanningContext } from "./approvePlanningContext";
 import { createWorldStateFixtureWith } from "@/game/domain/testing/worldStateFixture.testutil";
 import { asFactId } from "@/game/domain/worldEntity";
 
-it.each(["none", "answers", "brief", "contentFactIds"] as const)("单规划器决定回答与最终候选，正常四次生成加一次审核，旧不完整规划有界修复：missing=%s", async missing => {
+it.each(["none", "answers", "brief", "contentFactIds"] as const)("单规划器决定回答与最终候选，正常四次生成加前置及最终审核，旧不完整规划有界修复：missing=%s", async missing => {
   const cached = missing !== "none";
   const h = createStagedHarness();
   await h.startDecision();
@@ -71,15 +71,15 @@ it.each(["none", "answers", "brief", "contentFactIds"] as const)("单规划器�
   expect(h.source.requiresTaskBrief).toBe(true);
   const result = await h.run();
   expect(result).toMatchObject({ ok: true });
-  expect(calls.map(call => call.role)).toEqual(["planning", "narration", "character", "choices", "dialogue_consistency_review"]);
+  expect(calls.map(call => call.role)).toEqual(["planning", "dialogue_consistency_review", "narration", "character", "choices", "dialogue_consistency_review"]);
   if (missing === "brief" || missing === "contentFactIds") {
     expect(calls[0]!.text).toContain("plan_task_missing");
   }
-  expect(calls[2]!.text).toContain("明确表示不知道");
-  expect(calls[2]!.text).not.toContain(plan.decision.options[0].candidateId);
-  expect(calls[3]!.text).toContain("谁贴的、何时贴的，我都不知道。");
+  expect(calls[3]!.text).toContain("明确表示不知道");
+  expect(calls[3]!.text).not.toContain(plan.decision.options[0].candidateId);
+  expect(calls[4]!.text).toContain("谁贴的、何时贴的，我都不知道。");
   if (result.ok) {
-    expect(result.value.usedRequests).toBe(cached ? 6 : 5);
+    expect(result.value.usedRequests).toBe(cached ? 7 : 6);
     expect(result.value.units.find(unit => unit.key === "planning")?.attempts).toBe(cached ? 2 : 1);
     expect(result.value.units.find(unit => unit.key === "planning")?.value).toEqual(plan);
   }

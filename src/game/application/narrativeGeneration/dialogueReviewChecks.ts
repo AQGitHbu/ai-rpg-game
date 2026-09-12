@@ -29,7 +29,7 @@ type Route = Readonly<{ scope: DialogueViolation["scope"]; unitKey: string; cand
 export type CompiledDialogueReview = Readonly<{ request: DialogueReviewRequest; routes: ReadonlyMap<string, Route> }>;
 
 /** Pure compiler: omitting text produces plan checks without fabricating approved expression output. */
-export function compileDialogueReviewChecks(subjects: readonly DialogueReviewSubject[]): CompiledDialogueReview {
+export function compileDialogueReviewChecks(subjects: readonly DialogueReviewSubject[], phase: "all" | "planning" | "expression" = "all"): CompiledDialogueReview {
   const checks: DialogueReviewCheck[] = [];
   const routes = new Map<string, Route>();
   function add(subject: DialogueReviewSubject, kind: DialogueReviewCheck["kind"], scope: Route["scope"]) {
@@ -55,14 +55,14 @@ export function compileDialogueReviewChecks(subjects: readonly DialogueReviewSub
       ...(subject.candidateId === undefined ? {} : { candidateId: subject.candidateId }) });
   }
   for (const subject of subjects) {
-    if (subject.kind === "answer" && subject.selected?.historicalChoice) {
+    if (phase !== "planning" && subject.kind === "answer" && subject.selected?.historicalChoice) {
       const contract = subject.selected.contract;
       add({ ...subject, intent: contract?.intent ?? null, brief: contract?.brief ?? null,
         inquiries: contract?.inquiries ?? [], answers: [], prerequisiteFactIds: contract?.prerequisiteFactIds ?? [],
         topicFactIds: [...(subject.selected.topicFactIds ?? []), ...(contract?.inquiries.flatMap(q => q.factId) ?? []), ...(contract?.prerequisiteFactIds ?? [])],
         text: subject.selected.label }, "selected", "legacy");
     }
-    add(subject, subject.kind === "answer" ? "plan_answer" : "plan_option", "planning");
+    if (phase !== "expression") add(subject, subject.kind === "answer" ? "plan_answer" : "plan_option", "planning");
     if (subject.text !== undefined) add(subject, subject.kind, "expression");
   }
   return { request: { version: 1, checks }, routes };
@@ -75,11 +75,16 @@ export function parseDialogueReviewVerdict(value: unknown, request: DialogueRevi
   if (Object.keys(r).some(k => !["verdict", "violations"].includes(k))
     || !["pass", "reject", "uncertain"].includes(r.verdict as string) || !Array.isArray(r.violations)
     || r.violations.length > 8 || (r.verdict === "reject" ? r.violations.length === 0 : r.violations.length !== 0)) return null;
+  const planWitnesses = new Set<string>();
   for (const v of r.violations) {
     if (v === null || typeof v !== "object" || Array.isArray(v)
       || Object.keys(v).length !== 3 || Object.keys(v).some(k => !["checkId", "type", "inquiryId"].includes(k))) return null;
     const check = request.checks.find(c => c.checkId === v.checkId);
     if (check === undefined || !["extra_inquiry", "missing_response", "answer_mismatch", "intent_mismatch"].includes(v.type)) return null;
+    if (check.kind === "plan_answer" || check.kind === "plan_option") {
+      if (planWitnesses.has(check.checkId)) return null;
+      planWitnesses.add(check.checkId);
+    }
     if (v.type === "intent_mismatch") { if (v.inquiryId !== null) return null; continue; }
     if (typeof v.inquiryId !== "string") return null;
     const required = check.inquiries.some(q => q.inquiryId === v.inquiryId);

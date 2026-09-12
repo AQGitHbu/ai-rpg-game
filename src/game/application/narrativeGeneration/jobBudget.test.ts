@@ -29,18 +29,18 @@ function job(overrides: Partial<StoredJob> = {}): StoredJob {
 const NOW = "2026-09-09T08:00:00.000Z";
 
 describe("canStartRequest", () => {
-  it("decision、ending/null待答与无需审核的baseline只多一次；extra与unit上限不变", async () => {
+  it("decision、ending/null待答与无需审核的baseline含前置与最终审核；extra与unit上限不变", async () => {
     const { h, plan } = await dialogueReviewHarness();
     const stored = await h.readJob();
     if (!stored.ok) throw Error(stored.code);
     const checked = approvePlanningContext(stored.value.input, plan);
     if (!checked.ok) throw Error(checked.code);
-    expect(baselineRequestsForPlan(checked.value)).toBe(1 + plan.units.length + 1);
+    expect(baselineRequestsForPlan(checked.value)).toBe(1 + plan.units.length + 2);
     for (const kind of ["ending", "null"] as const) {
       const withoutCandidates = { ...checked.value, proposal: { ...plan, decision: null,
         ...(kind === "ending" ? { terminal: { kind: "ending" as const } } : {}) },
         choiceExpression: null, units: checked.value.units.filter(unit => unit.stage !== "choices") };
-      expect(baselineRequestsForPlan(withoutCandidates)).toBe(1 + withoutCandidates.units.length + 1);
+      expect(baselineRequestsForPlan(withoutCandidates)).toBe(1 + withoutCandidates.units.length + 2);
       expect(baselineRequestsForPlan({ ...withoutCandidates, currentUtterance: undefined })).toBe(1 + withoutCandidates.units.length);
     }
     expect(JOB_BUDGET).toEqual({ extraRequests: 12, maxUnitAttempts: 4 });

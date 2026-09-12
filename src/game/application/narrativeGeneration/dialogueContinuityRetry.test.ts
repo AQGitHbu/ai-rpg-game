@@ -58,6 +58,6 @@ it.each(["fresh", "cached", "exhausted"])("重复问询有界重规划，旧缓�
   } else {
     expect(result).toMatchObject({ ok: true });
     expect(plans).toBe(cached ? 1 : 2);
-    if (result.ok) expect(result.value.usedRequests).toBe(6);
+    if (result.ok) expect(result.value.usedRequests).toBe(7);
   }
 });

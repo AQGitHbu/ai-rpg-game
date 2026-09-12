@@ -1,3 +1,4 @@
+import { validatePlanningDialogueReviews } from "./planningDialogueReview";
 import { narrativeInputDigest } from "./narrativeInputDigest";
 import { INQUIRY_ASPECTS, type InquiryAspect } from "@/game/domain/expressionTask";
 import { fail, type Check, type UnitOutput } from "@/game/domain/narrativeUnit";
@@ -10,7 +11,7 @@ import { compileDialogueReviewChecks, type CompiledDialogueReview, type Dialogue
 
 export const DIALOGUE_REVIEW_VERSION = 1;
 /** Bump whenever review policy/prompt changes; storage schema remains readable. */
-export const DIALOGUE_REVIEW_POLICY_REVISION = 3;
+export const DIALOGUE_REVIEW_POLICY_REVISION = 4;
 export const DIALOGUE_REVIEW_MAX_ATTEMPTS = 2;
 export const DIALOGUE_REVIEW_CONTEXT_LIMIT = 16_000;
 export type DialogueViolation = Readonly<{
@@ -119,7 +120,7 @@ export function dialogueConsistencyReviewInput(job: StoredJob, plan: ApprovedPla
       approved.set(unit.key, output);
     }
   }
-  const compiled = compileDialogueReviewChecks(subjects);
+  const compiled = compileDialogueReviewChecks(subjects, "expression");
   const request = compiled.request;
   if ([...JSON.stringify(request)].length > DIALOGUE_REVIEW_CONTEXT_LIMIT) return fail("dialogue_consistency_context_limit");
   // Full input is hashed locally; private plan/world data is never sent to the reviewer.
@@ -131,6 +132,8 @@ export function dialogueConsistencyReviewInput(job: StoredJob, plan: ApprovedPla
 }
 
 export function validateJobDialogueConsistencyReview(job: StoredJob, plan: ApprovedPlan): Check<true> {
+  const planning = validatePlanningDialogueReviews(job, plan);
+  if (!planning.ok) return planning;
   const input = dialogueConsistencyReviewInput(job, plan);
   if (!input.ok) return input;
   if (input.value === null) return { ok: true, value: true };

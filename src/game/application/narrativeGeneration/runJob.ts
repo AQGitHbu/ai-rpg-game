@@ -1,3 +1,4 @@
+import { runPlanningDialogueReview, validatePlanningDialogueReviews } from "./planningDialogueReview";
 // 可恢复 DAG 调度（Plan 2026-09-09 / Task 8）。
 //
 // runJob 不 claim/release：协调器（ensureCoordinator 的单一执行作用域）
@@ -190,11 +191,15 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
   }
 
   // 重启恢复：在途 running → unknown，保留 charge（等待 lease 过期后有界重做）。
-  if (job.units.some((unit) => unit.status === "running")) {
+  if (job.units.some((unit) => unit.status === "running")
+    || Object.values(job.planningDialogueReviews ?? {}).some(review => review.status === "running")) {
     const kept = await activeLease();
     if (kept === null) return fail("JOB_ABORTED");
     job = {
       ...job,
+      ...(job.planningDialogueReviews === undefined ? {} : { planningDialogueReviews:
+        Object.fromEntries(Object.entries(job.planningDialogueReviews).map(([key, review]) =>
+          [key, review.status === "running" ? { ...review, status: "unknown" as const } : review])) }),
       units: job.units.map((unit) => unit.status === "running"
         ? { ...unit, status: "unknown" as const }
         : unit),
@@ -439,6 +444,10 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
     if (saved !== true) return fail(saved);
   }
 
+  const preflight = await runPlanningDialogueReview({ plan: approved, getJob: () => job, persist,
+    source: deps.source, signal: deps.signal, now: deps.now });
+  if (!preflight.ok) return failJob(preflight.code);
+
   for (;;) {
     if (deps.signal.aborted) return fail("JOB_ABORTED");
     const approvedKeys = new Set(
@@ -461,6 +470,9 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
 
     const failures: string[] = [];
     for (const unit of batch) {
+      const planningReview = await runPlanningDialogueReview({ plan: approved, getJob: () => job, persist,
+        source: deps.source, signal: deps.signal, now: deps.now, unitKey: unit.key });
+      if (!planningReview.ok) return failJob(planningReview.code);
       const stored = unitOfKey(job, unit.key);
       const attempts = stored?.attempts ?? 0;
       const charge = canStartRequest({ job, unitAttempts: attempts, now: deps.now() });
@@ -641,6 +653,8 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
     return failJob("unit_output_missing");
   }
   if (deps.now() >= job.deadline) return failJob("job_deadline_exceeded");
+  const planningCoverage = validatePlanningDialogueReviews(job, approved);
+  if (!planningCoverage.ok) return failJob(planningCoverage.code);
   const review = await runDialogueConsistencyReview({ plan: approved, getJob: () => job, persist,
     source: deps.source, signal: deps.signal, now: deps.now });
   if (!review.ok) return review.code === "JOB_ABORTED" || review.code === "LEASE_LOST" || review.code === "JOB_CONFLICT"

@@ -45,6 +45,7 @@ export type InitializationEnvelope = {
 };
 
 export type StoredJob = {
+  readonly planningDialogueReviews?: Readonly<Record<string, NonNullable<StoredJob["dialogueConsistencyReview"]>>>;
   readonly dialogueConsistencyReview?: Readonly<{
     version: 1; cycle: number; inputDigest: string; attempts: number;
     status: StoredUnitStatus; passDigest?: string;
