@@ -17,7 +17,7 @@ import {
   type WorldStateFixtureOverrides,
 } from "@/game/domain/testing/worldStateFixture.testutil";
 import type { WorldDeltaProposal } from "@/game/domain/worldDelta";
-import { asLocationId, asNpcId, asEnemyId, asGenerationId, asQuestId, type GenerationMetadata } from "@/game/domain/worldEntity";
+import { asLocationId, asNpcId, asEnemyId, asFactId, asGenerationId, asQuestId, type GenerationMetadata } from "@/game/domain/worldEntity";
 import { bindNpcToTownSlot, createTownRuntime } from "@/game/gameplay/rpg/town";
 import { TRUST_ENDING_MIN_AFFINITY, DOUBT_ENDING_MAX_AFFINITY } from "@/game/application/deterministicEvolutionSource";
 
@@ -156,6 +156,31 @@ function makeWorldWithFinalMainQuestTalk(): WorldState {
 }
 
 describe("approveWorldDelta", () => {
+  it("keeps an npc_private fact in the new NPC's initial knowledge only", () => {
+    const result = approveWorldDelta({
+      proposal: {
+        ...nextActProposal(),
+        newFact: { text: "信使受命隐瞒渡口位置。", visibility: "npc_private" },
+      },
+      need: { kind: "next_act", act: 2 },
+      ws: makeWorld(),
+      ss: makeStory({ currentAct: 2 }),
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const factId = asFactId("fact_dyn_0");
+    const layers = result.approved.npcCreationComponentsById.get(asNpcId("npc_dyn_1"));
+    expect(layers?.knowledge.entries).toEqual([expect.objectContaining({
+      factId,
+      disclosure: "secret",
+      source: { kind: "initial_world", learnedAtTurn: 0 },
+    })]);
+    expect(result.approved.newFacts[0]).toEqual(expect.objectContaining({ factId, discovered: false }));
+    expect(result.approved.newNpcs[0]?.memory.knownFactIds).toEqual([]);
+    expect(result.approved.newNpcs[0]?.memory.hiddenFactIds).toEqual([factId]);
+  });
+
   it("requires an explicit entity-context closure for relationship seeds", () => {
     const result = approveWorldDelta({
       proposal: proposalWithSeed("ally"),

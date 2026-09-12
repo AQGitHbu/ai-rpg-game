@@ -12,6 +12,7 @@ import { asEventId } from "@/game/domain/events";
 import type { CommittedNarrativeEvent } from "@/game/domain/events";
 import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
 import {
+  authorizeNpcDeliberationOutward,
   buildNpcSpeechAuthority,
   validateNpcSpeechReferences,
   type NpcSpeechAuthority,
@@ -348,5 +349,170 @@ describe("NpcSpeechAuthority", () => {
       eventLedger: [unrelatedEvent],
       speakerNpcId: NPC_A,
     })).toEqual({ ok: false, code: "invalid_event_reference" });
+  });
+
+  it("rejects a private disclosure and invalid evidence before creating an outward projection", () => {
+    const rejectedFact = authorizeNpcDeliberationOutward({
+      store: { version: 3, records: records() },
+      speakerNpcId: NPC_A,
+      sceneVisibleFactIds: [FACT_PUBLIC, FACT_SECRET],
+      targetContext: { targetId: PLAYER_ENTITY_ID },
+      proposal: {
+        response: "refuse",
+        goalIds: ["goal_1"],
+        evidenceEventIds: [],
+        discloseFactIds: [FACT_SECRET],
+        interactionProposals: [],
+      },
+    });
+    expect(rejectedFact).toEqual({ ok: false, code: "invalid_fact_disclosure" });
+
+    const rejectedEvidence = authorizeNpcDeliberationOutward({
+      store: { version: 3, records: records() },
+      speakerNpcId: NPC_A,
+      sceneVisibleFactIds: [FACT_PUBLIC],
+      targetContext: { targetId: PLAYER_ENTITY_ID },
+      proposal: {
+        response: "cooperate",
+        goalIds: [],
+        evidenceEventIds: [asEventId("turn:missing:evidence")],
+        discloseFactIds: [],
+        interactionProposals: [],
+      },
+    });
+    expect(rejectedEvidence).toEqual({ ok: false, code: "invalid_event_reference" });
+  });
+
+  it("returns only approved outward fields and never forwards private context or goals", () => {
+    const result = authorizeNpcDeliberationOutward({
+      store: { version: 3, records: records() },
+      speakerNpcId: NPC_A,
+      sceneVisibleFactIds: [FACT_PUBLIC],
+      targetContext: { targetId: PLAYER_ENTITY_ID },
+      proposal: {
+        response: "cooperate",
+        goalIds: ["goal_1"],
+        evidenceEventIds: [asEventId("evt:test:action_2:2")],
+        discloseFactIds: [FACT_PUBLIC],
+        interactionProposals: [],
+      },
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      projection: {
+        npcId: NPC_A,
+        response: "cooperate",
+        evidenceEventIds: [asEventId("evt:test:action_2:2")],
+        discloseFactIds: [FACT_PUBLIC],
+        interactionProposals: [],
+      },
+    });
+    if (result.ok) {
+      expect(result.projection).not.toHaveProperty("goalIds");
+      expect(result.projection).not.toHaveProperty("privateContext");
+    }
+  });
+
+  it("does not let an interaction proposal bypass audience-specific disclosure authority", () => {
+    const result = authorizeNpcDeliberationOutward({
+      store: { version: 3, records: records() },
+      speakerNpcId: NPC_A,
+      sceneVisibleFactIds: [FACT_PUBLIC, FACT_SECRET],
+      targetContext: { targetId: PLAYER_ENTITY_ID },
+      proposal: {
+        response: "offer_condition",
+        goalIds: [],
+        evidenceEventIds: [],
+        discloseFactIds: [],
+        interactionProposals: [{
+          proposalKey: "secret_share",
+          npcId: NPC_A,
+          operation: "share_known_fact",
+          condition: [],
+          factIds: [FACT_SECRET],
+          goalIds: [],
+          promiseId: null,
+          audienceIds: [NPC_B],
+          evidenceEventIds: [],
+        }],
+      },
+    });
+
+    expect(result).toEqual({ ok: false, code: "invalid_fact_disclosure" });
+  });
+
+  it("rejects goal references that are not current goals of the deliberating NPC", () => {
+    const result = authorizeNpcDeliberationOutward({
+      store: { version: 3, records: records() },
+      speakerNpcId: NPC_A,
+      sceneVisibleFactIds: [FACT_PUBLIC],
+      targetContext: { targetId: PLAYER_ENTITY_ID },
+      proposal: {
+        response: "question",
+        goalIds: ["goal:not_owned"],
+        evidenceEventIds: [],
+        discloseFactIds: [],
+        interactionProposals: [],
+      },
+    });
+
+    expect(result).toEqual({ ok: false, code: "invalid_interaction_proposal" });
+  });
+
+  it("applies current-goal ownership checks to nested interaction proposals", () => {
+    const result = authorizeNpcDeliberationOutward({
+      store: { version: 3, records: records() },
+      speakerNpcId: NPC_A,
+      sceneVisibleFactIds: [FACT_PUBLIC],
+      targetContext: { targetId: PLAYER_ENTITY_ID },
+      proposal: {
+        response: "offer_condition",
+        goalIds: [],
+        evidenceEventIds: [],
+        discloseFactIds: [],
+        interactionProposals: [{
+          proposalKey: "bad_goal",
+          npcId: NPC_A,
+          operation: "share_known_fact",
+          condition: [],
+          factIds: [FACT_PUBLIC],
+          goalIds: ["goal:not_owned"],
+          promiseId: null,
+          audienceIds: [PLAYER_ENTITY_ID],
+          evidenceEventIds: [],
+        }],
+      },
+    });
+
+    expect(result).toEqual({ ok: false, code: "invalid_interaction_proposal" });
+  });
+
+  it("keeps verification and fact-sharing operation requirements at the NPC boundary", () => {
+    const result = authorizeNpcDeliberationOutward({
+      store: { version: 3, records: records() },
+      speakerNpcId: NPC_A,
+      sceneVisibleFactIds: [FACT_PUBLIC],
+      targetContext: { targetId: PLAYER_ENTITY_ID },
+      proposal: {
+        response: "offer_condition",
+        goalIds: [],
+        evidenceEventIds: [],
+        discloseFactIds: [],
+        interactionProposals: [{
+          proposalKey: "verification_without_evidence",
+          npcId: NPC_A,
+          operation: "request_verification",
+          condition: [],
+          factIds: [FACT_PUBLIC],
+          goalIds: [],
+          promiseId: null,
+          audienceIds: [PLAYER_ENTITY_ID],
+          evidenceEventIds: [],
+        }],
+      },
+    });
+
+    expect(result).toEqual({ ok: false, code: "invalid_interaction_proposal" });
   });
 });

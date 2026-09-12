@@ -2,7 +2,7 @@
 
 ## 职责
 
-NPC 的人格锚点、动态目标、知识、关系、承诺与结构化交互属于实体组件；规则层产生关系变化和接触事实，NPC speech authority 决定当前 speaker 能引用什么。AI 只能在 authority 和审批契约允许的范围内表达。
+NPC 的人格锚点、动态目标、知识、关系、承诺与结构化交互属于实体组件；规则层产生关系变化和接触事实，NPC speech authority 决定当前 speaker 能引用什么。AI 只能在 authority 和审批契约允许的范围内表达。私下判断与场景作者是两个边界：`projectNpcDeliberation` 只给单个 NPC 自知、目标和当前证据，不能把其 `privateContext` 作为公共叙事上下文。
 
 ## 当前契约
 
@@ -10,6 +10,7 @@ NPC 的人格锚点、动态目标、知识、关系、承诺与结构化交互�
 - 人格 `identity.anchors` 包含 self concept、values、speech style、capability boundaries 和 taboos；goalId、关系 commitment ID 等由服务端按实体和序号铸造，AI 不能自定义权威 ID 或完成状态。
 - knowledge 按 FactId 去重，记录 certainty、disclosure 与 initial_world 或真实 Event 来源；关系边有方向，记录 affinity/trust/fear/hostility、stage/trend、evidence 和 commitments。封闭 signal 表与限速规则决定关系变化和相邻 stage 迁移；事实仅向显式 audience 传播，关系不自动反向成立。AI 不提交数值 delta 或任意 patch。NPC 故事互动由四种封闭 operation 与四类条件组成，缺少来源、依据、实际听众或条件不满足时不结算；目标状态只能由窄 mutation 改写。
 - `NpcSpeechAuthority` 从 speaker components、当前 scene-visible facts、目标和该 NPC history 计算 allowed/withheld facts、allowed Event 引用、anchors 和 evidence。secret fact 不因 NPC 已知就自动可说；conditional fact 需要关系条件。
+- `NpcDeliberationSource` 的 proposal 只允许返回 response、目标引用、依据事件、事实披露引用和结构化互动提议；live source 复用 `narrative_bundle` AI role，但审计 purpose 单独记为 `npc_deliberation`。服务端再按实际 audience 运行 authority，拒绝秘密、失效依据、非当前目标和越权互动。
 - 每条 NPC line/dialogue 必须提供 `usedFactIds` 与 `usedEventIds`；缺失、重复、非 speaker 所有或不在 allowlist 的引用会拒绝整包。
 - prompt 不带其他 NPC 私密正文、其他 NPC history、玩家自由文本历史或裸关系数字。focus context 只投影最近五条结构化交互、active goals、关系 stage/trend/open commitments 和有限 evidence。
 - 新 NPC 的正式 focus scene 未准备好时，read model 只开放单一 `ask`；不合成问候、不开放自由输入、不投影默认 support/challenge。
@@ -20,18 +21,21 @@ NPC 的人格锚点、动态目标、知识、关系、承诺与结构化交互�
 ```
 EntityStore components + committed events
   → NpcSpeechAuthority
-  → prompt authority / proposal references
+  → NPC-private deliberation (one NPC)
+  → outward authority / proposal references
   → validateNpcSpeechReferences
   → approveNarrativeBundle
   → dialogue resolution writes structured interaction and evidence
 ```
 
 NPC history 只保存结构化交互、主题和事件引用。玩家原话若需影响回应，作为当前 job 输入并受审计策略约束，不写成长期 NPC 私密历史。
+NPC 的秘密可以影响拒绝、追问或条件，但不会因模型“打算告知”而传播；只有规则结算的实际 `audienceIds` 会写入玩家发现或另一 NPC 的 `action` 来源知识。
 
 ## 代码与测试入口
 
 - 组件与校验：`src/game/domain/entity/npcComponents.ts`、`src/game/domain/entity/entityStore.ts`、`src/game/domain/entity/npcProjection.ts`
 - 权限与审批：`src/game/application/npcSpeechAuthority.ts`、`src/game/domain/npcSpeechReferences.ts`、`src/game/application/approveNarrativeBundle.ts`
+- 私下判断：`src/game/application/projectNpcDeliberation.ts`、`src/game/application/npcDeliberationSource.ts`、`src/game/application/server/ai/liveNpcDeliberationSource.ts`
 - 规则：`src/game/gameplay/rpg/npcMemory/`、`src/game/gameplay/rpg/dialogue/`
 - 测试：`src/game/application/npcSpeechAuthority.test.ts`、`src/game/domain/entity/*test.ts`、`src/game/domain/npcSpeech.test.ts`、`src/game/application/approveNarrativeBundle.test.ts`
 

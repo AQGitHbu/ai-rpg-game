@@ -11,7 +11,7 @@ import {
   type WorldStateFixtureOverrides,
 } from "@/game/domain/testing/worldStateFixture.testutil";
 import type { WorldDeltaProposal } from "@/game/domain/worldDelta";
-import { asLocationId, asNpcId, asGenerationId, type GenerationMetadata } from "@/game/domain/worldEntity";
+import { asFactId, asLocationId, asNpcId, asGenerationId, type GenerationMetadata } from "@/game/domain/worldEntity";
 import { entitiesOfKind } from "@/game/domain/entity";
 import { approveWorldDelta, type ApprovedWorldDeltaCore } from "./approveWorldDelta";
 import { createTownRuntime, bindNpcToTownSlot } from "@/game/gameplay/rpg/town";
@@ -117,6 +117,32 @@ function nextActProposal(): WorldDeltaProposal {
 }
 
 describe("materializeWorldDelta", () => {
+  it("materializes private initial knowledge without adding it to player knowledge", () => {
+    const ws = makeWorld();
+    const ss = makeStory({ currentAct: 2, targetActs: 3, evolution: { ...makeStory().evolution, status: "needs_next_act" } });
+    const approved = approve({
+      proposal: { ...nextActProposal(), newFact: { text: "信使受命隐瞒渡口位置。", visibility: "npc_private" } },
+      need: { kind: "next_act", act: 2 },
+      ws,
+      ss,
+    });
+    const delta = materializeWorldDelta({ approved, need: { kind: "next_act", act: 2 }, ws, ss, now: () => "2026-01-02" });
+    const factId = asFactId("fact_dyn_0");
+    const npc = entitiesOfKind(delta.previewWorldState.entityStore, "npc")
+      .find((record) => record.core.id === asNpcId("npc_dyn_1"));
+    const player = entitiesOfKind(delta.previewWorldState.entityStore, "player_character")[0];
+    expect(npc?.core.kind).toBe("npc");
+    expect(player?.core.kind).toBe("player_character");
+    if (npc?.core.kind !== "npc" || player?.core.kind !== "player_character") return;
+    expect(npc.knowledge.entries).toEqual([expect.objectContaining({
+      factId,
+      disclosure: "secret",
+      source: { kind: "initial_world", learnedAtTurn: 0 },
+    })]);
+    expect(player.knowledge.knownFactIds).not.toContain(factId);
+    expect(delta.previewWorldState.worldFacts.find((fact) => fact.factId === factId)?.discovered).toBe(false);
+  });
+
   it("materializes only the new NPC outgoing seed edge and preserves the target components", () => {
     const ws = makeWorld();
     const ss = makeStory({ currentAct: 2 });

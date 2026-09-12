@@ -90,6 +90,32 @@ function knownFacts(worldState: WorldState, npcId: NpcId, factIds: readonly Fact
   return factIds.every((factId) => knowsFact(worldState, String(npcId), String(factId)));
 }
 
+function canDiscloseFactToAudience(
+  worldState: WorldState,
+  npcId: NpcId,
+  factId: FactId,
+  audienceId: EntityId,
+): boolean {
+  const npc = npcOf(worldState, npcId);
+  if (npc === undefined) return false;
+  const entry = npc?.knowledge.entries.find((candidate) => String(candidate.factId) === String(factId));
+  if (entry === undefined || entry.disclosure === "secret") return false;
+  if (entry.disclosure === "public") return true;
+  const relationship = npc.relationships.outgoing.find((edge) => String(edge.targetId) === String(audienceId));
+  return relationship?.stage === "cooperative"
+    || relationship?.stage === "trusted"
+    || relationship?.stage === "bonded";
+}
+
+function canDiscloseFactsToAudiences(
+  worldState: WorldState,
+  interaction: StoryInteraction,
+  npcId: NpcId,
+): boolean {
+  return interaction.factIds.every((factId) => interaction.audienceIds.every((audienceId) =>
+    canDiscloseFactToAudience(worldState, npcId, factId, audienceId)));
+}
+
 function evidenceExists(worldState: WorldState, eventIds: readonly string[]): boolean {
   const ledger = new Set(worldState.eventLedger.map((event) => String(event.eventId)));
   return eventIds.every((eventId) => ledger.has(eventId));
@@ -209,6 +235,9 @@ export function resolveStoryInteraction(
   }
   if (!knownFacts(worldState, action.npcId, interaction.factIds)) {
     return { ok: false, feedback: "角色没有足够的事实依据。" };
+  }
+  if (!canDiscloseFactsToAudiences(worldState, interaction, action.npcId)) {
+    return { ok: false, feedback: "角色没有足够的披露权限。" };
   }
   if (interaction.operation === "request_verification" && !evidenceExists(worldState, interaction.evidenceEventIds)) {
     return { ok: false, feedback: "核验依据尚未成立。" };

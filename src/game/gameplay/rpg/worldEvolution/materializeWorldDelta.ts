@@ -168,8 +168,10 @@ export function materializeWorldDelta(input: MaterializeWorldDeltaInput): Approv
         },
       }];
 
-  // 先用唯一 projection compiler 在局部构造所需 EntityRecord；再只将新 records、
-  // 已有地点组件和解锁索引作为一批规则可信 mutation 应用到原 store。
+  // 先用唯一 projection compiler 在局部构造所需 EntityRecord；新 NPC 的知识
+  // 只来自 approveWorldDelta 传入的显式 creation map（含 initial_world 来源），
+  // 不从兼容 memory 或未来步骤推导；再只将新 records、已有地点组件和解锁索引
+  // 作为一批规则可信 mutation 应用到原 store。
   const desiredStore = compileEntityStoreFromCompatibilityProjection({
     projection: {
       ...projectEntityStore(ws.entityStore),

@@ -253,6 +253,29 @@ function validText(text: string): boolean {
   return t.length > 0 && t.length <= MAX_ENTITY_TEXT_LENGTH;
 }
 
+/**
+ * Mint the NPC's initial knowledge separately from the compatibility memory.
+ * A private fact is known by this NPC, but remains undiscovered globally until
+ * a later rule-approved disclosure; no future step is copied into this list.
+ */
+function buildNpcInitialKnowledge(input: Readonly<{
+  readonly knownFactIds: readonly FactId[];
+  readonly privateFactIds: readonly FactId[];
+  readonly createdAtTurn: number;
+}>): NpcKnowledgeComponent {
+  const privateFactIdSet = new Set(input.privateFactIds.map(String));
+  const knowledgeFactIds = [...new Set([...input.knownFactIds, ...input.privateFactIds].map(String))]
+    .map(asFactId);
+  return {
+    entries: knowledgeFactIds.map((factId) => ({
+      factId,
+      certainty: "known" as const,
+      disclosure: privateFactIdSet.has(String(factId)) ? "secret" as const : "public" as const,
+      source: { kind: "initial_world" as const, learnedAtTurn: input.createdAtTurn },
+    })),
+  };
+}
+
 function buildNpcCreationComponents(input: Readonly<{
   npc: NonNullable<WorldDeltaProposal["newNpc"]>;
   npcId: NpcId;
@@ -265,16 +288,7 @@ function buildNpcCreationComponents(input: Readonly<{
   const proposals = parseNpcGoalProposals(input.npc.goals);
   if (anchors === null || proposals === null) return null;
 
-  const privateFactIdSet = new Set(input.privateFactIds);
-  const knowledgeFactIds = [...new Set([...input.knownFactIds, ...input.privateFactIds])];
-  const knowledge: NpcKnowledgeComponent = {
-    entries: knowledgeFactIds.map((factId) => ({
-      factId,
-      certainty: "known",
-      disclosure: privateFactIdSet.has(factId) ? "secret" : "public",
-      source: { kind: "initial_world", learnedAtTurn: input.createdAtTurn },
-    })),
-  };
+  const knowledge = buildNpcInitialKnowledge(input);
   const dynamicState: NpcDynamicStateComponent = {
     isCompanion: false,
     met: false,

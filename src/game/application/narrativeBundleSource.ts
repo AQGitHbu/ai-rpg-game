@@ -17,7 +17,8 @@ import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
 
 // ---------------------------------------------------------------------------
 // Task 4：统一叙事生成包源端口。一次 generate 调用返回完整原子包提案。
-// 生产注入 liveNarrativeBundleSource（Task 5），离线注入确定性 fixture。
+// 生产注入 liveNarrativeBundleSource；离线注入确定性 fixture。Task 6 的
+// NPC 私有判断是独立端口，不能把 privateContext 塞进这个公共场景包。
 // 不含 IO 编排、审批或状态写回——那些由 approveNarrativeBundle 和上层协调。
 // ---------------------------------------------------------------------------
 
@@ -82,6 +83,15 @@ export type NarrativeBundleSourceResult =
 export type NarrativeBundleSource = {
   generate(context: NarrativeBundleSourceContext): Promise<NarrativeBundleSourceResult>;
 };
+
+// Keep the NPC deliberation boundary discoverable beside the public bundle
+// port without making a bundle source responsible for private NPC calls.
+export type {
+  NpcDeliberationInput,
+  NpcDeliberationProposal,
+  NpcDeliberationResponse,
+  NpcDeliberationSource,
+} from "./npcDeliberationSource";
 
 // Re-export domain types for convenience
 export type {

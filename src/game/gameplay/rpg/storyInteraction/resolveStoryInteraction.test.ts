@@ -19,6 +19,7 @@ const MESSENGER = asNpcId("npc_messenger");
 const WITNESS = asNpcId("npc_witness");
 const ITEM = asItemId("item_letter");
 const FACT = asFactId("fact_origin");
+const SECRET_FACT = asFactId("fact_secret_route");
 
 function npcRecord(record: EntityRecord | undefined): NpcEntityRecord {
   if (record?.core.kind !== "npc") throw new Error("missing npc fixture");
@@ -40,7 +41,7 @@ function interaction(overrides: Partial<StoryInteraction> = {}): StoryInteractio
   };
 }
 
-function world(definition: StoryInteraction = interaction()): WorldState {
+function world(definition: StoryInteraction = interaction(), options: { readonly secret?: boolean } = {}): WorldState {
   const base = createWorldStateFixture({
     generation: {
       generationId: asGenerationId("gen-1"),
@@ -76,8 +77,8 @@ function world(definition: StoryInteraction = interaction()): WorldState {
           met: true,
           memory: {
             npcId: MESSENGER,
-            knownFactIds: [FACT],
-            hiddenFactIds: [],
+            knownFactIds: [FACT, ...(options.secret ? [SECRET_FACT] : [])],
+            hiddenFactIds: options.secret ? [SECRET_FACT] : [],
             interactionHistory: [],
             relationship: { affinity: 0 },
             emotion: "neutral",
@@ -106,7 +107,10 @@ function world(definition: StoryInteraction = interaction()): WorldState {
       ],
       items: [{ id: ITEM, name: "信筒", description: "", kind: "letter", tags: [] }],
       inventory: [ITEM],
-      worldFacts: [{ factId: FACT, text: "信件来自旧友", source: "generated", discovered: false, locationId: LOCATION }],
+      worldFacts: [
+        { factId: FACT, text: "信件来自旧友", source: "generated", discovered: false, locationId: LOCATION },
+        ...(options.secret ? [{ factId: SECRET_FACT, text: "信使知道渡口暗号", source: "generated" as const, discovered: false, locationId: LOCATION }] : []),
+      ],
     },
   });
   const npc = getEntity(base.entityStore, MESSENGER);
@@ -219,6 +223,22 @@ describe("resolveStoryInteraction", () => {
     }, deps);
 
     expect(result).toEqual({ ok: false, feedback: "核验依据尚未成立。" });
+  });
+
+  it("does not allow an installed interaction to reveal a secret without disclosure authority", () => {
+    const current = world(interaction({
+      id: "interaction:secret",
+      factIds: [SECRET_FACT],
+      audienceIds: [WITNESS],
+    }), { secret: true });
+    const result = resolveStoryInteraction(current, {
+      type: "talk",
+      npcId: MESSENGER,
+      interactionId: "interaction:secret",
+      dialogueAct: "ask",
+    }, deps);
+
+    expect(result).toEqual({ ok: false, feedback: "角色没有足够的披露权限。" });
   });
 
   it("rejects an interaction with no actual audience", () => {

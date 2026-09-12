@@ -15,6 +15,10 @@ export const RPG_AI_ROLES = ["intent", "opening", "scene", "world", "narrative_b
 export type RpgAiRole = AiTextAuditRole;
 export type RpgAiThinking = ProviderThinking;
 
+/** NPC judgment reuses the existing transport/audit role; only its purpose differs. */
+export const RPG_AI_NPC_DELIBERATION_ROLE: RpgAiRole = "narrative_bundle";
+export const RPG_AI_NPC_DELIBERATION_PURPOSE = "npc_deliberation" as const;
+
 export type RpgAiRolePolicy = Readonly<{
   readonly thinking: RpgAiThinking;
   readonly timeoutMs: number;

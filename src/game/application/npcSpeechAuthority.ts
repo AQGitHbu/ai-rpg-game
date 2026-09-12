@@ -17,6 +17,11 @@ import {
   areUniqueNpcSpeechReferenceIds,
   isWellFormedNpcSpeechReferenceId,
 } from "@/game/domain/npcSpeechReferences";
+import { parseStoryInteractionProposal, type StoryInteractionProposal } from "@/game/domain/storyInteraction";
+import type {
+  NpcDeliberationProposal,
+  NpcDeliberationResponse,
+} from "./npcDeliberationSource";
 
 export type NpcSpeechReferenceRejection =
   | "duplicate_npc_reference"
@@ -88,6 +93,19 @@ export type NpcSpeechAuthority = Readonly<{
   readonly evidenceKeys: readonly string[];
 }>;
 
+export type NpcDeliberationOutwardProjection = Readonly<{
+  readonly npcId: NpcId;
+  readonly response: NpcDeliberationResponse;
+  readonly evidenceEventIds: readonly EventId[];
+  readonly discloseFactIds: readonly FactId[];
+  readonly interactionProposals: readonly StoryInteractionProposal[];
+}>;
+
+export type NpcDeliberationOutwardRejection =
+  | "invalid_fact_disclosure"
+  | "invalid_event_reference"
+  | "invalid_interaction_proposal";
+
 /**
  * The single reference gate used by every narrative approval path.  It is
  * intentionally non-normalizing: a malformed, duplicate, or unauthorized ID
@@ -128,6 +146,128 @@ export function validateNpcSpeechReferences(input: {
     }
   }
   return { ok: true };
+}
+
+/**
+ * Cross the private-to-public boundary for one NPC proposal. Only references
+ * that the existing speech authority permits survive; privateContext, goals,
+ * and all private reasoning stay outside this projection.
+ */
+export function authorizeNpcDeliberationOutward(input: {
+  readonly store: EntityStore;
+  readonly speakerNpcId: NpcId;
+  readonly sceneVisibleFactIds: readonly FactId[];
+  readonly eventLedger?: readonly CommittedNarrativeEvent[];
+  readonly targetContext?: NpcSpeechAuthorityInput["targetContext"];
+  readonly proposal: Pick<
+    NpcDeliberationProposal,
+    "response" | "evidenceEventIds" | "discloseFactIds" | "interactionProposals"
+  > & Readonly<{ goalIds?: readonly string[] }>;
+}):
+  | { readonly ok: true; readonly projection: NpcDeliberationOutwardProjection }
+  | { readonly ok: false; readonly code: NpcDeliberationOutwardRejection } {
+  const authority = buildNpcSpeechAuthority({
+    store: input.store,
+    speakerNpcId: input.speakerNpcId,
+    sceneVisibleFactIds: input.sceneVisibleFactIds,
+    ...(input.eventLedger === undefined ? {} : { eventLedger: input.eventLedger }),
+    ...(input.targetContext === undefined ? {} : { targetContext: input.targetContext }),
+  });
+  if (authority === null) return { ok: false, code: "invalid_interaction_proposal" };
+
+  const referenceResult = validateNpcSpeechReferences({
+    authority,
+    usedFactIds: input.proposal.discloseFactIds.map(String),
+    usedEventIds: input.proposal.evidenceEventIds.map(String),
+    ...(input.eventLedger === undefined ? {} : { eventLedger: input.eventLedger }),
+    speakerNpcId: input.speakerNpcId,
+  });
+  if (!referenceResult.ok) {
+    return {
+      ok: false,
+      code: referenceResult.code === "invalid_fact_reference"
+        ? "invalid_fact_disclosure"
+        : referenceResult.code === "invalid_event_reference"
+          ? "invalid_event_reference"
+          : "invalid_interaction_proposal",
+    };
+  }
+
+  const speaker = getEntity(input.store, String(input.speakerNpcId));
+  if (!isNpc(speaker)) return { ok: false, code: "invalid_interaction_proposal" };
+  const currentGoalIds = new Set(
+    speaker.dynamicState.goals
+      .filter((goal) => goal.status === "active" || goal.status === "blocked")
+      .map((goal) => goal.goalId),
+  );
+  if ((input.proposal.goalIds ?? []).some((goalId) => !currentGoalIds.has(goalId))) {
+    return { ok: false, code: "invalid_interaction_proposal" };
+  }
+  const knownFactIds = new Set(speaker.knowledge.entries.map((entry) => String(entry.factId)));
+  const proposalKeys = new Set<string>();
+  const interactionProposals: StoryInteractionProposal[] = [];
+  for (const [index, rawProposal] of input.proposal.interactionProposals.entries()) {
+    const parsed = parseStoryInteractionProposal(rawProposal, `interactionProposals[${index}]`);
+    if (!parsed.ok || String(parsed.value.npcId) !== String(input.speakerNpcId)) {
+      return { ok: false, code: "invalid_interaction_proposal" };
+    }
+    if (proposalKeys.has(parsed.value.proposalKey)) {
+      return { ok: false, code: "invalid_interaction_proposal" };
+    }
+    if (parsed.value.goalIds.some((goalId) => !currentGoalIds.has(goalId))) {
+      return { ok: false, code: "invalid_interaction_proposal" };
+    }
+    if (parsed.value.factIds.some((factId) => !knownFactIds.has(String(factId)))) {
+      return { ok: false, code: "invalid_interaction_proposal" };
+    }
+    if (parsed.value.audienceIds.length === 0) {
+      return { ok: false, code: "invalid_interaction_proposal" };
+    }
+    for (const targetId of parsed.value.audienceIds) {
+      if (!isValidNpcSpeechTarget(input.store, targetId as PlayerEntityId | NpcId)
+        || String(targetId) === String(input.speakerNpcId)) {
+        return { ok: false, code: "invalid_interaction_proposal" };
+      }
+      const audienceAuthority = buildNpcSpeechAuthority({
+        store: input.store,
+        speakerNpcId: input.speakerNpcId,
+        sceneVisibleFactIds: input.sceneVisibleFactIds,
+        ...(input.eventLedger === undefined ? {} : { eventLedger: input.eventLedger }),
+        targetContext: { targetId: targetId as PlayerEntityId | NpcId },
+      });
+      if (audienceAuthority === null
+        || parsed.value.factIds.some((factId) => !audienceAuthority.allowedFactIds.some((allowedFactId) => String(allowedFactId) === String(factId)))) {
+        return { ok: false, code: "invalid_fact_disclosure" };
+      }
+    }
+    if (parsed.value.operation !== "promise_confidentiality" && parsed.value.factIds.length === 0) {
+      return { ok: false, code: "invalid_interaction_proposal" };
+    }
+    if (parsed.value.operation === "request_verification" && parsed.value.evidenceEventIds.length === 0) {
+      return { ok: false, code: "invalid_interaction_proposal" };
+    }
+    const interactionEvidence = validateNpcSpeechReferences({
+      authority,
+      usedFactIds: [],
+      usedEventIds: parsed.value.evidenceEventIds.map(String),
+      ...(input.eventLedger === undefined ? {} : { eventLedger: input.eventLedger }),
+      speakerNpcId: input.speakerNpcId,
+    });
+    if (!interactionEvidence.ok) return { ok: false, code: "invalid_interaction_proposal" };
+    proposalKeys.add(parsed.value.proposalKey);
+    interactionProposals.push(parsed.value);
+  }
+
+  return {
+    ok: true,
+    projection: {
+      npcId: input.speakerNpcId,
+      response: input.proposal.response,
+      evidenceEventIds: [...input.proposal.evidenceEventIds],
+      discloseFactIds: [...input.proposal.discloseFactIds],
+      interactionProposals,
+    },
+  };
 }
 
 function eventInvolvesNpc(event: CommittedNarrativeEvent, npcId: NpcId): boolean {
