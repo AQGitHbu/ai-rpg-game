@@ -29,7 +29,10 @@ async function disclosureHarness(verdict: "pass" | "reject" | "uncertain" = "pas
         point: { stepKey: "current", order: 2 }, audienceIds: ["player_0", "npc_0"],
         fact: { factId, certainty: "known" } }],
       units: response.value.units.map(u => u.key === "character_npc_0"
-        ? { ...u, requiredObservationKeys: ["heard_new"] } : u),
+        ? { ...u, taskFactIds: [factId], requiredObservationKeys: ["heard_new"], draft: {
+          stage: "character", speakerId: "npc_0", emotion: "neutral", actions: [], answeredBeatIds: [],
+          parts: [{ text: verdict === "pass" ? "官差藏身义庄。" : "我不会告诉你这件事。", facts: [{ factId, certainty: "known" }], evidence: [], beatIds: [] }],
+        } } : u),
     } };
     if (response.stage === "character" && response.value.stage === "character" && response.value.speakerId === "npc_0")
       return { ...response, value: { ...response.value, parts: [{ text: verdict === "pass" ? "官差藏身义庄。" : "我不会告诉你这件事。",

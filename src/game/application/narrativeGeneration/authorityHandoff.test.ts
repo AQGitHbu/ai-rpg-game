@@ -56,7 +56,9 @@ it.each(["fresh", "cached", "conditional", "exhausted"])("规划修复不授予�
       audienceIds: ["player_0"], source: { kind: "witness" },
       fact: { factId: "fact_player_only", certainty: "known" } }],
     units: plan.units.map(unit => unit.stage === "narration"
-      ? { ...unit, requiredObservationKeys: ["player_reminder"] } : unit),
+      ? { ...unit, taskFactIds: ["fact_player_only"], requiredObservationKeys: ["player_reminder"], draft: {
+        stage: "narration", actionKeys: [], parts: [{ text: "你回想起守门人的说法，等待答复。", facts: [{ factId: "fact_player_only", certainty: "known" }], evidence: [], beatIds: [] }],
+      } } : unit),
   };
   const invalid = withObservation(originalInvalid);
   const fixed = withObservation(originalFixed);

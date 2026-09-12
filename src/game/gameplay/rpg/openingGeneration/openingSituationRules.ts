@@ -28,9 +28,12 @@ export function resolveOpeningResponses(
   if ([...known].some((key) => privateFacts.has(key))) return null;
   if ([...known, ...privateFacts].some((key) => !factIdByKey.has(key))) return null;
 
+  // Topic eligibility does not grant either participant knowledge or bypass later disclosure.
+  const publicTopicKeys = new Set([...known, ...(candidate.player.knownFactKeys ?? [])]
+    .filter(key => factIdByKey.has(key) && !privateFacts.has(key)));
   const threadByKey = new Map<string, string>();
   for (const thread of situation.threads) {
-    if (!known.has(thread.questionFactKey)) return null;
+    if (!publicTopicKeys.has(thread.questionFactKey)) return null;
     if (thread.supportingFactKeys.some((key) => !factIdByKey.has(key))) return null;
     if (thread.causeHistoryKeys.some((key) => !historyKeys.has(key))) return null;
     threadByKey.set(thread.key, `thread_init_${thread.key}`);
@@ -48,7 +51,7 @@ export function resolveOpeningResponses(
   const resolved = situation.responses.map((response): ResolvedOpeningResponse | null => {
     let topic: TalkAction["topic"];
     if (response.topic.kind === "fact") {
-      if (!known.has(response.topic.key)) return null;
+      if (!publicTopicKeys.has(response.topic.key)) return null;
       const factId = factIdByKey.get(response.topic.key);
       if (factId === undefined) return null;
       topic = { kind: "fact", factId };

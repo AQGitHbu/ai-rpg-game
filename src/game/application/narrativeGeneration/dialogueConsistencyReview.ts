@@ -8,7 +8,7 @@ import { isLegacyStoredDialogueReview } from "./legacyDialogueReview";
 export { parseDialogueConsistencyVerdict, type DialogueViolation, type DialogueConsistencyVerdict } from "./legacyDialogueReview";
 
 export const DIALOGUE_REVIEW_VERSION = 2;
-export const DIALOGUE_REVIEW_POLICY_REVISION = 8;
+export const DIALOGUE_REVIEW_POLICY_REVISION = 9;
 export const DIALOGUE_REVIEW_MAX_ATTEMPTS = 2;
 export const DIALOGUE_REVIEW_CONTEXT_LIMIT = 24_000;
 export type PolishReviewVerdict = Readonly<{ verdict: "pass" | "reject" | "uncertain"; failedIds: readonly string[] }>;

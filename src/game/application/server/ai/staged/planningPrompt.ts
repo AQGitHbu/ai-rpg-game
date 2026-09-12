@@ -84,7 +84,7 @@ export const PLANNING_COSMETIC_ACTION_KINDS = ["pause", "look", "gesture"] as co
 /** 内容职责只在系统消息中定义一次；用户消息提供结构契约和本轮资料。 */
 export const PLANNING_CONTENT_RULES = `你是 RPG 的完整场景作者。一次写出本轮旁白、NPC 完整回应和两个有意义的玩家直接回复，保存为 unit.draft；三个润色器只改变措辞。
 先保留玩家明确输入与已发生的原因，确定当下处境和 NPC 的需求，再写完整场景和两个回应。后续问答以玩家实际选中的 label 原句为准；历史仅用于连贯和避免重复，不授予新事实。
-NPC 用第一人称自然回答真实问题，长度服从内容与角色语气；同场同 NPC 恰好一次完整回应。缺答案时准确说不知道什么，不改为失忆、拒答或未曾发生；不编理由或设备。NPC 自己的问句保持是问句。
+character.parts 只写 NPC 第一人称直接台词，自然回答真实问题，长度服从内容与角色语气；不夹第三人称动作说明或旁白。获批表演动作只放 actions，不写未提交的递物、转移或身体结果；同场同 NPC 恰好一次完整回应。缺答案时准确说不知道什么，不改为失忆、拒答或未曾发生；不编理由或设备。NPC 自己的问句保持是问句。
 旁白交代获批变化和必选节拍，NPC 承担回答与态度，避免无意义复述。无新状态时可以一句自然衔接。不能为风格编造天气、见闻、行动结果或进展。
 两个候选均是玩家可直接说出的第一人称台词，回应本轮 NPC 内容，保留实质差异和条件，不写“询问/告诉某人”等指令。人物身份、事实、知识和规则图仍独立限制正文。
 事实表是授权范围，不是逐条复述的提纲。隐藏动机不进入正文；不能从职业或语气推导新能力、经历、线索与承诺。只返回完整 JSON。`;
@@ -234,13 +234,9 @@ export function renderPlanProposalContract(context: PlanningContext, includeWorl
 - source 二选一且只能二选一：{"kind":"witness"} 或 {"kind":"speech","speakerId": NPC 实体 id}（开局链路 NPC 实体 id 是 npc_0）。
 - speech 来源的 certainty 不得高于说话人自身的认知；key 不得重复。
 
-**引用观察的硬性约束（最易错，务必逐条满足）**：单元通过 requiredObservationKeys 引用某条观察时，服务端要求**同时**成立：
-1. 该 key 确实存在于 observations 里；
-2. 该观察的 point.stepKey **与本单元 point.stepKey 完全相同**（**跨 step 引用必然失败**，这是最常见的错误）；
-3. 该观察的 point.order **≤ 本单元 point.order**（观察必须发生在先）；
-4. 若本单元 speakerId 不为 null，则该 speakerId **必须出现在该观察的 audienceIds 里**。
-
-因此：写 character 单元时，它引用的每条观察的 audienceIds 都必须包含该单元的 speakerId；写任何非 choices 单元时，所引用的观察都必须与它在同一个 step。**stage="choices" 的单元 requiredObservationKeys 必须为空数组**。任一条件不成立即整体被拒（observation_without_source），planning 会直接失败。
+**观察归属与初稿义务**：requiredObservationKeys 声明本单元负责向受众实际呈现/披露的观察，不是读取前文的输入依赖。旁白只认领 witness；NPC 只认领 speakerId 为自己的 speech，且自身须在 audienceIds 中；choices 必须写 []。
+观察 key 必须存在、同 step、order 不晚于本单元。同序的本角色来源观察即使未列入 requiredObservationKeys，仍属于该单元。每条归属观察的 fact 必须出现于本单元 draft.parts[].facts，certainty 不得升级；写进 evidence/beatIds 不算呈现事实。
+读取上游观察仍依靠 DAG 依赖和真实已批准披露，不靠填 requiredObservationKeys 授权。没有本单元新披露时 observations/requiredObservationKeys 可以为空；不得伪造 witness 或改成虚假 NPC speech 绕过权限。
 
 ## actions[] —— 无规则后果的表演动作
 每项恰有 6 键：{"key","actorId","point","kind","objectId","audienceIds"}
@@ -354,13 +350,13 @@ function openingContractSection(context: PlanningContext): string {
   - situation 恰有 4 键：history、threads、npcConnection、responses。
     - 所有局部 key 长度 1–40，匹配 [a-z][a-z0-9_]*；history/threads/responses 各自 key 唯一。
     - history 0–4 条，每条恰有 4 键：key、factKeys（1–4）、participantRefs（1–2，取值仅 "player" 或 "opening_npc"）、causeHistoryKeys（0–4，只能引用同批更早的 history key）。
-    - threads 1–3 条，每条恰有 5 键：key、questionFactKey（必须属于 knownFactKeys）、supportingFactKeys（0–4）、participantRefs、causeHistoryKeys。
+    - threads 1–3 条，每条恰有 5 键：key、questionFactKey（必须属于 NPC 公开 knownFactKeys 或 player.knownFactKeys，并排除 NPC privateFactKeys）、supportingFactKeys（0–4）、participantRefs、causeHistoryKeys。
     - npcConnection 恰有 3 键：familiarity、stance、basisHistoryKeys。
       familiarity 取 "stranger" | "known"；stance 取 "neutral" | "ally" | "protective_of" | "indebted_to" | "rival" | "wary"。
       familiarity="stranger" 时 stance 必须是 "neutral" 且 basisHistoryKeys 为 []。
     - responses 恰好 2 项，每项恰有 3 键：key、dialogueAct、topic。
       dialogueAct ∈ ${DIALOGUE_ACTS.join(" | ")}；topic 恰有 2 键：{"kind":"fact"|"thread","key": 键}（注意此处的键名是 key，不是 factId/threadId）。
-      fact key 必须属于 knownFactKeys；thread key 必须属于已声明的 threads；两项的 act/topic 语义必须不同。`;
+      fact key 必须属于 NPC 公开 knownFactKeys 或 player.knownFactKeys，并排除 NPC privateFactKeys；这只允许选题，不把玩家知识授予 NPC，NPC 新线索仍须实际披露后才能进入玩家选项。thread key 必须属于已声明的 threads；两项的 act/topic 语义必须不同。`;
 }
 
 /** 仅识别服务端审批反馈；普通文本/旧格式反馈不替换当前结构上下文。此投影不授予审批权限。 */

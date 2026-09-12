@@ -73,6 +73,20 @@ function preflightObservationBindings(
 /** 逐单元检查静态权限；上游真实披露可能改变的视角留到运行时重新投影。 */
 function preflightStaticAuthority(plan: ApprovedPlan, detail?: string): { ok: false; code: string; detail?: string } | null {
   for (const unit of plan.units) {
+    // Owned observations are output obligations even when real upstream knowledge is not available yet.
+    // Check immutable draft metadata only; do not simulate disclosure or infer references from prose.
+    if (unit.draft !== undefined && unit.draft.stage !== "choices") {
+      const references = unit.draft.parts.flatMap(part => part.facts);
+      const owned = observationsForUnit(unit, plan.proposal.observations);
+      const missing = owned.filter(observation => !references.some(fact => fact.factId === observation.fact.factId));
+      const upgraded = owned.filter(observation => observation.fact.certainty === "suspected"
+        && references.some(fact => fact.factId === observation.fact.factId && fact.certainty === "known"));
+      if (missing.length > 0 || upgraded.length > 0) return { ok: false,
+        code: missing.length > 0 ? "plan_draft_observation_missing" : "plan_draft_observation_certainty_invalid",
+        detail: JSON.stringify({ unitKey: unit.key, observations: (missing.length > 0 ? missing : upgraded)
+          .map(observation => ({ observationKey: observation.key, factId: observation.fact.factId, certainty: observation.fact.certainty })),
+          repairInstruction: "本单元负责呈现的观察事实必须写入 draft.parts[].facts，certainty 不得升级；evidence 和 beatIds 不能代替事实引用。不得改写观察来源来绕过知识权限。" }) };
+    }
     const waitsForObservation = plan.units.some(owner => unit.dependencies.includes(owner.key)
       && (owner.point.stepKey !== unit.point.stepKey || owner.point.order < unit.point.order)
       && observationsForUnit(owner, plan.proposal.observations).some(observation =>

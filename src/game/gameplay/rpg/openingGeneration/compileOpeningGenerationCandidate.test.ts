@@ -89,6 +89,18 @@ describe("compileOpeningGenerationCandidate", () => {
     expect(worldState.worldFacts.find(fact => fact.factId === "fact_2")?.discovered).toBe(false);
   });
 
+  it("player-known response topic does not enter NPC knowledge or change discovery", () => {
+    const base = makeLostConvoyOpening();
+    const candidate = { ...base, opening: { ...base.opening, situation: { ...base.opening.situation,
+      responses: [{ ...base.opening.situation.responses[0], topic: { kind: "fact" as const, key: "he_shan_token" } }, base.opening.situation.responses[1]] as const,
+    } } };
+    expect(validateOpeningGenerationCandidate(candidate, { gameLength: "short", targetActs: 3 }).ok).toBe(true);
+    const { worldState } = compile(candidate);
+    expect(worldState.worldFacts.find(fact => fact.factId === "fact_0")?.discovered).toBe(true);
+    expect(worldState.npcs[0]?.memory.knownFactIds).not.toContain("fact_0");
+    expect(worldState.worldFacts.find(fact => fact.factId === "fact_2")?.discovered).toBe(false);
+  });
+
   it("显式空玩家知识不继承 NPC 已知，旧候选缺省保持原行为", () => {
     const candidate = validCandidate();
     const empty = compile({ ...candidate, player: { ...candidate.player, knownFactKeys: [] } });
