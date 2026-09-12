@@ -20,9 +20,9 @@ export type DialogueHistoryEntry = Readonly<{
   readonly previousReply: string;
   readonly previousChoices: readonly string[];
   readonly selectedDialogue: Readonly<{
+    readonly label: string;
     readonly dialogueAct: NonNullable<PendingNarrativeJob["selectedDialogue"]>["dialogueAct"];
     readonly topic?: NonNullable<PendingNarrativeJob["selectedDialogue"]>["topic"];
-    readonly task?: NonNullable<PendingNarrativeJob["selectedDialogue"]>["task"];
   }>;
 }>;
 
@@ -71,13 +71,11 @@ export type StageExecution = Readonly<{
  * 失败一律返回 AiSourceFailure，不抛出传输异常。
  */
 export type StageSource = {
-  /** live source 要求新规划的每个表达任务携带完整 brief/contentFactIds；旧 fixture 可省略。 */
-  readonly requiresTaskBrief?: boolean;
   /** 不是生成阶段；缺少端口时仅允许无新增披露的单元。 */
   reviewDisclosure?(
     request: DisclosureReviewRequest, execution: StageExecution,
   ): Promise<{ readonly ok: true; readonly verdict: "pass" | "reject" | "uncertain" } | AiSourceFailure>;
-  reviewDialogueConsistency?(request: import("./dialogueConsistencyReview").DialogueConsistencyReviewRequest, execution: StageExecution): Promise<({ readonly ok: true } & import("./dialogueReviewChecks").DialogueReviewVerdict) | AiSourceFailure>;
+  reviewDialogueConsistency?(request: import("./dialogueConsistencyReview").DialogueConsistencyReviewRequest, execution: StageExecution): Promise<({ readonly ok: true } & import("./dialogueConsistencyReview").PolishReviewVerdict) | AiSourceFailure>;
   generate(
     request: StageRequest,
     execution: StageExecution,

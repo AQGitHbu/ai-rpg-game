@@ -1,6 +1,3 @@
-import { REVIEW_MAX_REQUESTS } from "./dialogueReviewRecovery";
-import { PLANNING_CONTRACT, planningAnchorDigest, planningSemanticFeedback } from "./planningSemanticRepair";
-import { runPlanningDialogueReview, validatePlanningDialogueReviews } from "./planningDialogueReview";
 // 可恢复 DAG 调度（Plan 2026-09-09 / Task 8）。
 //
 // runJob 不 claim/release：协调器（ensureCoordinator 的单一执行作用域）
@@ -35,7 +32,6 @@ import type {
   StoredJob,
   StoredUnit,
 } from "../server/persistence/narrativeJobRepository";
-import { planningSceneContract } from "./planningSceneContract";
 import { approvePlanningContext } from "./approvePlanningContext";
 import type { StageExecution, StageRequest, StageSource } from "./stageSource";
 import type { StageSuccess } from "./stageSource";
@@ -169,16 +165,8 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
     ? { origin: "manual_failed_job" as const, mechanism: "initial" as const, attempt: 0 }
     : undefined;
   const approveGeneratedPlan = (proposal: PlanProposal) => {
-    const semanticRepair = job.planningSemanticRepair;
-    if (semanticRepair?.used === 1 && planningAnchorDigest(proposal) !== planningAnchorDigest(semanticRepair.anchor))
-      return { ok: false as const, code: "plan_semantic_anchor_mismatch", detail: planningSemanticFeedback(job)?.detail };
-    if (deps.source.requiresTaskBrief && (proposal.units.some(unit => unit.stage !== "choices"
-      && (unit.task?.brief === undefined || unit.task.contentFactIds === undefined))
-      || (proposal.decision?.kind === "ordinary" && proposal.decision.options.some(option => option.task?.brief === undefined
-        || option.task.contentFactIds === undefined)))) {
-      return { ok: false as const, code: "plan_task_missing",
-        detail: "live planning task requires brief and contentFactIds" };
-    }
+    if (proposal.units.some(unit => unit.draft === undefined))
+      return { ok: false as const, code: "plan_draft_missing", detail: "live planning requires a complete unit.draft" };
     return approvePlanningContext(job.input, proposal);
   };
 
@@ -195,15 +183,11 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
   }
 
   // 重启恢复：在途 running → unknown，保留 charge（等待 lease 过期后有界重做）。
-  if (job.units.some((unit) => unit.status === "running")
-    || Object.values(job.planningDialogueReviews ?? {}).some(review => review.status === "running")) {
+  if (job.units.some((unit) => unit.status === "running")) {
     const kept = await activeLease();
     if (kept === null) return fail("JOB_ABORTED");
     job = {
       ...job,
-      ...(job.planningDialogueReviews === undefined ? {} : { planningDialogueReviews:
-        Object.fromEntries(Object.entries(job.planningDialogueReviews).map(([key, review]) =>
-          [key, review.status === "running" ? { ...review, status: "unknown" as const } : review])) }),
       units: job.units.map((unit) => unit.status === "running"
         ? { ...unit, status: "unknown" as const }
         : unit),
@@ -271,42 +255,19 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
   }
 
   if (deps.now() >= job.deadline) return failJob("job_deadline_exceeded");
-  if (job.planningSemanticRepair !== undefined) {
-    const r = job.planningSemanticRepair;
-    if (r.cycle !== job.cycle || r.inputDigest !== job.inputDigest || !approvePlanningContext(job.input, r.anchor).ok)
-      return failJob("JOB_CONFLICT");
-    if (r.status === "exhausted") return failJob(PLANNING_CONTRACT);
-  }
-  // Semantic planning rejection atomically clears the plan. Honor its durable receipt
-  // before regeneration, including a crash between receipt persistence and failJob.
-  if (job.planningSemanticRepair?.used !== 1 && Object.values(job.planningDialogueReviews ?? {}).some(review => review.cycle === job.cycle
-    && review.violations?.some(v => v.scope === "planning")))
-    return failJob("dialogue_consistency_planning_contract");
-  if (job.dialogueConsistencyReview?.cycle === job.cycle && job.dialogueConsistencyReview.status === "failed"
-    && job.dialogueConsistencyReview.violations?.some(v => v.scope === "legacy"))
-    return failJob("legacy_dialogue_contract_mismatch");
-  if (job.dialogueConsistencyReview?.cycle === job.cycle && job.dialogueConsistencyReview.status === "failed"
-    && job.dialogueConsistencyReview.violations?.some(v => v.scope === "planning"))
-    return failJob("dialogue_consistency_planning_contract");
-  if (job.dialogueConsistencyReview?.cycle === job.cycle && job.dialogueConsistencyReview.status !== "approved"
-    && (job.dialogueConsistencyReview.lastFailure === "exhausted" || job.dialogueConsistencyReview.attempts >= REVIEW_MAX_REQUESTS
-      || (job.dialogueConsistencyReview.attempts > 0 && job.dialogueConsistencyReview.protocolCorrections === undefined))) return failJob("dialogue_consistency_review_exhausted");
-
   // -----------------------------------------------------------------------
   // planning：固定逻辑 key，成功后 approvePlan 并铸造表达单元。
   // -----------------------------------------------------------------------
 
   let approved: ApprovedPlan | null = null;
   let planningUnit = unitOfKey(job, PLANNING_UNIT_KEY);
-  let cachedPlanRepair: StageExecution["repair"] = planningSemanticFeedback(job) ?? input.planningRepair;
+  let cachedPlanRepair: StageExecution["repair"] = input.planningRepair;
   if (planningUnit !== undefined && planningUnit.status === "approved"
     && planningUnit.value !== null && "steps" in (planningUnit.value as object)) {
     const proposal = planningUnit.value as PlanProposal;
     const planApproval = approveGeneratedPlan(proposal);
     if (!planApproval.ok) {
-      if (planApproval.code !== "plan_mandatory_beat_mismatch" && planApproval.code !== "beat_authority_conflict"
-        && planApproval.code !== "plan_dialogue_repeated" && planApproval.code !== "plan_task_missing"
-        && planApproval.code !== "plan_character_response_split" && !planApproval.code.startsWith("plan_reply_")) return failJob(planApproval.code);
+      if (proposal.units.every(unit => unit.draft !== undefined)) return failJob(planApproval.code);
       cachedPlanRepair = { attempt: planningUnit.attempts, reason: "invalid_schema",
         rejectionCode: planApproval.code, detail: planApproval.detail };
       // 旧骨架的表达不可复用。先落盘撤销，保留 attempts 与 usedRequests，
@@ -391,8 +352,6 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
     approved = planApproval.value;
     const savedPlan = await persist((current) =>
       patchedUnit({ ...current, baselineRequests: baselineRequestsForPlan(planApproval.value),
-        ...(current.planningSemanticRepair?.used === 1 ? { planningSemanticRepair: {
-          ...current.planningSemanticRepair, status: "replanned" as const } } : {}),
         // 新骨架不再引用的旧表达缓存可以移除；已经消耗的 job 请求额度不变。
         units: current.units.filter(unit => unit.key === PLANNING_UNIT_KEY
           || planApproval.value.units.some(planned => planned.key === unit.key)),
@@ -462,11 +421,6 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
     if (saved !== true) return fail(saved);
   }
 
-  const preflight = await runPlanningDialogueReview({ plan: approved, getJob: () => job, persist,
-    source: deps.source, signal: deps.signal, now: deps.now });
-  if (!preflight.ok) return preflight.code === PLANNING_CONTRACT && job.planningSemanticRepair?.status === "pending"
-    ? runJob({ ...input, lease, dialogueHistory }, deps) : failJob(preflight.code);
-
   for (;;) {
     if (deps.signal.aborted) return fail("JOB_ABORTED");
     const approvedKeys = new Set(
@@ -489,10 +443,6 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
 
     const failures: string[] = [];
     for (const unit of batch) {
-      const planningReview = await runPlanningDialogueReview({ plan: approved, getJob: () => job, persist,
-        source: deps.source, signal: deps.signal, now: deps.now, unitKey: unit.key });
-      if (!planningReview.ok) return planningReview.code === PLANNING_CONTRACT && job.planningSemanticRepair?.status === "pending"
-        ? runJob({ ...input, lease, dialogueHistory }, deps) : failJob(planningReview.code);
       const stored = unitOfKey(job, unit.key);
       const attempts = stored?.attempts ?? 0;
       const charge = canStartRequest({ job, unitAttempts: attempts, now: deps.now() });
@@ -506,22 +456,6 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
         approved: approvedOutputs(job),
       });
       if (!context.ok) {
-        if (context.code === "beat_authority_conflict") {
-          const invalidated = await persist(current => ({ ...current,
-            units: current.units.map(stored => ({ ...stored, status: "pending" as const, value: null })),
-          }));
-          if (invalidated !== true) return fail(invalidated);
-          return runJob({ id: input.id, lease, dialogueHistory, planningRepair: {
-            attempt: unitOfKey(job, PLANNING_UNIT_KEY)?.attempts ?? 0,
-            reason: "invalid_schema", rejectionCode: context.code, detail: JSON.stringify({
-              approvedWorldDelta: approved.proposal.worldDelta,
-              ...(approved.ruleSceneGraph === undefined ? {} : {
-                sceneContract: planningSceneContract(approved.ruleSceneGraph, job.input.kind === "decision" ? job.input.job.focusNpcId ?? null : null),
-              }),
-              ...JSON.parse(context.detail ?? "{}"),
-            }),
-          } }, deps);
-        }
         failures.push(context.code);
         continue;
       }
@@ -545,10 +479,10 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
       }
 
       const request: StageRequest = { stage: unit.stage, context: context.value };
-      const dialogueRepair = dialogueRepairForUnit(job, unit.key, context.value.options.map(option => option.candidateId));
+      const dialogueRepair = dialogueRepairForUnit(job);
       let response = await generate(request, {
         ...(dialogueRepair.length === 0 ? {} : { repair: { attempt: attempts, reason: "invalid_schema",
-          rejectionCode: "dialogue_consistency_rejected", detail: JSON.stringify({ violations: dialogueRepair }) } }),
+          rejectionCode: "dialogue_consistency_rejected", detail: JSON.stringify({ failedIds: dialogueRepair }) } }),
         signal: deps.signal,
         timeoutMs: cappedTimeoutMs(job, EXPRESSION_TIMEOUT_MS, deps.now()),
         audit: { purpose: "game_api", trigger: "staged_expression", jobId: job.id,
@@ -673,8 +607,6 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
     return failJob("unit_output_missing");
   }
   if (deps.now() >= job.deadline) return failJob("job_deadline_exceeded");
-  const planningCoverage = validatePlanningDialogueReviews(job, approved);
-  if (!planningCoverage.ok) return failJob(planningCoverage.code);
   const review = await runDialogueConsistencyReview({ plan: approved, getJob: () => job, persist,
     source: deps.source, signal: deps.signal, now: deps.now });
   if (!review.ok) return review.code === "JOB_ABORTED" || review.code === "LEASE_LOST" || review.code === "JOB_CONFLICT"

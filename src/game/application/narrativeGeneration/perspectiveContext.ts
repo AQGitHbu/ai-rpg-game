@@ -8,6 +8,7 @@
 // 秘密用唯一 sentinel 断言（见测试），fail-closed：未知单元/未知说话人直接拒绝。
 
 import { projectExpressionTask } from "./expressionTask";
+import { approveUnit } from "./approveUnit";
 import {
   fail,
   type Check,
@@ -97,14 +98,13 @@ export type SafeObservation = Readonly<{
 
 export type SafeContext = Readonly<{
   unit: Unit;
+  draft?: UnitOutput;
   persona: SafePersona | null;
   visibleFacts: readonly SafeFact[];
   priorText: readonly TextPart[];
   allowedActions: readonly CosmeticAction[];
   options: readonly SafeOption[];
   playerUtterance: string | null;
-  /** Prior player contract, projected only for the current focus reply; it grants no NPC knowledge. */
-  selectedDialogueContract?: Readonly<{ intent: string; inquiries: NonNullable<ExpressionTask["inquiries"]>; brief: string | null; prerequisiteFactIds?: readonly string[] }>;
   /** 当前生成对白的身份，不从前文的称呼推断。choices 的 speaker 永远是玩家。 */
   dialogue?: Readonly<{ speakerId: string; speakerName: string; addresseeId: string; addresseeName: string; addresseeRole?: string }>;
   scene?: Readonly<{ locationId: string; locationName: string; playerName: string; speakers: readonly { id: string; name: string }[] }>;
@@ -114,8 +114,6 @@ export type SafeContext = Readonly<{
   requiredBeats: readonly SafeBeat[];
   requiredObservations: readonly SafeObservation[];
   choiceKind: "ordinary" | "ending" | null;
-  /** 当前玩家已问过的维度；只作为选项表达的排除边界。 */
-  askedInquiries?: NonNullable<import("@/game/domain/expressionTask").ExpressionTask["inquiries"]>;
   /** 只投影同 NPC 当前场景的上一轮实际对白；不是新的知识来源。 */
   previousReply?: string;
   previousChoices?: readonly string[];
@@ -329,6 +327,19 @@ function optionsOf(plan: ApprovedPlan, prior: readonly TextPart[], facts: readon
       else return { ok: false, code: "choice_intent_authority_conflict",
         detail: JSON.stringify({ unavailableTargetName: name }) };
     }
+    if (plan.units.some(unit => unit.stage === "choices" && unit.draft !== undefined)) {
+      const part = option.publicIntent;
+      const invalidFact = part.facts.some(ref => !facts.some(fact => fact.id === ref.factId
+        && (ref.certainty === "suspected" || fact.certainty === "known")));
+      const invalidEvidence = part.evidence.some(ref => !facts.some(fact => fact.sources.some(source =>
+        source.kind === ref.kind && (source.kind === "committed" && ref.kind === "committed"
+          ? source.eventId === ref.eventId : source.kind === "conditional" && ref.kind === "conditional"
+            && source.observationKey === ref.observationKey))));
+      if (invalidFact || invalidEvidence || part.beatIds.length > 0) return fail("choice_intent_authority_conflict");
+      options.push({ candidateId: option.candidateId, dialogueAct: option.dialogueAct,
+        publicIntent: { ...part, text: "" } });
+      continue;
+    }
     if ("task" in option && option.task !== undefined && option.task.intent !== option.dialogueAct) {
       return fail("plan_task_intent_mismatch");
     }
@@ -536,23 +547,15 @@ export function projectUnitContext(input: ProjectUnitContextInput): ContextCheck
   const currentDialogue = unit.point.stepKey === "current"
     && (unit.stage === "character" ? unit.speakerId === plan.currentUtterance?.npcId
       : unit.stage === "choices" && plan.choiceExpression?.npcId === plan.currentUtterance?.npcId);
-  const selectedTask = currentDialogue && unit.stage === "character" ? plan.currentUtterance?.selectedTask : undefined;
-  // Historical brief was a player option. Validate it against player-visible facts, never the NPC's private knowledge.
-  const selectedBrief = selectedTask === undefined ? undefined : projectExpressionTask(selectedTask, discoveredFacts(ws));
-  if (selectedBrief?.ok === false) return fail("legacy_dialogue_contract_mismatch");
-  const task = unit.task === undefined ? undefined : projectExpressionTask(unit.task, visibleFacts,
-    unit.stage === "character" && currentDialogue ? plan.currentUtterance?.inquiries : []);
-  if (task?.ok === false) return { ...task, detail: JSON.stringify({
-    ...JSON.parse(task.detail ?? "{}"), unitKey: unit.key, stage: unit.stage,
-    stepKey: unit.point.stepKey, speakerId: unit.speakerId,
-  }) };
+  const task = unit.draft !== undefined || unit.task === undefined ? undefined : projectExpressionTask(unit.task, visibleFacts);
+  if (task?.ok === false) return task;
   // 历史按完整视角权限判断，不能用本轮选题把上一轮对白裁成碎片。
   const historyFacts = visibleFacts;
   const priorText = priorTextOf(plan, unit, input.approved, historyFacts, input.purpose === "planning");
   if (!priorText.ok && priorText.code !== "dependency_output_missing") return priorText;
   // 新任务的可说内容局限于规划选定主题与必须表达的节拍/观察，不能遍历整个知识库另起话题。
-  if (unit.task !== undefined && unit.stage !== "choices") {
-    const selected = new Set([...unit.task.focusFactIds, ...unit.task.prerequisiteFactIds,
+  if ((unit.draft !== undefined || unit.task !== undefined) && unit.stage !== "choices") {
+    const selected = new Set([...unit.taskFactIds, ...(unit.task?.focusFactIds ?? []), ...(unit.task?.prerequisiteFactIds ?? []),
       ...unit.requiredBeats.flatMap(beat => beat.factIds),
       ...observationsForUnit(unit, plan.proposal.observations).map(observation => observation.fact.factId)]);
     visibleFacts = visibleFacts.filter(fact => selected.has(fact.id));
@@ -568,11 +571,8 @@ export function projectUnitContext(input: ProjectUnitContextInput): ContextCheck
     : { ok: true as const, value: [] };
   if (!options.ok) return options;
   // 选项润色只读取各自规划任务的事实；不提供整份玩家知识库供它重新选题。
-  if (unit.stage === "choices" && plan.choiceExpression?.kind === "ordinary"
-    && plan.choiceExpression.options.every(option => option.task !== undefined)) {
-    const selected = new Set(plan.choiceExpression.options.flatMap(option => [
-      ...option.task!.focusFactIds, ...option.task!.prerequisiteFactIds,
-    ]));
+  if (unit.stage === "choices" && unit.draft !== undefined) {
+    const selected = new Set(options.value.flatMap(option => option.publicIntent.facts.map(fact => fact.factId)));
     visibleFacts = visibleFacts.filter(fact => selected.has(fact.id));
   }
   const choiceNpc = unit.stage === "choices"
@@ -588,10 +588,8 @@ export function projectUnitContext(input: ProjectUnitContextInput): ContextCheck
     contentIntensity: setup?.contentIntensity === "dark" ? "dark" : "normal",
   });
 
-  return {
-    ok: true,
-    value: {
-      unit: rebuilt,
+  const context: SafeContext = {
+      unit: { key: rebuilt.key, stage: rebuilt.stage, point: rebuilt.point, speakerId: rebuilt.speakerId, dependencies: rebuilt.dependencies, taskFactIds: rebuilt.taskFactIds, requiredObservationKeys: rebuilt.requiredObservationKeys, requiredBeats: rebuilt.requiredBeats, ...(unit.draft === undefined && rebuilt.task !== undefined ? { task: rebuilt.task } : {}) },
       persona,
       visibleFacts,
       priorText: priorText.value,
@@ -601,16 +599,12 @@ export function projectUnitContext(input: ProjectUnitContextInput): ContextCheck
         ...(plan.currentUtterance?.previousReply !== undefined
           && plan.currentUtterance.previousReply.factIds.every(id => historyFacts.some(fact => fact.id === id))
           ? { previousReply: plan.currentUtterance.previousReply.text } : {}),
-        ...(unit.stage === "choices" ? { askedInquiries: plan.currentUtterance?.inquiries ?? [],
-          previousChoices: plan.currentUtterance?.previousChoices ?? [] } : {}),
+        ...(unit.stage === "choices" ? { previousChoices: plan.currentUtterance?.previousChoices ?? [] } : {}),
       } : {}),
       ...(choiceNpc === undefined ? {} : { dialogue: {
         speakerId: String(PLAYER_ENTITY_ID), speakerName: ws.player.name,
         addresseeId: String(choiceNpc.id), addresseeName: choiceNpc.name, addresseeRole: choiceNpc.role,
       } }),
-      ...(selectedTask === undefined ? {} : { selectedDialogueContract: { intent: selectedTask.intent,
-        inquiries: selectedTask.inquiries ?? [], brief: selectedBrief?.ok ? selectedBrief.value : null,
-        prerequisiteFactIds: [...selectedTask.prerequisiteFactIds] } }),
       playerUtterance: unit.point.stepKey === "current"
         && (unit.stage !== "character" || unit.speakerId === plan.currentUtterance?.npcId)
         ? plan.currentUtterance?.text ?? null : null,
@@ -629,6 +623,11 @@ export function projectUnitContext(input: ProjectUnitContextInput): ContextCheck
       requiredObservations: requiredObservations.value,
       choiceKind: choiceKindOf(plan, unit),
       ...(narrationLayoutOf(plan, unit) === undefined ? {} : { narrationLayout: narrationLayoutOf(plan, unit) }),
-    },
   };
+  if (unit.draft !== undefined) {
+    const approvedDraft = approveUnit({ unit, context, output: unit.draft });
+    if (!approvedDraft.ok) return approvedDraft;
+    if (input.purpose !== "planning") return { ok: true, value: { ...context, draft: approvedDraft.value } };
+  }
+  return { ok: true, value: context };
 }

@@ -88,6 +88,8 @@ export type Unit = {
   readonly taskFactIds: readonly string[];
   /** 缺省仅兼容旧内部产物；新 live 规划必须提供。 */
   readonly task?: ExpressionTask;
+  /** Historical units may omit this; live planning supplies the complete immutable draft. */
+  readonly draft?: UnitOutput;
   readonly requiredObservationKeys: readonly string[];
   readonly requiredBeats: readonly SafeBeat[];
 };
@@ -302,7 +304,7 @@ export function parseUnit(value: unknown): Unit | null {
   if (!isPlainRecord(value)) return null;
   if (!hasOnlyKeys(value, [
     "key", "stage", "point", "speakerId", "dependencies",
-    "taskFactIds", "requiredObservationKeys", "requiredBeats", "task",
+    "taskFactIds", "requiredObservationKeys", "requiredBeats", "task", "draft",
   ])) return null;
   const key = parseKey(value.key);
   if (key === null) return null;
@@ -327,7 +329,11 @@ export function parseUnit(value: unknown): Unit | null {
   }
   const task = value.task === undefined ? undefined : parseExpressionTask(value.task);
   if (task === null || (task !== undefined && stage === "narration" && task.intent !== "describe")) return null;
+  const draft = value.draft === undefined ? undefined : parseUnitOutput(value.draft);
+  if (draft !== undefined && (!draft.ok || draft.value.stage !== stage
+    || (draft.value.stage === "character" && draft.value.speakerId !== speakerId))) return null;
   return { key, stage, point, speakerId, dependencies, taskFactIds, requiredObservationKeys, requiredBeats,
+    ...(draft?.ok ? { draft: draft.value } : {}),
     ...(task === undefined ? {} : { task }) };
 }
 

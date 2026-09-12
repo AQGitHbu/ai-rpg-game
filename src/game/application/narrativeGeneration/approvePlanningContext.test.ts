@@ -1,11 +1,9 @@
-import { createWorldStateFixtureWith } from "@/game/domain/testing/worldStateFixture.testutil";
-import { asFactId } from "@/game/domain/worldEntity";
 import { expect, it } from "vitest";
 import { projectUnitContext } from "./perspectiveContext";
 import { approveUnit } from "./approveUnit";
 import { asQuestId } from "@/game/domain/worldEntity";
 import { narrationLayoutOf } from "./perspectiveContext";
-import { buildPlanningPrompt, PLANNING_CONTENT_RULES } from "../server/ai/staged/planningPrompt";
+import { buildPlanningPrompt } from "../server/ai/staged/planningPrompt";
 import { approvePlanningContext } from "./approvePlanningContext";
 import { createPendingDecisionRecord, makeDecisionPlan, FIXTURE_DECISION_NPC } from "@/game/domain/testing/stagedNarrativeFixture.testutil";
 import type { PlanningContext } from "./stageSource";
@@ -20,7 +18,7 @@ function lostConvoyContext(): PlanningContext {
 
 function lostConvoyPlan() {
   const opening = makeLostConvoyOpening();
-  const base = makeOpeningStagedPlan(opening);
+  const base = makeOpeningStagedPlan(opening, true);
   if (base.decision?.kind !== "ordinary") throw Error("ordinary opening fixture");
   const [first, second] = base.decision.options;
   return { ...base, opening, decision: { ...base.decision,
@@ -102,7 +100,7 @@ it.each(["npc_only", "absent", "future_only", "duplicate", "wrong_kind", "extra"
     if (input.kind !== "decision") throw Error("decision");
     const beat = { beatId: "quest_advanced_1", kind: "quest_advanced" as const,
       factIds: [], evidence: [], instruction: "承接任务推进" };
-    const base = makeDecisionPlan();
+    const base = makeDecisionPlan(true);
     const narration = base.units[0]!;
     const units = base.units.map(unit => ({ ...unit, requiredBeats:
       mode === "npc_only" && unit.stage === "character" ? [beat]
@@ -126,7 +124,7 @@ it.each(["npc_only", "absent", "future_only", "duplicate", "wrong_kind", "extra"
 it("多旁白单元只允许最后一个承接独立氛围，不要求新增场景", () => {
   const input = context();
   if (input.kind !== "decision") throw Error("decision");
-  const base = makeDecisionPlan();
+  const base = makeDecisionPlan(true);
   const mandatory = ["a", "b"].map(beatId => ({ beatId, kind: "quest_progress" as const,
     subjectIds: [], instruction: "任务进展" }));
   const beats = mandatory.map(({ beatId, kind, instruction }) => ({ beatId, kind, instruction, factIds: [], evidence: [] }));
@@ -146,7 +144,7 @@ it("多旁白单元只允许最后一个承接独立氛围，不要求新增场�
 });
 
 it("无必选节拍的普通回应也不能新增当前节拍，开局契约不受影响", () => {
-  const base = makeDecisionPlan();
+  const base = makeDecisionPlan(true);
   expect(approvePlanningContext(context(), { ...base, units: base.units.map(unit => unit.stage === "narration"
     ? { ...unit, requiredBeats: [{ beatId: "player_utterance", kind: "player_utterance",
       factIds: [], evidence: [], instruction: "自造节拍" }] } : unit) }))
@@ -154,7 +152,7 @@ it("无必选节拍的普通回应也不能新增当前节拍，开局契约不�
 });
 
 it("同一场景同一 NPC 的回应必须合在一个 character 单元", () => {
-  const base = makeDecisionPlan();
+  const base = makeDecisionPlan(true);
   const character = base.units.find(unit => unit.stage === "character")!;
   const split = { ...character, key: `${character.key}_split`,
     point: { ...character.point, order: character.point.order + 1 } };
@@ -166,7 +164,7 @@ it("同一场景同一 NPC 的回应必须合在一个 character 单元", () => 
 it("旁白与 NPC 可用不同表达共同承接，原提案和事实权限不改写", () => {
   const input = context();
   if (input.kind !== "decision") throw Error("decision");
-  const base = makeDecisionPlan();
+  const base = makeDecisionPlan(true);
   const beat = { beatId: "quest_advanced_1", kind: "quest_advanced" as const,
     factIds: [], evidence: [], instruction: "承接任务推进" };
   const proposal = { ...base, units: base.units.map(unit => unit.stage === "choices" ? unit
@@ -189,13 +187,13 @@ it("旁白与 NPC 可用不同表达共同承接，原提案和事实权限不�
 it("真实失败结构：将 current 塞进未来图时在表达调用前拒绝", () => {
   const input = context();
   if (input.kind !== "decision") throw Error("fixture context");
-  expect(approvePlanningContext(input, { ...makeDecisionPlan(), steps: [
+  expect(approvePlanningContext(input, { ...makeDecisionPlan(true), steps: [
     { key: "current", trigger: { kind: "move", locationId: input.world.currentLocationId }, next: [] },
   ] })).toMatchObject({ ok: false, code: "plan_scene_graph_mismatch", detail: expect.stringContaining('"steps"') });
 });
 
 it("合法 current 决策先审批实质分支并保留原提案", () => {
-  const proposal = makeDecisionPlan();
+  const proposal = makeDecisionPlan(true);
   const result = approvePlanningContext(context(), proposal);
   expect(result.ok).toBe(true);
   if (!result.ok) return;
@@ -206,7 +204,7 @@ it("合法 current 决策先审批实质分支并保留原提案", () => {
 });
 
 it("表达调用前拒绝把 witness observation 分配给 character 单元", () => {
-  const base = makeDecisionPlan();
+  const base = makeDecisionPlan(true);
   const character = base.units.find((unit) => unit.stage === "character");
   if (character === undefined) throw new Error("character fixture missing");
   const proposal = {
@@ -234,7 +232,7 @@ it("表达调用前拒绝把 witness observation 分配给 character 单元", ()
 });
 
 it("允许 character 引用更早 narration 真实披露的 conditional observation", () => {
-  const base = makeDecisionPlan();
+  const base = makeDecisionPlan(true);
   const narration = base.units.find((unit) => unit.stage === "narration");
   const character = base.units.find((unit) => unit.stage === "character");
   if (narration === undefined || character === undefined) throw new Error("staged fixture missing");
@@ -263,7 +261,7 @@ it("允许 character 引用更早 narration 真实披露的 conditional observat
 });
 
 it("同地点的不同对白无需路线目标，相同语义仍拒绝", () => {
-  const base = makeDecisionPlan();
+  const base = makeDecisionPlan(true);
   if (base.decision?.kind !== "ordinary") throw Error("ordinary fixture");
   const [left, right] = base.decision.options;
   const proposal = { ...base, decision: { ...base.decision, options: [
@@ -281,12 +279,12 @@ it("规则要求下一幕时不能用 null 世界增量假装已经结束", () =
   if (input.kind !== "decision") throw Error("decision fixture");
   const result = approvePlanningContext({ ...input, story: { ...input.story,
     evolution: { ...input.story.evolution, status: "needs_next_act" },
-  } }, makeDecisionPlan());
+  } }, makeDecisionPlan(true));
   expect(result).toMatchObject({ ok: false, code: "planning_world_delta_required" });
 });
 
 it("事件类型不能冒充证据 ID，必须在表达调用前退回规划修复", () => {
-  const base = makeDecisionPlan();
+  const base = makeDecisionPlan(true);
   const result = approvePlanningContext(context(), { ...base, units: base.units.map((unit, index) => index === 0
     ? { ...unit, requiredBeats: [{ beatId: "progress", kind: "quest_progress", factIds: [],
       evidence: [{ kind: "committed", eventId: "quest_completed" }], instruction: "衔接任务" }] }
@@ -308,7 +306,7 @@ it.each([false, true])("本回合真实任务完成事件可证明旁白的完�
       completed: ending ? [] : [{ questId: asQuestId(String(questId)), objectiveIndex: 0, label: "完成交谈" }] },
     mandatoryBeats: [{ beatId: "progress", kind: "quest_progress" as const, subjectIds: [String(questId)], instruction: "目标完成" }],
   } };
-  const base = makeDecisionPlan();
+  const base = makeDecisionPlan(true);
   const plan = { ...base, units: base.units.map(unit => unit.stage === "narration" ? { ...unit,
     requiredBeats: [{ beatId: "progress", kind: "quest_progress" as const, factIds: [],
       evidence: [{ kind: "committed" as const, eventId: String(event.eventId) }], instruction: "目标完成" }],
@@ -334,7 +332,7 @@ it.each([false, true])("本回合真实任务完成事件可证明旁白的完�
 it("真实事件 ID 也不自动成为 NPC 已知事实的出处", () => {
   const input = context();
   if (input.kind !== "decision") throw Error("decision fixture");
-  const base = makeDecisionPlan();
+  const base = makeDecisionPlan(true);
   const eventId = String(input.world.eventLedger[0]!.eventId);
   const result = approvePlanningContext(input, { ...base, units: base.units.map(unit => unit.stage === "character"
     ? { ...unit, requiredBeats: [{ beatId: "heard", kind: "player_utterance", factIds: [],
@@ -345,41 +343,4 @@ it("真实事件 ID 也不自动成为 NPC 已知事实的出处", () => {
     unitKey: base.units.find(unit => unit.stage === "character")!.key,
     invalidBeats: [{ beatId: "heard", invalidEventIds: [eventId], allowedEventIds: expect.any(Array) }],
   });
-});
-
-
-it("柳三娘回归：重复来源/时间在表达前退回规划，同事实的新维度允许", () => {
-  const input = context();
-  if (input.kind !== "decision") throw Error("decision");
-  const base = makeDecisionPlan();
-  if (base.decision?.kind !== "ordinary") throw Error("ordinary");
-  const task = { intent: "ask" as const, focusFactIds: ["fact_0"], prerequisiteFactIds: [],
-    inquiries: [{ factId: "fact_0", aspects: ["source", "time"] as const }] };
-  const world = createWorldStateFixtureWith({ generation: input.world.generation, base: input.world }, {
-    worldFacts: [{ factId: asFactId("fact_0"), text: "镇口贴有告示。", source: "generated", discovered: true }],
-    eventLedger: input.world.eventLedger,
-  });
-  const scoped = { ...input, world, job: { ...input.job, focusNpcId: input.world.npcs[0]!.id,
-    selectedDialogue: { dialogueAct: "ask" as const, label: "是谁贴的？什么时候贴的？", task } } };
-  const proposal = { ...base, units: base.units.map(unit => unit.stage !== "character" ? unit : { ...unit,
-    task: { intent: "admit_unknown" as const, focusFactIds: [], contentFactIds: [], prerequisiteFactIds: [],
-      answers: ["source", "time"].map(aspect => ({ factId: "fact_0", aspect: aspect as "source" | "time",
-        outcome: "unknown" as const, answerFactIds: [] })) } }), decision: { ...base.decision, npcId: String(input.world.npcs[0]!.id), options: [
-    { ...base.decision.options[0], target: null, deferredLocation: null, dialogueAct: "ask" as const,
-      topic: { kind: "general" as const }, task },
-    { ...base.decision.options[1], target: null, deferredLocation: null, dialogueAct: "challenge" as const },
-  ] as const } };
-  const rejected = approvePlanningContext(scoped, proposal);
-  expect(rejected).toMatchObject({ ok: false, code: "plan_dialogue_repeated" });
-  if (!rejected.ok) expect(JSON.parse(rejected.detail!)).toMatchObject({
-    repeatedCandidates: [proposal.decision.options[0].candidateId], sceneContract: expect.any(Object),
-    repairInstruction: expect.stringContaining("不能只换措辞"),
-  });
-  const repaired = { ...proposal, decision: { ...proposal.decision, options: [
-    { ...proposal.decision.options[0], task: { ...task, inquiries: [{ factId: "fact_0", aspects: ["purpose" as const] }] } },
-    proposal.decision.options[1],
-  ] as const } };
-  expect(approvePlanningContext(scoped, repaired).ok).toBe(true);
-  expect(buildPlanningPrompt(scoped)).toContain('"aspects":["source","time"]');
-  expect(PLANNING_CONTENT_RULES).toContain("已问过且答称不知道的问题不再问");
 });

@@ -34,7 +34,6 @@ import type { StoryState } from "@/game/domain/storyState";
 import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
 import type { PlanningContext } from "@/game/application/narrativeGeneration/stageSource";
 import { parsePlanProposal } from "@/game/domain/narrativePlan";
-import { dialogueReviewHarness } from "../../narrativeGeneration/dialogueConsistencyFixture.testutil";
 
 const RUN_ROOT = mkdtempSync(join(tmpdir(), "ai-rpg-game-narrative-jobs-"));
 
@@ -166,79 +165,6 @@ const OWNER_B = "worker-b";
 const NOW = "2026-09-09T08:00:00.000Z";
 const EXPIRES = "2026-09-09T08:00:30.000Z";
 
-it("规划修复各持久化状态SQLite roundtrip，并阻止旧凭据发布和篡改锚点", async () => {
-  const { h } = await dialogueReviewHarness(false);
-  let reviews = 0;
-  h.source.reviewDialogueConsistency = async request => ++reviews === 1 ? { ok: true, verdict: "reject", violations: [{
-    checkId: request.checks.find(c => c.kind === "plan_option")!.checkId, type: "intent_mismatch", inquiryId: null,
-  }] } : { ok: true, verdict: "pass", violations: [] };
-  const snapshots: StoredJob[] = [];
-  const save = h.jobs.save.bind(h.jobs);
-  h.jobs.save = async input => { snapshots.push(structuredClone(input.job)); return save(input); };
-  const ready = await h.run();
-  if (!ready.ok) throw Error(ready.code);
-  for (const job of snapshots.filter(j => j.planningSemanticRepair !== undefined)) {
-    const stores = openStores(nextDbPath());
-    await stores.jobs.start({ job: { ...job, version: 0 }, requestId: "snapshot", digest: job.inputDigest });
-    expect(await stores.jobs.get(job.id)).toMatchObject({ ok: true, value: {
-      usedRequests: job.usedRequests, planningSemanticRepair: JSON.parse(JSON.stringify(job.planningSemanticRepair)),
-    } });
-  }
-  const publication = h.decisionPublication();
-  if (publication.kind !== "decision") throw Error("expected decision publication");
-  for (const state of ["control", "pending", "running", "anchor"] as const) {
-    const stores = openStores(nextDbPath());
-    expect((await stores.games.createInitialGame({ gameId: publication.input.gameId,
-      worldState: publication.input.nextWorldState, storyState: publication.input.nextStoryState, createdAt: NOW })).ok).toBe(true);
-    const before = await stores.games.getCurrentGame();
-    if (!before.ok || before.status !== "active") throw Error("expected active game before publish");
-    expect(before.record.revision).toBe(publication.input.expectedRevision);
-    const r = ready.value.planningSemanticRepair!;
-    const job: StoredJob = { ...ready.value, version: 0, planningSemanticRepair: { ...r,
-      ...(state === "pending" ? { status: "pending" } : state === "running" ? { reviewInFlight: true }
-        : state === "anchor" ? { anchor: { ...r.anchor, actions: [{ key: "tampered_pause", actorId: "npc_0",
-          point: { stepKey: "current", order: 0 }, kind: "pause", objectId: null, audienceIds: ["player_0"] }] } } : {}),
-    } };
-    await stores.jobs.start({ job, requestId: "tamper-semantic", digest: job.inputDigest });
-    const lease = await stores.jobs.claim({ id: job.id, owner: OWNER_A, now: NOW, expiresAt: EXPIRES });
-    if (!lease.ok) throw Error(lease.code);
-    expect(await stores.jobs.get(job.id)).toMatchObject({ ok: true });
-    const published = await stores.jobs.publish({ lease: lease.value, expectedVersion: 0, publication });
-    const after = await stores.games.getCurrentGame();
-    if (!after.ok || after.status !== "active") throw Error("expected active game after publish");
-    if (state === "control") {
-      expect(published).toMatchObject({ ok: true, value: { status: "published", version: 1 } });
-      expect(after.record.revision).toBe(before.record.revision + 1);
-    } else {
-      expect(published).toEqual({ ok: false, code: "JOB_CONFLICT" });
-      expect(after.record.revision).toBe(before.record.revision);
-      expect(after.record.worldState.eventLedger).toEqual(before.record.worldState.eventLedger);
-      expect(after.record).toEqual(before.record);
-      expect(await stores.jobs.get(job.id)).toMatchObject({ ok: true, value: { status: "pending", version: 0 } });
-    }
-  }
-  const stores = openStores(nextDbPath());
-  await stores.jobs.start({ job: { ...ready.value, version: 0, status: "failed" }, requestId: "semantic-retry", digest: ready.value.inputDigest });
-  const retried = await stores.jobs.control({ id: ready.value.id, operation: "retry", expectedCycle: 0, expectedVersion: 0, now: NOW });
-  expect(retried).toMatchObject({ ok: true, value: { cycle: 1, usedRequests: 0 } });
-  if (retried.ok) expect(retried.value.planningSemanticRepair).toBeUndefined();
-});
-
-it.each([{ used: 2 }, { used: 1 }, { used: 1, status: "pending", violations: [null] }, { violations: [{ scope: "expression" }] },
-  { privateText: "untrusted" }, { anchor: null }, { cycle: 9 }, { inputDigest: "different" },
-  { protocolCorrections: 2 }, { reviewInFlight: "true" }, { status: "unknown" },
-])("SQLite损坏规划修复记录返回UNSUPPORTED_JOB而不抛错：%j", async patch => {
-  const h = createStagedHarness();
-  await h.startDecision();
-  const ready = await h.run();
-  if (!ready.ok) throw Error(ready.code);
-  const stores = openStores(nextDbPath());
-  await stores.jobs.start({ job: { ...ready.value, version: 0,
-    planningSemanticRepair: { ...ready.value.planningSemanticRepair!, ...patch } as never },
-    requestId: "invalid-semantic", digest: ready.value.inputDigest });
-  expect(await stores.jobs.get(ready.value.id)).toEqual({ ok: false, code: "UNSUPPORTED_JOB" });
-});
-
 it("一致性审核在途重开SQLite保留charge，有界重审；显式retry清新周期凭据", async () => {
   const h = createStagedHarness();
   await h.startDecision();
@@ -256,7 +182,7 @@ it("一致性审核在途重开SQLite保留charge，有界重审；显式retry�
     usedRequests: job.usedRequests, dialogueConsistencyReview: { attempts: 1, status: "running" } } });
   const claim = await second.jobs.claim({ id: job.id, owner: OWNER_A, now: NOW, expiresAt: EXPIRES });
   if (!claim.ok) throw Error(claim.code);
-  const review = vi.fn(async () => ({ ok: true as const, verdict: "pass" as const, violations: [] }));
+  const review = vi.fn(async () => ({ ok: true as const, verdict: "pass" as const, failedIds: [] }));
   h.source.reviewDialogueConsistency = review;
   const resumed = await runJob({ id: job.id, lease: claim.value }, { jobs: second.jobs, source: h.source,
     now: () => NOW, signal: new AbortController().signal });
@@ -291,7 +217,7 @@ it.each([undefined, { version: 1, cycle: 0, inputDigest: "a".repeat(64), attempt
   expect(loaded).toMatchObject(review === undefined ? { ok: true } : { ok: false, code: "UNSUPPORTED_JOB" });
 });
 
-it.each(["missing", "text", "stale", "planning_missing", "planning_stale", "planning_partial"])("publish事务根据持久化内容重算审核门禁，拒绝%s且游戏零写入", async change => {
+it.each(["missing", "text", "stale", "draft", "metadata"])("publish事务根据持久化内容重算审核门禁，拒绝%s且游戏零写入", async change => {
   const h = createStagedHarness();
   await h.startDecision();
   const ready = await h.run();
@@ -300,12 +226,13 @@ it.each(["missing", "text", "stale", "planning_missing", "planning_stale", "plan
   const created = await games.createInitialGame({ gameId: asGameId("game-1"), worldState: fixtureWorld(), storyState: fixtureStory(), createdAt: NOW });
   expect(created.ok).toBe(true);
   const job: StoredJob = { ...ready.value, version: 0, gameId: "game-1",
-    planningDialogueReviews: change === "planning_missing" ? undefined : change === "planning_partial" ? {}
-      : change === "planning_stale" ? Object.fromEntries(Object.entries(ready.value.planningDialogueReviews!).map(([key, receipt]) =>
-        [key, { ...receipt, inputDigest: "f".repeat(64), passDigest: "f".repeat(64) }])) : ready.value.planningDialogueReviews,
     dialogueConsistencyReview: change === "missing" ? undefined : { ...ready.value.dialogueConsistencyReview!,
       ...(change === "stale" ? { cycle: 99 } : {}) },
-    units: ready.value.units.map(u => u.value !== null && "stage" in u.value && u.value.stage === "choices" && change === "text"
+    units: ready.value.units.map(u => change === "metadata" && u.value !== null && "stage" in u.value && u.value.stage === "character"
+      ? { ...u, value: { ...u.value, emotion: u.value.emotion === "neutral" ? "warm" : "neutral" } }
+      : change === "draft" && u.value !== null && "units" in u.value
+      ? { ...u, value: { ...u.value, units: u.value.units.map(unit => unit.draft?.stage === "character" ? { ...unit, draft: { ...unit.draft, parts: unit.draft.parts.map(part => ({ ...part, text: part.text + "啊" })) } } : unit) } }
+      : u.value !== null && "stage" in u.value && u.value.stage === "choices" && change === "text"
       ? { ...u, value: { ...u.value, labels: u.value.labels.map((l, i) => i === 0 ? { ...l, label: l.label + "啊" } : l) } } : u),
   };
   await jobs.start({ job, requestId: "tamper", digest: job.inputDigest });

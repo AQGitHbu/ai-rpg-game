@@ -29,31 +29,18 @@ import type { NpcEntry } from "@/game/domain/worldEntries";
 // ---------------------------------------------------------------------------
 
 function livePlan() {
-  const base = makeStagedPlan();
-  if (base.decision?.kind !== "ordinary") throw Error("ordinary");
-  return { ...base, units: base.units.map(unit => unit.stage === "choices" ? unit : { ...unit,
-    task: { intent: unit.stage === "narration" ? "describe" : "inform",
-      brief: unit.stage === "narration" ? "承接现场。" : "完整回应玩家。",
-      focusFactIds: [], contentFactIds: [], prerequisiteFactIds: [] } }),
-    decision: { ...base.decision, options: base.decision.options.map(option => ({ ...option,
-      task: { intent: option.dialogueAct, brief: "表达一个具体回应。",
-        focusFactIds: [], contentFactIds: [], prerequisiteFactIds: [] } })) } };
+  const base = makeStagedPlan(); if (base.decision?.kind !== "ordinary") throw Error("ordinary");
+  return { ...base, units: base.units.map(({ taskFactIds: _, ...unit }) => unit),
+    decision: { ...base.decision, options: base.decision.options.map(option => {
+      const { text: _, ...references } = option.publicIntent; return { ...option, publicIntent: references };
+    }) } };
 }
-it.each(["task", "brief", "contentFactIds"])("新 live 规划缺少 %s 时显式退回，不回落到笼统润色", async missing => {
-  const base = livePlan();
-  const plan = missing === "task" ? makeStagedPlan() : { ...base, units: base.units.map(unit => {
-    if (unit.stage === "choices") return unit;
-    const task = { ...unit.task } as Record<string, unknown>;
-    delete task[missing];
-    return { ...unit, task };
-  }) };
-  const { client } = recordingClient([OK_JSON(plan)]);
+it("fresh live plan never synthesizes a missing draft", async () => {
+  const plan = livePlan(); const { draft: _, ...missing } = plan.units[0]!;
+  const { client } = recordingClient([OK_JSON({ ...plan, units: [missing, ...plan.units.slice(1)] })]);
   const source = createLiveStageSource({ client });
-  const result = await source.generate({ stage: "planning", context: { kind: "opening",
-    input: { gameType: "wuxia", gameLength: "short", seed: "s" },
-    generation: OPENING_GENERATION } }, { signal: new AbortController().signal, timeoutMs: 1000, audit: { purpose: "game_api", trigger: "staged_planning" } });
-  expect(result).toMatchObject({ ok: false });
-  expect(JSON.stringify(result)).toContain("plan_task_missing");
+  const result = await source.generate({ stage: "planning", context: { kind: "opening", input: { gameType: "wuxia", gameLength: "short", seed: "s" }, generation: OPENING_GENERATION } }, executionWith(new AbortController().signal));
+  expect(result).toMatchObject({ ok: false, repairReason: "plan_draft_invalid" });
 });
 
 it("同场同 NPC 的多个 character 单元被退回给规划器合并", async () => {
@@ -270,7 +257,7 @@ function fourStageRequests(): readonly StageRequest[] {
 
 describe("createLiveStageSource", () => {
   it("由 live source 合并内容修复审计并保留手动重试来源和调用字段", async () => {
-    const { client, calls } = recordingClient([OK_JSON(VALID_NARRATION)]);
+    const { client, calls } = recordingClient([OK_JSON({ texts: VALID_NARRATION.parts.map(part => part.text) })]);
     const source = createLiveStageSource({ client });
     await source.generate(
       { stage: "narration", context: contextFor(approvedPlan(), FIXTURE_NARRATION_UNIT) },
@@ -289,9 +276,9 @@ describe("createLiveStageSource", () => {
   it("四个 stage 各调用一次 complete，role 顺序为 planning/narration/character/choices", async () => {
     const { client, calls } = recordingClient([
       OK_JSON(livePlan()),
-      OK_JSON(VALID_NARRATION),
-      OK_JSON(VALID_CHARACTER),
-      OK_JSON(VALID_CHOICES),
+      OK_JSON({ texts: VALID_NARRATION.parts.map(part => part.text) }),
+      OK_JSON({ texts: VALID_CHARACTER.parts.map(part => part.text) }),
+      OK_JSON({ labels: VALID_CHOICES.labels }),
     ]);
     const source: StageSource = createLiveStageSource({ client });
     const controller = new AbortController();
@@ -313,9 +300,9 @@ describe("createLiveStageSource", () => {
   it("角色请求的消息不携带秘密，也不含 planning 阶段内容", async () => {
     const { client, calls } = recordingClient([
       OK_JSON(livePlan()),
-      OK_JSON(VALID_NARRATION),
-      OK_JSON(VALID_CHARACTER),
-      OK_JSON(VALID_CHOICES),
+      OK_JSON({ texts: VALID_NARRATION.parts.map(part => part.text) }),
+      OK_JSON({ texts: VALID_CHARACTER.parts.map(part => part.text) }),
+      OK_JSON({ labels: VALID_CHOICES.labels }),
     ]);
     const source = createLiveStageSource({ client });
     const controller = new AbortController();
@@ -333,9 +320,9 @@ describe("createLiveStageSource", () => {
   it("choice prompt 只返回两条玩家直接说出的对白", async () => {
     const { client, calls } = recordingClient([
       OK_JSON(livePlan()),
-      OK_JSON(VALID_NARRATION),
-      OK_JSON(VALID_CHARACTER),
-      OK_JSON(VALID_CHOICES),
+      OK_JSON({ texts: VALID_NARRATION.parts.map(part => part.text) }),
+      OK_JSON({ texts: VALID_CHARACTER.parts.map(part => part.text) }),
+      OK_JSON({ labels: VALID_CHOICES.labels }),
     ]);
     const source = createLiveStageSource({ client });
     const controller = new AbortController();
@@ -343,7 +330,7 @@ describe("createLiveStageSource", () => {
       await source.generate(request, executionWith(controller.signal));
     }
     const choiceText = calls[3]!.messages.map((message) => message.content).join("\n");
-    expect(choiceText).toContain("只返回玩家直接说出的对白");
+    expect(choiceText).toContain("玩家第一人称直接台词");
     expect(choiceText).toContain("cand_route");
     expect(choiceText).toContain("cand_alt");
   });
@@ -351,9 +338,9 @@ describe("createLiveStageSource", () => {
   it("AbortSignal 与剩余 timeoutMs 原样透传给 client", async () => {
     const { client, calls } = recordingClient([
       OK_JSON(livePlan()),
-      OK_JSON(VALID_NARRATION),
-      OK_JSON(VALID_CHARACTER),
-      OK_JSON(VALID_CHOICES),
+      OK_JSON({ texts: VALID_NARRATION.parts.map(part => part.text) }),
+      OK_JSON({ texts: VALID_CHARACTER.parts.map(part => part.text) }),
+      OK_JSON({ labels: VALID_CHOICES.labels }),
     ]);
     const source = createLiveStageSource({ client });
     const controller = new AbortController();
@@ -367,7 +354,7 @@ describe("createLiveStageSource", () => {
   });
 
   it("planning 输出含未知字段时按 invalid_schema 拒绝并保留稳定拒绝码", async () => {
-    const bogusPlan = { ...makeStagedPlan(), bogus_key: true };
+    const bogusPlan = { ...livePlan(), bogus_key: true };
     const { client } = recordingClient([OK_JSON(bogusPlan)]);
     const source = createLiveStageSource({ client });
     const controller = new AbortController();
@@ -426,7 +413,7 @@ describe("createLiveStageSource", () => {
   });
 
   it("输出 stage 与请求不一致时拒绝", async () => {
-    const { client } = recordingClient([OK_JSON(VALID_CHARACTER)]);
+    const { client } = recordingClient([OK_JSON({ stage: "character", texts: ["完整原句。"] })]);
     const source = createLiveStageSource({ client });
     const controller = new AbortController();
     const result = await source.generate(
@@ -436,13 +423,13 @@ describe("createLiveStageSource", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.failure.kind).toBe("AI_RESPONSE_INVALID");
-    expect(result.repairDetail).toBe("stage: expected narration; received character");
+    expect(result.repairReason).toBe("polish_texts_invalid");
   });
 
   it("choices 超长反馈保留字段索引和 Unicode 码点长度", async () => {
     const invalid = { ...VALID_CHOICES, labels: [VALID_CHOICES.labels[0],
       { candidateId: "cand_alt", label: "😀".repeat(106) }] };
-    const { client } = recordingClient([OK_JSON(invalid)]);
+    const { client } = recordingClient([OK_JSON({ labels: invalid.labels })]);
     const source = createLiveStageSource({ client });
     const result = await source.generate(
       { stage: "choices", context: contextFor(approvedPlan(), FIXTURE_CHOICE_UNIT) },
@@ -457,11 +444,9 @@ describe("createLiveStageSource", () => {
     const source = createLiveStageSource({ client });
     const result = await source.generate({ stage: "choices", context: contextFor(approvedPlan(), FIXTURE_CHOICE_UNIT) },
       executionWith(new AbortController().signal));
-    expect(result).toMatchObject({ ok: false, repairReason: "unit_output_stage_invalid" });
+    expect(result).toMatchObject({ ok: false, repairReason: "polish_payload_invalid" });
     const prompt = calls[0]!.messages.map(m => m.content).join("\n");
-    expect(prompt).toContain('stage="choices"');
-    expect(prompt).toContain("不得返回type字段");
-    expect(prompt).toContain("json_object是传输格式设置");
+    expect(prompt).toContain('只返回 {"labels"');
   });
 });
 
@@ -474,10 +459,21 @@ it("urban character extra type feedback survives source and next expression prom
   const execution = executionWith(new AbortController().signal);
   const first = await source.generate(request, execution);
   if (first.ok) throw Error("expected failure");
-  expect(first.repairDetail).toContain("$.type");
-  expect(first.repairDetail).toContain("allowedKeys");
-  expect(first.repairDetail).not.toMatch(/PRIVATE_BODY|private_secret_key/);
+  expect(first.repairReason).toBe("polish_texts_invalid");
+  expect(JSON.stringify(first)).not.toMatch(/PRIVATE_BODY|private_secret_key/);
   const { repairFromSourceFailure } = await import("@/game/application/aiGenerationRetry");
   await source.generate(request, { ...execution, repair: repairFromSourceFailure(first, 1) });
-  expect(calls[1]!.messages.map(m => m.content).join("\n")).toContain(first.repairDetail!);
+  expect(calls[1]!.messages.map(m => m.content).join("\n")).toContain(first.repairReason!);
+});
+
+it("fresh opening rejects unknown player keys at the server whitelist boundary", async () => {
+  const { createFixtureOpeningCandidateSource } = await import("@/game/application/createGame");
+  const { makeOpeningStagedPlan } = await import("@/game/domain/testing/stagedNarrativeFixture.testutil");
+  const candidate = await createFixtureOpeningCandidateSource().generate({ gameType: "wuxia", seed: "keys", gameLength: "short" });
+  const plan = makeOpeningStagedPlan(candidate);
+  if (plan.opening === null) throw Error("opening fixture");
+  const { client } = recordingClient([OK_JSON({ ...plan, opening: { ...plan.opening, player: { ...plan.opening.player, invented: true } } })]);
+  const source = createLiveStageSource({ client });
+  expect(await source.generate({ stage: "planning", context: { kind: "opening", input: { gameType: "wuxia", gameLength: "short", seed: "s" }, generation: OPENING_GENERATION } }, executionWith(new AbortController().signal)))
+    .toMatchObject({ ok: false, repairReason: "opening_unknown_keys" });
 });

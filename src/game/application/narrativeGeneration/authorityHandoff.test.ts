@@ -33,7 +33,7 @@ function fixture() {
       instruction: "让新 NPC 承认亲眼见过翻墙者。",
     }] } : unit) };
   const fixed: PlanProposal = { ...invalid, units: invalid.units.map(unit => unit.stage === "character"
-    ? { ...unit, taskFactIds: [], requiredBeats: unit.requiredBeats.map(beat => ({ ...beat, factIds: [] })) } : unit) };
+    ? { ...unit, taskFactIds: [], requiredBeats: unit.requiredBeats.map(beat => ({ ...beat, factIds: [] })), draft: { ...makeCharacterOutput(unit.speakerId!), parts: [{ text: "我不知道。", facts: [], evidence: [], beatIds: ["reply"] }], answeredBeatIds: ["reply"] } } : unit) };
   return { input, invalid, fixed };
 }
 
@@ -94,7 +94,7 @@ it.each(["fresh", "cached", "conditional", "exhausted"])("规划修复不授予�
       expect(request.context.visibleFacts.some(fact => fact.id === "fact_player_only")).toBe(false);
       const prompt = buildCharacterPrompt(request.context);
       expect(prompt).toContain(input.job.selectedDialogue!.label);
-      expect(prompt).toContain("不等于已核实事实");
+      expect(prompt).toContain("不是已核实事实");
       return { ok: true, stage: "character", value: { ...makeCharacterOutput("npc_dyn_1"),
         parts: [{ text: "我没亲眼见过，你得问当时在场的人。", beatIds: ["reply"], facts: [], evidence: [] }],
         answeredBeatIds: ["reply"],
@@ -108,6 +108,10 @@ it.each(["fresh", "cached", "conditional", "exhausted"])("规划修复不授予�
   const result = await h.run();
   // A player-only witness cannot authorize the NPC. Static preflight rejects it
   // before any expression and the existing bounded planning repair can fix it.
+  if (mode === "cached") {
+    expect(result).toMatchObject({ ok: false, code: "beat_authority_conflict" });
+    expect(calls).toEqual([]); return;
+  }
   if (mode === "exhausted") {
     expect(result).toMatchObject({ ok: false, code: "beat_authority_conflict" });
     expect(calls).toEqual(["planning", "planning", "planning", "planning"]);
@@ -118,7 +122,7 @@ it.each(["fresh", "cached", "conditional", "exhausted"])("规划修复不授予�
   }
   if (!result.ok) throw Error(result.code + ":" + calls.join(","));
   expect(result.ok).toBe(true);
-  expect(result.value.usedRequests).toBe(7);
+  expect(result.value.usedRequests).toBe(6);
   const publication = buildDecisionPublication({ job: result.value, createdAt: h.clock.now() });
   expect(publication).toMatchObject({ ok: true });
   if (!publication.ok) return;

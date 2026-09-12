@@ -2,7 +2,7 @@ import { publishJob } from "./publishJob";
 import { expect, it } from "vitest";
 import type { PlanProposal } from "@/game/domain/narrativePlan";
 import type { PlanningContext } from "./stageSource";
-import { createPendingDecisionRecord, makeDecisionPlan } from "@/game/domain/testing/stagedNarrativeFixture.testutil";
+import { createPendingDecisionRecord, makeDecisionPlan, withOfflineDrafts } from "@/game/domain/testing/stagedNarrativeFixture.testutil";
 import { approvePlanningContext } from "./approvePlanningContext";
 import { buildNarrationPrompt } from "../server/ai/staged/narrationPrompt";
 import { buildPlanningPrompt } from "../server/ai/staged/planningPrompt";
@@ -48,7 +48,7 @@ function crossActFixture() {
       { ...base.decision.options[0], candidateId: `${stepKey}_choice_1`, target: null, deferredLocation: null },
       { ...base.decision.options[1], candidateId: `${stepKey}_choice_2`, target: null, deferredLocation: null },
     ] } };
-  return { input, proposal, stepKey };
+  return { input, proposal: withOfflineDrafts(proposal), stepKey };
 }
 
 it("重复实体拒绝带占用身份与空间约束，不自动改名或复建旧 NPC", () => {
@@ -87,7 +87,7 @@ it("规则已允许结局时，同包生成结局对后派生并原子发布终�
         { themeKey: "trust", name: "携手前行", description: "选择信任" },
         { themeKey: "doubt", name: "独立求证", description: "选择质疑" },
       ] } };
-  const result = approvePlanningContext(endingInput, endingPlan);
+  const result = approvePlanningContext(endingInput, withOfflineDrafts(endingPlan));
   expect(result.ok ? result.value.choiceExpression?.kind : result.code).toBe("ending");
   const h = createStagedHarness();
   await h.startDecision();
@@ -96,7 +96,7 @@ it("规则已允许结局时，同包生成结局对后派生并原子发布终�
   await h.jobs.save({ lease: h.lease(), expectedVersion: stored.value.version,
     job: { ...stored.value, input: endingInput } });
   h.source.generate = async request => {
-    if (request.stage === "planning") return { ok: true, stage: "planning", value: endingPlan };
+    if (request.stage === "planning") return { ok: true, stage: "planning", value: withOfflineDrafts(endingPlan) };
     if (request.stage === "narration") return { ok: true, stage: "narration", value: makeNarrationOutput() };
     if (request.stage === "character") return { ok: true, stage: "character", value: makeCharacterOutput("npc_dyn_1") };
     return { ok: true, stage: "choices", value: { stage: "choices", labels: [
@@ -113,7 +113,8 @@ it("规则已允许结局时，同包生成结局对后派生并原子发布终�
 
 function arrivalFactFixture() {
   const { input, proposal, stepKey } = crossActFixture();
-  if (proposal.decision === null || proposal.worldDelta === null) throw Error("cross-act fixture");
+  if (proposal.decision?.kind !== "ordinary" || proposal.worldDelta === null) throw Error("cross-act fixture");
+  const decision = proposal.decision;
   const point = { stepKey, order: 2 };
   const factId = "fact_dyn_0";
   const plan: PlanProposal = { ...proposal, worldDelta: { ...proposal.worldDelta,
@@ -125,10 +126,10 @@ function arrivalFactFixture() {
       : unit.key === "arrival_narration" ? { ...unit, taskFactIds: [factId], requiredBeats: [
         { beatId: "arrival_fact", kind: "fact_discovered", factIds: [factId], evidence: [], instruction: "呈现抵达后发现的铜牌刻纹" },
       ] } : unit),
-    decision: { ...proposal.decision, point, npcId: "npc_dyn_2" } };
-  const approved = approvePlanningContext(input, plan);
+    decision: { ...proposal.decision, point, npcId: "npc_dyn_2", options: decision.options.map(option => ({ ...option, publicIntent: { ...option.publicIntent, facts: [{ factId, certainty: "known" as const }] } })) as unknown as typeof decision.options } };
+  const approved = approvePlanningContext(input, withOfflineDrafts(plan));
   if (!approved.ok) throw Error(approved.code);
-  return { input, plan, approved: approved.value, factId, stepKey };
+  return { input, plan: withOfflineDrafts(plan), approved: approved.value, factId, stepKey };
 }
 
 it.each([0, 1, 4])("强制节拍只分配给 NPC：有界规划修复与完整发布（已耗规划次数=%s）", async priorAttempts => {
@@ -154,7 +155,7 @@ it.each([0, 1, 4])("强制节拍只分配给 NPC：有界规划修复与完整�
   expect((await h.jobs.save({ lease: h.lease(), expectedVersion: stored.value.version,
     job: { ...stored.value, input, usedRequests: cached ? priorAttempts + 1 : 0,
       units: cached ? [
-        { key: "planning", unit: null, inputDigest: stored.value.inputDigest, attempts: priorAttempts, status: "approved", value: invalid },
+        { key: "planning", unit: null, inputDigest: stored.value.inputDigest, attempts: priorAttempts, status: "approved", value: { ...invalid, units: invalid.units.map(({ draft: _, ...unit }) => unit) } },
         { key: "obsolete_expression", unit: invalid.units[0]!, inputDigest: stored.value.inputDigest,
           attempts: 1, status: "approved", value: makeNarrationOutput() },
       ] : [],
@@ -164,15 +165,15 @@ it.each([0, 1, 4])("强制节拍只分配给 NPC：有界规划修复与完整�
     calls.push(request.stage);
     if (request.stage === "planning") {
       if (!cached && calls.length === 1) return { ok: true, stage: "planning", value: invalid };
-      expect(execution.repair).toMatchObject({ rejectionCode: "plan_mandatory_beat_mismatch" });
-      expect(JSON.parse(execution.repair!.detail!).requiredNarrationBeats).toHaveLength(2);
-      return { ok: true, stage: "planning", value: fixed };
+      expect(execution.repair).toMatchObject({ rejectionCode: cached ? "plan_draft_missing" : "plan_mandatory_beat_mismatch" });
+      if (!cached) expect(JSON.parse(execution.repair!.detail!).requiredNarrationBeats).toHaveLength(2);
+      return { ok: true, stage: "planning", value: withOfflineDrafts(fixed) };
     }
     expect(request.context).not.toHaveProperty("world");
     expect(request.context).not.toHaveProperty("requiredNarrationBeats");
     if (request.stage === "narration" && request.context.unit.point.stepKey === "current") {
       expect(request.context.narrationLayout).toEqual({ allowAtmosphere: true });
-      expect(buildNarrationPrompt(request.context)).toContain("正文末尾");
+      expect(buildNarrationPrompt(request.context)).toContain("严格保持原段数量和顺序");
     } else expect(request.context.narrationLayout).toBeUndefined();
     if (request.stage === "narration") return { ok: true, stage: "narration", value: {
       stage: "narration", actionKeys: [], parts: request.context.requiredBeats.map(beat => ({
@@ -208,7 +209,7 @@ it.each([0, 1, 4])("强制节拍只分配给 NPC：有界规划修复与完整�
   if (!result.ok) return;
   expect(calls.filter(stage => stage === "planning")).toHaveLength(cached ? 1 : 2);
   expect(calls.filter(stage => stage !== "planning")).toHaveLength(5);
-  expect(result.value.usedRequests).toBe(cached ? 10 : 9);
+  expect(result.value.usedRequests).toBe(cached ? 9 : 8);
   expect(result.value.units.some(unit => unit.key === "obsolete_expression")).toBe(false);
   const publication = buildDecisionPublication({ job: result.value, createdAt: h.clock.now() });
   expect(publication).toMatchObject({ ok: true });
@@ -284,7 +285,7 @@ it("含未来事实节拍的四类生成与完整包发布审批通过，发布�
   expect(await h.jobs.save({ lease: h.lease(), expectedVersion: stored.value.version,
     job: { ...stored.value, input } })).toMatchObject({ ok: true });
   h.source.generate = async request => {
-    if (request.stage === "planning") return { ok: true, stage: "planning", value: plan };
+    if (request.stage === "planning") return { ok: true, stage: "planning", value: withOfflineDrafts(plan) };
     if (request.stage === "narration") return { ok: true, stage: "narration", value: {
       ...makeNarrationOutput(), parts: request.context.requiredBeats.length === 0 ? makeNarrationOutput().parts
         : request.context.requiredBeats.map(beat => ({ text: "信使留下的铜牌刻着盐纹。",

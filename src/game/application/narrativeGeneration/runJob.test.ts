@@ -28,7 +28,7 @@ function twoBeatHarness(ambiguousAttempts = 1) {
       units: response.value.units.map(unit => unit.stage === "narration"
         ? { ...unit, point: { ...unit.point, order: 2 }, requiredBeats: ["beat_a", "beat_b"].map(beatId => ({
           beatId, kind: "atmosphere" as const, factIds: [], evidence: [], instruction: "描写现场",
-        })) }
+        })), draft: { stage: "narration" as const, actionKeys: [], parts: ["beat_a", "beat_b"].map((beatId, i) => ({ text: i === 0 ? "灯火明暗。" : "窗外风起。", facts: [], evidence: [], beatIds: [beatId] })) } }
         : unit.key === "character_npc_0" ? { ...unit, point: { ...unit.point, order: 3 }, dependencies: ["narration_current"] }
           : unit.key === "character_npc_1" ? { ...unit, point: { ...unit.point, order: 1 } } : unit),
     } };
@@ -108,7 +108,7 @@ describe("runJob", () => {
     expect(h.calls.filter(call => call.stage === "planning")).toHaveLength(1);
     expect(h.calls.filter(call => call.stage === "character")).toHaveLength(2);
     expect(h.calls.filter(call => call.stage === "choices")).toHaveLength(1);
-    expect(result.value.usedRequests).toBe(8);
+    expect(result.value.usedRequests).toBe(7);
     const proposal = result.value.units.find(unit => unit.key === "planning")?.value as PlanProposal;
     const plan = approvePlanningContext(result.value.input, proposal);
     if (!plan.ok) throw new Error(plan.code);
@@ -163,7 +163,7 @@ describe("runJob", () => {
     expect(h.calls.slice(callsBefore).map(call => call.stage)).toEqual(["narration", "character", "choices"]);
     expect(h.calls.slice(callsBefore).every(call => call.auditContext.retry?.origin === "manual_failed_job"
       && call.auditContext.retry.mechanism === "initial" && call.auditContext.retry.attempt === 0)).toBe(true);
-    expect(result.value.usedRequests).toBe(5);
+    expect(result.value.usedRequests).toBe(4);
     for (const key of ["narration_current", "character_npc_0", "choices_current"]) {
       expect(result.value.units.find(unit => unit.key === key)?.attempts).toBe(2);
     }
@@ -231,7 +231,7 @@ describe("runJob", () => {
     expect(h.source.calls.filter((c) => c.stage === "choices")).toHaveLength(2);
     expect(h.source.calls.filter((c) => c.stage === "narration")).toHaveLength(1);
     expect(h.source.calls.filter((c) => c.stage === "character")).toHaveLength(2);
-    if (result.ok) expect(result.value.usedRequests).toBe(h.source.calls.length + 2);
+    if (result.ok) expect(result.value.usedRequests).toBe(h.source.calls.length + 1);
   });
 
   it("planning schema 失败把稳定 code 和安全 detail 传给下一次请求", async () => {

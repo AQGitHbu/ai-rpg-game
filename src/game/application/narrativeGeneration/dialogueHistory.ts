@@ -29,14 +29,14 @@ export async function loadDialogueHistory(
       || candidate.input.job.focusNpcId !== current.input.job.focusNpcId) continue;
     const selected = candidate.input.job.selectedDialogue;
     const shown = previousDialogue(candidate.input as PlanningContext);
-    if (selected === undefined || shown === null) continue;
+    if (selected === undefined || selected.label === undefined || shown === null) continue;
     const entry: DialogueHistoryEntry = {
       previousReply: shown.reply.text,
       previousChoices: [...shown.choices],
       selectedDialogue: {
+        label: selected.label,
         dialogueAct: selected.dialogueAct,
         ...(selected.topic === undefined ? {} : { topic: selected.topic }),
-        ...(selected.task === undefined ? {} : { task: selected.task }),
       },
     };
     const chars = JSON.stringify(entry).length + (recentFirst.length === 0 ? 0 : 1);

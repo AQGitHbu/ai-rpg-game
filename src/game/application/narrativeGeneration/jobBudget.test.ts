@@ -35,13 +35,13 @@ describe("canStartRequest", () => {
     if (!stored.ok) throw Error(stored.code);
     const checked = approvePlanningContext(stored.value.input, plan);
     if (!checked.ok) throw Error(checked.code);
-    expect(baselineRequestsForPlan(checked.value)).toBe(1 + plan.units.length + 2);
+    expect(baselineRequestsForPlan(checked.value)).toBe(1 + plan.units.length + 1);
     for (const kind of ["ending", "null"] as const) {
       const withoutCandidates = { ...checked.value, proposal: { ...plan, decision: null,
         ...(kind === "ending" ? { terminal: { kind: "ending" as const } } : {}) },
         choiceExpression: null, units: checked.value.units.filter(unit => unit.stage !== "choices") };
-      expect(baselineRequestsForPlan(withoutCandidates)).toBe(1 + withoutCandidates.units.length + 2);
-      expect(baselineRequestsForPlan({ ...withoutCandidates, currentUtterance: undefined })).toBe(1 + withoutCandidates.units.length);
+      expect(baselineRequestsForPlan(withoutCandidates)).toBe(1 + withoutCandidates.units.length + 1);
+      expect(baselineRequestsForPlan({ ...withoutCandidates, currentUtterance: undefined })).toBe(2 + withoutCandidates.units.length);
     }
     expect(JOB_BUDGET).toEqual({ extraRequests: 12, maxUnitAttempts: 4 });
   });

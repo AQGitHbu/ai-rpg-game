@@ -42,8 +42,8 @@ it("历史只保留同 game/NPC 的完整脱敏条目，按 12k 预算从近到�
   const history = await loadDialogueHistory(current, repository);
   expect(history.map(entry => entry.previousReply)).toEqual(["更早一次回答", "最近一次回答"]);
   expect(JSON.stringify(history)).not.toContain("secret-old");
-  expect(JSON.stringify(history)).not.toContain("SECRET_LABEL");
-  expect(history[0]?.selectedDialogue.task?.brief).toBe("帮老人留意刀客行踪。");
+  expect(history[0]?.selectedDialogue.label).toBe("SECRET_LABEL_old-older");
+  expect(history[0]?.selectedDialogue).not.toHaveProperty("task");
 });
 
 it("runJob 只加载一次历史，planning 修复重试复用同一上下文且不写回 StoredJob", async () => {

@@ -260,6 +260,13 @@ export function parsePlanProposal(raw: unknown): Check<PlanProposal> {
     return fail("plan_terminal_step_dangling");
   }
 
+  for (const unit of units) {
+    if (unit.draft?.stage !== "choices") continue;
+    const expectedIds = terminal.kind === "ending" ? ["trust", "doubt"] : decision?.options.map(option => option.candidateId);
+    if (expectedIds === undefined || unit.draft.labels.length !== expectedIds.length
+      || unit.draft.labels.some(label => !expectedIds.includes(label.candidateId))) return fail("plan_draft_candidate_mismatch");
+  }
+
   return {
     ok: true,
     value: {

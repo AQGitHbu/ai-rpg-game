@@ -1,141 +1,88 @@
-import { isReviewProtocolIssue } from "./dialogueReviewChecks";
-import { REVIEW_MAX_REQUESTS } from "./dialogueReviewRecovery";
-import { validatePlanningDialogueReviews } from "./planningDialogueReview";
-import { narrativeInputDigest } from "./narrativeInputDigest";
-import { INQUIRY_ASPECTS, type InquiryAspect } from "@/game/domain/expressionTask";
-import { fail, type Check, type UnitOutput } from "@/game/domain/narrativeUnit";
+import { fail, hasOnlyKeys, isPlainRecord, type Check, type UnitOutput } from "@/game/domain/narrativeUnit";
 import { readyUnits, type ApprovedPlan } from "@/game/gameplay/rpg/narrativePlanning";
 import type { StoredJob } from "../server/persistence/narrativeJobRepository";
 import { approveUnit } from "./approveUnit";
 import { projectUnitContext, type SafeContext } from "./perspectiveContext";
+import { narrativeInputDigest } from "./narrativeInputDigest";
+import { isLegacyStoredDialogueReview } from "./legacyDialogueReview";
+export { parseDialogueConsistencyVerdict, type DialogueViolation, type DialogueConsistencyVerdict } from "./legacyDialogueReview";
 
-import { compileDialogueReviewChecks, type CompiledDialogueReview, type DialogueReviewSubject, type DialogueReviewRequest } from "./dialogueReviewChecks";
+export const DIALOGUE_REVIEW_VERSION = 2;
+export const DIALOGUE_REVIEW_POLICY_REVISION = 7;
+export const DIALOGUE_REVIEW_MAX_ATTEMPTS = 2;
+export const DIALOGUE_REVIEW_CONTEXT_LIMIT = 24_000;
+export type PolishReviewVerdict = Readonly<{ verdict: "pass" | "reject" | "uncertain"; failedIds: readonly string[] }>;
+export type DialogueConsistencyReviewRequest = Readonly<{ items: readonly Readonly<{
+  id: string; stage: "narration" | "character" | "choices"; draft: string; text: string;
+  facts: readonly Readonly<{ id: string; text: string; certainty: "known" | "suspected" }>[];
+  scene?: SafeContext["scene"]; speaker?: string; selectedLabel?: string;
+}>[] }>;
+export function shouldReviewDialogueConsistency(plan: ApprovedPlan): boolean { return plan.units.length > 0; }
 
-export const DIALOGUE_REVIEW_VERSION = 1;
-/** Bump whenever review policy/prompt changes; storage schema remains readable. */
-export const DIALOGUE_REVIEW_POLICY_REVISION = 6;
-export const DIALOGUE_REVIEW_MAX_ATTEMPTS = REVIEW_MAX_REQUESTS;
-export const DIALOGUE_REVIEW_CONTEXT_LIMIT = 16_000;
-export type DialogueViolation = Readonly<{
-  scope: "expression" | "planning" | "legacy";
-  unitKey?: string;
-  candidateId?: string;
-  type: "extra_inquiry" | "missing_response" | "answer_mismatch" | "intent_mismatch";
-  aspect: InquiryAspect | null;
-  factId?: string;
-}>;
-export type DialogueConsistencyVerdict = Readonly<{
-  verdict: "pass" | "reject" | "uncertain";
-  violations: readonly DialogueViolation[];
-}>;
-export type DialogueConsistencyReviewRequest = DialogueReviewRequest;
-
-/** The same predicate is used for baseline accounting, execution and publication. */
-export function shouldReviewDialogueConsistency(plan: ApprovedPlan): boolean {
-  return plan.units.some(unit => unit.stage === "choices")
-    || (plan.currentUtterance?.inquiries?.length ?? 0) > 0
-    || ((plan.currentUtterance?.text.trim().length ?? 0) > 0 && plan.units.some(unit =>
-      unit.stage === "character" && unit.point.stepKey === "current" && unit.speakerId === plan.currentUtterance?.npcId));
+export function parsePolishReviewVerdict(value: unknown, request: DialogueConsistencyReviewRequest): Check<PolishReviewVerdict> {
+  if (!isPlainRecord(value) || !hasOnlyKeys(value, ["verdict", "failedIds"])
+    || !["pass", "reject", "uncertain"].includes(String(value.verdict)) || !Array.isArray(value.failedIds)
+    || value.failedIds.some(id => typeof id !== "string" || !request.items.some(item => item.id === id))
+    || new Set(value.failedIds).size !== value.failedIds.length
+    || (value.verdict === "reject" ? value.failedIds.length === 0 : value.failedIds.length !== 0))
+    return fail("dialogue_consistency_review_invalid");
+  return { ok: true, value: { verdict: value.verdict as PolishReviewVerdict["verdict"], failedIds: value.failedIds } };
 }
 
-/** Storage compatibility only. Live reviewer output must use parseDialogueReviewVerdict. */
-export function parseDialogueConsistencyVerdict(value: unknown): DialogueConsistencyVerdict | null {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
-  if (Object.keys(record).some(key => !["verdict", "violations"].includes(key))
-    || !["pass", "reject", "uncertain"].includes(record.verdict as string)
-    || !Array.isArray(record.violations) || record.violations.length > 8
-    || (record.verdict === "reject" ? record.violations.length === 0 : record.violations.length !== 0)) return null;
-  const id = (v: unknown) => typeof v === "string" && /^[a-zA-Z0-9_:-]{1,128}$/.test(v);
-  for (const v of record.violations) {
-    if (v === null || typeof v !== "object" || Array.isArray(v)
-      || Object.keys(v).some(key => !["scope", "unitKey", "candidateId", "type", "aspect", "factId"].includes(key))
-      || !["expression", "planning", "legacy"].includes(v.scope)
-      || !["extra_inquiry", "missing_response", "answer_mismatch", "intent_mismatch"].includes(v.type)
-      || (v.factId !== undefined && (!id(v.factId) || v.aspect === null))
-      || (v.aspect !== null && !INQUIRY_ASPECTS.includes(v.aspect))
-      || (v.unitKey === undefined ? !id(v.candidateId) : !id(v.unitKey) || v.candidateId !== undefined)) return null;
-  }
-  return record as unknown as DialogueConsistencyVerdict;
-}
-
-/** Only approved outputs and explicit SafeContext fields enter the reviewer DTO. */
+/** One item per complete utterance or candidate; reference scope remains independently approved. */
 export function dialogueConsistencyReviewInput(job: StoredJob, plan: ApprovedPlan): Check<{
-  request: DialogueConsistencyReviewRequest; digest: string; compiled: CompiledDialogueReview;
+  request: DialogueConsistencyReviewRequest; digest: string; routes: ReadonlyMap<string, string>;
 } | null> {
-  if (!shouldReviewDialogueConsistency(plan)) return { ok: true, value: null };
-  if ((plan.currentUtterance?.inquiries?.length ?? 0) > 0 && !plan.units.some(unit =>
-    unit.stage === "character" && unit.point.stepKey === "current" && unit.speakerId === plan.currentUtterance?.npcId))
-    return fail("plan_reply_missing");
+  if (!shouldReviewDialogueConsistency(plan)) return { ok: true, value: null }; // explicit legacy/offline data only
   const approved = new Map<string, UnitOutput>();
+  const items: DialogueConsistencyReviewRequest["items"][number][] = [];
   const contexts: SafeContext[] = [];
-  const subjects: DialogueReviewSubject[] = [];
+  const routes = new Map<string, string>();
   while (approved.size < plan.units.length) {
     const ready = readyUnits(plan.units, new Set(approved.keys()));
     if (ready.length === 0) return fail("staged_dependency_unmet");
     for (const unit of ready) {
-      const stored = job.units.find(s => s.key === unit.key);
+      const stored = job.units.find(stored => stored.key === unit.key);
       if (stored?.status !== "approved" || stored.value === null || !("stage" in stored.value)) return fail("assemble_unit_missing");
-      const output = stored.value;
       const projected = projectUnitContext({ plan, unit, approved });
       if (!projected.ok) return projected;
       const context = projected.value;
+      const draft = context.draft;
+      if (draft === undefined) return fail("plan_draft_missing");
+      const output = stored.value;
       const valid = approveUnit({ unit, context, output });
       if (!valid.ok) return valid;
       contexts.push(context);
-      const currentReply = unit.stage === "character" && unit.point.stepKey === "current"
-        && unit.speakerId === plan.currentUtterance?.npcId;
-      const decisionReply = unit.stage === "character" && unit.point.stepKey === plan.choiceExpression?.point.stepKey
-        && unit.speakerId === plan.choiceExpression?.npcId;
-      if (output.stage === "choices" || (output.stage === "character" && (currentReply || decisionReply))) {
-        const selectedLabel = currentReply ? context.playerUtterance : null;
-        if (output.stage === "character") {
-          subjects.push({ unitKey: unit.key, kind: "answer", intent: context.unit.task?.intent ?? null,
-            brief: context.unit.task?.brief ?? context.taskInstruction ?? null, text: output.parts.map(part => part.text).join("\n"),
-            inquiries: context.selectedDialogueContract?.inquiries ?? [], answers: context.unit.task?.answers ?? [],
-            prerequisiteFactIds: context.unit.task?.prerequisiteFactIds ?? [],
-            topicFactIds: (context.unit.task?.focusFactIds ?? []).filter(id => context.visibleFacts.some(f => f.id === id)),
-            facts: context.visibleFacts,
-            ...(selectedLabel === null ? {} : { selected: { label: selectedLabel,
-              historicalChoice: job.input.kind === "decision" && job.input.job.generationKind !== "npc_free_text"
-                && job.input.job.selectedDialogue !== undefined,
-              topicFactIds: job.input.kind === "decision" ? (job.input.job.selectedDialogue?.task?.focusFactIds ?? [])
-                .filter(id => context.visibleFacts.some(f => f.id === id)) : [],
-              contract: context.selectedDialogueContract === undefined ? null : { ...context.selectedDialogueContract,
-                brief: job.input.kind === "decision" ? job.input.job.selectedDialogue?.task?.brief
-                  ?? context.selectedDialogueContract.brief : context.selectedDialogueContract.brief } } }),
-          });
-        } else for (const label of output.labels) {
-          const option = context.options.find(o => o.candidateId === label.candidateId)!;
-          const planned = plan.choiceExpression?.options.find(o => o.candidateId === label.candidateId);
-          const task = planned !== undefined && "task" in planned ? planned.task : undefined;
-          subjects.push({ unitKey: unit.key, candidateId: label.candidateId, kind: "option",
-            intent: option.dialogueAct, brief: task?.brief ?? option.publicIntent.text, text: label.label,
-            inquiries: option.inquiries ?? [], answers: [], prerequisiteFactIds: option.prerequisiteFactIds ?? [],
-            topicFactIds: [...(task?.focusFactIds ?? []),
-              ...(planned !== undefined && "topic" in planned && planned.topic.kind === "fact" ? [String(planned.topic.factId)] : [])]
-              .filter(id => context.visibleFacts.some(f => f.id === id)),
-            facts: context.visibleFacts,
-          });
+      const add = (draftText: string, text: string, factIds?: readonly string[]) => {
+        const id = `polish_${items.length}`;
+        routes.set(id, unit.key);
+        items.push({ id, stage: unit.stage, draft: draftText, text,
+          facts: context.visibleFacts.filter(fact => factIds === undefined || factIds.includes(fact.id))
+            .map(({ id, text, certainty }) => ({ id, text, certainty })),
+          scene: context.scene, speaker: context.dialogue?.speakerName ?? context.persona?.publicName ?? context.scene?.playerName,
+          ...(context.playerUtterance === null ? {} : { selectedLabel: context.playerUtterance }) });
+      };
+      if (draft.stage === "choices" && output.stage === "choices") {
+        for (const label of draft.labels) {
+          const final = output.labels.find(candidate => candidate.candidateId === label.candidateId);
+          if (final === undefined) return fail("unit_output_candidate_missing");
+          const option = context.options.find(option => option.candidateId === label.candidateId);
+          add(label.label, final.label, option?.publicIntent.facts.map(fact => fact.factId));
         }
-      }
+      } else if (draft.stage !== "choices" && output.stage !== "choices") {
+        add(draft.parts.map(part => part.text).join("\n"), output.parts.map(part => part.text).join("\n"));
+      } else return fail("unit_output_stage_mismatch");
       approved.set(unit.key, output);
     }
   }
-  const compiled = compileDialogueReviewChecks(subjects, "expression");
-  const request = compiled.request;
+  const request = { items };
   if ([...JSON.stringify(request)].length > DIALOGUE_REVIEW_CONTEXT_LIMIT) return fail("dialogue_consistency_context_limit");
-  // Full input is hashed locally; private plan/world data is never sent to the reviewer.
   const digest = narrativeInputDigest({ version: DIALOGUE_REVIEW_VERSION, policyRevision: DIALOGUE_REVIEW_POLICY_REVISION,
-    cycle: job.cycle, inputDigest: job.inputDigest, proposal: plan.proposal, contexts,
-    units: job.units.map(unit => ({ key: unit.key, inputDigest: unit.inputDigest, value: unit.value })), request,
-  });
-  return { ok: true, value: { request, digest, compiled } };
+    cycle: job.cycle, inputDigest: job.inputDigest, proposal: plan.proposal, contexts, request,
+    units: job.units.map(unit => ({ key: unit.key, inputDigest: unit.inputDigest, value: unit.value })) });
+  return { ok: true, value: { request, digest, routes } };
 }
-
 export function validateJobDialogueConsistencyReview(job: StoredJob, plan: ApprovedPlan): Check<true> {
-  const planning = validatePlanningDialogueReviews(job, plan);
-  if (!planning.ok) return planning;
   const input = dialogueConsistencyReviewInput(job, plan);
   if (!input.ok) return input;
   if (input.value === null) return { ok: true, value: true };
@@ -145,22 +92,15 @@ export function validateJobDialogueConsistencyReview(job: StoredJob, plan: Appro
     && receipt.inputDigest === input.value.digest && receipt.passDigest === input.value.digest
     ? { ok: true, value: true } : fail("dialogue_consistency_review_required");
 }
-
 export function isStoredDialogueReview(value: unknown): boolean {
-  if (value === undefined) return true;
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
-  const r = value as Record<string, unknown>;
-  return Object.keys(r).every(key => ["version", "cycle", "inputDigest", "attempts", "status", "passDigest", "violations", "protocolCorrections", "contentRepairs", "lastFailure", "protocolIssue"].includes(key))
-    && r.version === DIALOGUE_REVIEW_VERSION && Number.isInteger(r.cycle) && Number(r.cycle) >= 0
-    && Number.isInteger(r.attempts) && Number(r.attempts) >= 0 && Number(r.attempts) <= DIALOGUE_REVIEW_MAX_ATTEMPTS
-    && ((r.protocolCorrections === undefined && r.contentRepairs === undefined && Number(r.attempts) <= 2)
-      || ([r.protocolCorrections, r.contentRepairs].every(n => n === 0 || n === 1)
-        && Number(r.protocolCorrections) + Number(r.contentRepairs) <= Number(r.attempts)
-        && Number(r.attempts) <= 1 + Number(r.protocolCorrections) + Number(r.contentRepairs)))
-    && (r.lastFailure === undefined || ["protocol_error", "provider_failure", "uncertain", "outcome_unknown", "content_recheck", "exhausted"].includes(r.lastFailure as string))
-    && (r.protocolIssue === undefined || isReviewProtocolIssue(r.protocolIssue))
-    && typeof r.inputDigest === "string" && /^[a-f0-9]{64}$/.test(r.inputDigest)
-    && ["pending", "running", "approved", "failed", "unknown"].includes(r.status as string)
-    && (r.passDigest === undefined || (r.status === "approved" && typeof r.passDigest === "string" && /^[a-f0-9]{64}$/.test(r.passDigest)))
-    && (r.violations === undefined || parseDialogueConsistencyVerdict({ verdict: "reject", violations: r.violations }) !== null);
+  if (value === undefined || (isPlainRecord(value) && value.version === 1)) return isLegacyStoredDialogueReview(value);
+  if (!isPlainRecord(value)) return false;
+  return hasOnlyKeys(value, ["version", "cycle", "inputDigest", "attempts", "status", "passDigest", "failedIds", "lastFailure"])
+    && value.version === 2 && Number.isInteger(value.cycle) && Number(value.cycle) >= 0
+    && Number.isInteger(value.attempts) && Number(value.attempts) >= 0 && Number(value.attempts) <= 2
+    && typeof value.inputDigest === "string" && /^[a-f0-9]{64}$/.test(value.inputDigest)
+    && ["pending", "running", "approved", "failed", "unknown"].includes(String(value.status))
+    && (value.passDigest === undefined || (value.status === "approved" && value.passDigest === value.inputDigest))
+    && (value.failedIds === undefined || (Array.isArray(value.failedIds) && value.failedIds.every(id => typeof id === "string" && /^polish_\d+$/.test(id))))
+    && (value.lastFailure === undefined || ["protocol_error", "provider_failure", "uncertain", "outcome_unknown", "content_recheck", "exhausted"].includes(String(value.lastFailure)));
 }

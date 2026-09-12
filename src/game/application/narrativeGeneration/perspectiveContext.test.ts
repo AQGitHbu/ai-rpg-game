@@ -55,7 +55,7 @@ it("同序未列required键的speech观察上限进入prompt和审批，降级�
   const projected = projectUnitContext({ plan, unit, approved: approvedOutputs() });
   if (!projected.ok) throw Error(projected.code);
   expect(projected.value.requiredObservations).toEqual([{ key: "implicit_speech", factId: FACT_PUB, certainty: "suspected" }]);
-  const prompt = buildCharacterPrompt(projected.value);
+  const prompt = buildCharacterPrompt({ ...projected.value, draft: makeCharacterOutput(projected.value.unit.speakerId!) });
   expect(prompt).toContain("suspected");
   expect(prompt).toContain("implicit_speech");
   expect(prompt).not.toContain("other_step_secret");
@@ -159,7 +159,7 @@ function withTamperedAnchors(world: WorldState): WorldState {
   return cloned;
 }
 
-function approvedPlanOf(world: WorldState, proposal: PlanProposal = makeStagedPlan()) {
+function approvedPlanOf(world: WorldState, proposal: PlanProposal = makeStagedPlan(true)) {
   if (proposal.decision?.kind === "ordinary") {
     const options = proposal.decision.options;
     proposal = { ...proposal, decision: { ...proposal.decision, options: [
@@ -225,25 +225,25 @@ describe("projectUnitContext", () => {
     expect(second.ok && second.value.persona?.delivery).toEqual({ sentenceLength: "long", register: "formal", tone: "neutral" });
     expect(JSON.stringify([first, second])).not.toContain(SENTINEL);
     if (!first.ok || !second.ok) throw new Error("style projection failed");
-    const prompt = buildCharacterPrompt(first.value);
-    expect(prompt).toContain("sentenceLength=short，register=neutral，tone=restrained");
-    expect(buildCharacterPrompt(second.value)).toContain("sentenceLength=long，register=formal，tone=neutral");
+    const prompt = buildCharacterPrompt({ ...first.value, draft: makeCharacterOutput(first.value.unit.speakerId!) });
+    expect(prompt).toContain(JSON.stringify(first.value.persona?.delivery));
+    expect(buildCharacterPrompt({ ...second.value, draft: makeCharacterOutput(second.value.unit.speakerId!) })).toContain(JSON.stringify(second.value.persona?.delivery));
     expect(prompt).not.toContain(SENTINEL);
-    expect(prompt).not.toContain("冷静");
-    expect(prompt).toContain("无公开人格锚点时");
+    expect(prompt).not.not.toContain(SENTINEL);
+    expect(prompt).toContain("公开角色和语气");
     const narration = contextOf(plan, FIXTURE_NARRATION_UNIT);
     if (!narration.ok) throw new Error(narration.code);
-    expect(buildNarrationPrompt(narration.value)).toContain("冷静");
-    expect(buildNarrationPrompt(narration.value)).not.toContain(SENTINEL);
+    expect(buildNarrationPrompt({ ...narration.value, draft: { stage: "narration", parts: [{ text: "本场衔接。", facts: [], evidence: [], beatIds: [] }], actionKeys: [] } })).not.toContain(SENTINEL);
+    expect(buildNarrationPrompt({ ...narration.value, draft: { stage: "narration", parts: [{ text: "本场衔接。", facts: [], evidence: [], beatIds: [] }], actionKeys: [] } })).not.toContain(SENTINEL);
     // 改主角特质只改变玩家刻画，不能改变 NPC prompt/delivery。
     Object.assign(world.generation.setup!, { personalityTags: ["幽默"] });
     const changed = contextOf(approvedPlanOf(world), FIXTURE_NPC_A_UNIT);
     if (!changed.ok) throw new Error(changed.code);
-    expect(buildCharacterPrompt(changed.value)).toBe(prompt);
+    expect(buildCharacterPrompt({ ...changed.value, draft: makeCharacterOutput(changed.value.unit.speakerId!) })).toBe(prompt);
   });
 
   it("选项只保留已审批 task 的安全询问，不从自由 brief 推导问题", () => {
-    const base = makeStagedPlan();
+    const base = makeStagedPlan(true);
     if (base.decision?.kind !== "ordinary") throw new Error("ordinary fixture required");
     const proposal: PlanProposal = { ...base, decision: { ...base.decision, options: [
       { ...base.decision.options[0], dialogueAct: "ask", task: { intent: "ask", brief: "问清来源与可信程度",
@@ -259,17 +259,15 @@ describe("projectUnitContext", () => {
     ]);
   });
   it("当前 NPC 只拿自己的回应结果，其他 NPC 不继承原话或上一轮选项", () => {
-    const base = makeStagedPlan();
+    const base = makeStagedPlan(true);
     const plan = { ...approvedPlanOf(personaWorld(), { ...base, units: base.units.map(unit => unit.speakerId === FIXTURE_NPC_A
-      ? { ...unit, task: { intent: "admit_unknown", focusFactIds: [], prerequisiteFactIds: [], answers: [
-        { factId: FACT_PUB, aspect: "source", outcome: "unknown", answerFactIds: [] },
-      ] } } : unit) }), currentUtterance: { npcId: FIXTURE_NPC_A, text: "PLAYER_QUESTION",
+      ? { ...unit, task: { intent: "admit_unknown", focusFactIds: [], prerequisiteFactIds: [], brief: "我不知道。" } } : unit) }), currentUtterance: { npcId: FIXTURE_NPC_A, text: "PLAYER_QUESTION",
       inquiries: [{ factId: FACT_PUB, aspects: ["source"] as const }],
       previousReply: { text: "MY_PREVIOUS_REPLY", factIds: [] }, previousChoices: ["OLD_A", "OLD_B"] } };
     const npc = contextOf(plan, FIXTURE_NPC_A_UNIT);
     expect(npc.ok).toBe(true);
     if (npc.ok) {
-      expect(npc.value.taskInstruction).toContain("明确表示不知道");
+      expect(npc.value.taskInstruction).toContain("我不知道。");
       expect(npc.value.previousReply).toBe("MY_PREVIOUS_REPLY");
       expect(npc.value.options).toEqual([]);
       expect(npc.value.previousChoices).toBeUndefined();
@@ -286,7 +284,7 @@ describe("projectUnitContext", () => {
   });
 
   it("未来选项不继承旧场景原文、玩家问题或其他 NPC 的内容", () => {
-    const base = makeStagedPlan();
+    const base = makeStagedPlan(true);
     const choice = base.units.find(unit => unit.stage === "choices")!;
     const plan = approvedPlanOf(personaWorld(), { ...base,
       steps: [{ key: "next", trigger: { kind: "explore", locationId: asLocationId("loc_a") }, next: [] }],
@@ -308,7 +306,7 @@ describe("projectUnitContext", () => {
     const npc = world.entityStore.records.find(r => r.core.kind === "npc" && String(r.core.id) === FIXTURE_NPC_A) as NpcEntityRecord;
     Object.assign(npc.knowledge.entries.find(e => String(e.factId) === FACT_PUB)!, { disclosure: "conditional" });
     Object.assign(npc.relationships.outgoing.find(e => String(e.targetId) === "player_0")!, { stage });
-    const base = makeStagedPlan();
+    const base = makeStagedPlan(true);
     const plan = approvedPlanOf(world, { ...base, units: base.units.map(u => u.key === FIXTURE_NPC_A_UNIT
       ? { ...u, task: { intent: "inform", focusFactIds: [FACT_PUB], prerequisiteFactIds: [] } } : u) });
     const result = contextOf(plan, FIXTURE_NPC_A_UNIT);
@@ -316,7 +314,7 @@ describe("projectUnitContext", () => {
   });
 
   it("具体意图与先求证条件保真：合法事实不许可任意规划正文", () => {
-    const base = makeStagedPlan();
+    const base = makeStagedPlan(true);
     if (base.decision?.kind !== "ordinary") throw Error("decision");
     const proposal: PlanProposal = { ...base,
       units: base.units.map(unit => unit.stage === "narration" ? { ...unit,
@@ -338,7 +336,7 @@ describe("projectUnitContext", () => {
   });
 
   it("旁白与角色都不能拿到未来步骤或尚未发生的表演动作", () => {
-    const base = makeStagedPlan();
+    const base = makeStagedPlan(true);
     const proposal: PlanProposal = { ...base, actions: [
       { key: "future_scene", actorId: FIXTURE_NPC_A, point: { stepKey: "elsewhere", order: 0 },
         kind: "look", objectId: null, audienceIds: ["player_0"] },
@@ -353,7 +351,7 @@ describe("projectUnitContext", () => {
   });
 
   it("先求证条件也不能携带秘密，不能静默删条件冒充原意图", () => {
-    const base = makeStagedPlan();
+    const base = makeStagedPlan(true);
     const plan = approvedPlanOf(personaWorld(), { ...base, units: base.units.map(unit =>
       unit.stage === "narration" ? { ...unit, task: { intent: "describe", focusFactIds: [FACT_PUB],
         prerequisiteFactIds: [FACT_SECRET] } } : unit) });
@@ -361,7 +359,7 @@ describe("projectUnitContext", () => {
   });
 
   it("规划意图和节拍即使不标注秘密引用，也不能把正文传给表达器", () => {
-    const base = makeStagedPlan();
+    const base = makeStagedPlan(true);
     const proposal: PlanProposal = {
       ...base,
       decision: base.decision?.kind === "ordinary" ? {
@@ -398,7 +396,7 @@ describe("projectUnitContext", () => {
     if (!result.ok) return;
     const context = result.value;
     expect(JSON.stringify(context)).not.toContain(SENTINEL);
-    expect(buildCharacterPrompt(context)).not.toContain(SENTINEL);
+    expect(buildCharacterPrompt({ ...context, draft: makeCharacterOutput(context.unit.speakerId!) })).not.toContain(SENTINEL);
     // 人格保留公开身份与当前情绪，不被过滤成空壳
     expect(context.persona).not.toBeNull();
     if (context.persona === null) return;
@@ -454,7 +452,7 @@ describe("projectUnitContext", () => {
   });
 
   it("新增 DAG 依赖不能把玩家私聊原文授权给其他 NPC", () => {
-    const base = makeStagedPlan();
+    const base = makeStagedPlan(true);
     const plan = approvedPlanOf(personaWorld(), { ...base, units: base.units.map(unit =>
       unit.key === FIXTURE_NPC_B_UNIT ? { ...unit, dependencies: [FIXTURE_NPC_A_UNIT] } : unit) });
     const output = makeCharacterOutput(FIXTURE_NPC_A);
@@ -480,7 +478,7 @@ describe("projectUnitContext", () => {
 
   it("终幕表达投影 ending 候选，不需要 RouteTarget", () => {
     const proposal: PlanProposal = {
-      ...makeStagedPlan(),
+      ...makeStagedPlan(true),
       decision: {
         kind: "ending",
         point: { stepKey: "current", order: 4 },
@@ -503,8 +501,8 @@ describe("projectUnitContext", () => {
   it("重建 Unit：taskFactIds 与观察引用只保留授权后的子集", () => {
     const world = personaWorld();
     const proposal: PlanProposal = {
-      ...makeStagedPlan(),
-      units: makeStagedPlan().units.map((unit) =>
+      ...makeStagedPlan(true),
+      units: makeStagedPlan(true).units.map((unit) =>
         unit.key === FIXTURE_NPC_A_UNIT
           ? { ...unit, taskFactIds: [FACT_PUB, FACT_SECRET] }
           : unit),
@@ -523,8 +521,8 @@ describe("projectUnitContext", () => {
       { key: "character_npc_9", stage: "character", point: { stepKey: "current", order: 2 }, speakerId: "npc_9", dependencies: [], taskFactIds: [], requiredObservationKeys: [], requiredBeats: [] },
       { key: FIXTURE_CHOICE_UNIT, stage: "choices", point: { stepKey: "current", order: 3 }, speakerId: null, dependencies: [FIXTURE_NARRATION_UNIT, "character_npc_9"], taskFactIds: [], requiredObservationKeys: [], requiredBeats: [] },
     ];
-    const proposal: PlanProposal = { ...makeStagedPlan(), units,
-      decision: { ...makeStagedPlan().decision!, point: { stepKey: "current", order: 3 } } };
+    const proposal: PlanProposal = { ...makeStagedPlan(true), units,
+      decision: { ...makeStagedPlan(true).decision!, point: { stepKey: "current", order: 3 } } };
     const plan = approvedPlanOf(world, proposal);
     const ghostUnit = plan.units.find((candidate) => candidate.key === "character_npc_9");
     if (ghostUnit === undefined) throw new Error("fixture missing ghost unit");

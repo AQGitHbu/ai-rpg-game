@@ -146,9 +146,6 @@ function parsePayloadJob(text: string, expectedId: string): JobCheck<StoredJob> 
   if (!isStoredPlanningSemanticRepair(parsed["planningSemanticRepair"])) return { ok: false, code: "UNSUPPORTED_JOB" };
   if (!isStoredDialogueReview(parsed["dialogueConsistencyReview"])) return { ok: false, code: "UNSUPPORTED_JOB" };
   const job = { ...(parsed as unknown as StoredJob), units };
-  if (job.planningSemanticRepair !== undefined && (job.planningSemanticRepair.cycle !== job.cycle
-    || job.planningSemanticRepair.inputDigest !== job.inputDigest
-    || !approvePlanningContext(job.input, job.planningSemanticRepair.anchor).ok)) return { ok: false, code: "UNSUPPORTED_JOB" };
   return { ok: true, value: job };
 }
 

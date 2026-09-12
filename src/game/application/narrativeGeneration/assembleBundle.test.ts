@@ -53,7 +53,7 @@ function observation(
 function approvedPlan(proposalOverrides: Partial<PlanProposal> = {}) {
   const result = approvePlan({
     kind: "decision",
-    proposal: { ...makeStagedPlan(), ...proposalOverrides },
+    proposal: { ...makeStagedPlan(true), ...proposalOverrides },
     world: branchWorld(),
     story: branchStory(),
   });
@@ -77,7 +77,7 @@ function fullApprovedMap(overrides: {
 
 describe("assembleBundle", () => {
   it("真实 parser 的 decision=null 终幕经规则派生、选项表达与装配闭环", () => {
-    const parsed = parsePlanProposal({ ...makeStagedPlan(), decision: null, terminal: { kind: "ending" } });
+    const parsed = parsePlanProposal({ ...makeStagedPlan(true), decision: null, terminal: { kind: "ending" } });
     if (!parsed.ok) throw Error(parsed.code);
     const world = { ...branchWorld(), endings: [
       { id: asEndingId("ending_trust"), name: "信任", description: "未发生的结果", requirements: [] },
@@ -117,7 +117,7 @@ describe("assembleBundle", () => {
     expect(result.value.currentScene.segments[0]?.text).toContain("门外响起脚步声。");
   });
   it("未来决策不能被提升为当前场景而提前剧透", () => {
-    const base = makeStagedPlan();
+    const base = makeStagedPlan(true);
     if (base.decision === null) throw new Error("missing decision");
     const plan = approvedPlan({
       units: base.units.map(unit => unit.stage === "choices"
@@ -158,10 +158,10 @@ describe("assembleBundle", () => {
 
   it("后续 stepKey 的单元进入 continuationScenes", () => {
     const plan = approvedPlan({
-      units: makeStagedPlan().units.map((u) =>
+      units: makeStagedPlan(true).units.map((u) =>
         u.key === FIXTURE_NPC_B_UNIT ? { ...u, point: { stepKey: "arrive", order: 1 } }
           : u.stage === "choices" ? { ...u, point: { stepKey: "arrive", order: 4 } } : u),
-      decision: { ...makeStagedPlan().decision!, point: { stepKey: "arrive", order: 4 } },
+      decision: { ...makeStagedPlan(true).decision!, point: { stepKey: "arrive", order: 4 } },
       steps: [{ key: "arrive", trigger: { kind: "move", locationId: asLocationId("loc_b") }, next: [] }],
       terminal: { kind: "next_decision", target: { kind: "continuation_step", stepKey: "arrive" } },
     });
@@ -188,7 +188,7 @@ describe("assembleBundle", () => {
   it("句段 fact 与观察引用保持逐 speaker 来源", () => {
     const plan = approvedPlan({
       observations: [observation("obs_speech_1", FIXTURE_NPC_A)],
-      units: makeStagedPlan().units.map((u) =>
+      units: makeStagedPlan(true).units.map((u) =>
         u.key === FIXTURE_NPC_A_UNIT
           ? {
             ...u,
@@ -223,7 +223,7 @@ describe("assembleBundle", () => {
         observation("obs_witness_1", null),
         observation("obs_speech_1", FIXTURE_NPC_A),
       ],
-      units: makeStagedPlan().units.map((u) => {
+      units: makeStagedPlan(true).units.map((u) => {
         if (u.key === FIXTURE_NARRATION_UNIT) {
           return { ...u, requiredObservationKeys: ["obs_witness_1"] };
         }
@@ -280,7 +280,7 @@ describe("assembleBundle", () => {
 
   it("旁白句段必须携带已知节拍", () => {
     const plan = approvedPlan({
-      units: makeStagedPlan().units.map((u) =>
+      units: makeStagedPlan(true).units.map((u) =>
         u.key === FIXTURE_NARRATION_UNIT
           ? { ...u, requiredBeats: [{ beatId: "beat_open", kind: "atmosphere" as const, factIds: [], evidence: [], instruction: "氛围" }] }
           : u),

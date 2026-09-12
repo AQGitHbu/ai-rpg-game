@@ -14,7 +14,7 @@ function setup(audienceIds: readonly string[] = [PLAYER_ENTITY_ID, "npc_0", "npc
     npcs: [ { ...npc, memory: { ...npc.memory, knownFactIds: [asFactId("fact_rumor")] } },
       { ...npc, id: asNpcId("npc_1"), name: "小陈", memory: { ...npc.memory, npcId: asNpcId("npc_1") } } ],
   });
-  const proposal = makeStagedPlan();
+  const proposal = makeStagedPlan(true);
   const result = approvePlan({ kind: "decision", world, story: branchStory(), proposal: { ...proposal,
     observations: [{ key: "heard", point: { stepKey: "current", order: 2 }, audienceIds,
       fact: { factId: "fact_rumor", certainty: "known" }, source: { kind: "speech", speakerId: "npc_0" } }],

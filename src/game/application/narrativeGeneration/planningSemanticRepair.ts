@@ -1,31 +1,8 @@
-import { parsePlanProposal, type PlanProposal } from "@/game/domain/narrativePlan";
+// Historical data reader only; this state no longer participates in generation or publication.
+import { parsePlanProposal } from "@/game/domain/narrativePlan";
 import type { StoredJob } from "../server/persistence/narrativeJobRepository";
-import { isStoredDialogueReview } from "./dialogueConsistencyReview";
+import { isLegacyStoredDialogueReview as isStoredDialogueReview } from "./legacyDialogueReview";
 import { narrativeInputDigest } from "./narrativeInputDigest";
-import { planningSceneContract } from "./planningSceneContract";
-import { approvePlanningContext } from "./approvePlanningContext";
-import type { StageExecution } from "./stageSource";
-
-export const PLANNING_CONTRACT = "dialogue_consistency_planning_contract";
-export function planningAnchorDigest(plan: PlanProposal): string {
-  // Tasks and candidate intentions may change; world, knowledge and rule topology may not.
-  const { opening, worldDelta, steps, terminal, observations, actions } = plan;
-  return narrativeInputDigest({ opening, worldDelta, steps, terminal, observations, actions });
-}
-export function planningSemanticFeedback(job: StoredJob): StageExecution["repair"] {
-  const repair = job.planningSemanticRepair;
-  if (repair?.cycle !== job.cycle || repair.used !== 1) return undefined;
-  const approved = approvePlanningContext(job.input, repair.anchor);
-  if (!approved.ok) return undefined;
-  return { attempt: job.units.find(u => u.key === "planning")?.attempts ?? 0,
-    reason: PLANNING_CONTRACT, rejectionCode: PLANNING_CONTRACT,
-    detail: JSON.stringify({ violations: repair.violations, approvedProposal: repair.anchor,
-      approvedOpening: repair.anchor.opening, approvedWorldDelta: repair.anchor.worldDelta,
-      ...(approved.value.ruleSceneGraph === undefined ? {} : {
-        sceneContract: planningSceneContract(approved.value.ruleSceneGraph,
-          job.input.kind === "decision" ? job.input.job.focusNpcId ?? null : null),
-      }) }) };
-}
 export function isStoredPlanningSemanticRepair(value: unknown): boolean {
   if (value === undefined) return true;
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;

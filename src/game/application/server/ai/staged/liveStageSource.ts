@@ -8,8 +8,9 @@ import type { AiCompletionResult, AiMessage } from "@ai-game/ai-transport";
 import { aiRepairAuditContext, createAiSourceFailure, type AiSourceFailure } from "@/game/application/aiGenerationRetry";
 import { transportFailureCodeToCategory } from "@/game/application/aiGenerationFailure";
 import { parseStructuredJsonObject } from "@/game/core/json";
-import { parsePlanProposal } from "@/game/domain/narrativePlan";
-import { parseUnitOutput } from "@/game/domain/narrativeUnit";
+import { hasOnlyKnownOpeningCandidateKeys } from "../openingGenerationSource";
+import { parseLiveDraftPlan } from "@/game/domain/liveDraftPlan";
+import { applyPolish } from "@/game/domain/draftPolish";
 import type {
   StageExecution,
   StageRequest,
@@ -23,9 +24,9 @@ import { buildCharacterPrompt } from "./characterPrompt";
 import { buildChoicePrompt } from "./choicePrompt";
 import { buildDialogueConsistencyReviewPrompt } from "./dialogueConsistencyReviewPrompt";
 import { DIALOGUE_REVIEW_CONTEXT_LIMIT } from "@/game/application/narrativeGeneration/dialogueConsistencyReview";
-import { validateDialogueReviewVerdict, reviewProtocolDetail } from "@/game/application/narrativeGeneration/dialogueReviewChecks";
+import { parsePolishReviewVerdict } from "@/game/application/narrativeGeneration/dialogueConsistencyReview";
 import { buildDisclosureReviewPrompt } from "./disclosureReviewPrompt";
-import { plannedReplyRejection, repeatedNpcResponseUnits } from "@/game/application/narrativeGeneration/dialogueContinuity";
+import { repeatedNpcResponseUnits } from "@/game/application/narrativeGeneration/dialogueContinuity";
 
 const STAGE_ROLES: Readonly<Record<StageRequest["stage"], RpgAiRole>> = {
   planning: "planning",
@@ -86,7 +87,6 @@ function providerFailure(result: ProviderFailureResult) {
  */
 export function createLiveStageSource(options: CreateLiveStageSourceOptions): StageSource {
   return {
-    requiresTaskBrief: true,
     async reviewDialogueConsistency(request, execution) {
       if ([...JSON.stringify(request)].length > DIALOGUE_REVIEW_CONTEXT_LIMIT)
         return invalidContent("dialogue_consistency_context_limit");
@@ -95,11 +95,10 @@ export function createLiveStageSource(options: CreateLiveStageSourceOptions): St
           : { ...execution.audit, retry: aiRepairAuditContext(execution.repair, execution.audit.retry) },
         { signal: execution.signal, timeoutMs: Math.min(30_000, execution.timeoutMs) });
       if (!response.ok) return providerFailure(response);
-      if ([...response.content].length > 4_000) return invalidContent("dialogue_consistency_review_invalid", reviewProtocolDetail({ code: "response_too_long", path: "$" }));
+      if ([...response.content].length > 4_000) return invalidContent("dialogue_consistency_review_invalid", "response too long");
       const parsed = parseStructuredJsonObject(response.content);
-      const verdict = parsed.ok ? validateDialogueReviewVerdict(parsed.value, request)
-        : { ok: false as const, issue: { code: "invalid_json" as const, path: "$" } };
-      return !verdict.ok ? invalidContent("dialogue_consistency_review_invalid", reviewProtocolDetail(verdict.issue)) : { ok: true, ...verdict.value };
+      const verdict = parsed.ok ? parsePolishReviewVerdict(parsed.value, request) : { ok: false as const, code: "invalid_json" };
+      return !verdict.ok ? invalidContent("dialogue_consistency_review_invalid", "Only verdict and failedIds are allowed") : { ok: true, ...verdict.value };
     },
     async reviewDisclosure(request, execution) {
       const prompt = buildDisclosureReviewPrompt(request);
@@ -153,28 +152,16 @@ export function createLiveStageSource(options: CreateLiveStageSourceOptions): St
       }
 
       if (request.stage === "planning") {
-        const proposal = parsePlanProposal(parsed.value);
+        if (parsed.value.opening !== null && parsed.value.opening !== undefined
+          && !hasOnlyKnownOpeningCandidateKeys(parsed.value.opening)) return invalidContent("opening_unknown_keys");
+        const proposal = parseLiveDraftPlan(parsed.value);
         if (!proposal.ok) return invalidContent(proposal.code, proposal.detail);
-        if (proposal.value.units.some(unit => unit.stage !== "choices" && (unit.task?.brief === undefined
-          || unit.task.contentFactIds === undefined))
-          || (proposal.value.decision?.kind === "ordinary" && proposal.value.decision.options.some(option => option.task?.brief === undefined
-            || option.task.contentFactIds === undefined))) {
-          return invalidContent("plan_task_missing", "每个 narration/character 单元及每个普通候选必须提供 task={intent,brief,focusFactIds,contentFactIds,prerequisiteFactIds}；brief 写完整具体含义，contentFactIds 区分正文必须事实与话题背景。");
-        }
-        const repeatedResponseUnits = repeatedNpcResponseUnits(proposal.value);
-        if (repeatedResponseUnits.length > 0) return invalidContent("plan_character_response_split",
-          `同一步骤的同一 NPC 只能规划一个完整回应单元；请把这些重复单元合并为一个 task：${repeatedResponseUnits.join(",")}`);
-        if (request.context.kind === "decision") {
-          const rejection = plannedReplyRejection(request.context.job, proposal.value);
-          if (rejection !== null) return invalidContent(rejection, "先在当前焦点 NPC 的 task.answers 中逐项规划玩家已问维度的回应结果，再确定两个后续候选。答案只引用本任务授权事实，未知与拒答不得编造答案。");
-        } else if (proposal.value.units.some(unit => (unit.task?.answers?.length ?? 0) > 0)
-          || proposal.value.decision?.options.some(option => "task" in option && (option.task?.answers?.length ?? 0) > 0)) {
-          return invalidContent("plan_reply_question_mismatch", "开局没有已选择的问题，answers 应省略；NPC 开场内容用 task.intent 和授权 focusFactIds 规划。");
-        }
+        if (repeatedNpcResponseUnits(proposal.value).length > 0) return invalidContent("plan_character_response_split");
         return { ok: true, stage: "planning", value: proposal.value };
       }
 
-      const output = parseUnitOutput(parsed.value);
+      if (request.context.draft === undefined) return invalidContent("plan_draft_missing");
+      const output = applyPolish(request.context.draft, parsed.value);
       if (!output.ok) return invalidContent(output.code, output.detail);
       if (output.value.stage !== request.stage) {
         return invalidContent("invalid_schema", `stage: expected ${request.stage}; received ${output.value.stage}`);

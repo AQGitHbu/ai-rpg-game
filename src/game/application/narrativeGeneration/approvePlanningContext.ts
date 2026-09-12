@@ -1,4 +1,4 @@
-import { repeatedDialogueCandidates, plannedReplyRejection, repeatedNpcResponseUnits } from "./dialogueContinuity";
+import { repeatedDialogueCandidates, repeatedNpcResponseUnits } from "./dialogueContinuity";
 import { previousDialogue } from "./dialogueContext";
 import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
 import type { PlanProposal } from "@/game/domain/narrativePlan";
@@ -81,7 +81,7 @@ function preflightStaticAuthority(plan: ApprovedPlan, detail?: string): { ok: fa
         && observation.audienceIds.includes("player_0")));
     if (waitsForObservation) continue;
     const context = projectUnitContext({ plan, unit, approved: new Map(), purpose: "planning" });
-    if (!context.ok && (context.code === "beat_authority_conflict" || context.code === "choice_intent_authority_conflict")) {
+    if (!context.ok) {
       return { ...context, detail: JSON.stringify({ ...JSON.parse(detail ?? "{}"), ...JSON.parse(context.detail ?? "{}") }) };
     }
   }
@@ -93,7 +93,7 @@ export function approvePlanningContext(input: PlanningContext, proposal: PlanPro
   const repeatedResponseUnits = repeatedNpcResponseUnits(proposal);
   if (repeatedResponseUnits.length > 0) return { ok: false, code: "plan_character_response_split",
     detail: JSON.stringify({ repeatedResponseUnits,
-      repairInstruction: "同一 stepKey 的同一 NPC 只能有一个 character 单元；把回答、未知范围、态度和协助内容合并进该单元的完整 brief/task，不自动拆分或依赖表达器补全。" }) };
+      repairInstruction: "同一 stepKey 的同一 NPC 只能有一个 character 单元；把回答、未知范围、态度和协助内容合并进该单元的完整 draft，不自动拆分或依赖表达器补全。" }) };
   if (input.kind === "opening") {
     const approved = approvePlan({ kind: "opening", proposal, generation: input.generation,
       gameLength: input.input.gameLength, seed: input.input.seed });
@@ -198,21 +198,14 @@ export function approvePlanningContext(input: PlanningContext, proposal: PlanPro
   const previous = previousDialogue(input);
   const result = approved.ok ? approvePlanDecision({ ...approved.value, ruleSceneGraph: graph, currentBeatEvidence,
     ...(utterance === undefined ? {} : { currentUtterance: { npcId: input.job.focusNpcId ?? null, text: utterance,
-      inquiries: input.job.selectedDialogue?.task?.inquiries,
-      selectedTask: input.job.selectedDialogue?.task,
       ...(previous === null ? {} : { previousReply: previous.reply, previousChoices: previous.choices }),
     } }),
   }) : approved;
   if (!result.ok) return { ...result, detail };
-  const replyRejection = plannedReplyRejection(input.job, proposal);
-  if (replyRejection !== null) return { ok: false, code: replyRejection, detail: JSON.stringify({
-    ...JSON.parse(detail), selectedDialogue: input.job.selectedDialogue,
-    repairInstruction: "当前焦点 NPC 的 task.answers 必须逐项决定已问维度的 answer/unknown/refuse；答案引用限本任务可说事实。先确定回答结果，再规划后续选项，不把回答内容留给润色器决定。",
-  }) };
   const repeatedCandidates = repeatedDialogueCandidates(input.job, proposal);
   if (repeatedCandidates.length > 0) return { ok: false, code: "plan_dialogue_repeated", detail: JSON.stringify({
     ...JSON.parse(detail), repeatedCandidates, selectedDialogue: input.job.selectedDialogue,
-    repairInstruction: "这些候选重复了玩家刚向同一 NPC 问过的具体维度。先回应已问内容；不知道时明确不知道，再围绕尚未问过的维度、其他已知事实或不同回应意图重做候选。不能只换措辞、删掉 inquiries 或重复询问；不编造答案，不扩大知识权限。保留已批准的 worldDelta 与 sceneContract。",
+    repairInstruction: "这些候选逐字重复已显示的玩家原句。请在保留授权事实的范围内写两个新的直接回应。保留已批准的 worldDelta 与 sceneContract。",
   }) };
   const observationBindingFailure = preflightObservationBindings(proposal, result.value.units);
   if (observationBindingFailure !== null) return observationBindingFailure;

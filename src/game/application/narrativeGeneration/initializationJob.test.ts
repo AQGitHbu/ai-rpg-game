@@ -173,7 +173,7 @@ function createOpeningSource(plan: StageRequest extends never ? never : ReturnTy
   const stages: string[] = [];
   return {
     stages,
-    async reviewDialogueConsistency() { return { ok: true, verdict: "pass", violations: [] }; },
+    async reviewDialogueConsistency() { return { ok: true, verdict: "pass", failedIds: [] }; },
     async generate(request: StageRequest, _execution: StageExecution): Promise<StageSuccess | AiSourceFailure> {
       stages.push(request.stage);
       if (request.stage === "planning") {

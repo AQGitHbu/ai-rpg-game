@@ -1,397 +1,74 @@
 import { expect, it, vi } from "vitest";
-import { createStagedHarness } from "../testing/stagedNarrativeHarness.testutil";
 import { createAiSourceFailure } from "../aiGenerationRetry";
 import { dialogueReviewHarness } from "./dialogueConsistencyFixture.testutil";
-import { runJob } from "./runJob";
-import type { StageSource } from "./stageSource";
 
-it.each([false, true])("free-text有selectedDialogue仍不是旧固定选项；错误legacy verdict不放行：%s", async misclassified => {
-  const { h } = await dialogueReviewHarness(false);
-  const stored = await h.readJob();
-  if (!stored.ok || stored.value.input.kind !== "decision") throw Error("fixture");
-  await h.jobs.save({ lease: h.lease(), expectedVersion: stored.value.version, job: { ...stored.value,
-    input: { ...stored.value.input, job: { ...stored.value.input.job, generationKind: "npc_free_text",
-      utterance: "消息是从哪儿来的？", selectedDialogue: { dialogueAct: "ask", label: "消息是从哪儿来的？" } } } } });
-  let calls = 0;
-  h.source.reviewDialogueConsistency = async request => {
-    if (request.checks.every(c => c.kind.startsWith("plan_"))) return { ok: true, verdict: "pass", violations: [] };
-    calls++;
-    const reply = request.checks.find(c => c.kind === "answer")!;
-    expect(request.checks.some(c => c.kind === "selected")).toBe(false);
-    expect(reply.selectedText).toBe("消息是从哪儿来的？");
-    expect(reply.answers).toEqual([]);
-    return misclassified ? { ok: true, verdict: "reject", violations: [{ checkId: "nonexistent_selected_check", type: "intent_mismatch", inquiryId: null }] } : { ok: true, verdict: "pass", violations: [] };
-  };
-  const result = await h.run();
-  expect(result).toMatchObject(misclassified ? { ok: false, code: "dialogue_consistency_review_failed" } : { ok: true });
-  expect(calls).toBe(misclassified ? 2 : 1);
-});
-
-it("第二次审核拒绝即耗尽，重启不能再发审核或表达；手动新cycle可重做", async () => {
-  const h = createStagedHarness();
-  await h.startDecision();
+it.each(["protocol", "reject"])("%s then reject shares a strict two-request cycle and never replans", async first => {
+  const { h, requests } = await dialogueReviewHarness(false);
   let reviews = 0;
   h.source.reviewDialogueConsistency = async request => {
-    if (request.checks.every(c => c.kind.startsWith("plan_"))) return { ok: true, verdict: "pass", violations: [] };
     reviews++;
-    return { ok: true, verdict: "reject", violations: [{ checkId: request.checks.find(c => c.kind === "option")!.checkId, type: "intent_mismatch", inquiryId: null }] };
+    if (first === "protocol" && reviews === 1) return createAiSourceFailure("scene", "invalid_schema");
+    return { ok: true, verdict: "reject", failedIds: [request.items.find(item => item.stage === "choices")!.id] };
   };
   expect(await h.run()).toMatchObject({ ok: false, code: "dialogue_consistency_review_exhausted" });
   expect(reviews).toBe(2);
-  const loaded = await h.readJob();
-  if (!loaded.ok) throw Error(loaded.code);
-  const count = h.calls.length;
-  // Simulate a restart between atomic reject persistence and failJob persistence.
+  expect(requests.filter(request => request.stage === "planning")).toHaveLength(1);
+  const loaded = await h.readJob(); if (!loaded.ok) throw Error(loaded.code);
+  const count = requests.length;
   await h.jobs.save({ lease: h.lease(), expectedVersion: loaded.value.version, job: { ...loaded.value, status: "pending" } });
   expect(await h.run()).toMatchObject({ ok: false, code: "dialogue_consistency_review_exhausted" });
-  expect(h.calls).toHaveLength(count);
+  expect(requests).toHaveLength(count); expect(reviews).toBe(2);
+});
+
+it("a rejected NPC repolishes its descendants, retaining the approved world and narration", async () => {
+  const { h, requests } = await dialogueReviewHarness(); let reviews = 0;
+  h.source.reviewDialogueConsistency = async (request, execution) => {
+    expect(execution.repair).toBeUndefined();
+    return ++reviews === 1
+      ? { ok: true, verdict: "reject", failedIds: [request.items.find(item => item.stage === "character")!.id] }
+      : { ok: true, verdict: "pass", failedIds: [] };
+  };
+  expect((await h.run()).ok).toBe(true);
+  expect(requests.filter(request => request.stage === "planning")).toHaveLength(1);
+  expect(requests.filter(request => request.stage === "narration")).toHaveLength(1);
+  expect(requests.filter(request => request.stage === "character")).toHaveLength(2);
+  expect(requests.filter(request => request.stage === "choices")).toHaveLength(2);
   expect(reviews).toBe(2);
 });
 
-it("剩余额度耗尽在审核发送前失败，baseline恢复不累加", async () => {
-  const h = createStagedHarness();
-  await h.startDecision();
-  const ready = await h.run();
-  if (!ready.ok) throw Error(ready.code);
-  await h.jobs.save({ lease: h.lease(), expectedVersion: ready.value.version, job: { ...ready.value,
-    usedRequests: ready.value.baselineRequests + 12, dialogueConsistencyReview: undefined } });
-  const review = vi.fn(async () => ({ ok: true as const, verdict: "pass" as const, violations: [] }));
-  h.source.reviewDialogueConsistency = async request => request.checks.every(c => c.kind.startsWith("plan_"))
-    ? { ok: true, verdict: "pass", violations: [] } : review();
-  expect(await h.run()).toMatchObject({ ok: false, code: "job_budget_exhausted" });
-  expect(review).not.toHaveBeenCalled();
-  expect(await h.readJob()).toMatchObject({ ok: true, value: { baselineRequests: ready.value.baselineRequests } });
-});
-
-it("审核在途发生另一个worker接管，旧fence不能写回pass", async () => {
-  const h = createStagedHarness();
-  await h.startDecision();
-  h.source.reviewDialogueConsistency = async request => {
-    if (request.checks.every(c => c.kind.startsWith("plan_"))) return { ok: true, verdict: "pass", violations: [] };
-    h.clock.advance(31_000);
-    const takeover = await h.jobs.claim({ id: h.jobId(), owner: "other-worker", now: h.clock.now(),
-      expiresAt: new Date(Date.parse(h.clock.now()) + 30_000).toISOString() });
-    expect(takeover.ok).toBe(true);
-    return { ok: true, verdict: "pass", violations: [] };
-  };
-  expect(await h.run()).toMatchObject({ ok: false, code: "LEASE_LOST" });
-  expect(await h.readJob()).toMatchObject({ ok: true, value: { status: "pending",
-    dialogueConsistencyReview: { status: "running", attempts: 1 } } });
-});
-
-it("reliability标签追加从哪儿听来：只重做choices，二次合并审核后发布", async () => {
-  const { h, requests } = await dialogueReviewHarness(false);
-  const generate = h.source.generate;
-  let choices = 0;
-  h.source.generate = async (request, execution) => {
-    const response = await generate(request, execution);
-    if (response.ok && response.stage === "choices" && response.value.stage === "choices") {
-      choices++;
-      if (choices === 1) return { ...response, value: { ...response.value, labels: response.value.labels.map((label, i) =>
-        i === 0 ? { ...label, label: "告示可信吗，从哪儿听来的？" } : label) } };
-      expect(execution.repair).toMatchObject({ rejectionCode: "dialogue_consistency_rejected" });
-      expect(execution.repair?.detail).toContain('"aspect":"source"');
-    }
-    return response;
-  };
-  let reviews = 0;
-  h.source.reviewDialogueConsistency = async request => {
-    if (request.checks.every(c => c.kind.startsWith("plan_"))) return { ok: true, verdict: "pass", violations: [] };
-    reviews++;
-    const choice = request.checks.find(c => c.kind === "option")!;
-    expect(choice.inquiries.map(q => q.aspect)).toEqual(["reliability"]);
-    if (reviews === 1) {
-      expect(choice.text).toContain("从哪儿听来");
-      return { ok: true, verdict: "reject", violations: [{ checkId: choice.checkId, type: "extra_inquiry",
-        inquiryId: choice.inquiryTargets.find(q => q.aspect === "source")!.inquiryId }] };
-    }
-    expect(choice.text).toBe("这告示可信吗？");
-    return { ok: true, verdict: "pass", violations: [] };
-  };
-  const result = await h.run();
-  expect(result).toMatchObject({ ok: true, value: { usedRequests: 8, baselineRequests: 6,
-    dialogueConsistencyReview: { attempts: 2, status: "approved" } } });
-  expect(reviews).toBe(2);
-  expect(requests.filter(r => r.stage === "planning")).toHaveLength(1);
-  expect(requests.filter(r => r.stage === "character")).toHaveLength(1);
-});
-
-it("source+reliability计划均unknown但实际只回应reliability：失效NPC及其choices依赖", async () => {
+it.each(["uncertain", "provider", "throw"])("%s is explicit failure without polish or plan recovery", async failure => {
   const { h, requests } = await dialogueReviewHarness();
-  const generate = h.source.generate;
-  let replies = 0;
-  h.source.generate = async (request, execution) => {
-    const response = await generate(request, execution);
-    if (response.ok && response.stage === "character" && ++replies === 1) return { ...response, value: { ...response.value,
-      parts: [{ text: "是否可信我不知道。", facts: [], evidence: [], beatIds: [] }] } };
-    return response;
-  };
-  let reviews = 0;
-  h.source.reviewDialogueConsistency = async request => {
-    if (request.checks.every(c => c.kind.startsWith("plan_"))) return { ok: true, verdict: "pass", violations: [] };
-    const reply = request.checks.find(c => c.kind === "answer")!;
-    expect(reply.answers).toHaveLength(2);
-    if (++reviews === 1) {
-      expect(reply.text).toBe("是否可信我不知道。");
-      return { ok: true, verdict: "reject", violations: [{ checkId: reply.checkId, type: "missing_response",
-        inquiryId: reply.inquiries.find(q => q.aspect === "source")!.inquiryId }] };
-    }
-    return { ok: true, verdict: "pass", violations: [] };
-  };
-  expect((await h.run()).ok).toBe(true);
-  expect(requests.filter(r => r.stage === "character")).toHaveLength(2);
-  expect(requests.filter(r => r.stage === "choices")).toHaveLength(2);
-  expect(requests.filter(r => r.stage === "planning")).toHaveLength(1);
-});
-
-it.each(["来源并不重要，我只关心告示是否可信。", "劳驾，请问告示可靠吗？"])("陈述来源与礼貌语不由关键词拒绝：%s", async label => {
-  const { h } = await dialogueReviewHarness(false);
-  const generate = h.source.generate;
-  h.source.generate = async (r, e) => {
-    const value = await generate(r, e);
-    return value.ok && value.stage === "choices" && value.value.stage === "choices" ? { ...value, value: { ...value.value,
-      labels: value.value.labels.map((l, i) => i === 0 ? { ...l, label } : l) } } : value;
-  };
-  const review = vi.fn(async () => ({ ok: true as const, verdict: "pass" as const, violations: [] }));
-  h.source.reviewDialogueConsistency = async request => request.checks.every(c => c.kind.startsWith("plan_"))
-    ? { ok: true, verdict: "pass", violations: [] } : review();
-  expect((await h.run()).ok).toBe(true);
-  expect(review).toHaveBeenCalledTimes(1);
-});
-
-it.each(["uncertain", "provider", "throw", "schema"])("审核%s分类明确；协议可纠正一次，其他失败不重复请求", async failure => {
-  const h = createStagedHarness();
-  await h.startDecision();
   const review = vi.fn(async () => {
-    if (failure === "throw") throw Error("private provider body");
-    if (failure === "provider") return createAiSourceFailure("scene", "timeout");
-    return { ok: true as const, verdict: failure === "schema" ? "invalid" as never : "uncertain" as const, violations: [] };
+    if (failure === "throw") throw Error("offline failure");
+    return failure === "provider" ? createAiSourceFailure("scene", "unavailable") : { ok: true as const, verdict: "uncertain" as const, failedIds: [] };
   });
-  h.source.reviewDialogueConsistency = async request => request.checks.every(c => c.kind.startsWith("plan_"))
-    ? { ok: true, verdict: "pass", violations: [] } : review();
-  const attempts = failure === "schema" ? 2 : 1;
-  expect(await h.run()).toMatchObject({ ok: false, code: failure === "schema" ? "dialogue_consistency_review_failed"
-    : failure === "uncertain" ? "dialogue_consistency_review_uncertain" : "AI_CALL_FAILED" });
-  expect(review).toHaveBeenCalledTimes(attempts);
-  expect(await h.readJob()).toMatchObject({ ok: true, value: { status: "failed", usedRequests: 6 + attempts,
-    dialogueConsistencyReview: { attempts, status: "failed", lastFailure: failure === "schema" ? "protocol_error"
-      : failure === "uncertain" ? "uncertain" : "provider_failure" } } });
-  expect(h.publications()).toHaveLength(0);
-});
-
-it("缺审核实现为配置失败，不能因旧fixture或requiresTaskBrief省略而放行", async () => {
-  const h = createStagedHarness();
-  await h.startDecision();
-  delete (h.source as StageSource).reviewDialogueConsistency;
-  expect(await h.run()).toMatchObject({ ok: false, code: "dialogue_consistency_review_unavailable" });
-});
-
-it("审核前保存running和预算，pass恢复复用；unknown恢复保留已扣成本", async () => {
-  const h = createStagedHarness();
-  await h.startDecision();
-  let calls = 0;
-  h.source.reviewDialogueConsistency = async request => {
-    if (request.checks.every(c => c.kind.startsWith("plan_"))) return { ok: true, verdict: "pass", violations: [] };
-    const loaded = await h.readJob();
-    expect(loaded).toMatchObject({ ok: true, value: { dialogueConsistencyReview: { status: "running", attempts: ++calls } } });
-    return { ok: true, verdict: "pass", violations: [] };
-  };
-  const first = await h.run();
-  if (!first.ok) throw Error(first.code);
-  expect((await h.run()).ok).toBe(true);
-  expect(calls).toBe(1);
-  const saved = await h.jobs.save({ lease: h.lease(), expectedVersion: first.value.version, job: { ...first.value,
-    dialogueConsistencyReview: { ...first.value.dialogueConsistencyReview!, status: "running", passDigest: undefined } } });
-  if (!saved.ok) throw Error(saved.code);
-  expect(await h.run()).toMatchObject({ ok: true, value: { usedRequests: 8, baselineRequests: 7,
-    dialogueConsistencyReview: { attempts: 2 } } });
-  expect(calls).toBe(2);
-});
-
-it("reject与DAG失效原子保存，保存后重启仍带安全反馈修复", async () => {
-  const h = createStagedHarness();
-  await h.startDecision();
-  const save = h.jobs.save.bind(h.jobs);
-  let interrupted = false;
-  h.jobs.save = async input => {
-    const result = await save(input);
-    if (!interrupted && input.job.dialogueConsistencyReview?.violations?.length) {
-      interrupted = true;
-      expect(input.job.units.find(u => u.key === "choices_current")).toMatchObject({ status: "pending", value: null });
-      h.controller.abort();
-    }
-    return result;
-  };
-  let reviews = 0;
-  h.source.reviewDialogueConsistency = async request => request.checks.every(c => c.kind.startsWith("plan_"))
-    ? { ok: true, verdict: "pass", violations: [] } : ++reviews === 1
-    ? { ok: true, verdict: "reject", violations: [{ checkId: request.checks.find(c => c.kind === "option")!.checkId,
-      type: "intent_mismatch", inquiryId: null }] }
-    : { ok: true, verdict: "pass", violations: [] };
+  h.source.reviewDialogueConsistency = review;
   expect((await h.run()).ok).toBe(false);
-  const resumed = await runJob({ id: h.jobId(), lease: h.lease() }, { jobs: h.jobs, source: h.source,
-    now: () => h.clock.now(), signal: new AbortController().signal });
-  expect(resumed).toMatchObject({ ok: true, value: { usedRequests: 9, dialogueConsistencyReview: { attempts: 2 } } });
-  expect(h.calls.filter(c => c.stage === "choices").at(-1)?.repair?.detail).toContain('"type":"intent_mismatch"');
+  expect(review).toHaveBeenCalledTimes(1);
+  expect(requests.filter(request => request.stage === "planning")).toHaveLength(1);
 });
 
-it.each(["planning", "legacy"] as const)("%s合同拒绝终止周期；planning手动重试不复用旧骨架", async scope => {
-  const { h, requests } = await dialogueReviewHarness();
-  h.source.reviewDialogueConsistency = async request => scope === "legacy" && request.checks.every(c => c.kind.startsWith("plan_"))
-    ? { ok: true, verdict: "pass", violations: [] } : ({ ok: true, verdict: "reject", violations: [{ checkId: request.checks.find(c => c.kind === (scope === "planning" ? "plan_answer" : "selected"))!.checkId,
-    type: "intent_mismatch", inquiryId: null }] });
-  expect(await h.run()).toMatchObject({ ok: false, code: scope === "legacy" ? "legacy_dialogue_contract_mismatch" : "dialogue_consistency_planning_contract" });
-  if (scope !== "planning") return;
-  expect(await h.readJob()).toMatchObject({ ok: true, value: { units: expect.arrayContaining([
-    expect.objectContaining({ key: "planning", status: "pending", value: null }),
-  ]) } });
-  await h.retry();
-  h.source.reviewDialogueConsistency = async () => ({ ok: true, verdict: "pass", violations: [] });
-  const claimed = await h.jobs.claim({ id: h.jobId(), owner: "new-cycle", now: h.clock.now(),
-    expiresAt: new Date(Date.parse(h.clock.now()) + 30_000).toISOString() });
-  if (!claimed.ok) throw Error(claimed.code);
-  expect(await runJob({ id: h.jobId(), lease: claimed.value }, { jobs: h.jobs, source: h.source,
-    now: () => h.clock.now(), signal: h.controller.signal })).toMatchObject({ ok: true, value: { cycle: 1, dialogueConsistencyReview: { cycle: 1, attempts: 1 } } });
-  expect(requests.filter(r => r.stage === "planning")).toHaveLength(3);
-});
-
-it("late审核被cancel fence拒绝，不能保存pass或发布", async () => {
-  const h = createStagedHarness();
-  await h.startDecision();
-  h.source.reviewDialogueConsistency = async request => {
-    if (request.checks.every(c => c.kind.startsWith("plan_"))) return { ok: true, verdict: "pass", violations: [] };
-    await h.cancel();
-    return { ok: true, verdict: "pass", violations: [] };
-  };
-  expect((await h.run()).ok).toBe(false);
-  expect(await h.readJob()).toMatchObject({ ok: true, value: { status: "cancelled",
-    dialogueConsistencyReview: { status: "running", attempts: 1 } } });
-});
-
-it("审核响应越过deadline不保存pass", async () => {
-  const h = createStagedHarness();
-  await h.startDecision();
-  h.source.reviewDialogueConsistency = async request => {
-    if (request.checks.every(c => c.kind.startsWith("plan_"))) return { ok: true, verdict: "pass", violations: [] }; h.clock.advance(600_000); return { ok: true, verdict: "pass", violations: [] }; };
-  expect(await h.run()).toMatchObject({ ok: false, code: "job_deadline_exceeded" });
-});
-
-it("protocol error then expression rejection permits third review with safe feedback", async () => {
-  const { h, requests } = await dialogueReviewHarness();
-  let calls = 0;
-  h.source.reviewDialogueConsistency = async (request, execution) => {
-    if (request.checks.every(c => c.kind.startsWith("plan_"))) return { ok: true, verdict: "pass", violations: [] };
-    calls++;
-    if (calls === 1) return { ok: true, verdict: "reject", violations: [{ checkId: "private_invalid_target", type: "intent_mismatch", inquiryId: null }] };
-    if (calls === 2) {
-      expect(execution.repair?.detail).toContain("checkId");
-      expect(execution.repair?.detail).not.toContain("private_invalid_target");
-      const reply = request.checks.find(c => c.kind === "answer")!;
-      return { ok: true, verdict: "reject", violations: [{ checkId: reply.checkId, type: "missing_response", inquiryId: reply.inquiries[0]!.inquiryId }] };
-    }
-    expect(execution.repair?.detail).toContain("content_recheck");
-    return { ok: true, verdict: "pass", violations: [] };
-  };
-  expect(await h.run()).toMatchObject({ ok: true, value: { dialogueConsistencyReview: {
-    attempts: 3, protocolCorrections: 1, contentRepairs: 1, status: "approved" } } });
-  expect(calls).toBe(3);
-  expect(requests.filter(r => r.stage === "character")).toHaveLength(2);
-  expect(requests.filter(r => r.stage === "choices")).toHaveLength(2);
-});
-
-it("content repair first can still correct protocol on final third request", async () => {
-  const { h, requests } = await dialogueReviewHarness();
-  let calls = 0;
-  h.source.reviewDialogueConsistency = async (request, execution) => {
-    if (request.checks.every(c => c.kind.startsWith("plan_"))) return { ok: true, verdict: "pass", violations: [] };
-    calls++;
-    if (calls === 1) return { ok: true, verdict: "reject", violations: [{ checkId: request.checks.find(c => c.kind === "answer")!.checkId, type: "intent_mismatch", inquiryId: null }] };
-    if (calls === 2) return { ok: true, verdict: "reject", violations: [{ checkId: "foreign", type: "intent_mismatch", inquiryId: null }] };
-    expect(execution.repair?.detail).toContain("unknown_checkId");
-    return { ok: true, verdict: "pass", violations: [] };
-  };
-  expect(await h.run()).toMatchObject({ ok: true, value: { dialogueConsistencyReview: {
-    attempts: 3, protocolCorrections: 1, contentRepairs: 1 } } });
-  expect(requests.filter(r => r.stage === "character")).toHaveLength(2);
-  expect(requests.filter(r => r.stage === "choices")).toHaveLength(2);
-});
-it("protocol correction survives interruption with concrete feedback and prior charge", async () => {
+it.each(["cancel", "deadline", "lease"])("late review cannot persist pass after %s", async change => {
   const { h } = await dialogueReviewHarness();
-  const save = h.jobs.save.bind(h.jobs);
-  let stopped = false;
-  h.jobs.save = async input => {
-    const saved = await save(input);
-    if (!stopped && input.job.dialogueConsistencyReview?.lastFailure === "protocol_error"
-      && input.job.dialogueConsistencyReview.status === "failed") { stopped = true; h.controller.abort(); }
-    return saved;
-  };
-  let calls = 0;
-  h.source.reviewDialogueConsistency = async (request, execution) => {
-    if (request.checks.every(c => c.kind.startsWith("plan_"))) return { ok: true, verdict: "pass", violations: [] };
-    if (++calls === 1) return { ok: true, verdict: "reject", violations: [{ checkId: "foreign", type: "intent_mismatch", inquiryId: null }] };
-    expect(execution.repair?.detail).toContain("$.violations[0].checkId");
-    return { ok: true, verdict: "pass", violations: [] };
+  h.source.reviewDialogueConsistency = async () => {
+    if (change === "cancel") h.controller.abort();
+    else h.clock.advance(change === "deadline" ? 600_001 : 31_000);
+    if (change === "lease") await h.jobs.claim({ id: h.jobId(), owner: "other-worker", now: h.clock.now(), expiresAt: new Date(Date.parse(h.clock.now()) + 30_000).toISOString() });
+    return { ok: true, verdict: "pass", failedIds: [] };
   };
   expect((await h.run()).ok).toBe(false);
-  const before = await h.readJob();
-  if (!before.ok) throw Error(before.code);
-  const resumed = await runJob({ id: h.jobId(), lease: h.lease() }, { jobs: h.jobs, source: h.source,
-    now: () => h.clock.now(), signal: new AbortController().signal });
-  expect(resumed).toMatchObject({ ok: true, value: { usedRequests: before.value.usedRequests + 1,
-    dialogueConsistencyReview: { attempts: 2, protocolCorrections: 1 } } });
+  const loaded = await h.readJob(); if (!loaded.ok) throw Error(loaded.code);
+  expect(loaded.value.dialogueConsistencyReview?.status).not.toBe("approved");
+  expect(loaded.value.dialogueConsistencyReview?.attempts).toBe(1);
 });
 
-it.each(["deadline", "cancel"])("third review cannot publish after %s", async mode => {
-  const { h } = await dialogueReviewHarness();
-  let calls = 0;
-  h.source.reviewDialogueConsistency = async request => {
-    if (request.checks.every(c => c.kind.startsWith("plan_"))) return { ok: true, verdict: "pass", violations: [] };
-    if (++calls === 1) return { ok: true, verdict: "reject", violations: [{ checkId: "foreign", type: "intent_mismatch", inquiryId: null }] };
-    if (calls === 2) return { ok: true, verdict: "reject", violations: [{ checkId: request.checks.find(c => c.kind === "option")!.checkId, type: "intent_mismatch", inquiryId: null }] };
-    if (mode === "deadline") h.clock.advance(600_000); else await h.cancel();
-    return { ok: true, verdict: "pass", violations: [] };
+it("review charge and running receipt precede provider send; unchanged pass is reused", async () => {
+  const { h } = await dialogueReviewHarness(); let calls = 0;
+  h.source.reviewDialogueConsistency = async () => {
+    calls++; const loaded = await h.readJob(); if (!loaded.ok) throw Error(loaded.code);
+    expect(loaded.value.dialogueConsistencyReview).toMatchObject({ attempts: 1, status: "running" });
+    expect(loaded.value.usedRequests).toBe(5);
+    return { ok: true, verdict: "pass", failedIds: [] };
   };
-  expect((await h.run()).ok).toBe(false);
-  expect(calls).toBe(3);
-  expect(h.publications()).toHaveLength(0);
-  expect(await h.readJob()).toMatchObject({ ok: true, value: { dialogueConsistencyReview: { attempts: 3, status: "running" } } });
-});
-
-it("legacy rejected receipt cannot regenerate pending expressions on same-cycle restart", async () => {
-  const h = createStagedHarness();
-  await h.startDecision();
-  const ready = await h.run();
-  if (!ready.ok) throw Error(ready.code);
-  const { protocolCorrections: _p, contentRepairs: _c, ...legacy } = ready.value.dialogueConsistencyReview!;
-  await h.jobs.save({ lease: h.lease(), expectedVersion: ready.value.version, job: { ...ready.value, status: "pending",
-    dialogueConsistencyReview: { ...legacy, status: "failed", passDigest: undefined,
-      violations: [{ scope: "expression", unitKey: "choices_current", type: "intent_mismatch", aspect: null }] },
-    units: ready.value.units.map(u => u.key === "choices_current" ? { ...u, status: "pending", value: null } : u) } });
-  const generated = h.calls.length;
-  expect(await h.run()).toMatchObject({ ok: false, code: "dialogue_consistency_review_exhausted" });
-  expect(h.calls).toHaveLength(generated);
-});
-
-it("interrupted content recheck uses remaining protocol allowance for third unknown-outcome recovery", async () => {
-  const { h } = await dialogueReviewHarness();
-  let calls = 0;
-  h.source.reviewDialogueConsistency = async (request, execution) => {
-    if (request.checks.every(c => c.kind.startsWith("plan_"))) return { ok: true, verdict: "pass", violations: [] };
-    if (++calls === 1) return { ok: true, verdict: "reject", violations: [{ checkId: request.checks.find(c => c.kind === "option")!.checkId, type: "intent_mismatch", inquiryId: null }] };
-    if (calls === 2) h.controller.abort();
-    if (calls === 3) {
-      expect(execution.repair?.reason).toBe("dialogue_consistency_outcome_unknown");
-      expect(execution.repair?.detail).toContain("outcome_unknown");
-      expect(execution.repair?.detail).not.toContain("invalid_schema");
-    }
-    return { ok: true, verdict: "pass", violations: [] };
-  };
-  expect((await h.run()).ok).toBe(false);
-  const before = await h.readJob();
-  if (!before.ok) throw Error(before.code);
-  expect(before.value.dialogueConsistencyReview).toMatchObject({ attempts: 2, status: "running", protocolCorrections: 0, contentRepairs: 1 });
-  const resumed = await runJob({ id: h.jobId(), lease: h.lease() }, { jobs: h.jobs, source: h.source,
-    now: () => h.clock.now(), signal: new AbortController().signal });
-  expect(resumed).toMatchObject({ ok: true, value: { usedRequests: before.value.usedRequests + 1,
-    dialogueConsistencyReview: { attempts: 3, status: "approved", protocolCorrections: 1, contentRepairs: 1 } } });
+  expect((await h.run()).ok).toBe(true); expect((await h.run()).ok).toBe(true); expect(calls).toBe(1);
 });

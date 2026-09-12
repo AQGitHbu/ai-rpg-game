@@ -11,7 +11,7 @@ import { startDecisionJob, runDecision } from "./decisionJob";
 import type { PlanProposal } from "@/game/domain/narrativePlan";
 import { startInitialization, runInitialization } from "./initializationJob";
 import { createFixtureOpeningCandidateSource } from "../createGame";
-import { makeOpeningStagedPlan, makeOpeningChoiceOutput, makeNarrationOutput, makeCharacterOutput } from "@/game/domain/testing/stagedNarrativeFixture.testutil";
+import { makeOpeningStagedPlan, withOfflineDrafts } from "@/game/domain/testing/stagedNarrativeFixture.testutil";
 import { asGenerationId } from "@/game/domain/worldEntity";
 import type { StageSource } from "./stageSource";
 import { performTurn } from "../performTurn";
@@ -27,38 +27,28 @@ it.each(["legacy_route", "dialogue"] as const)("真实 SQLite 发布、选择与
   if (basePlan.decision?.kind !== "ordinary") throw Error("ordinary opening expected");
   const plan: PlanProposal = mode === "legacy_route" ? basePlan : { ...basePlan, decision: { ...basePlan.decision!,
     options: [
-      { ...basePlan.decision!.options[0], target: null, deferredLocation: null, dialogueAct: "ask",
-        task: { intent: "ask", focusFactIds: ["fact_0"], prerequisiteFactIds: [], inquiries: [{ factId: "fact_0", aspects: ["source", "time"] }] } },
+      { ...basePlan.decision!.options[0], target: null, deferredLocation: null, dialogueAct: "ask" },
       { ...basePlan.decision!.options[1], target: null, deferredLocation: null, dialogueAct: "challenge", topic: { kind: "thread", threadId: "lead" } },
     ] } };
   const calls: string[] = [];
-  const source: StageSource = { async reviewDialogueConsistency() { return { ok: true, verdict: "pass", violations: [] }; }, async generate(request) {
+  const source: StageSource = { async reviewDialogueConsistency() { return { ok: true, verdict: "pass", failedIds: [] }; }, async generate(request) {
     calls.push(request.stage);
     if (request.stage === "planning") {
       if (request.context.kind === "opening") return { ok: true, stage: "planning", value: plan };
+      const context = request.context;
       const value: PlanProposal = { ...plan, opening: null,
-        decision: mode === "legacy_route" || plan.decision?.kind !== "ordinary" ? plan.decision : { ...plan.decision, options: [
-          { ...plan.decision.options[0], task: { intent: "ask", focusFactIds: ["fact_0"], prerequisiteFactIds: [], inquiries: [{ factId: "fact_0", aspects: ["purpose"] }] } }, { ...plan.decision.options[1], topic: { kind: "thread", threadId: "thread_init_lead" } },
-        ] }, units: plan.units.map(unit => unit.stage === "character" ? { ...unit,
-          task: { intent: "admit_unknown", focusFactIds: [], contentFactIds: [], prerequisiteFactIds: [],
-            answers: (request.context.kind === "decision" ? request.context.job.selectedDialogue?.task?.inquiries ?? [] : [])
-              .flatMap(question => question.aspects.map(aspect => ({ factId: question.factId, aspect,
-                outcome: "unknown" as const, answerFactIds: [] }))) } } : unit.stage !== "narration" ? unit : {
-        ...unit, requiredBeats: request.context.kind !== "decision" ? [] : request.context.job.mandatoryBeats.map(beat => ({
-          beatId: beat.beatId, kind: beat.kind, factIds: [], evidence: [], instruction: beat.instruction,
-        })),
-      }) };
-      return { ok: true, stage: "planning", value };
+        decision: plan.decision?.kind !== "ordinary" ? plan.decision : { ...plan.decision, options: [
+          { ...plan.decision.options[0], publicIntent: { ...plan.decision.options[0].publicIntent, text: "我先听听你的打算。" } },
+          { ...plan.decision.options[1], topic: { kind: "thread", threadId: "thread_init_lead" }, publicIntent: { ...plan.decision.options[1].publicIntent, text: "我还想知道你准备怎么做。" } },
+        ] }, units: plan.units.map(unit => unit.stage !== "narration" ? unit : {
+          ...unit, requiredBeats: context.job.mandatoryBeats.map(beat => ({
+            beatId: beat.beatId, kind: beat.kind, factIds: [], evidence: [], instruction: beat.instruction,
+          })),
+        }) };
+      return { ok: true, stage: "planning", value: withOfflineDrafts(value) };
     }
-    if (request.stage === "narration") return { ok: true, stage: "narration", value: {
-      ...makeNarrationOutput(), parts: request.context.unit.requiredBeats.length === 0 ? makeNarrationOutput().parts
-        : request.context.unit.requiredBeats.map(beat => ({ text: "烛火在风中晃动。", facts: [], evidence: [], beatIds: [beat.beatId] })),
-    } };
-    if (request.stage === "character") return { ok: true, stage: "character", value: {
-      ...makeCharacterOutput("npc_0"), ...((request.context.unit.task?.answers?.length ?? 0) > 0
-        ? { parts: [{ text: "来源和发生时间，我都不知道。", facts: [], evidence: [], beatIds: [] }] } : {}),
-    } };
-    return { ok: true, stage: "choices", value: makeOpeningChoiceOutput() };
+    if (request.context.draft === undefined) throw Error("fixture draft missing");
+    return { ok: true, stage: request.stage, value: request.context.draft };
   } };
   const now = () => "2026-09-11T00:00:00.000Z";
   const outcomes: string[] = [];
@@ -128,7 +118,7 @@ it.each(["legacy_route", "dialogue"] as const)("真实 SQLite 发布、选择与
           const published = await games.getCurrentGame();
           if (!published.ok || published.status !== "active" || published.record.storyState.narrative.status !== "ready") throw Error("published expected");
           expect(published.record.storyState.narrative.choiceRegistry).toHaveLength(2);
-          expect(published.record.storyState.narrative.choiceRegistry[0]?.task?.inquiries).toEqual([{ factId: "fact_0", aspects: ["purpose"] }]);
+          expect(published.record.storyState.narrative.choiceRegistry.every(choice => choice.task === undefined)).toBe(true);
           expect(published.record.storyState.narrative.choiceRegistry.every(choice => choice.branch === undefined)).toBe(true);
           expect(published.record.worldState.locations).toEqual(record.worldState.locations);
           outcomes.push(pending.job.selectedDialogue!.dialogueAct);

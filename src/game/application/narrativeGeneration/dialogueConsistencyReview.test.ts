@@ -1,219 +1,47 @@
-import { runPlanningDialogueReview } from "./planningDialogueReview";
-import { expect, it, vi } from "vitest";
-import * as digestModule from "./narrativeInputDigest";
-import { approvePlanningContext } from "./approvePlanningContext";
-import { dialogueConsistencyReviewInput, isStoredDialogueReview, parseDialogueConsistencyVerdict,
-  shouldReviewDialogueConsistency, validateJobDialogueConsistencyReview } from "./dialogueConsistencyReview";
+import { expect, it } from "vitest";
 import { dialogueReviewHarness } from "./dialogueConsistencyFixture.testutil";
+import { approvePlanningContext } from "./approvePlanningContext";
+import { dialogueConsistencyReviewInput, parsePolishReviewVerdict, validateJobDialogueConsistencyReview } from "./dialogueConsistencyReview";
 import type { PlanProposal } from "@/game/domain/narrativePlan";
-import { createStagedHarness } from "../testing/stagedNarrativeHarness.testutil";
-import { runDialogueConsistencyReview } from "./runDialogueConsistencyReview";
 
-it("旧审核政策凭据恢复会重新审核，保留同周期请求及审核次数", async () => {
-  const { h } = await dialogueReviewHarness();
-  const ready = await h.run();
-  if (!ready.ok) throw Error(ready.code);
-  const approved = approvePlanningContext(ready.value.input, ready.value.units.find(u => u.key === "planning")!.value as PlanProposal);
-  if (!approved.ok) throw Error(approved.code);
-  const digest = digestModule.narrativeInputDigest;
-  const spy = vi.spyOn(digestModule, "narrativeInputDigest");
-  dialogueConsistencyReviewInput(ready.value, approved.value);
-  const payload = spy.mock.calls.at(-1)![0] as Record<string, unknown>;
-  spy.mockRestore();
-  expect(payload.policyRevision).toBeGreaterThan(1);
-  const oldDigest = digest({ ...payload, policyRevision: 1 });
-  const receipt = ready.value.dialogueConsistencyReview!;
-  let job = { ...ready.value, dialogueConsistencyReview: { ...receipt, inputDigest: oldDigest, passDigest: oldDigest } };
-  expect(isStoredDialogueReview(job.dialogueConsistencyReview)).toBe(true);
-  expect(validateJobDialogueConsistencyReview(job, approved.value).ok).toBe(false);
-  let calls = 0;
-  const source = { ...h.source, reviewDialogueConsistency: async () => {
-    calls++; return { ok: true as const, verdict: "pass" as const, violations: [] };
-  } };
-  expect(await runDialogueConsistencyReview({ plan: approved.value, getJob: () => job, source,
-    now: () => h.clock.now(), signal: h.controller.signal,
-    persist: async mutate => { job = mutate(job) as typeof job; return true; },
-  })).toEqual({ ok: true, repair: false });
-  expect(calls).toBe(1);
-  expect(job.cycle).toBe(ready.value.cycle);
-  expect(job.usedRequests).toBe(ready.value.usedRequests + 1);
-  expect(job.dialogueConsistencyReview.attempts).toBe(receipt.attempts + 1);
-  expect(validateJobDialogueConsistencyReview(job, approved.value).ok).toBe(true);
+it("strict small protocol rejects old aspects, foreign/duplicate IDs and malformed pass", () => {
+  const request = { items: [{ id: "polish_0", stage: "character" as const, draft: "我不知道旧址是什么地方。", text: "我不知道旧址是什么地方。", facts: [] }] };
+  expect(parsePolishReviewVerdict({ verdict: "pass", failedIds: [] }, request).ok).toBe(true);
+  expect(parsePolishReviewVerdict({ verdict: "reject", failedIds: ["polish_0"] }, request).ok).toBe(true);
+  for (const value of [{ verdict: "pass", failedIds: ["polish_0"] }, { verdict: "uncertain", failedIds: ["polish_0"] },
+    { verdict: "reject", failedIds: [] }, { verdict: "reject", failedIds: ["unknown"] },
+    { verdict: "reject", failedIds: ["polish_0", "polish_0"] }, { verdict: "pass", violations: [] },
+    { verdict: "reject", failedIds: ["polish_0"], scope: "planning" }]) expect(parsePolishReviewVerdict(value, request).ok).toBe(false);
 });
 
-it("审核合同保留已安全编译的候选与历史先核实条件ID，不扩充inquiries", async () => {
-  const { h, plan } = await dialogueReviewHarness(false);
-  if (plan.decision?.kind !== "ordinary") throw Error("fixture");
-  const decision = plan.decision;
-  const generate = h.source.generate;
-  h.source.generate = async (r, e) => {
-    const result = await generate(r, e);
-    if (!result.ok || result.stage !== "planning") return result;
-    return { ...result, value: { ...plan, decision: { ...decision, options: decision.options.map(o => ({ ...o,
-      task: { ...o.task!, prerequisiteFactIds: ["fact_notice"] },
-    })) as unknown as typeof decision.options } } };
-  };
-  const loaded = await h.readJob();
-  if (!loaded.ok || loaded.value.input.kind !== "decision") throw Error("fixture");
-  await h.jobs.save({ lease: h.lease(), expectedVersion: loaded.value.version, job: { ...loaded.value,
-    input: { ...loaded.value.input, job: { ...loaded.value.input.job, selectedDialogue: { dialogueAct: "support",
-      label: "先确认告示上的说法，我再支持你。", task: { intent: "support", brief: "先核实告示再支持。",
-        focusFactIds: [], contentFactIds: [], prerequisiteFactIds: ["fact_notice"], inquiries: [] } } } } } });
+it("whole package covers narration/NPC/both candidates with actual selected words and scoped facts", async () => {
+  const { h } = await dialogueReviewHarness();
   h.source.reviewDialogueConsistency = async request => {
-    if (request.checks.every(c => c.kind.startsWith("plan_"))) return { ok: true, verdict: "pass", violations: [] };
-    const selected = request.checks.find(c => c.kind === "selected")!;
-    expect(selected.prerequisiteFactIds).toEqual(["fact_notice"]);
-    expect(selected.inquiries).toEqual([]);
-    const options = request.checks.filter(c => c.kind === "option");
-    expect(options.every(o => o.prerequisiteFactIds?.[0] === "fact_notice")).toBe(true);
-    expect(JSON.stringify(request)).not.toContain("entityStore");
-    return { ok: true, verdict: "pass", violations: [] };
+    expect(request.items.map(item => item.stage)).toEqual(["narration", "character", "choices", "choices"]);
+    expect(request.items.find(item => item.stage === "character")?.selectedLabel).toBe("从哪儿听来的，消息可靠吗？");
+    expect(JSON.stringify(request)).not.toContain('"inquiries"');
+    expect(request.items.find(item => item.stage === "character")?.facts).toEqual([]);
+    return { ok: true, verdict: "pass", failedIds: [] };
   };
   expect((await h.run()).ok).toBe(true);
 });
 
-it("历史brief经安全投影核对协助条件，只交给当前focus审核，不转发其他NPC或原始task", async () => {
-  const h = createStagedHarness();
-  await h.startDecision();
-  const stored = await h.readJob();
-  if (!stored.ok || stored.value.input.kind !== "decision") throw Error("fixture");
-  const brief = "只有你愿意同行，我才答应帮你探路。";
-  await h.jobs.save({ lease: h.lease(), expectedVersion: stored.value.version, job: { ...stored.value,
-    input: { ...stored.value.input, job: { ...stored.value.input.job, selectedDialogue: { dialogueAct: "offer",
-      label: "你愿意同行，我就帮你探路。", task: { intent: "offer", brief,
-        focusFactIds: [], contentFactIds: [], prerequisiteFactIds: [] } } } } } });
-  const generate = h.source.generate;
-  h.source.generate = async (r, e) => {
-    const result = await generate(r, e);
-    if (result.ok && result.stage === "character" && result.value.stage === "character" && result.value.speakerId === "npc_1")
-      return { ...result, value: { ...result.value, parts: [{ text: "OTHER_NPC_PRIVATE_LINE", facts: [], evidence: [], beatIds: [] }] } };
-    return result;
-  };
-  h.source.reviewDialogueConsistency = async request => {
-    if (request.checks.every(c => c.kind.startsWith("plan_"))) return { ok: true, verdict: "pass", violations: [] };
-    const current = request.checks.find(c => c.kind === "selected")!;
-    expect(current.brief).toContain(brief);
-    expect(current).not.toHaveProperty("focusFactIds");
-    expect(JSON.stringify(request)).not.toContain("OTHER_NPC_PRIVATE_LINE");
-    expect(request.checks.filter(c => c.kind === "answer")).toHaveLength(1);
-    return { ok: true, verdict: "pass", violations: [] };
-  };
-  expect((await h.run()).ok).toBe(true);
-  const other = h.requests.find(r => r.stage === "character" && r.context.unit.speakerId === "npc_1");
-  expect(JSON.stringify(other)).not.toContain(brief);
-});
-
-it.each(["brief", "legacy_prerequisite"])("历史任务引用玩家不可见事实时显式拒绝：%s", async variant => {
-  const h = createStagedHarness();
-  await h.startDecision();
-  const stored = await h.readJob();
-  if (!stored.ok || stored.value.input.kind !== "decision") throw Error("fixture");
-  await h.jobs.save({ lease: h.lease(), expectedVersion: stored.value.version, job: { ...stored.value,
-    input: { ...stored.value.input, job: { ...stored.value.input.job, selectedDialogue: { dialogueAct: "offer", label: "我帮你。",
-      task: { intent: "offer", ...(variant === "brief" ? { brief: "PRIVATE_HISTORICAL_BRIEF" } : {}),
-        focusFactIds: variant === "brief" ? ["fact_private"] : [],
-        prerequisiteFactIds: variant === "legacy_prerequisite" ? ["PRIVATE_PREREQUISITE_ID"] : [] } } } } } });
-  let reviews = 0;
-  h.source.reviewDialogueConsistency = async request => {
-    if (request.checks.every(c => c.kind.startsWith("plan_"))) return { ok: true, verdict: "pass", violations: [] }; reviews++; return { ok: true, verdict: "pass", violations: [] }; };
-  expect(await h.run()).toMatchObject({ ok: false, code: "legacy_dialogue_contract_mismatch" });
-  expect(reviews).toBe(0);
-  expect(JSON.stringify(h.requests.filter(r => r.stage !== "planning"))).not.toContain("PRIVATE_HISTORICAL_BRIEF");
-  expect(JSON.stringify(h.requests.filter(r => r.stage !== "planning"))).not.toContain("PRIVATE_PREREQUISITE_ID");
-});
-
-it("逐场景绑定实际问题与unknown回应，安全投影不含完整世界/私密计划", async () => {
-  const { h } = await dialogueReviewHarness();
-  h.source.reviewDialogueConsistency = async request => {
-    if (request.checks.every(c => c.kind.startsWith("plan_"))) return { ok: true, verdict: "pass", violations: [] };
-    const reply = request.checks.find(c => c.kind === "answer")!;
-    expect(reply.selectedText).toBe("从哪儿听来的，消息可靠吗？");
-    expect(reply.inquiries.map(q => q.aspect)).toEqual(["source", "reliability"]);
-    expect(reply.answers.map(answer => answer.aspect)).toEqual(["source", "reliability"]);
-    expect(reply.text).toContain("从哪儿传来、是否可信");
-    expect(request).not.toHaveProperty("world");
-    expect(reply).not.toHaveProperty("unit");
-    return { ok: true, verdict: "pass", violations: [] };
-  };
-  expect((await h.run()).ok).toBe(true);
-});
-
-it.each(["text", "order", "style", "dependency", "cycle", "missing"])("发布凭据绑定完整输入：%s变化失效", async change => {
-  const { h } = await dialogueReviewHarness();
-  const result = await h.run();
-  if (!result.ok) throw Error(result.code);
-  let job = result.value;
+it.each(["draft", "text", "cycle", "context", "legacy"])("publication receipt invalidated by %s mutation", async change => {
+  const { h } = await dialogueReviewHarness(); const ready = await h.run(); if (!ready.ok) throw Error(ready.code);
+  let job = ready.value;
   if (change === "cycle") job = { ...job, cycle: job.cycle + 1 };
-  if (change === "missing") job = { ...job, dialogueConsistencyReview: undefined };
-  if (change === "text" || change === "order" || change === "dependency") job = { ...job, units: job.units.map(unit =>
-    unit.value !== null && "stage" in unit.value && unit.value.stage === "choices" ? { ...unit,
-      inputDigest: change === "dependency" ? "changed" : unit.inputDigest,
-      value: { ...unit.value, labels: change === "order" ? [...unit.value.labels].reverse()
-        : unit.value.labels.map((label, i) => i === 0 && change === "text" ? { ...label, label: label.label + "啊" } : label) },
-    } : unit) };
-  const plan = approvePlanningContext(job.input, job.units.find(u => u.key === "planning")!.value as PlanProposal);
+  if (change === "context") job = { ...job, inputDigest: "changed" };
+  if (change === "legacy") job = { ...job, dialogueConsistencyReview: { ...job.dialogueConsistencyReview!, version: 1 } };
+  job = { ...job, units: job.units.map(stored => {
+    if (change === "draft" && stored.key === "planning" && stored.value !== null && "units" in stored.value)
+      return { ...stored, value: { ...stored.value, units: stored.value.units.map(unit => unit.draft?.stage === "character"
+        ? { ...unit, draft: { ...unit.draft, parts: unit.draft.parts.map(part => ({ ...part, text: "我拒绝回答。" })) } } : unit) } };
+    if (change === "text" && stored.value !== null && "stage" in stored.value && stored.value.stage === "character")
+      return { ...stored, value: { ...stored.value, parts: stored.value.parts.map(part => ({ ...part, text: "我拒绝回答。" })) } };
+    return stored;
+  }) };
+  const plan = approvePlanningContext(job.input, job.units.find(unit => unit.key === "planning")!.value as PlanProposal);
   if (!plan.ok) throw Error(plan.code);
-  const changedPlan = change === "style" ? { ...plan.value, world: { ...plan.value.world, generation: {
-    ...plan.value.world.generation, gameType: "xianxia" as const,
-  } } } : plan.value;
-  expect(validateJobDialogueConsistencyReview(job, changedPlan)).toMatchObject({ ok: false });
-});
-
-it("无候选无待答问题无需审核；null终点待答问题仍审核且缺回答单元失败", async () => {
-  const { h } = await dialogueReviewHarness();
-  const result = await h.run();
-  if (!result.ok) throw Error(result.code);
-  const approved = approvePlanningContext(result.value.input, result.value.units.find(u => u.key === "planning")!.value as PlanProposal);
-  if (!approved.ok) throw Error(approved.code);
-  const plan = { ...approved.value, choiceExpression: null, units: approved.value.units.filter(u => u.stage !== "choices") };
-  expect(shouldReviewDialogueConsistency(plan)).toBe(true);
-  expect(shouldReviewDialogueConsistency({ ...plan, currentUtterance: undefined })).toBe(false);
-  expect(dialogueConsistencyReviewInput(result.value, { ...plan, units: plan.units.filter(u => u.stage !== "character") }))
-    .toMatchObject({ ok: false, code: "plan_reply_missing" });
-});
-
-it.each(["ending", "null", "none"] as const)("无候选的审核执行与发布谓词同源：%s", async kind => {
-  const { h } = await dialogueReviewHarness();
-  const ready = await h.run();
-  if (!ready.ok) throw Error(ready.code);
-  let job = { ...ready.value, dialogueConsistencyReview: undefined } as typeof ready.value;
-  const approved = approvePlanningContext(job.input, job.units.find(u => u.key === "planning")!.value as PlanProposal);
-  if (!approved.ok) throw Error(approved.code);
-  const units = approved.value.units.filter(u => u.stage !== "choices");
-  const plan = { ...approved.value, units, choiceExpression: null,
-    ...(kind === "none" ? { currentUtterance: undefined } : {}),
-    proposal: { ...approved.value.proposal, units, decision: null,
-      ...(kind === "ending" ? { terminal: { kind: "ending" as const } } : {}) },
-  };
-  let calls = 0;
-  const source = { ...h.source, reviewDialogueConsistency: async () => {
-    calls++;
-    return { ok: true as const, verdict: "pass" as const, violations: [] };
-  } };
-  expect(await runPlanningDialogueReview({ plan, getJob: () => job, source,
-    now: () => h.clock.now(), signal: h.controller.signal,
-    persist: async mutate => { job = mutate(job); return true; },
-  })).toMatchObject({ ok: true });
-  expect(await runDialogueConsistencyReview({ plan, getJob: () => job, source,
-    now: () => h.clock.now(), signal: h.controller.signal,
-    persist: async mutate => { job = mutate(job); return true; },
-  })).toMatchObject({ ok: true });
-  expect(calls).toBe(kind === "none" ? 0 : 2);
-  expect(validateJobDialogueConsistencyReview(job, plan).ok).toBe(true);
-  expect(job.usedRequests).toBe(ready.value.usedRequests + (kind === "none" ? 0 : 2));
-});
-
-it.each([
-  { verdict: "approve", violations: [] }, { verdict: "pass", violations: [{ scope: "expression" }] },
-  { verdict: "reject", violations: [] }, { verdict: "uncertain", violations: [], rewrite: "秘密" },
-  { verdict: "reject", violations: [{ scope: "expression", candidateId: "x", type: "extra_inquiry", aspect: "secret" }] },
-  { verdict: "reject", violations: Array(9).fill({ scope: "expression", candidateId: "x", type: "extra_inquiry", aspect: "source" }) },
-])("拒绝非法/超长审核schema：%j", value => expect(parseDialogueConsistencyVerdict(value)).toBeNull());
-
-it("可选持久化字段兼容旧job，但拒绝错误attempts与私密自由反馈", () => {
-  expect(isStoredDialogueReview(undefined)).toBe(true);
-  const review = { version: 1, cycle: 0, inputDigest: "a".repeat(64), attempts: 1, status: "running" };
-  expect(isStoredDialogueReview(review)).toBe(true);
-  expect(isStoredDialogueReview({ ...review, attempts: 3 })).toBe(false);
-  expect(isStoredDialogueReview({ ...review, violations: [{ scope: "expression", unitKey: "x", type: "missing_response", aspect: "source", detail: "私密" }] })).toBe(false);
+  expect(dialogueConsistencyReviewInput(job, plan.value).ok).toBe(true);
+  expect(validateJobDialogueConsistencyReview(job, plan.value).ok).toBe(false);
 });

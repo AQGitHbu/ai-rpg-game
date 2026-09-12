@@ -343,7 +343,7 @@ function createScriptedSource(): HarnessSource {
   return {
     calls,
     requests,
-    async reviewDialogueConsistency() { return { ok: true, verdict: "pass", violations: [] }; },
+    async reviewDialogueConsistency() { return { ok: true, verdict: "pass", failedIds: [] }; },
     failNext(stage) { failCounts.set(stage, (failCounts.get(stage) ?? 0) + 1); },
     failApprovalNext(stage) { approvalFailCounts.set(stage, (approvalFailCounts.get(stage) ?? 0) + 1); },
     hold(stage) {

@@ -97,7 +97,7 @@ function createDecisionSource(): StageSource & { readonly stages: string[] } {
   const stages: string[] = [];
   return {
     stages,
-    async reviewDialogueConsistency() { return { ok: true, verdict: "pass", violations: [] }; },
+    async reviewDialogueConsistency() { return { ok: true, verdict: "pass", failedIds: [] }; },
     async generate(request: StageRequest, _execution: StageExecution): Promise<StageSuccess | AiSourceFailure> {
       stages.push(request.stage);
       if (request.stage === "planning") return { ok: true, stage: "planning", value: makeDecisionPlan() };

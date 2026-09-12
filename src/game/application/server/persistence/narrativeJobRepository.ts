@@ -45,6 +45,7 @@ export type InitializationEnvelope = {
 };
 
 export type StoredJob = {
+  /** Historical storage compatibility only; new jobs never create planning review/replan state. */
   readonly planningSemanticRepair?: Readonly<{
     cycle: number; inputDigest: string; used: 0 | 1;
     status: "idle" | "pending" | "replanned" | "exhausted";
@@ -53,16 +54,18 @@ export type StoredJob = {
     reviewInFlight: boolean;
     reviewFailure?: "protocol_error" | "provider_failure" | "uncertain";
     protocolIssue?: import("../../narrativeGeneration/dialogueReviewChecks").ReviewProtocolIssue;
-    violations?: readonly import("../../narrativeGeneration/dialogueConsistencyReview").DialogueViolation[];
+    violations?: readonly import("../../narrativeGeneration/legacyDialogueReview").DialogueViolation[];
   }>;
   readonly planningDialogueReviews?: Readonly<Record<string, NonNullable<StoredJob["dialogueConsistencyReview"]>>>;
   readonly dialogueConsistencyReview?: Readonly<{
-    version: 1; cycle: number; inputDigest: string; attempts: number;
+    version: 1 | 2; cycle: number; inputDigest: string; attempts: number;
     status: StoredUnitStatus; passDigest?: string;
+    failedIds?: readonly string[];
+    /** Version 1 payload only; version 2 uses the single attempts counter. */
     protocolCorrections?: number; contentRepairs?: number;
     lastFailure?: "protocol_error" | "provider_failure" | "uncertain" | "outcome_unknown" | "content_recheck" | "exhausted";
     protocolIssue?: import("../../narrativeGeneration/dialogueReviewChecks").ReviewProtocolIssue;
-    violations?: readonly import("../../narrativeGeneration/dialogueConsistencyReview").DialogueViolation[];
+    violations?: readonly import("../../narrativeGeneration/legacyDialogueReview").DialogueViolation[];
   }>;
   readonly schemaVersion: 1;
   readonly id: string;

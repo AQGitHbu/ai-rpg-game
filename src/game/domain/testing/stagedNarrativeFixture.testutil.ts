@@ -60,8 +60,8 @@ function unit(overrides: Partial<Unit> & Pick<Unit, "key" | "stage">): Unit {
 }
 
 /** 结构骨架：规划素材，不含最终旁白/台词/选项 label。 */
-export function makeStagedPlan(): PlanProposal {
-  return {
+export function makeStagedPlan(legacy = false): PlanProposal {
+  return withOfflineDrafts({
     opening: null,
     worldDelta: null,
     steps: [],
@@ -98,7 +98,7 @@ export function makeStagedPlan(): PlanProposal {
       ],
     },
     terminal: { kind: "next_decision", target: { kind: "current_scene" } },
-  };
+  }, legacy);
 }
 
 /** 有效角色表现输出；测试可局部替换字段制造非法输入。 */
@@ -168,8 +168,8 @@ function decisionBranchOption(
 }
 
 /** 与描述符图 current_scene_choice_1/2 对齐的决策计划（骨架，无展示文本）。 */
-export function makeDecisionPlan(): PlanProposal {
-  return {
+export function makeDecisionPlan(legacy = false): PlanProposal {
+  return withOfflineDrafts({
     opening: null,
     worldDelta: null,
     steps: [],
@@ -200,7 +200,7 @@ export function makeDecisionPlan(): PlanProposal {
       ],
     },
     terminal: { kind: "next_decision", target: { kind: "current_scene" } },
-  };
+  }, legacy);
 }
 
 /** 决策候选的纯对白 label；candidateId 与 makeDecisionPlan 对齐。 */
@@ -256,9 +256,9 @@ export function makeOpeningChoiceOutput(): UnitOutput {
  * candidate 由调用方从 fixture 世界生成源取得，保证与 situation 自洽。
  */
 export function makeOpeningStagedPlan(
-  opening: NonNullable<PlanProposal["opening"]>,
+  opening: NonNullable<PlanProposal["opening"]>, legacy = false,
 ): PlanProposal {
-  return {
+  return withOfflineDrafts({
     opening: {
       ...opening,
       world: { ...opening.world, publicFacts: [...opening.world.publicFacts, { key: "branch_routes", text: "镇外北滩和南岗都可以探查。" }] },
@@ -293,7 +293,7 @@ export function makeOpeningStagedPlan(
       ],
     },
     terminal: { kind: "next_decision", target: { kind: "current_scene" } },
-  };
+  }, legacy);
 }
 
 // ---------------------------------------------------------------------------
@@ -457,4 +457,18 @@ export function createPendingDecisionRecord(revision = 0, gameId = "game-decisio
     revision,
     createdAt: "2026-09-09T08:00:00.000Z",
   };
+}
+
+/** Offline fixture only: concrete test prose, never a production migration or fallback. */
+export function withOfflineDrafts(plan: PlanProposal, legacy = false): PlanProposal {
+  if (legacy) return plan;
+  return { ...plan, units: plan.units.map(unit => {
+    const parts = unit.requiredBeats.length === 0 ? (unit.stage === "character" ? makeCharacterOutput(unit.speakerId!).parts : makeNarrationOutput().parts)
+      : unit.requiredBeats.map(beat => ({ text: beat.instruction, beatIds: [beat.beatId], evidence: beat.evidence,
+        facts: beat.factIds.map(factId => ({ factId, certainty: "known" as const })) }));
+    return { ...unit, draft: unit.stage === "narration" ? { stage: "narration", parts, actionKeys: [] }
+      : unit.stage === "character" ? { ...makeCharacterOutput(unit.speakerId!), parts, answeredBeatIds: unit.requiredBeats.map(beat => beat.beatId) }
+        : { stage: "choices", labels: plan.decision?.options.map(option => ({ candidateId: option.candidateId, label: option.publicIntent.text }))
+          ?? [{ candidateId: "trust", label: "我相信你。" }, { candidateId: "doubt", label: "我仍有疑问。" }] } };
+  }) };
 }
