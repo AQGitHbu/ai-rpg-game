@@ -5,6 +5,7 @@ import { approveNarrativeBundle, type ApprovedNarrativeBundle } from "./approveN
 import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
 import type { GameLogger } from "@/game/logging";
 import type { StoryState } from "@/game/domain/storyState";
+import type { WorldState } from "@/game/domain/worldState";
 import type { EvolutionNeed } from "@/game/domain/worldDelta";
 import type { ObjectiveTransition } from "@/game/domain/narrativeBeat";
 import type { NarrativeRuntimeState } from "@/game/domain/narrative";
@@ -44,11 +45,11 @@ export type GeneratePendingNarrativeBundleDeps = {
   readonly auditLink?: AiTextAuditLink;
 };
 
-function deriveEvolutionNeed(storyState: StoryState): EvolutionNeed {
+function deriveEvolutionNeed(storyState: StoryState, worldState: WorldState): EvolutionNeed {
   if (storyState.evolution.status === "needs_next_act") {
     return { kind: "next_act", act: storyState.currentAct };
   }
-  if (storyState.evolution.status === "needs_ending_pair") {
+  if (storyState.evolution.status === "needs_ending_pair" && worldState.endings.length < 2) {
     return { kind: "ending_pair", finalAct: storyState.targetActs };
   }
   return { kind: "none" };
@@ -73,7 +74,7 @@ export async function generatePendingNarrativeBundle(
   const storyState = record.storyState;
 
   const transition: ObjectiveTransition = job.objectiveTransition;
-  const evolutionNeed = deriveEvolutionNeed(storyState);
+  const evolutionNeed = deriveEvolutionNeed(storyState, worldState);
 
   const retryOrigin = deps.auditLink?.retry ?? (narrative.retryContext === undefined
     ? undefined

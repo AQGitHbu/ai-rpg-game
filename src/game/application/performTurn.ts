@@ -316,7 +316,11 @@ export async function performTurn(
     resolution.primaryResult,
     converted.action,
   );
-  if (isFormalNarrativeChoice || isNpcTalkEntryPoint || endingStance !== undefined || command.interaction.kind === "free_text") {
+  if (isFormalNarrativeChoice
+    || isNpcTalkEntryPoint
+    || endingStance !== undefined
+    || converted.action.type === "abandon_quest"
+    || command.interaction.kind === "free_text") {
     return commitResolution({
       repository: deps.repository,
       gameId: command.gameId,

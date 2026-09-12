@@ -13,11 +13,14 @@ import {
   type WorldState,
 } from "@/game/domain/worldState";
 import { locationScaleOf } from "@/game/domain/worldEntity";
-import type {
-  FactId,
-  LocationId,
-  NpcId,
-  QuestId,
+import {
+  RETURN_REQUIRED_ITEM_TAG,
+  asItemId,
+  type FactId,
+  type ItemId,
+  type LocationId,
+  type NpcId,
+  type QuestId,
 } from "@/game/domain/worldEntity";
 import type { PreparedChoiceCandidate, PreparedArrivalNpcContext } from "@/game/gameplay/rpg/preparedContinuation";
 import { getEntity, type EntityRecord, type NpcEntityRecord } from "@/game/domain/entity";
@@ -146,6 +149,16 @@ function authorizedFactIdsForArrivalNpc(
     ...npc.knownFactCards.map((fact) => String(fact.factId)),
   ]);
   return [...ids].map((id) => id as FactId);
+}
+
+function deliveryItemForFinalAct(
+  worldState: WorldState,
+  storyState: StoryState,
+): ItemId | undefined {
+  if (storyState.currentAct < storyState.targetActs || storyState.contract.delivery === undefined) return undefined;
+  const item = worldState.items.find((candidate) =>
+    worldState.inventory.includes(candidate.id) && candidate.tags.includes(RETURN_REQUIRED_ITEM_TAG));
+  return item?.id ?? undefined;
 }
 
 function choicesForNpc(npc: PreparedArrivalNpcContext | undefined, stepKey: string): readonly PreparedChoiceCandidate[] {
@@ -380,6 +393,9 @@ export function buildNarrativeBundleDescriptors(
         objective.locationId,
       );
       const allAbsorbed = [...absorbedIndexes, objectiveIndex];
+      const deliveryItemId = arrivalNpc === undefined
+        ? undefined
+        : deliveryItemForFinalAct(worldState, storyState);
       descriptors.push({
         stepKey,
         objectiveKey: objectiveKey(activeQuest.id, objectiveIndex),
@@ -396,7 +412,7 @@ export function buildNarrativeBundleDescriptors(
           visibleFactIds: arrivalNpc === undefined ? [] : authorizedFactIdsForArrivalNpc(arrivalNpc),
         },
         ...(arrivalNpc === undefined ? {} : { arrivalNpc }),
-        choiceCandidates: choicesForNpc(arrivalNpc, stepKey),
+        choiceCandidates: deliveryItemId === undefined ? choicesForNpc(arrivalNpc, stepKey) : [],
         nextStepKeys: [],
       });
       if (arrivalNpc === undefined) {
@@ -406,23 +422,52 @@ export function buildNarrativeBundleDescriptors(
         return [stepKey];
       }
       // Arrival NPC found: fold trailing discover_fact and the terminal talk_to_npc
-      // into this step's absorbedObjectiveIndexes.
+      // into this step's absorbedObjectiveIndexes, unless the final-act delivery
+      // contract requires a real give_item action before that dialogue boundary.
       let foldIdx = objectiveIndex + 1;
       while (foldIdx < activeQuest.objectives.length) {
         const foldObj = activeQuest.objectives[foldIdx];
         if (foldObj === undefined) break;
-        if (foldObj.kind === "discover_fact" || foldObj.kind === "talk_to_npc") {
+        if (foldObj.kind === "discover_fact") {
           allAbsorbed.push(foldIdx);
-          if (foldObj.kind === "talk_to_npc") break;
           foldIdx += 1;
+        } else if (foldObj.kind === "talk_to_npc") {
+          if (deliveryItemId === undefined) allAbsorbed.push(foldIdx);
+          break;
         } else {
           break;
         }
       }
-      descriptors[descriptors.length - 1] = {
-        ...descriptors[descriptors.length - 1]!,
+      const moveDescriptorIndex = descriptors.length - 1;
+      descriptors[moveDescriptorIndex] = {
+        ...descriptors[moveDescriptorIndex]!,
         absorbedObjectiveIndexes: [...allAbsorbed],
       };
+      if (deliveryItemId !== undefined) {
+        const giveTrigger: NarrativeBundleTrigger = {
+          kind: "give_item",
+          itemId: asItemId(deliveryItemId),
+          npcId: arrivalNpc.id,
+        };
+        const giveStepKey = narrativeBundleTriggerKey(giveTrigger);
+        descriptors.push({
+          stepKey: giveStepKey,
+          objectiveKey: objectiveKey(activeQuest.id, foldIdx),
+          consumptionGroupKey: groupKeyFor(activeQuest.id, foldIdx, "give_item", branchKey),
+          trigger: giveTrigger,
+          absorbedObjectiveIndexes: foldIdx < activeQuest.objectives.length ? [foldIdx] : [],
+          authority: {
+            questId: activeQuest.id,
+            objectiveIndex: foldIdx,
+            allowedEntityIds: [String(deliveryItemId), String(arrivalNpc.id)],
+            visibleFactIds: authorizedFactIdsForArrivalNpc(arrivalNpc),
+          },
+          arrivalNpc,
+          choiceCandidates: choicesForNpc(arrivalNpc, giveStepKey),
+          nextStepKeys: [],
+        });
+        setSuccessors(stepKey, [giveStepKey]);
+      }
       return [stepKey];
     }
 

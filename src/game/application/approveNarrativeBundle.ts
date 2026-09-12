@@ -840,6 +840,8 @@ function bundleSceneLocationId(
     case "move":
     case "explore":
       return String(trigger.locationId);
+    case "give_item":
+      return String(worldState.npcs.find((npc) => npc.id === trigger.npcId)?.locationId ?? worldState.currentLocationId);
     default:
       return String(worldState.currentLocationId);
   }

@@ -62,8 +62,19 @@ export function isActionReleased(
       return isObjectiveEntityReleased(worldState, storyState, (objective) =>
         objective.kind === "obtain_item" && String(objective.itemId) === String(action.itemId));
     case "give_item":
+      {
+        const bundle = storyState.narrative.status === "ready"
+          ? storyState.narrative.narrativeBundle
+          : undefined;
       return isObjectiveEntityReleased(worldState, storyState, (objective) =>
-        objective.kind === "obtain_item" && String(objective.itemId) === String(action.itemId));
+        objective.kind === "obtain_item" && String(objective.itemId) === String(action.itemId))
+        || (bundle?.activeStepIds.some((stepId) => {
+            const step = bundle.steps.find((candidate) => candidate.stepId === stepId);
+            return step?.trigger.kind === "give_item"
+              && String(step.trigger.itemId) === String(action.itemId)
+              && String(step.trigger.npcId) === String(action.npcId);
+          }) === true);
+      }
     case "abandon_quest":
       return worldState.quests.some((quest) => quest.id === action.questId && quest.kind === "main" && quest.status === "active")
         && (storyState.reveal === undefined || storyState.reveal === null || String(storyState.reveal.questId) === String(action.questId));
