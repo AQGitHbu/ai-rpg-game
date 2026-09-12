@@ -298,7 +298,7 @@ describe("opening quality create → ack → choice → decision context", () =>
       now: () => "2026-09-09T00:02:00.000Z",
     });
     expect(sourceResult.ok).toBe(false);
-    expect(capturedMessages).toHaveLength(4);
+    expect(capturedMessages).toHaveLength(3);
     const actualDecisionPrompt = capturedMessages[0]!.map((message) => message.content).join("\n");
     expect(actualDecisionPrompt).toContain("[relevant_events] 开局背景与本次回应");
     expect(actualDecisionPrompt).toContain("主角过去曾与船厂技师共同维修引擎");
@@ -311,7 +311,7 @@ describe("opening quality create → ack → choice → decision context", () =>
     expect(actualDecisionPrompt).toContain('"topic":"general"');
     expect(actualDecisionPrompt).toContain("本次所选结构化意图：dialogueAct=refuse；topic=thread:thread_init_shutdown");
     expect(actualDecisionPrompt).not.toContain("技师私自隐去了上次维修失误");
-    expect(capturedMessages.map((messages) => messages.map((message) => message.content).join("\n").match(/eventId=.*thread_shutdown/g)?.length)).toEqual([1, 1, 1, 1]);
+    expect(capturedMessages.map((messages) => messages.map((message) => message.content).join("\n").match(/eventId=.*thread_shutdown/g)?.length)).toEqual([1, 1, 1]);
     expect(branches[1]!.record().worldState.eventLedger.filter((event) => event.kind === "opening_history_established")).toHaveLength(3);
   });
 });

@@ -219,6 +219,10 @@ export function createServerGameEntryPoints(
   env: Record<string, string | undefined> = process.env,
   externalAuditRecorder?: AiTextAuditRecorder,
   externalRepository?: GameRepository & { close(): Promise<void> },
+  options: Readonly<{
+    /** Optional batch guard used by bounded acceptance runners. */
+    readonly beforeNarrativeHttpAttempt?: () => Promise<boolean> | boolean;
+  }> = {},
 ): ServerGameEntryPoints {
   const logRuntime = createServerLogRuntime(env);
   const { logger } = logRuntime;
@@ -239,7 +243,10 @@ export function createServerGameEntryPoints(
   // One provider transport/client per server composition root. Role policy,
   // thinking mode, budgets, and transient retries are centralized there.
   const aiClient = createServerRpgAiClient(env, logger, auditRecorder);
-  const narrativeRequestClient = createNarrativeRequestClient({ aiClient });
+  const narrativeRequestClient = createNarrativeRequestClient({
+    aiClient,
+    beforeTransportAttempt: options.beforeNarrativeHttpAttempt,
+  });
   const narrativeCandidateReviewer = createLiveNarrativeCandidateReview({ aiClient, requestClient: narrativeRequestClient, logger });
   // Unified source is the only runtime AI entry point for opening and decisions.
   const narrativeBundleSource = createNarrativeBundleSourceFactory(env, logger, aiClient, narrativeRequestClient);

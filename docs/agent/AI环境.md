@@ -25,6 +25,7 @@
 
 - 本地离线回归：`npm run journey:foundation`
 - 真实 AI smoke：`RUN_REAL_AI_SMOKE=1 npm run smoke:ai:phase4b`；该命令是受门禁的 smoke，不是完整旅程。
+- P1 旅程协议：先用 `npm run journey:narrative:p1 -- --mode=register --run-id=<id>` 登记固定输入，再由 `RUN_REAL_AI_JOURNEY=1 npm run journey:narrative:p1 -- --mode=live --run-id=<id>` 执行；`--mode=replay` 只读本地审计产物、零网络。协议和产物规则见 [P1 旅程协议](../superpowers/reports/2026-09-12-narrative-p1-protocol.md)。
 - provider：`src/game/application/server/ai/rpgAiClient.ts`、`src/game/application/server/ai/sourceFactory.ts`、`src/game/application/server/ai/aiRuntimeConfig.ts`
 - 装配：`src/game/application/server/compositionRoot.ts`
 - 测试：`src/game/application/server/ai/rpgAiClient.test.ts`、`src/game/application/server/ai/worldEvolutionSource.test.ts`、`src/game/application/server/compositionRoot.test.ts`

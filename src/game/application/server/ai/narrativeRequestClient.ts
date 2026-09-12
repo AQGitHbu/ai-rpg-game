@@ -41,20 +41,30 @@ function policyFor(purpose: NarrativeRequestPurpose): Partial<RpgAiRolePolicy> {
  * once per HTTP attempt, including transport retries.
  */
 export function createNarrativeRequestClient(
-  deps: Readonly<{ readonly aiClient?: RpgAiClient }>,
+  deps: Readonly<{
+    readonly aiClient?: RpgAiClient;
+    /** Optional batch-wide guard, used by the P1 journey protocol. */
+    readonly beforeTransportAttempt?: () => Promise<boolean> | boolean;
+  }>,
 ): NarrativeRequestClient {
   return {
     async completeNarrativeRequest(input) {
       if (deps.aiClient === undefined) {
         return { ok: false, code: "invalid_config", retryable: false, latencyMs: 0 };
       }
+      const reserveHttpAttempt = deps.beforeTransportAttempt === undefined
+        ? input.reserveHttpAttempt
+        : async (): Promise<boolean> => {
+            if (input.reserveHttpAttempt !== undefined && !(await input.reserveHttpAttempt())) return false;
+            return deps.beforeTransportAttempt!();
+          };
       return deps.aiClient.complete(
         "narrative_bundle",
         input.messages,
         input.auditContext,
         {
           signal: input.signal,
-          beforeTransportAttempt: input.reserveHttpAttempt,
+          ...(reserveHttpAttempt === undefined ? {} : { beforeTransportAttempt: reserveHttpAttempt }),
           policyOverride: policyFor(input.purpose),
         },
       );
