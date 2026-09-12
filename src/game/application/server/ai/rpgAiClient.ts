@@ -96,7 +96,7 @@ export const RPG_AI_DEFAULT_POLICIES: Readonly<Record<RpgAiRole, RpgAiRolePolicy
   planning: {
     // 内容取舍与结构约束由规划器完成，表达角色保持非思考润色。
     thinking: "on",
-    timeoutMs: 90_000,
+    timeoutMs: 240_000,
     jsonMode: "prompt_only",
     maxAttempts: 2,
   },
@@ -197,6 +197,9 @@ function mergePolicies(overrides: RpgAiRolePolicyOverrides | undefined): Record<
     RPG_AI_ROLES.map((role) => [
       role,
       { ...RPG_AI_DEFAULT_POLICIES[role], ...(overrides?.[role] ?? {}),
+        ...(role === "planning" && overrides?.planning?.timeoutMs === undefined
+          ? { timeoutMs: overrides?.planning?.thinking === "off" ? 90_000 : 240_000 }
+          : {}),
         ...(role === "dialogue_consistency_review" ? { maxAttempts: 1, thinking: "off", jsonMode: "json_object" } : {}) },
     ]),
   ) as Record<RpgAiRole, RpgAiRolePolicy>;
@@ -243,7 +246,10 @@ export function createRpgAiClient(options: CreateRpgAiClientOptions): RpgAiClien
     // transport retry 只在此层识别：attempt>1 时为 provider 重试，
     // 保留来源（origin），机制覆盖为 transport，reason 为上一失败的稳定码。
     let lastFailureCode: string | undefined;
-    const deadline = overrides?.timeoutMs === undefined ? undefined : Date.now() + overrides.timeoutMs;
+    const callTimeoutMs = role === "planning"
+      ? Math.min(policy.timeoutMs, overrides?.timeoutMs ?? policy.timeoutMs)
+      : overrides?.timeoutMs;
+    const deadline = callTimeoutMs === undefined ? undefined : Date.now() + callTimeoutMs;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       const remaining = deadline === undefined ? undefined : deadline - Date.now();
@@ -257,8 +263,8 @@ export function createRpgAiClient(options: CreateRpgAiClientOptions): RpgAiClien
         policy.jsonMode,
         policy.thinking,
       );
-      // staged 编排的剩余预算覆盖 role 默认 timeout；AbortSignal 原样交给
-      // transport（取消/超时机制仍由 transport 独占）。
+      // 单次 transport 同时受角色策略和 staged 编排剩余预算约束；重试只
+      // 消费同一 complete 调用的剩余时间，不重新获得完整窗口。
       const transportOptions = {
         ...providerOptions,
         ...(policy.temperature === undefined ? {} : { temperature: policy.temperature }),

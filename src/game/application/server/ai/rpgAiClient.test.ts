@@ -69,8 +69,43 @@ describe("staged narrative roles", () => {
       expect(timeouts).toEqual([1000, 300]);
     } finally { clock.mockRestore(); }
   });
+  it("planning 按实际 thinking 策略限制单次等待，并继续受调用剩余时间约束", async () => {
+    const thinkingTimeouts: number[] = [];
+    const thinking = createRpgAiClient({ config, transport: transportFor(async (_c, _m, opts) => {
+      thinkingTimeouts.push(opts!.timeoutMs!);
+      return { ok: true, content: "{}", latencyMs: 1 };
+    }) });
+    await thinking.complete("planning", messages, undefined, { timeoutMs: 300_000 });
+    await thinking.complete("planning", messages, undefined, { timeoutMs: 50_000 });
+    expect(thinkingTimeouts).toEqual([240_000, 50_000]);
+
+    const nonThinkingTimeouts: number[] = [];
+    const nonThinking = createRpgAiClient({ config, transport: transportFor(async (_c, _m, opts) => {
+      nonThinkingTimeouts.push(opts!.timeoutMs!);
+      return { ok: true, content: "{}", latencyMs: 1 };
+    }), policies: { planning: { thinking: "off" } } });
+    await nonThinking.complete("planning", messages, undefined, { timeoutMs: 240_000 });
+    expect(nonThinkingTimeouts).toEqual([90_000]);
+  });
+  it("关闭 thinking 的 planning 在真实样本对应的本地 90 秒边界失败且不获得新预算", async () => {
+    let time = 1_000;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => time);
+    const timeouts: number[] = [];
+    try {
+      const client = createRpgAiClient({ config, transport: transportFor(async (_c, _m, opts) => {
+        timeouts.push(opts!.timeoutMs!);
+        time += opts!.timeoutMs!;
+        return { ok: false, code: "timeout", retryable: true, latencyMs: opts!.timeoutMs! };
+      }), policies: { planning: { thinking: "off" } } });
+      // 出处：tmp/staged-final-retest-20260912/call-statistics.json 的 urban planning
+      // 记录 timeoutMs=90000、latencyMs=90003；这里仅固化本地等待边界。
+      const result = await client.complete("planning", messages);
+      expect(result).toMatchObject({ ok: false, code: "timeout" });
+      expect(timeouts).toEqual([90_000]);
+    } finally { clock.mockRestore(); }
+  });
   it("defines fixed decision-table budgets for the four staged roles", () => {
-    expect(RPG_AI_DEFAULT_POLICIES.planning).toMatchObject({ thinking: "on", timeoutMs: 90_000, maxAttempts: 2 });
+    expect(RPG_AI_DEFAULT_POLICIES.planning).toMatchObject({ thinking: "on", timeoutMs: 240_000, maxAttempts: 2 });
     expect(RPG_AI_DEFAULT_POLICIES.planning.maxTokens).toBeUndefined();
     expect(RPG_AI_DEFAULT_POLICIES.narration).toMatchObject({ thinking: "off", timeoutMs: 45_000, maxTokens: 2_000, maxAttempts: 2 });
     expect(RPG_AI_DEFAULT_POLICIES.character).toMatchObject({ thinking: "off", timeoutMs: 45_000, maxTokens: 2_000, maxAttempts: 2 });
@@ -282,9 +317,11 @@ describe("resolveRpgAiThinkingRoles", () => {
   it("生产装配使用规划默认值，三个润色角色保持关闭", () => {
     const client = createServerRpgAiClient({ AI_API_BASE_URL: "http://provider.test/v1", AI_API_KEY: "secret", AI_MODEL: "model" });
     expect(client?.policy("planning").thinking).toBe("on");
+    expect(client?.policy("planning").timeoutMs).toBe(240_000);
     for (const role of ["narration", "character", "choices"] as const) expect(client?.policy(role).thinking).toBe("off");
     const disabled = createServerRpgAiClient({ AI_API_BASE_URL: "http://provider.test/v1", AI_API_KEY: "secret", AI_MODEL: "model", AI_RUNTIME_THINKING_ROLES: "" });
     expect(disabled?.policy("planning").thinking).toBe("off");
+    expect(disabled?.policy("planning").timeoutMs).toBe(90_000);
   });
 });
 

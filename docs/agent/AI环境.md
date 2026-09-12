@@ -7,7 +7,7 @@
 ## 当前契约
 
 - `AI_API_BASE_URL`、`AI_MODEL`、`AI_API_KEY` 和 `AI_OUTPUT_FORMAT` 由 `application/server/ai/aiRuntimeConfig.ts` 解析；`GAME_DB_PATH` 只由 `src/game/application/server/persistence/sqliteClient.ts` 读取，缺省为 `db/rpg.sqlite`。
-- `AI_RUNTIME_THINKING_ROLES` 控制角色 thinking，未配置时仅开启 `planning`，让规划器完成内容取舍与结构约束，三个表达角色只润色。显式空值关闭全部角色，显式列表覆盖默认值；可用角色以环境示例和 runtime policy 为准。生产叙事生成走分阶段链路（planning → narration / character / choices），统一由 `createStageSource` 装配；不能把角色枚举当作独立调用链，也不能把旧 `NarrativeBundleSource` 描述为生产路径。
+- `AI_RUNTIME_THINKING_ROLES` 控制角色 thinking，未配置时仅开启 `planning`，让规划器完成内容取舍与结构约束，三个表达角色只润色。planning 开启 thinking 时 RPG 本地单次策略为 240 秒，关闭 thinking 时为 90 秒；runJob 的 240 秒 planning 外层窗口始终取 job 剩余截止时间的较小值，client 内 transport 重试继续共用该剩余时间。显式空值关闭全部角色，显式列表覆盖默认值；可用角色以环境示例和 runtime policy 为准。生产叙事生成走分阶段链路（planning → narration / character / choices），统一由 `createStageSource` 装配；不能把角色枚举当作独立调用链，也不能把旧 `NarrativeBundleSource` 描述为生产路径。命中 90 秒只证明本地等待超时，不能据此断定远端故障原因。
 - composition root 在 `src/game/application/server/compositionRoot.ts` 装配 repository、`RpgAiClient`、audit recorder、logger、background ensure coordinator 和 stage source。AI transport 只在 `application/server/ai/` 使用。
 - provider 传输失败、空响应、JSON/schema/reference 失败和审批拒绝都返回稳定 failure。生产 source 不切换 deterministic、fixture 或默认文本；无可用 AI 配置时注入 unavailable source，创建/叙事任务进入明确失败态。
 - 传输由 `RpgAiClient` 按角色策略重试；逐单元生成尝试与手动重试由 [运行时 AI](运行时AI导演与场景表演.md) 维护，普通轮询不重跑 failed job。

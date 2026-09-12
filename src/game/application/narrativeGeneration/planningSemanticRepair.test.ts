@@ -23,17 +23,18 @@ it("首次规划语义拒绝原子撤销后只重做一次，修正骨架才表�
   const real = semanticReviewSamples.find(s => s.id === "no_ship_response")!.subjects[0]!;
   const stored = await h.readJob();
   if (!stored.ok || stored.value.input.kind !== "decision" || base.decision?.kind !== "ordinary") throw Error("fixture");
+  const baseDecision = base.decision;
   const world = stored.value.input.world;
   await h.jobs.save({ lease: h.lease(), expectedVersion: stored.value.version, job: { ...stored.value,
     input: { ...stored.value.input, world: createWorldStateFixtureWith({ generation: world.generation, base: world }, {
       worldFacts: [...world.worldFacts, ...real.facts.map(f => ({ factId: asFactId(f.id), text: f.text,
         discovered: true, source: "generated" as const }))], eventLedger: world.eventLedger,
     }) } } });
-  const decision = { ...base.decision, options: base.decision.options.map((o, i) => i !== 1 ? o : {
+  const decision = { ...baseDecision, options: baseDecision.options.map((o, i) => i !== 1 ? o : {
     ...o, dialogueAct: "challenge" as const, task: { ...o.task!, intent: "challenge" as const,
       brief: "追问信号来自哪里，只询问来源。", focusFactIds: ["fact_3"],
       inquiries: [{ factId: "fact_3", aspects: ["source"] as const }] },
-  }) as unknown as typeof base.decision.options };
+  }) as unknown as typeof baseDecision.options };
   const broken = { ...base, decision: { ...decision, options: decision.options.map((o, i) => i !== 0 ? o : {
     ...o, dialogueAct: "offer" as const, task: { ...o.task!, intent: "offer" as const, brief: real.brief!,
       focusFactIds: real.topicFactIds, inquiries: [] },

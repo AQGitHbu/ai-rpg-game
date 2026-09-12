@@ -47,11 +47,10 @@ const PLANNING_UNIT_KEY = "planning";
 /** 每 job 最多同时在途的 provider 请求；批调度按此上限派发。 */
 const MAX_IN_FLIGHT = 2;
 /**
- * 规划阶段超时（Plan 固定决策 3 的已记录偏离）：规划要产出完整骨架 JSON，
- * 比表达单元大一个量级，45s 对慢 provider 偏紧，放宽到 90s。表达单元维持
- * 45s 不变。
+ * planning 外层调用窗口。RpgAiClient 再按实际 thinking 策略限制单次
+ * transport；这里仍由 cappedTimeoutMs 保证请求不越过 job 绝对截止时间。
  */
-const PLANNING_TIMEOUT_MS = 90_000;
+const PLANNING_TIMEOUT_MS = 240_000;
 /** 表达单元（旁白/角色/选项）超时：与固定决策 3 的 45s 一致。 */
 const EXPRESSION_TIMEOUT_MS = 45_000;
 

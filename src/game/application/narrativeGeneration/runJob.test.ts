@@ -434,13 +434,13 @@ describe("runJob", () => {
     }
   });
 
-  it("满预算时 planning 90s / expression 45s（Plan 固定决策 3 的已记录偏离）", async () => {
+  it("满预算时 planning 240s / expression 45s", async () => {
     const h = createStagedHarness();
     await h.startDecision();
     const result = await h.run();
     expect(result.ok).toBe(true);
     const planning = h.source.calls.find((c) => c.stage === "planning");
-    expect(planning?.timeoutMs).toBe(90_000);
+    expect(planning?.timeoutMs).toBe(240_000);
     const narration = h.source.calls.find((c) => c.stage === "narration");
     expect(narration?.timeoutMs).toBe(45_000);
   });
@@ -509,7 +509,7 @@ describe("runJob", () => {
 
   it("剩余时间不足默认超时时按 deadline 收缩 timeout，请求不越过周期", async () => {
     // 固定决策 3「按剩余时间缩短 timeout」：clock 前进 550s 后剩余 50s，
-    // planning 默认 90s 收缩到 50s；expression 默认 45s 低于剩余时间保持不变。
+    // planning 外层 240s 收缩到 50s；expression 默认 45s 低于剩余时间保持不变。
     const h = createStagedHarness();
     await h.startDecision();
     h.clock.advance(550_000);
