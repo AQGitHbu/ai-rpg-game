@@ -1,4 +1,4 @@
-import { fail, hasOnlyKeys, isPlainRecord, type Check, type UnitOutput } from "@/game/domain/narrativeUnit";
+import { fail, hasOnlyKeys, isPlainRecord, type Check, type Unit, type UnitOutput } from "@/game/domain/narrativeUnit";
 import { readyUnits, type ApprovedPlan } from "@/game/gameplay/rpg/narrativePlanning";
 import type { StoredJob } from "../server/persistence/narrativeJobRepository";
 import { approveUnit } from "./approveUnit";
@@ -8,7 +8,7 @@ import { isLegacyStoredDialogueReview } from "./legacyDialogueReview";
 export { parseDialogueConsistencyVerdict, type DialogueViolation, type DialogueConsistencyVerdict } from "./legacyDialogueReview";
 
 export const DIALOGUE_REVIEW_VERSION = 2;
-export const DIALOGUE_REVIEW_POLICY_REVISION = 7;
+export const DIALOGUE_REVIEW_POLICY_REVISION = 8;
 export const DIALOGUE_REVIEW_MAX_ATTEMPTS = 2;
 export const DIALOGUE_REVIEW_CONTEXT_LIMIT = 24_000;
 export type PolishReviewVerdict = Readonly<{ verdict: "pass" | "reject" | "uncertain"; failedIds: readonly string[] }>;
@@ -16,6 +16,12 @@ export type DialogueConsistencyReviewRequest = Readonly<{ items: readonly Readon
   id: string; stage: "narration" | "character" | "choices"; draft: string; text: string;
   facts: readonly Readonly<{ id: string; text: string; certainty: "known" | "suspected" }>[];
   scene?: SafeContext["scene"]; speaker?: string; selectedLabel?: string;
+  authority?: Readonly<{
+    publicRole?: string;
+    addresseeRole?: Readonly<{ id: string; name: string; role: string }>;
+    actions?: readonly Readonly<{ actorId: string; kind: "pause" | "look" | "gesture"; objectId: string | null }>[];
+    events?: readonly Readonly<{ kind: "quest_completed"; questId: string; objectives: readonly Readonly<{ index: number; label: string }>[] }>[];
+  }>;
 }>[] }>;
 export function shouldReviewDialogueConsistency(plan: ApprovedPlan): boolean { return plan.units.length > 0; }
 
@@ -27,6 +33,34 @@ export function parsePolishReviewVerdict(value: unknown, request: DialogueConsis
     || (value.verdict === "reject" ? value.failedIds.length === 0 : value.failedIds.length !== 0))
     return fail("dialogue_consistency_review_invalid");
   return { ok: true, value: { verdict: value.verdict as PolishReviewVerdict["verdict"], failedIds: value.failedIds } };
+}
+
+/** Only already-approved public identity, selected cosmetic actions and current rule evidence. */
+function reviewAuthority(job: StoredJob, plan: ApprovedPlan, unit: Unit, context: SafeContext, draft: UnitOutput): DialogueConsistencyReviewRequest["items"][number]["authority"] {
+  const keys = draft.stage === "narration" ? draft.actionKeys : draft.stage === "character" ? draft.actions.map(action => action.key) : [];
+  const actions = context.allowedActions.filter(action => keys.includes(action.key)).map(({ actorId, kind, objectId }) => ({ actorId, kind, objectId }));
+  const events: NonNullable<NonNullable<DialogueConsistencyReviewRequest["items"][number]["authority"]>["events"]>[number][] = [];
+  if (job.input.kind === "decision" && unit.stage === "narration" && unit.point.stepKey === "current") {
+    const input = job.input;
+    const ids = new Set(context.requiredBeats.flatMap(beat => beat.evidence.flatMap(ref => ref.kind === "committed"
+      && plan.currentBeatEvidence?.[beat.beatId]?.includes(ref.eventId) ? [ref.eventId] : [])));
+    for (const event of input.world.eventLedger) {
+      if (!ids.has(String(event.eventId)) || !input.job.domainEventIds.includes(event.eventId) || event.payload.type !== "quest_completed") continue;
+      const questId = event.payload.questId;
+      const transition = input.job.objectiveTransition;
+      const completed = transition.completed.filter(objective => objective.questId === questId);
+      if (completed.length === 0 && transition.mode === "ready_for_ending" && transition.before?.questId === questId) completed.push(transition.before);
+      if (completed.length > 0) events.push({ kind: "quest_completed", questId: String(questId),
+        objectives: completed.map(({ objectiveIndex, label }) => ({ index: objectiveIndex, label })) });
+    }
+  }
+  const publicRole = context.persona?.publicRole.text;
+  const addresseeRole = context.dialogue?.addresseeRole === undefined ? undefined : {
+    id: context.dialogue.addresseeId, name: context.dialogue.addresseeName, role: context.dialogue.addresseeRole,
+  };
+  return publicRole === undefined && addresseeRole === undefined && actions.length === 0 && events.length === 0 ? undefined : {
+    ...(publicRole === undefined ? {} : { publicRole }), ...(addresseeRole === undefined ? {} : { addresseeRole }), ...(actions.length === 0 ? {} : { actions }), ...(events.length === 0 ? {} : { events }),
+  };
 }
 
 /** One item per complete utterance or candidate; reference scope remains independently approved. */
@@ -53,10 +87,12 @@ export function dialogueConsistencyReviewInput(job: StoredJob, plan: ApprovedPla
       const valid = approveUnit({ unit, context, output });
       if (!valid.ok) return valid;
       contexts.push(context);
+      const authority = reviewAuthority(job, plan, unit, context, draft);
       const add = (draftText: string, text: string, factIds?: readonly string[]) => {
         const id = `polish_${items.length}`;
         routes.set(id, unit.key);
         items.push({ id, stage: unit.stage, draft: draftText, text,
+          ...(authority === undefined ? {} : { authority }),
           facts: context.visibleFacts.filter(fact => factIds === undefined || factIds.includes(fact.id))
             .map(({ id, text, certainty }) => ({ id, text, certainty })),
           scene: context.scene, speaker: context.dialogue?.speakerName ?? context.persona?.publicName ?? context.scene?.playerName,
@@ -67,7 +103,7 @@ export function dialogueConsistencyReviewInput(job: StoredJob, plan: ApprovedPla
           const final = output.labels.find(candidate => candidate.candidateId === label.candidateId);
           if (final === undefined) return fail("unit_output_candidate_missing");
           const option = context.options.find(option => option.candidateId === label.candidateId);
-          add(label.label, final.label, option?.publicIntent.facts.map(fact => fact.factId));
+          add(label.label, final.label, context.choiceKind === "ordinary" ? option?.publicIntent.facts.map(fact => fact.factId) : undefined);
         }
       } else if (draft.stage !== "choices" && output.stage !== "choices") {
         add(draft.parts.map(part => part.text).join("\n"), output.parts.map(part => part.text).join("\n"));

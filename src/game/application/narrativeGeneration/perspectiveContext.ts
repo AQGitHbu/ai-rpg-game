@@ -570,8 +570,8 @@ export function projectUnitContext(input: ProjectUnitContextInput): ContextCheck
   const options = unit.stage === "choices" ? optionsOf(plan, priorText.value, visibleFacts)
     : { ok: true as const, value: [] };
   if (!options.ok) return options;
-  // 选项润色只读取各自规划任务的事实；不提供整份玩家知识库供它重新选题。
-  if (unit.stage === "choices" && unit.draft !== undefined) {
+  // 普通选项仅取声明引用；终幕没有候选事实 wire，保留当前玩家可见事实作为核对依据。
+  if (unit.stage === "choices" && unit.draft !== undefined && plan.choiceExpression?.kind === "ordinary") {
     const selected = new Set(options.value.flatMap(option => option.publicIntent.facts.map(fact => fact.factId)));
     visibleFacts = visibleFacts.filter(fact => selected.has(fact.id));
   }
