@@ -117,7 +117,7 @@ function makeStory(trigger?: PreparedContinuationTrigger): StoryState {
     narrative: {
       ...base.narrative,
       narrativeBundle: {
-        contractVersion: 1,
+        contractVersion: 2,
         originJobId: asNarrativeJobId("job-provider-trigger-matrix"),
         activeStepIds: ["step-trigger"],
         steps: [{

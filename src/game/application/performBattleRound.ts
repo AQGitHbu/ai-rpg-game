@@ -160,7 +160,11 @@ export async function performBattleRound(
         : { ...afterWorldState, battle: { status: "idle" as const } };
 
       const restoredStoryState: StoryState = narrativeCheckpoint === undefined
-        ? { ...beforeStoryState, narrative: restoredNarrative }
+        ? {
+            ...beforeStoryState,
+            ...(preBattleSnapshot?.history === undefined ? {} : { history: preBattleSnapshot.history }),
+            narrative: restoredNarrative,
+          }
         : { ...narrativeCheckpoint.storySnapshot, narrative: restoredNarrative };
 
       const commitResult = await commitState(deps.repository, {

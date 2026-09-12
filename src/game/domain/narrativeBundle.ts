@@ -9,6 +9,7 @@ import type {
 } from "./worldEntity";
 import type { PreparedSceneSeedState } from "./preparedContinuation";
 import { areUniqueNpcSpeechReferenceIds } from "./npcSpeechReferences";
+import { parseSceneExpressionProposal, type SceneExpressionProposal } from "./sceneExpression";
 
 // ---------------------------------------------------------------------------
 // Pure value types moved from application/sceneSource.ts so domain code does
@@ -72,8 +73,10 @@ export type NarrativeBundleTerminal =
   | { readonly kind: "ending" };
 
 export type BundleSceneProposal = {
-  readonly segments: readonly ScenePerformanceSegment[];
-  readonly npcLine: ScenePerformanceNpcLine | null;
+  /** Bundle2 ordered expression body. Legacy fields remain accepted only as an input adapter. */
+  readonly expressions?: readonly SceneExpressionProposal[];
+  readonly segments?: readonly ScenePerformanceSegment[];
+  readonly npcLine?: ScenePerformanceNpcLine | null;
   readonly npcDialogues?: readonly ScenePerformanceNpcDialogue[];
   readonly objectiveLink: ScenePerformanceObjectiveLink | null;
   readonly choices: readonly { readonly candidateId: string; readonly label: string }[];
@@ -143,7 +146,7 @@ export type NarrativeBundleStepState = {
 };
 
 export type NarrativeBundleState = {
-  readonly contractVersion: 1;
+  readonly contractVersion: 2;
   readonly originJobId: NarrativeJobId;
   readonly steps: readonly NarrativeBundleStepState[];
   readonly activeStepIds: readonly string[];
@@ -287,9 +290,11 @@ function isChoiceCandidate(value: unknown): boolean {
 
 function isBundleSceneProposal(value: unknown): value is BundleSceneProposal {
   if (!isRecord(value)) return false;
-  if (!hasOnlyKeys(value, ["segments", "npcLine", "npcDialogues", "objectiveLink", "choices", "handoffAcknowledgement"])) return false;
-  if (!Array.isArray(value.segments) || !value.segments.every(isScenePerformanceSegment)) return false;
-  if (value.npcLine !== null && !isScenePerformanceNpcLine(value.npcLine)) return false;
+  if (!hasOnlyKeys(value, ["expressions", "segments", "npcLine", "npcDialogues", "objectiveLink", "choices", "handoffAcknowledgement"])) return false;
+  if (value.expressions !== undefined && !parseSceneExpressionProposal(value.expressions).ok) return false;
+  if (value.segments !== undefined && (!Array.isArray(value.segments) || !value.segments.every(isScenePerformanceSegment))) return false;
+  if (value.expressions === undefined && value.segments === undefined) return false;
+  if (value.npcLine !== undefined && value.npcLine !== null && !isScenePerformanceNpcLine(value.npcLine)) return false;
   if (value.npcDialogues !== undefined && (!Array.isArray(value.npcDialogues) || !value.npcDialogues.every(isScenePerformanceNpcDialogue))) return false;
   if (value.objectiveLink !== null && !isScenePerformanceObjectiveLink(value.objectiveLink)) return false;
   if (!Array.isArray(value.choices) || !value.choices.every(isChoiceCandidate)) return false;
@@ -445,14 +450,16 @@ function isTerminalState(value: unknown): value is NarrativeBundleTerminalState 
 // validate the scene shape inline.
 function isPreparedSceneSeedState(value: unknown): boolean {
   if (!isRecord(value)) return false;
-  if (!hasOnlyKeys(value, ["segments", "event", "npcLine", "npcDialogues", "objectiveLink", "choiceSeeds", "source"])) return false;
-  if (!Array.isArray(value.segments) || !value.segments.every((seg) => (
+  if (!hasOnlyKeys(value, ["expressions", "segments", "event", "npcLine", "npcDialogues", "objectiveLink", "choiceSeeds", "source"])) return false;
+  if (value.expressions !== undefined && !parseSceneExpressionProposal(value.expressions).ok) return false;
+  if (value.expressions === undefined && value.segments === undefined) return false;
+  if (value.segments !== undefined && (!Array.isArray(value.segments) || !value.segments.every((seg) => (
     isRecord(seg)
     && hasOnlyKeys(seg, ["beatId", "text", "referencedEntityIds"])
     && isNonEmptyString(seg.beatId)
     && isNonEmptyString(seg.text)
     && (seg.referencedEntityIds === undefined || isStringArray(seg.referencedEntityIds))
-  ))) return false;
+  )))) return false;
   // event validation
   const event = value.event as unknown;
   if (!isRecord(event) || typeof event.kind !== "string") return false;
@@ -551,7 +558,7 @@ function isAcyclic(steps: readonly NarrativeBundleStepState[]): boolean {
 export function parseNarrativeBundleState(value: unknown): ParseNarrativeBundleStateResult {
   if (!isRecord(value)) return INVALID_STATE;
   if (!hasOnlyKeys(value, ["contractVersion", "originJobId", "steps", "activeStepIds", "terminal"])) return INVALID_STATE;
-  if (value.contractVersion !== 1) return INVALID_STATE;
+  if (value.contractVersion !== 2) return INVALID_STATE;
   if (!isNonEmptyString(value.originJobId)) return INVALID_STATE;
   if (!Array.isArray(value.steps) || !value.steps.every(isBundleStepState)) return INVALID_STATE;
   if (!isStringArray(value.activeStepIds) || !hasUniqueStrings(value.activeStepIds)) return INVALID_STATE;

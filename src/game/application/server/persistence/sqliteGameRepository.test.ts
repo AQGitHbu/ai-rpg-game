@@ -180,7 +180,7 @@ describe("sqliteGameRepository", () => {
       expect(current.record.revision).toBe(0);
       expect(current.record.worldState.version).toBe(WORLD_STATE_SCHEMA_VERSION);
       expect(current.record.worldState.entityStore.version).toBe(2);
-      expect(current.record.storyState.version).toBe(8);
+      expect(current.record.storyState.version).toBe(10);
     }
   });
 
@@ -196,12 +196,37 @@ describe("sqliteGameRepository", () => {
     await repo.createInitialGame({
       gameId: asGameId("opening-roundtrip"),
       ...compiled,
+      storyState: {
+        ...compiled.storyState,
+        history: {
+          entries: [{
+            id: "scene-opening:player:choice-1",
+            segmentId: "segment-opening",
+            sequence: 0,
+            actionId: "choice-1",
+            jobId: null,
+            sceneId: "scene-opening",
+            revision: 0,
+            turnNumber: 0,
+            kind: "player_choice",
+            text: "我检查门口的脚印。",
+            speakerId: "player_0",
+            audienceIds: ["player_0"],
+            entityIds: ["player_0"],
+            factIds: [],
+            eventIds: [asEventId("turn-0:event-opening")],
+            choiceToken: "choice-1",
+          }],
+        },
+      },
       createdAt: "2026-01-01T00:00:00.000Z",
     });
 
     const record = await expectActiveCurrentGame(repo);
     expect(record.worldState.entityStore).toEqual(compiled.worldState.entityStore);
     expect(record.worldState.eventLedger).toEqual(compiled.worldState.eventLedger);
+    expect(record.storyState.history.entries).toHaveLength(1);
+    expect(record.storyState.history.entries[0]?.text).toBe("我检查门口的脚印。");
     expect(record.storyState.memory).toEqual(compiled.storyState.memory);
     expect(record.storyState.narrative.status).toBe("ready");
     if (record.storyState.narrative.status === "ready" && compiled.storyState.narrative.status === "ready") {

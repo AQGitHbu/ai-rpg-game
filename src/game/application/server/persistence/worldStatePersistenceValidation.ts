@@ -5,6 +5,7 @@ import type { GenerationMetadata } from "@/game/domain/worldEntity";
 import { classifyWorldStateSchemaVersion, WORLD_STATE_SCHEMA_VERSION, type BattleState, type EndingState, type WorldState } from "@/game/domain/worldState";
 import type { EndingEntry } from "@/game/domain/worldEntries";
 import { validateWorldStateEntityReferences, validateWorldStateEventLedger } from "@/game/domain/worldStateValidation";
+import { parseNarrativeHistory } from "@/game/domain/narrativeHistory";
 import {
   MODERN_BATTLE_KEYS,
   hasExactKeys,
@@ -61,10 +62,11 @@ function isGeneration(value: unknown): value is GenerationMetadata {
 }
 
 function isBattleSnapshot(value: unknown): boolean {
-  if (!isObject(value) || !hasExactKeys(value, ["entityStore", "eventLedger"]) || !Array.isArray(value.eventLedger)) return false;
+  if (!isObject(value) || !hasRequiredAndOptionalKeys(value, ["entityStore", "eventLedger"], ["history"]) || !Array.isArray(value.eventLedger)) return false;
   const store = parseEntityStore(value.entityStore);
   const ledger = parseCommittedEventLedger(value.eventLedger);
   if (!store.ok || !ledger.ok) return false;
+  if (value.history !== undefined && !parseNarrativeHistory(value.history).ok) return false;
   return validateWorldStateEventLedger(ledger.value, store.store).length === 0
     && validateEntityStoreProvenance(store.store, ledger.value).length === 0;
 }

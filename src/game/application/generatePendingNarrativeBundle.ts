@@ -13,6 +13,7 @@ import type { AiFailureKind } from "@/game/domain/narrativeGenerationFailure";
 import { buildWorldDeltaEntityContextClosure } from "./entityContextProjection";
 import { commitEventDrafts } from "@/game/domain/eventLedger";
 import { reconcileCommittedMemory } from "./reconcileCommittedMemory";
+import { appendHistory, narrativeSceneHistoryEntries } from "@/game/domain/narrativeHistory";
 
 // A next-act package contains five independently unique world entities. A
 // provider repair may correct one named collision at a time, so leave room for
@@ -242,12 +243,27 @@ export async function generatePendingNarrativeBundle(
   }
   const nextWorldState = { ...approved.nextWorldState, eventLedger: eventCommit.ledger };
 
+  const history = storyState.history ?? { entries: [] };
+  const nextHistory = appendHistory(history, narrativeSceneHistoryEntries({
+    history,
+    scene: approved.currentScene,
+    actionId: job.actionId,
+    jobId: job.jobId,
+    revision: record.revision + 1,
+    turnNumber: job.turnNumber,
+    eventIds: [...new Set([
+      ...job.domainEventIds,
+      ...eventCommit.appended.map((event) => event.eventId),
+    ])],
+  }));
+
   // The next story state includes the new world state from the bundle,
   // plus the ready narrative with the current scene and choice registry.
   // The scene event is committed in this same CAS, so memory must be rebuilt
   // from that final ledger before persistence validation.
   const nextStoryState: StoryState = {
     ...approved.nextStoryStatePreview,
+    history: nextHistory,
     narrative: readyNarrative,
     memory: reconcileCommittedMemory({
       previous: approved.nextStoryStatePreview.memory,

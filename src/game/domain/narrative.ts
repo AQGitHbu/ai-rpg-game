@@ -21,6 +21,7 @@ import {
   parseNarrativeBundleState,
   type NarrativeBundleState,
 } from "./narrativeBundle";
+import { parseSceneExpressionProposal, type ApprovedSceneExpression } from "./sceneExpression";
 import { areUniqueNpcSpeechReferenceIds } from "./npcSpeechReferences";
 
 export const NARRATIVE_EMOTIONS = [
@@ -108,6 +109,8 @@ export type NarrativeSceneState = {
   readonly event?: NarrativeEventState;
   /** Phase 14: 场景内多 NPC 对白（含焦点 NPC）。 */
   readonly npcDialogues?: readonly NpcDialogueInScene[];
+  /** Ordered, audience-aware body for Bundle2 scenes. Legacy scenes may omit it. */
+  readonly expressions?: readonly ApprovedSceneExpression[];
 };
 
 /** 一段 NPC 对话的服务端会话游标；选择不会在第一轮直接完成 talk 目标。 */
@@ -275,7 +278,7 @@ function isNarrativeScene(value: unknown): value is NarrativeSceneState {
   return isRecord(value)
     && hasOnlyKeys(value, [
       "sceneId", "turn", "narration", "usedFactIds", "npcLine", "choices",
-      "handoffAcknowledgement", "source", "event", "npcDialogues",
+      "handoffAcknowledgement", "source", "event", "npcDialogues", "expressions",
     ])
     && isNonEmptyString(value.sceneId)
     && Number.isInteger(value.turn)
@@ -290,7 +293,8 @@ function isNarrativeScene(value: unknown): value is NarrativeSceneState {
     && ["generated", "rule", "fixture"].includes(value.source as string)
     && (value.event === undefined || isNarrativeEvent(value.event))
     && (value.npcDialogues === undefined
-      || (Array.isArray(value.npcDialogues) && value.npcDialogues.every(isNpcDialogue)));
+      || (Array.isArray(value.npcDialogues) && value.npcDialogues.every(isNpcDialogue)))
+    && (value.expressions === undefined || parseSceneExpressionProposal(value.expressions).ok);
 }
 
 function isDialogueSession(value: unknown): value is DialogueSessionState {

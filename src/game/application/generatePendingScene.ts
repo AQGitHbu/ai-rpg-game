@@ -24,6 +24,7 @@ import { runBoundedAttempts } from "@/game/core/retry";
 import { buildWorldDeltaEntityContextClosure } from "./entityContextProjection";
 import { commitEventDrafts } from "@/game/domain/eventLedger";
 import { rebuildEpisodicMemory } from "@/game/domain/episodicMemory";
+import { appendHistory, narrativeSceneHistoryEntries } from "@/game/domain/narrativeHistory";
 
 export type GeneratePendingSceneDeps = {
   readonly repository: GameRepository;
@@ -382,6 +383,19 @@ export async function generatePendingScene(
     return fail(sceneFailure("AI_RESPONSE_INVALID", { attempt: 1, reason: "invalid_schema", detail: "event_commit_failed" }));
   }
   const committedScenarioWs = { ...scenarioWs, eventLedger: eventCommit.ledger };
+  const history = scenarioSs.history ?? record.storyState.history ?? { entries: [] };
+  const nextHistory = appendHistory(history, narrativeSceneHistoryEntries({
+    history,
+    scene: approved.scene,
+    actionId: generation.job.actionId,
+    jobId: generation.job.jobId,
+    revision: record.revision + 1,
+    turnNumber: generation.job.turnNumber,
+    eventIds: [...new Set([
+      ...generation.job.domainEventIds,
+      ...eventCommit.appended.map((event) => event.eventId),
+    ])],
+  }));
 
   const writeBack = await deps.repository.applySceneWriteBack({
     gameId: record.gameId,
@@ -389,6 +403,7 @@ export async function generatePendingScene(
     nextWorldState: committedScenarioWs,
     nextStoryState: {
       ...scenarioSs,
+      history: nextHistory,
       memory: rebuildEpisodicMemory(eventCommit.ledger),
       narrative: {
         status: "ready",

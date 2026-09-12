@@ -7,7 +7,7 @@ import type {
   ApprovedWorldDelta,
 } from "@/game/domain/worldDelta";
 import type { NarrativeJobId } from "@/game/domain/events";
-import { asTurnId, type NarrativeEventDraft } from "@/game/domain/events";
+import { asEventId, asTurnId, type NarrativeEventDraft } from "@/game/domain/events";
 import type {
   NarrativeBundleProposal,
   NarrativeBundleState,
@@ -45,14 +45,15 @@ import {
 } from "@/game/gameplay/rpg/narrativeBundle";
 import type { NarrativeBundleRejection } from "./narrativeBundleSource";
 import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
-import { entitiesOfKind } from "@/game/domain/entity";
-import { asFactId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
+import { entitiesOfKind, getEntity, type EntityId } from "@/game/domain/entity";
+import { asFactId, PLAYER_ENTITY_ID, type FactId } from "@/game/domain/worldEntity";
 import {
   buildNpcSpeechAuthority,
   isValidNpcSpeechTarget,
   validateNpcSpeechReferences,
 } from "./npcSpeechAuthority";
 import { buildNarrativeScenePresentedDraft } from "./approveAndWriteScene";
+import { sceneExpressionsOf, type SceneExpressionProposal, type ApprovedSceneExpression } from "@/game/domain/sceneExpression";
 
 // ---------------------------------------------------------------------------
 // Task 4：原子审批叙事生成包。
@@ -122,6 +123,160 @@ function reclassifiedStageDirection(text: string): string {
     .trim();
 }
 
+function normalizedSceneParts(proposal: BundleSceneProposal): {
+  readonly expressions: readonly SceneExpressionProposal[];
+  readonly segments: readonly { readonly beatId: string; readonly text: string; readonly referencedEntityIds?: readonly string[] }[];
+  readonly npcLine: Extract<SceneExpressionProposal, { readonly kind: "npc_line" }> | null;
+} {
+  const expressions = sceneExpressionsOf(proposal);
+  const segments = expressions
+    .filter((expression): expression is Extract<SceneExpressionProposal, { readonly kind: "narration" }> => expression.kind === "narration")
+    .map((expression) => ({
+      beatId: expression.beatId,
+      text: expression.text,
+      referencedEntityIds: expression.referencedEntityIds,
+    }));
+  const line = expressions.find((expression): expression is Extract<SceneExpressionProposal, { readonly kind: "npc_line" }> => expression.kind === "npc_line");
+  return {
+    expressions,
+    segments,
+    npcLine: line === undefined ? null : line,
+  };
+}
+
+function sceneSymbolBindings(
+  worldState: WorldState,
+  approvedDelta: ApprovedWorldDelta | undefined,
+  focusNpcId: string | undefined,
+): ReadonlyMap<string, string> {
+  const bindings = new Map<string, string>([
+    ["@current.location", String(worldState.currentLocationId)],
+    ...(focusNpcId === undefined ? [] : [["@current.focus_npc", focusNpcId] as const]),
+  ]);
+  const first = (ids: readonly string[] | undefined): void => {
+    const id = ids?.[0];
+    if (id !== undefined) {
+      // The binding values originate from already approved, branded IDs.
+      bindings.set("@new.location", String(id));
+    }
+  };
+  first(approvedDelta?.mintedLocationIds);
+  if (approvedDelta?.mintedNpcIds[0] !== undefined) bindings.set("@new.npc", String(approvedDelta.mintedNpcIds[0]));
+  if (approvedDelta?.mintedItemIds[0] !== undefined) bindings.set("@new.item", String(approvedDelta.mintedItemIds[0]));
+  if (approvedDelta?.mintedEnemyIds[0] !== undefined) bindings.set("@new.enemy", String(approvedDelta.mintedEnemyIds[0]));
+  if (approvedDelta?.mintedFactIds[0] !== undefined) bindings.set("@new.fact", String(approvedDelta.mintedFactIds[0]));
+  if (approvedDelta?.mintedQuestIds[0] !== undefined) bindings.set("@new.quest", String(approvedDelta.mintedQuestIds[0]));
+  return bindings;
+}
+
+function resolveSceneReference(raw: string, bindings: ReadonlyMap<string, string>): string | null {
+  if (!raw.startsWith("@")) return raw;
+  return bindings.get(raw) ?? null;
+}
+
+/** Resolve and fail closed before any approved expression is materialized. */
+function resolveSceneExpressions(
+  scene: BundleSceneProposal,
+  worldState: WorldState,
+  approvedDelta: ApprovedWorldDelta | undefined,
+  focusNpcId: string | undefined,
+): BundleSceneProposal | null {
+  if (scene.expressions === undefined) return scene;
+  const bindings = sceneSymbolBindings(worldState, approvedDelta, focusNpcId);
+  const resolved = [] as SceneExpressionProposal[];
+  for (const expression of scene.expressions) {
+    if (expression.kind === "narration") {
+      const referencedEntityIds = expression.referencedEntityIds.map((raw) => {
+        const id = resolveSceneReference(raw, bindings);
+        if (id === null || getEntity(worldState.entityStore, id) === undefined) return null;
+        return id;
+      });
+      if (referencedEntityIds.some((id) => id === null)) return null;
+      resolved.push({
+        ...expression,
+        referencedEntityIds: referencedEntityIds as string[],
+      });
+      continue;
+    }
+    const npcId = resolveSceneReference(expression.npcId, bindings);
+    const npc = npcId === null ? undefined : getEntity(worldState.entityStore, npcId);
+    const audienceIds = expression.audienceIds.map((raw) => {
+      const id = resolveSceneReference(raw, bindings);
+      return id === null || getEntity(worldState.entityStore, id) === undefined ? null : id;
+    });
+    const factIds = expression.usedFactIds.map((raw) => {
+      const id = resolveSceneReference(raw, bindings);
+      const record = id === null ? undefined : getEntity(worldState.entityStore, id);
+      return record?.core.kind === "fact" ? id : null;
+    });
+    const eventIds = expression.usedEventIds.map((raw) => {
+      const id = resolveSceneReference(raw, bindings);
+      return id !== null && worldState.eventLedger.some((event) => String(event.eventId) === id) ? id : null;
+    });
+    if (npc?.core.kind !== "npc"
+      || audienceIds.some((id) => id === null)
+      || factIds.some((id) => id === null)
+      || eventIds.some((id) => id === null)) return null;
+    resolved.push({
+      ...expression,
+      npcId: String(npc.core.id),
+      audienceIds: audienceIds as string[],
+      usedFactIds: factIds as string[],
+      usedEventIds: eventIds as string[],
+    });
+  }
+  return { ...scene, expressions: resolved };
+}
+
+function approvedExpressions(
+  expressions: readonly SceneExpressionProposal[],
+  worldState: WorldState,
+): readonly ApprovedSceneExpression[] {
+  return expressions.map((expression) => {
+    if (expression.kind === "narration") {
+      const referencedEntityIds: EntityId[] = [];
+      for (const id of expression.referencedEntityIds) {
+        const record = getEntity(worldState.entityStore, id);
+        if (record === undefined) throw new Error("APPROVED_SCENE_REFERENCE_MISSING");
+        referencedEntityIds.push(record.core.id);
+      }
+      return {
+        kind: "narration" as const,
+        beatId: expression.beatId,
+        text: expression.text,
+        referencedEntityIds,
+      };
+    }
+    const npc = getEntity(worldState.entityStore, expression.npcId);
+    const audienceIds: EntityId[] = [];
+    for (const id of expression.audienceIds) {
+      const record = getEntity(worldState.entityStore, id);
+      if (record === undefined) throw new Error("APPROVED_SCENE_REFERENCE_MISSING");
+      audienceIds.push(record.core.id);
+    }
+    const factIds: FactId[] = [];
+    for (const id of expression.usedFactIds) {
+      const record = getEntity(worldState.entityStore, id);
+      if (record?.core.kind !== "fact") throw new Error("APPROVED_SCENE_REFERENCE_MISSING");
+      factIds.push(record.core.id);
+    }
+    if (npc?.core.kind !== "npc"
+    ) {
+      throw new Error("APPROVED_SCENE_REFERENCE_MISSING");
+    }
+    return {
+      kind: "npc_line" as const,
+      npcId: npc.core.id,
+      audienceIds,
+      text: expression.text,
+      emotion: expression.emotion,
+      answeredBeatIds: [...expression.answeredBeatIds],
+      usedFactIds: factIds,
+      usedEventIds: expression.usedEventIds.map(asEventId),
+    };
+  });
+}
+
 /** Surface every existing-world naming collision in one repair hint. */
 function duplicateNameDetail(proposal: WorldDeltaProposal, worldState: WorldState): string | undefined {
   const npcName = proposal.newNpc?.name;
@@ -148,30 +303,31 @@ function buildSceneFromProposal(
   proposal: BundleSceneProposal,
   sceneId: string,
   turn: number,
+  worldState: WorldState,
   trigger?: NarrativeBundleTrigger,
   dialogueFocusNpcId?: NarrativeNpcLineState["npcId"],
-  worldState?: WorldState,
 ): NarrativeSceneState {
-  const normalizedNpcText = proposal.npcLine === null
+  const parts = normalizedSceneParts(proposal);
+  const normalizedNpcText = parts.npcLine === null
     ? null
-    : normalizeNpcSpeech(proposal.npcLine.text);
-  const stageDirection = proposal.npcLine !== null && normalizedNpcText === ""
-    ? reclassifiedStageDirection(proposal.npcLine.text)
+    : normalizeNpcSpeech(parts.npcLine.text);
+  const stageDirection = parts.npcLine !== null && normalizedNpcText === ""
+    ? reclassifiedStageDirection(parts.npcLine.text)
     : "";
   const narration = [
-    ...proposal.segments.map((s) => s.text),
+    ...parts.segments.map((s) => s.text),
     ...(stageDirection === "" ? [] : [stageDirection]),
   ].join("\n");
-  const npcLine: NarrativeNpcLineState | null = proposal.npcLine === null
+  const npcLine: NarrativeNpcLineState | null = parts.npcLine === null
     || normalizedNpcText === ""
     ? null
     : {
-        npcId: proposal.npcLine.npcId as never,
+        npcId: parts.npcLine.npcId as never,
         text: normalizedNpcText!,
-        emotion: proposal.npcLine.emotion,
-        usedFactIds: proposal.npcLine.usedFactIds.map((id: string) => id as never),
-        usedEventIds: [...proposal.npcLine.usedEventIds],
-        answeredBeatIds: [...proposal.npcLine.answeredBeatIds],
+        emotion: parts.npcLine.emotion,
+        usedFactIds: parts.npcLine.usedFactIds.map((id: string) => id as never),
+        usedEventIds: [...parts.npcLine.usedEventIds],
+        answeredBeatIds: [...parts.npcLine.answeredBeatIds],
       };
   // The current-scene terminal is itself a formal NPC decision boundary.
   // Unlike continuation steps it has no trigger, so derive its dialogue
@@ -184,7 +340,7 @@ function buildSceneFromProposal(
       : undefined
     : eventForTrigger(trigger);
   const npcDialogues = proposal.npcDialogues?.map((dialogue) => {
-    const npc = worldState?.npcs.find((candidate) => String(candidate.id) === dialogue.npcId);
+    const npc = worldState.npcs.find((candidate) => String(candidate.id) === dialogue.npcId);
     const text = normalizeNpcSpeech(dialogue.text, npc?.name);
     return {
       npcId: dialogue.npcId as never,
@@ -197,6 +353,9 @@ function buildSceneFromProposal(
       usedEventIds: [...dialogue.usedEventIds],
     };
   });
+  const expressionState = proposal.expressions === undefined
+    ? undefined
+    : approvedExpressions(parts.expressions, worldState);
   return {
     sceneId,
     turn,
@@ -210,6 +369,7 @@ function buildSceneFromProposal(
       ? {}
       : { handoffAcknowledgement: proposal.handoffAcknowledgement }),
     ...(npcDialogues === undefined ? {} : { npcDialogues }),
+    ...(expressionState === undefined ? {} : { expressions: expressionState }),
   };
 }
 
@@ -232,23 +392,24 @@ function buildStepState(
     return "bundle_invalid_scene";
   }
 
+  const parts = normalizedSceneParts(proposal.scene);
   const event = eventForTrigger(descriptor.trigger);
-  const normalizedNpcText = proposal.scene.npcLine === null
+  const normalizedNpcText = parts.npcLine === null
     ? null
-    : normalizeNpcSpeech(proposal.scene.npcLine.text);
-  const stageDirection = proposal.scene.npcLine !== null && normalizedNpcText === ""
-    ? reclassifiedStageDirection(proposal.scene.npcLine.text)
+    : normalizeNpcSpeech(parts.npcLine.text);
+  const stageDirection = parts.npcLine !== null && normalizedNpcText === ""
+    ? reclassifiedStageDirection(parts.npcLine.text)
     : "";
-  const npcLine = proposal.scene.npcLine === null
+  const npcLine = parts.npcLine === null
     || normalizedNpcText === ""
     ? null
     : {
-        npcId: proposal.scene.npcLine.npcId as never,
+        npcId: parts.npcLine.npcId as never,
         text: normalizedNpcText!,
-        emotion: proposal.scene.npcLine.emotion,
-        usedFactIds: proposal.scene.npcLine.usedFactIds.map((id: string) => id as never),
-        usedEventIds: [...proposal.scene.npcLine.usedEventIds],
-        answeredBeatIds: [...proposal.scene.npcLine.answeredBeatIds],
+        emotion: parts.npcLine.emotion,
+        usedFactIds: parts.npcLine.usedFactIds.map((id: string) => id as never),
+        usedEventIds: [...parts.npcLine.usedEventIds],
+        answeredBeatIds: [...parts.npcLine.answeredBeatIds],
       };
 
   const objectiveLink = proposal.scene.objectiveLink === null
@@ -285,9 +446,9 @@ function buildStepState(
   }
 
   const scene: PreparedSceneSeedState = {
-    segments: proposal.scene.segments.map((s, index) => ({
+    segments: parts.segments.map((s, index) => ({
       beatId: s.beatId,
-      text: stageDirection !== "" && index === proposal.scene.segments.length - 1
+      text: stageDirection !== "" && index === parts.segments.length - 1
         ? `${s.text}\n${stageDirection}`
         : s.text,
       ...(s.referencedEntityIds === undefined ? {} : { referencedEntityIds: s.referencedEntityIds }),
@@ -297,7 +458,8 @@ function buildStepState(
     ...(npcDialogues === undefined ? {} : { npcDialogues }),
     objectiveLink,
     choiceSeeds: choiceSeeds as NonNullable<typeof choiceSeeds[number]>[],
-    source: "generated",
+      source: "generated",
+      ...(proposal.scene.expressions === undefined ? {} : { expressions: approvedExpressions(parts.expressions, worldState) }),
   };
 
   return {
@@ -351,31 +513,57 @@ function hasExactChoiceCandidates(
 type SceneContentRejection = { readonly code: NarrativeBundleRejection; readonly detail?: string };
 
 function validateBundleNpcSpeech(
-  line: { readonly npcId: string; readonly usedFactIds: readonly string[]; readonly usedEventIds: readonly string[] },
+  line: {
+    readonly npcId: string;
+    readonly audienceIds?: readonly string[];
+    readonly usedFactIds: readonly string[];
+    readonly usedEventIds: readonly string[];
+  },
   worldState: WorldState,
+  presentNpcIds?: ReadonlySet<string>,
+  incomingFactIds: readonly string[] = [],
 ): SceneContentRejection | null {
   const visibleFactIds = entitiesOfKind(worldState.entityStore, "fact")
     .filter((fact) => fact.fact.discovered)
     .map((fact) => fact.core.id);
-  const targetIsValid = isValidNpcSpeechTarget(worldState.entityStore, PLAYER_ENTITY_ID);
-  if (!targetIsValid) return { code: "bundle_invalid_scene", detail: "invalid_target" };
-  const authority = buildNpcSpeechAuthority({
-    store: worldState.entityStore,
-    speakerNpcId: line.npcId as never,
-    sceneVisibleFactIds: visibleFactIds,
-    eventLedger: worldState.eventLedger,
-    targetContext: { targetId: PLAYER_ENTITY_ID },
-  });
-  if (authority === null) return { code: "bundle_invalid_scene", detail: "missing_speaker" };
-  const result = validateNpcSpeechReferences({
-    authority,
-    usedFactIds: line.usedFactIds,
-    usedEventIds: line.usedEventIds,
-    eventLedger: worldState.eventLedger,
-    speakerNpcId: line.npcId as never,
-  });
-  if (result.ok) return null;
-  return { code: "bundle_invalid_scene", detail: result.code };
+  const audienceIds = line.audienceIds ?? [String(PLAYER_ENTITY_ID)];
+  if (audienceIds.length === 0) return { code: "bundle_invalid_scene", detail: "invalid_target" };
+  const factIdsInWorld = new Set(visibleFactIds.map(String));
+  const disclosedFactIds = incomingFactIds.filter((factId) => factIdsInWorld.has(String(factId)));
+
+  for (const targetId of audienceIds) {
+    if (!isValidNpcSpeechTarget(worldState.entityStore, targetId as never)) {
+      return { code: "bundle_invalid_scene", detail: "invalid_target" };
+    }
+    if (targetId !== String(PLAYER_ENTITY_ID)
+      && presentNpcIds !== undefined
+      && !presentNpcIds.has(targetId)) {
+      return { code: "bundle_invalid_scene", detail: "missing_speaker" };
+    }
+    const authority = buildNpcSpeechAuthority({
+      store: worldState.entityStore,
+      speakerNpcId: line.npcId as never,
+      sceneVisibleFactIds: visibleFactIds,
+      eventLedger: worldState.eventLedger,
+      targetContext: { targetId: targetId as never },
+    });
+    if (authority === null) return { code: "bundle_invalid_scene", detail: "missing_speaker" };
+    const result = validateNpcSpeechReferences({
+      authority: {
+        ...authority,
+        // A fact explicitly disclosed to this speaker by an earlier expression
+        // is available for this later line, but is never added to the global
+        // world visibility set.
+        allowedFactIds: [...authority.allowedFactIds, ...disclosedFactIds.map((id) => id as never)],
+      },
+      usedFactIds: line.usedFactIds,
+      usedEventIds: line.usedEventIds,
+      eventLedger: worldState.eventLedger,
+      speakerNpcId: line.npcId as never,
+    });
+    if (!result.ok) return { code: "bundle_invalid_scene", detail: result.code };
+  }
+  return null;
 }
 
 function validateBundleSceneNpcSpeech(
@@ -384,22 +572,51 @@ function validateBundleSceneNpcSpeech(
   expectedNpcId?: string,
   presentNpcIds?: ReadonlySet<string>,
 ): SceneContentRejection | null {
+  const parts = normalizedSceneParts(scene);
   const dialogues = scene.npcDialogues ?? [];
-  const speakers = [
-    ...(scene.npcLine === null ? [] : [scene.npcLine.npcId]),
-    ...dialogues.map((dialogue) => dialogue.npcId),
-  ];
-  if (new Set(speakers).size !== speakers.length) {
+  const expressionLines = parts.expressions.filter((expression): expression is Extract<SceneExpressionProposal, { readonly kind: "npc_line" }> => expression.kind === "npc_line");
+  const legacySpeakers = scene.expressions === undefined
+    ? [
+        ...(parts.npcLine === null ? [] : [parts.npcLine.npcId]),
+        ...dialogues.map((dialogue) => dialogue.npcId),
+      ]
+    : dialogues.map((dialogue) => dialogue.npcId);
+  if (new Set(legacySpeakers).size !== legacySpeakers.length) {
     return { code: "bundle_invalid_scene", detail: "duplicate_speaker" };
   }
+  const speakers = [
+    ...expressionLines.map((line) => line.npcId),
+    ...legacySpeakers,
+  ];
   if (presentNpcIds !== undefined && speakers.some((npcId) => !presentNpcIds.has(npcId))) {
     return { code: "bundle_invalid_scene", detail: "missing_speaker" };
   }
-  if (scene.npcLine !== null) {
-    if (expectedNpcId !== undefined && scene.npcLine.npcId !== expectedNpcId) {
+  if (scene.expressions !== undefined) {
+    const disclosedFactsByNpc = new Map<string, readonly string[]>();
+    for (const line of expressionLines) {
+      const rejection = validateBundleNpcSpeech(
+        {
+          npcId: line.npcId,
+          audienceIds: line.audienceIds,
+          usedFactIds: line.usedFactIds,
+          usedEventIds: line.usedEventIds,
+        },
+        worldState,
+        presentNpcIds,
+        disclosedFactsByNpc.get(line.npcId) ?? [],
+      );
+      if (rejection !== null) return rejection;
+      for (const targetId of line.audienceIds) {
+        if (targetId === String(PLAYER_ENTITY_ID)) continue;
+        const previous = disclosedFactsByNpc.get(targetId) ?? [];
+        disclosedFactsByNpc.set(targetId, [...new Set([...previous, ...line.usedFactIds])]);
+      }
+    }
+  } else if (parts.npcLine !== null) {
+    if (expectedNpcId !== undefined && parts.npcLine.npcId !== expectedNpcId) {
       return { code: "bundle_invalid_scene", detail: "missing_speaker" };
     }
-    const rejection = validateBundleNpcSpeech(scene.npcLine, worldState);
+    const rejection = validateBundleNpcSpeech(parts.npcLine, worldState, presentNpcIds);
     if (rejection !== null) return rejection;
   }
   for (const dialogue of dialogues) {
@@ -407,10 +624,38 @@ function validateBundleSceneNpcSpeech(
       npcId: dialogue.npcId,
       usedFactIds: dialogue.usedFactIds,
       usedEventIds: dialogue.usedEventIds,
-    }, worldState);
+    }, worldState, presentNpcIds);
     if (rejection !== null) return rejection;
   }
   return null;
+}
+
+/** Shared opening gate for the same ordered body used by decision bundles. */
+export function validateNarrativeSceneExpressions(
+  expressions: readonly ApprovedSceneExpression[],
+  worldState: WorldState,
+): SceneContentRejection | null {
+  return validateBundleSceneNpcSpeech({
+    expressions: expressions.map((expression): SceneExpressionProposal => expression.kind === "narration"
+      ? {
+          kind: "narration",
+          beatId: expression.beatId,
+          text: expression.text,
+          referencedEntityIds: expression.referencedEntityIds,
+        }
+      : {
+          kind: "npc_line",
+          npcId: expression.npcId,
+          audienceIds: expression.audienceIds,
+          text: expression.text,
+          emotion: expression.emotion,
+          answeredBeatIds: expression.answeredBeatIds,
+          usedFactIds: expression.usedFactIds,
+          usedEventIds: expression.usedEventIds,
+        }),
+    objectiveLink: null,
+    choices: [],
+  }, worldState, undefined, presentNpcIdsAtLocation(worldState, String(worldState.currentLocationId)));
 }
 
 function presentNpcIdsAtLocation(worldState: WorldState, locationId: string): ReadonlySet<string> {
@@ -447,11 +692,12 @@ function validateCurrentSceneContent(input: {
   readonly worldState: WorldState;
 }): SceneContentRejection | null {
   const { scene, mandatoryBeats, dialogueFocusNpcId, transition, worldState } = input;
+  const parts = normalizedSceneParts(scene);
 
   // 节拍契约：强制节拍逐一覆盖（各恰好一次，顺序不限），
   // 不得自创节拍；最多追加一个 atmosphere 段且必须置于最后。
   const requiredBeats = mandatoryBeats.filter((beat) => beat.beatId !== ATMOSPHERE_BEAT_ID);
-  const segmentBeatIds = scene.segments.map((segment) => segment.beatId);
+  const segmentBeatIds = parts.segments.map((segment) => segment.beatId);
   const allowedBeatIds = new Set([
     ...requiredBeats.map((beat) => beat.beatId),
     ATMOSPHERE_BEAT_ID,
@@ -479,9 +725,9 @@ function validateCurrentSceneContent(input: {
   if (utteranceBeat !== undefined) {
     const focusNpcId = utteranceBeat.subjectIds[0];
     if (
-      scene.npcLine === null
-      || scene.npcLine.npcId !== focusNpcId
-      || !scene.npcLine.answeredBeatIds.includes(utteranceBeat.beatId)
+      parts.npcLine === null
+      || parts.npcLine.npcId !== focusNpcId
+      || !parts.npcLine.answeredBeatIds.includes(utteranceBeat.beatId)
     ) {
       return { code: "player_utterance_unanswered", detail: focusNpcId };
     }
@@ -489,20 +735,20 @@ function validateCurrentSceneContent(input: {
 
   // 正式对话决策点：两个选项都指向同一焦点 NPC 时，场景必须带该 NPC 的直接台词，
   // 玩家不能面对一组没有任何回应支撑的选项。
-  if (dialogueFocusNpcId !== undefined && scene.npcLine === null) {
+  if (dialogueFocusNpcId !== undefined && parts.npcLine === null) {
     return { code: "dialogue_focus_line_missing", detail: dialogueFocusNpcId };
   }
 
   // 台词说话人必须是世界内已存在的 NPC。
   if (
-    scene.npcLine !== null
-    && !worldState.npcs.some((npc) => String(npc.id) === scene.npcLine!.npcId)
+    parts.npcLine !== null
+    && !worldState.npcs.some((npc) => String(npc.id) === parts.npcLine!.npcId)
   ) {
-    return { code: "bundle_invalid_scene", detail: `npcLine 说话人 ${scene.npcLine.npcId} 不存在` };
+    return { code: "bundle_invalid_scene", detail: `npcLine 说话人 ${parts.npcLine.npcId} 不存在` };
   }
   if (dialogueFocusNpcId !== undefined
-    && scene.npcLine !== null
-    && scene.npcLine.npcId !== dialogueFocusNpcId) {
+    && parts.npcLine !== null
+    && parts.npcLine.npcId !== dialogueFocusNpcId) {
     return { code: "bundle_invalid_scene", detail: "missing_speaker" };
   }
 
@@ -626,6 +872,32 @@ export function approveNarrativeBundle(
     transition: descriptorTransition,
   });
 
+  const currentFocusForSymbols = graph.currentChoiceCandidates
+    .find((candidate) => candidate.action.type === "talk")?.action;
+  const symbolFocusNpcId = currentFocusForSymbols?.type === "talk"
+    ? String(currentFocusForSymbols.npcId)
+    : graph.steps[0]?.arrivalNpc === undefined
+      ? undefined
+      : String(graph.steps[0].arrivalNpc.id);
+  const resolvedCurrentScene = resolveSceneExpressions(
+    proposal.currentScene,
+    previewWorldState,
+    approvedDelta,
+    symbolFocusNpcId,
+  );
+  if (resolvedCurrentScene === null) return { ok: false, code: "bundle_invalid_scene" };
+  const resolvedContinuationScenes: BundleStepProposal[] = [];
+  for (const proposalStep of proposal.continuationScenes) {
+    const resolvedScene = resolveSceneExpressions(
+      proposalStep.scene,
+      previewWorldState,
+      approvedDelta,
+      symbolFocusNpcId,
+    );
+    if (resolvedScene === null) return { ok: false, code: "bundle_invalid_scene" };
+    resolvedContinuationScenes.push({ ...proposalStep, scene: resolvedScene });
+  }
+
   // Step 4: Validate coverage
   const coverage = validateNarrativeBundleCoverage(graph);
   if (!coverage.ok) {
@@ -643,12 +915,17 @@ export function approveNarrativeBundle(
   }
 
   // Check every proposal step has a matching descriptor
-  for (const proposalStep of proposal.continuationScenes) {
+  for (const [index, proposalStep] of proposal.continuationScenes.entries()) {
     const descriptor = descriptorByKey.get(proposalStep.stepKey);
     if (descriptor === undefined) {
       return { ok: false, code: "bundle_unknown_step" };
     }
-    const stepResult = buildStepState(proposalStep, descriptor, previewWorldState);
+    const resolvedStep = resolvedContinuationScenes[index]!;
+    const stepResult = buildStepState(
+      { ...proposalStep, scene: resolvedStep.scene! },
+      descriptor,
+      previewWorldState,
+    );
     if (typeof stepResult === "string") {
       return { ok: false, code: stepResult };
     }
@@ -667,14 +944,14 @@ export function approveNarrativeBundle(
   if (graph.terminal.kind === "next_decision" && graph.terminal.target.kind === "continuation_step") {
     const targetStepKey = graph.terminal.target.stepKey;
     const terminalDescriptor = descriptorByKey.get(targetStepKey);
-    const terminalProposal = proposal.continuationScenes.find((step) => step.stepKey === targetStepKey);
+    const terminalProposal = resolvedContinuationScenes.find((step) => step.stepKey === targetStepKey);
     // A written stage direction still counts as authored content (it is
     // reclassified into narration); only a fully omitted line is rejected.
     if (
       terminalDescriptor?.arrivalNpc !== undefined
       && (terminalProposal === undefined
-        || terminalProposal.scene.npcLine === null
-        || terminalProposal.scene.npcLine.npcId !== terminalDescriptor.arrivalNpc.id)
+        || normalizedSceneParts(terminalProposal.scene).npcLine === null
+        || normalizedSceneParts(terminalProposal.scene).npcLine!.npcId !== terminalDescriptor.arrivalNpc.id)
     ) {
       return { ok: false, code: "dialogue_focus_line_missing", detail: String(terminalDescriptor.arrivalNpc.id) };
     }
@@ -695,7 +972,7 @@ export function approveNarrativeBundle(
     ? firstCurrentChoice.action.npcId
     : undefined;
   const contentRejection = validateCurrentSceneContent({
-    scene: proposal.currentScene,
+    scene: resolvedCurrentScene,
     mandatoryBeats: input.mandatoryBeats,
     dialogueFocusNpcId: currentDialogueFocusNpcId === undefined
       ? undefined
@@ -707,12 +984,12 @@ export function approveNarrativeBundle(
     return { ok: false, code: contentRejection.code, ...(contentRejection.detail === undefined ? {} : { detail: contentRejection.detail }) };
   }
   const currentScene = buildSceneFromProposal(
-    proposal.currentScene,
+    resolvedCurrentScene,
     sceneId,
     basedOnRevision,
+    previewWorldState,
     undefined,
     currentDialogueFocusNpcId,
-    previewWorldState,
   );
 
   // Step 7: Build choice registry from terminal
@@ -725,7 +1002,7 @@ export function approveNarrativeBundle(
     if (terminalDescriptor === undefined) {
       return { ok: false, code: "bundle_invalid_terminal" };
     }
-    const terminalProposal = proposal.continuationScenes
+    const terminalProposal = resolvedContinuationScenes
       .find((step) => step.stepKey === targetStepKey);
     if (terminalProposal === undefined
       || !hasExactChoiceCandidates(terminalProposal.scene.choices, terminalDescriptor.choiceCandidates)) {
@@ -750,10 +1027,10 @@ export function approveNarrativeBundle(
       choiceRegistry.push(approved.choice);
     }
   } else if (terminal.kind === "next_decision" && terminal.target.kind === "current_scene") {
-    if (!hasExactChoiceCandidates(proposal.currentScene.choices, graph.currentChoiceCandidates)) {
+    if (!hasExactChoiceCandidates(resolvedCurrentScene.choices, graph.currentChoiceCandidates)) {
       return { ok: false, code: "bundle_invalid_scene" };
     }
-    const proposalChoiceMap = new Map(proposal.currentScene.choices
+    const proposalChoiceMap = new Map(resolvedCurrentScene.choices
       .map((choice) => [choice.candidateId, choice.label]));
     for (const matchingCandidate of graph.currentChoiceCandidates) {
       const label = proposalChoiceMap.get(matchingCandidate.candidateId);
@@ -774,7 +1051,7 @@ export function approveNarrativeBundle(
   // Build the final bundle state
   const terminalState = resolveTerminalState(graph);
   const bundle: NarrativeBundleState = {
-    contractVersion: 1,
+    contractVersion: 2,
     originJobId: jobId,
     steps: stepStates,
     activeStepIds: [...graph.activeStepKeys],

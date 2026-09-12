@@ -82,6 +82,35 @@ describe("PreparedContinuationState", () => {
     expect(createPreparedContinuationState(prepared)).toEqual({ ok: true, value: prepared });
   });
 
+  it("accepts an expression-only scene seed", () => {
+    const prepared: PreparedContinuationState = {
+      originJobId: asNarrativeJobId("job-expression-only"),
+      steps: [{
+        stepId: "prepared:observe",
+        objectiveKey: "quest_2:0",
+        consumptionGroupKey: "quest_2:0:observe",
+        trigger: { kind: "move", locationId: asLocationId("loc_temple") },
+        scene: {
+          expressions: [{
+            kind: "narration",
+            beatId: "atmosphere",
+            text: "雨声落在残瓦上。",
+            referencedEntityIds: [],
+          }],
+          event: { kind: "travel", locationId: asLocationId("loc_temple") },
+          npcLine: null,
+          objectiveLink: null,
+          choiceSeeds: [],
+          source: "fixture",
+        },
+        nextStepIds: [],
+      }],
+      activeStepIds: ["prepared:observe"],
+    };
+
+    expect(createPreparedContinuationState(prepared)).toEqual({ ok: true, value: prepared });
+  });
+
   it("keeps investigate approaches and battle outcomes as distinct canonical triggers", () => {
     const triggers = [
       { kind: "investigate", factId: asFactId("fact_tracks"), approachId: "quiet" },

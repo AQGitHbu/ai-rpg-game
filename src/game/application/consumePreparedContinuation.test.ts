@@ -220,6 +220,9 @@ describe("consumePreparedContinuation", () => {
       narrative.choiceRegistry.map(({ choiceToken, label }) => ({ choiceToken, label })),
     );
     expect(narrative.preparedContinuation).toBeUndefined();
+    expect(result.nextStoryState.history?.entries.map((entry) => entry.kind)).toEqual([
+      "player_choice", "narration", "npc_line", "shown_choice", "shown_choice",
+    ]);
   });
 
   it("returns NARRATIVE_CONTINUATION_MISSING when no continuation is available", () => {

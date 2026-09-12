@@ -15,17 +15,18 @@ function storyState() {
 }
 
 describe("parsePersistableStoryState", () => {
-  it("accepts v8 only and reconstructs memory from the supplied ledger", () => {
+  it("accepts v10 only and reconstructs memory from the supplied ledger", () => {
     const event = makeCommittedEvent({ type: "player_intent_expressed", intentCode: "unmapped_freeform" });
     const value = { ...storyState(), memory: rebuildEpisodicMemory([event]) };
     const result = parsePersistableStoryState(value, [event]);
     expect(result).toMatchObject({ ok: true });
   });
 
-  it("classifies v1-v7 as unsupported and future versions as version mismatch", () => {
+  it("classifies v1-v9 as unsupported and future versions as version mismatch", () => {
     const value = storyState();
     expect(parsePersistableStoryState({ ...value, version: 7 }, [])).toMatchObject({ ok: false, code: "UNSUPPORTED_RECORD" });
-    expect(parsePersistableStoryState({ ...value, version: 9 }, [])).toMatchObject({ ok: false, code: "VERSION_MISMATCH" });
+    expect(parsePersistableStoryState({ ...value, version: 9 }, [])).toMatchObject({ ok: false, code: "UNSUPPORTED_RECORD" });
+    expect(parsePersistableStoryState({ ...value, version: 11 }, [])).toMatchObject({ ok: false, code: "VERSION_MISMATCH" });
   });
 
   it("rejects memory cursor drift and episode eventIds that do not match the ledger", () => {

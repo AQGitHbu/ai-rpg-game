@@ -4,9 +4,10 @@ import {
   NPC_SCENE_PAGE_CHAR_BUDGET,
 } from "@/game/domain/narrative";
 import type { DialogueResumeState, NarrativeSceneState } from "@/game/domain/narrative";
+import type { ApprovedSceneExpression } from "@/game/domain/sceneExpression";
 import { narrativeBundleTriggerKey } from "@/game/domain/narrativeBundle";
 import { paginateSpeechText } from "@/game/domain/speechPagination";
-import { locationScaleOf } from "@/game/domain/worldEntity";
+import { locationScaleOf, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import type { ItemCategory, ItemRarity, ItemStatLine } from "@/game/domain/worldEntity";
 import { resolveItemPresentation, type ItemIconKey } from "@/game/domain/itemPresentation";
 import { relationshipTierOf, type RelationshipTier } from "@/game/domain/relationship";
@@ -556,15 +557,36 @@ export function projectGameSessionView(
     ? restoreDialogueResume(dialogueResume, revision)
     : null;
   const scene = restoredDialogue?.scene ?? currentScene;
+  const visibleExpressionLines = scene?.expressions
+    ?.filter((expression): expression is Extract<ApprovedSceneExpression, { readonly kind: "npc_line" }> => (
+      expression.kind === "npc_line"
+        && expression.audienceIds.some((audienceId) => String(audienceId) === String(PLAYER_ENTITY_ID))
+    )) ?? [];
+  const sceneNpcLineForPlayer = visibleExpressionLines[0] === undefined
+    ? scene?.npcLine
+    : {
+        npcId: visibleExpressionLines[0].npcId,
+        text: visibleExpressionLines[0].text,
+        emotion: visibleExpressionLines[0].emotion,
+        usedFactIds: visibleExpressionLines[0].usedFactIds,
+        usedEventIds: visibleExpressionLines[0].usedEventIds,
+        answeredBeatIds: visibleExpressionLines[0].answeredBeatIds,
+      };
+  const sceneNarrationText = scene?.expressions === undefined
+    ? scene?.narration ?? ""
+    : scene.expressions
+      .filter((expression) => expression.kind === "narration")
+      .map((expression) => expression.text)
+      .join("\n");
   const registry = restoredDialogue?.choiceRegistry
     ?? (scene === null ? [] : readyNarrative?.choiceRegistry)
     ?? [];
   // 只有结构化 dialogue event 才能赋予 NPC“焦点对话”能力。
   // observe/travel 等场景也可能带 npcLine 作为旁白表演，但不能因此泄露
   // 自由输入或伪造一个没有两个批准选项的焦点对话框。
-  const sceneLineNpcId = scene?.npcLine === null || scene?.npcLine === undefined
+  const sceneLineNpcId = sceneNpcLineForPlayer === null || sceneNpcLineForPlayer === undefined
     ? null
-    : String(scene.npcLine.npcId);
+    : String(sceneNpcLineForPlayer.npcId);
   // 规则层的 dialogueSession 在第二次正式回应后置 completed=true；此时
   // scene 允许只有一个 choices，它是旧 NPC 最后一段对白后的真实 handoff，
   // 不能再按普通地点行动或闲聊处理。
@@ -751,7 +773,19 @@ export function projectGameSessionView(
       : isDialogueScene && endingStanceChoices.length === 2
         ? [...endingStanceChoices]
         : [];
-  const sceneDialogues = new Map((scene?.npcDialogues ?? []).map((entry) => [String(entry.npcId), entry]));
+  const sceneDialogues = new Map([
+    ...(scene?.npcDialogues ?? []).map((entry) => [String(entry.npcId), entry] as const),
+    ...visibleExpressionLines.map((line) => [String(line.npcId), {
+      npcId: line.npcId,
+      npcName: String(line.npcId),
+      npcRole: "",
+      speechPages: paginateSpeechText(line.text, NPC_SCENE_PAGE_CHAR_BUDGET),
+      usedFactIds: line.usedFactIds,
+      usedEventIds: line.usedEventIds,
+      speechSource: scene?.source === "fixture" ? "fixture" : "generated",
+      speechPurpose: "focus" as const,
+    }] as const),
+  ]);
   // give_item 是必须消费叙事束权威步骤的剧情动作：缺步时服务端零写入失败。
   // 只有当前束真正持有活跃的 give_item 步骤时，才允许投影对应的给予按钮。
   const bundle = readyNarrative?.narrativeBundle;
@@ -765,11 +799,11 @@ export function projectGameSessionView(
   const npcDialogues: readonly NpcDialogueView[] = presentNpcs.map((npc) => {
     const isFocus = focusNpcId === String(npc.id) || endingChoiceNpcId === String(npc.id);
     const supplied = sceneDialogues.get(String(npc.id));
-    const normalizedFocusLine = scene?.npcLine !== null
-      && scene?.npcLine !== undefined
-      && scene.npcLine.npcId === npc.id
-      && scene.npcLine.text.trim() !== ""
-      ? normalizeNpcSpeech(scene.npcLine.text, npc.name)
+    const normalizedFocusLine = sceneNpcLineForPlayer !== null
+      && sceneNpcLineForPlayer !== undefined
+      && sceneNpcLineForPlayer.npcId === npc.id
+      && sceneNpcLineForPlayer.text.trim() !== ""
+      ? normalizeNpcSpeech(sceneNpcLineForPlayer.text, npc.name)
       : null;
     const focusLine = normalizedFocusLine === "" ? null : normalizedFocusLine;
     const suppliedSpeechText = supplied === undefined
@@ -857,17 +891,17 @@ export function projectGameSessionView(
   });
 
   const battle = activeBattle === null ? null : projectCombatView(worldState, activeBattle, revision);
-  const sceneNpc = scene?.npcLine === null || scene?.npcLine === undefined
+  const sceneNpc = sceneNpcLineForPlayer === null || sceneNpcLineForPlayer === undefined
     ? undefined
-    : presentNpcs.find((npc) => String(npc.id) === String(scene.npcLine?.npcId));
-  const projectedNpcLine = scene?.npcLine === null || scene?.npcLine === undefined
+    : presentNpcs.find((npc) => String(npc.id) === String(sceneNpcLineForPlayer?.npcId));
+  const projectedNpcLine = sceneNpcLineForPlayer === null || sceneNpcLineForPlayer === undefined
     ? null
     : {
         text: decorateNarrativeText(
-          normalizeNpcSpeech(scene.npcLine.text, sceneNpc?.name),
-          scene.source,
+          normalizeNpcSpeech(sceneNpcLineForPlayer.text, sceneNpc?.name),
+          scene?.source ?? "generated",
         ),
-        emotion: scene.npcLine.emotion,
+        emotion: sceneNpcLineForPlayer.emotion,
         ...(sceneNpc === undefined ? {} : { speaker: sceneNpc.name }),
       };
   const endingDefinition = worldState.ending === null
@@ -941,7 +975,7 @@ export function projectGameSessionView(
       hasScene: scene !== null,
       ...(scene === null ? {} : {
         eventKind: scene.event?.kind,
-        narration: decorateNarrativeText(scene.narration, scene.source),
+        narration: decorateNarrativeText(sceneNarrationText, scene.source),
       }),
       choices: isDialogueScene || isSingleChoiceHandoff ? [] : [...projectedSceneChoices, ...endingStanceChoices],
       npcLine: projectedNpcLine,

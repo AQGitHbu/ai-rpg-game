@@ -12,7 +12,7 @@ import type { FactId } from "@/game/domain/worldEntity";
 import { asCombatantId } from "@/game/domain/combat";
 import { asTurnId, asEventId } from "@/game/domain/events";
 import { createInitialWorldState } from "@/game/domain/worldState";
-import { npcCreationComponentsForProjection } from "@/game/domain/testing/worldStateFixture.testutil";
+import { npcCreationComponentsForProjection, updateWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { CommittedNarrativeEvent } from "@/game/domain/events";
 import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
@@ -198,6 +198,53 @@ function expectRolledBackLegacy(fixture: LegacyRollbackFixture, record: GameReco
 }
 
 describe("performBattleRound", () => {
+  it("restores the history snapshot when a legacy battle has no narrative checkpoint", async () => {
+    const battleBase = createBattleWorldState();
+    const enemyWorld = updateWorldStateFixture(battleBase, {
+      enemies: [{
+        ...battleBase.enemies[0]!,
+        stats: { hp: 50, maxHp: 50, attack: 10, defense: 5, speed: 10 },
+      }],
+    });
+    const worldState = updateWorldStateFixture(enemyWorld, {
+      enemies: enemyWorld.enemies,
+      battle: {
+        status: "active",
+        enemyId: asEnemyId("enemy_0"),
+        playerHp: 1,
+        enemyHp: 30,
+        round: 1,
+        preBattleSnapshot: {
+          entityStore: enemyWorld.entityStore,
+          eventLedger: enemyWorld.eventLedger,
+          history: { entries: [] },
+        },
+      },
+    });
+    const storyState = {
+      ...createBattleStoryState(),
+      history: { entries: [{ id: "during-battle" }] as never[] },
+    };
+    const harness = createInMemoryRepo({
+      gameId: "history-rollback" as never,
+      worldState,
+      storyState,
+      revision: 0,
+      createdAt: "2026-01-01",
+    });
+
+    const result = await performBattleRound({
+      gameId: "history-rollback" as never,
+      actionId: "withdraw-history",
+      interactionKind: "fixed_choice",
+      action: { type: "battle_action", action: "flee" },
+      expectedRevision: 0,
+    }, { repository: harness.repo, now: CLOCK });
+
+    expect(result).toMatchObject({ ok: true, outcome: "withdraw" });
+    expect(harness.getRecord()?.storyState.history).toEqual({ entries: [] });
+  });
+
   it("restores the complete pre-battle entity store after defeat", async () => {
     const fixture = await driveLegacyBattleUntilLayersDiverge();
     const result = await performBattleRound(

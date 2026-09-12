@@ -13,6 +13,7 @@ import { createApprovedChoice, type ApprovedChoice } from "@/game/domain/approve
 import type { WorldState } from "@/game/domain/worldState";
 import type { EnemyId, FactId, ItemId, LocationId, NpcId } from "@/game/domain/worldEntity";
 import { commitEventDrafts } from "@/game/domain/eventLedger";
+import { appendHistory, narrativeSceneHistoryEntries, playerActionHistoryEntry } from "@/game/domain/narrativeHistory";
 import { buildNarrativeScenePresentedDraft } from "./approveAndWriteScene";
 
 export type ConsumeNarrativeBundleResult =
@@ -67,16 +68,23 @@ function materializeScene(step: NarrativeBundleStepState, actionId: string, revi
     && firstChoiceSeed?.action.type === "talk"
     ? firstChoiceSeed.action.npcId
     : undefined;
+  const narrationExpressions = step.scene.expressions?.filter((expression) => expression.kind === "narration") ?? [];
+  const narrationSegments = step.scene.segments ?? narrationExpressions.map((expression) => ({
+    beatId: expression.beatId,
+    text: expression.text,
+    referencedEntityIds: expression.referencedEntityIds,
+  }));
   return {
     scene: {
       sceneId,
       turn: revision,
-      narration: step.scene.segments.map((segment) => segment.text).join("\n"),
+      narration: narrationSegments.map((segment) => segment.text).join("\n"),
       usedFactIds: step.scene.npcLine?.usedFactIds ?? [],
       npcLine: step.scene.npcLine,
       ...(step.scene.npcDialogues === undefined ? {} : { npcDialogues: step.scene.npcDialogues }),
       choices: choiceRegistry.map(({ choiceToken, label }) => ({ choiceToken, label })),
       source: step.scene.source,
+      ...(step.scene.expressions === undefined ? {} : { expressions: step.scene.expressions }),
       // A travel/item/battle trigger has just been consumed.  If its prepared
       // scene ends at a two-choice NPC boundary, the *presented* scene is now
       // a dialogue boundary; otherwise the following formal choice is treated
@@ -112,6 +120,7 @@ export function consumeNarrativeBundle(input: {
   readonly postCommitRevision: number;
   readonly resolvedEvent: ResolvedEvent;
   readonly domainEvents: readonly CommittedNarrativeEvent[];
+  readonly playerHistoryText?: string;
 }): ConsumeNarrativeBundleResult {
   if (input.beforeStoryState.narrative.status !== "ready" || input.resolvedStoryState.narrative.status !== "ready") {
     return { ok: false, code: "NARRATIVE_CONTINUATION_INVALID" };
@@ -153,7 +162,9 @@ export function consumeNarrativeBundle(input: {
     domainEventIds: input.domainEvents.map((event) => event.eventId),
     currentLocationId: input.resolvedWorldState.currentLocationId,
     nextPacingNeed: input.resolvedStoryState.nextPacingNeed,
-    mandatoryBeats: selected.scene.segments,
+    mandatoryBeats: selected.scene.segments ?? selected.scene.expressions
+      ?.filter((expression) => expression.kind === "narration")
+      .map((expression) => ({ beatId: expression.beatId, text: expression.text })) ?? [],
     objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
     scene: materialized.scene,
   });
@@ -168,5 +179,30 @@ export function consumeNarrativeBundle(input: {
     entityStore: input.resolvedWorldState.entityStore,
   });
   if (!committed.ok) return { ok: false, code: "NARRATIVE_CONTINUATION_INVALID" };
-  return { ok: true, nextWorldState: { ...input.resolvedWorldState, eventLedger: committed.ledger }, nextStoryState: { ...input.resolvedStoryState, narrative: nextNarrative } };
+  const historyBefore = input.resolvedStoryState.history ?? input.beforeStoryState.history ?? { entries: [] };
+  const historyWithPlayer = appendHistory(historyBefore, [playerActionHistoryEntry({
+    history: historyBefore,
+    action: input.action,
+    actionId: input.actionId,
+    text: input.playerHistoryText ?? input.action.type,
+    sceneId: input.beforeStoryState.narrative.currentScene.sceneId,
+    revision: input.postCommitRevision,
+    turnNumber: input.resolvedStoryState.turnNumber,
+    eventIds: input.domainEvents.map((event) => event.eventId),
+    jobId: bundle.originJobId,
+  })]);
+  const nextHistory = appendHistory(historyWithPlayer, narrativeSceneHistoryEntries({
+    history: historyWithPlayer,
+    scene: materialized.scene,
+    actionId: input.actionId,
+    jobId: bundle.originJobId,
+    revision: input.postCommitRevision,
+    turnNumber: input.resolvedStoryState.turnNumber,
+    eventIds: input.domainEvents.map((event) => event.eventId),
+  }));
+  return {
+    ok: true,
+    nextWorldState: { ...input.resolvedWorldState, eventLedger: committed.ledger },
+    nextStoryState: { ...input.resolvedStoryState, history: nextHistory, narrative: nextNarrative },
+  };
 }

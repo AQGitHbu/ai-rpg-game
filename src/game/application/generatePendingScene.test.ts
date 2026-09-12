@@ -313,6 +313,7 @@ describe("generatePendingScene", () => {
     expect(input.nextStoryState.narrative.choiceRegistry).toHaveLength(2);
     expect(new Set(input.nextStoryState.narrative.choiceRegistry.map((x) => x.choiceToken)).size).toBe(2);
     expect(input.nextStoryState.narrative.choiceRegistry.every((x) => x.basedOnRevision === 8)).toBe(true);
+    expect(input.nextStoryState.history?.entries.some((entry) => entry.text === "dummy")).toBe(true);
     const context = spy.contexts()[0];
     expect(context.job.jobId).toBe(IMPORTANT_JOB_ID);
     expect(context.job.actionId).toBe(IMPORTANT_ACTION_ID);

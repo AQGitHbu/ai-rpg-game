@@ -252,6 +252,7 @@ function normalizeDecisionBundleShape(
     candidates: readonly { readonly candidateId: string }[],
     npcIdFallback: string,
   ): Record<string, unknown> => ({
+    ...(scene.expressions === undefined ? {} : { expressions: scene.expressions }),
     segments: scene.segments,
     npcLine: normalizeNpcLine(scene.npcLine, npcIdFallback),
     ...(scene.npcDialogues === undefined ? {} : { npcDialogues: scene.npcDialogues }),

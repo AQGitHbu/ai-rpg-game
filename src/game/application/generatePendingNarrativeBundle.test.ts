@@ -388,6 +388,8 @@ describe("generatePendingNarrativeBundle", () => {
     expect(saved.storyState.narrative.dialogueSession).toEqual({ npcId: npc.id, turnCount: 1, requiredTurns: 2, completed: false });
     expect(projectGameSessionView(saved.worldState, saved.storyState, saved.revision, "test-session").narrative.npcDialogues[0]?.choices).toHaveLength(2);
     expect(saved.storyState.memory).toEqual(rebuildEpisodicMemory(saved.worldState.eventLedger));
+    expect(saved.storyState.history?.entries.some((entry) => entry.text === "老酒鬼放下酒坛，等你开口。")).toBe(true);
+    expect(saved.storyState.history?.entries.at(-1)?.kind).toBe("shown_choice");
   });
 
   it("事件账本提交失败时持久化独立稳定码，不伪装成审批拒绝", async () => {

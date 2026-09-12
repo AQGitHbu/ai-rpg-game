@@ -22,12 +22,14 @@ import {
   asGenerationId,
   asQuestId,
   asFactId,
+  PLAYER_ENTITY_ID,
 } from "@/game/domain/worldEntity";
 import { asNarrativeJobId, CommittedNarrativeEvent } from "@/game/domain/events";
 
 const locTown = asLocationId("loc_0");
 const locDyn1 = asLocationId("loc_dyn_1");
 const npcDyn1 = asNpcId("npc_dyn_1");
+const npcDyn2 = asNpcId("npc_dyn_2");
 const questId = asQuestId("quest_1");
 const factTracks = asFactId("fact_tracks");
 
@@ -403,6 +405,133 @@ describe("approveNarrativeBundle", () => {
     expect(result).toEqual({ ok: false, code: "bundle_invalid_scene", detail: "duplicate_speaker" });
   });
 
+  it("keeps ordered expression audiences and propagates only an explicit disclosure", () => {
+    const listener: NpcEntry = {
+      ...templeNpc,
+      id: npcDyn2,
+      name: "酒馆老板",
+      role: "酒馆老板",
+      memory: {
+        ...templeNpc.memory,
+        npcId: npcDyn2,
+        knownFactIds: [],
+        hiddenFactIds: [],
+      },
+    };
+    const multiNpcWorld = buildWorld({
+      locations: [{ ...townLocation }, { ...templeLocation, npcIds: [npcDyn1, npcDyn2] }],
+      npcs: [{ ...templeNpc, memory: { ...templeNpc.memory, knownFactIds: [factTracks] } }, listener],
+      worldFacts: [{ ...tracksFact, discovered: true }],
+    });
+    const expressions = [
+      { kind: "narration" as const, beatId: "atmosphere", text: "破庙里有人压低声音。", referencedEntityIds: [] },
+      {
+        kind: "npc_line" as const,
+        npcId: String(npcDyn1),
+        audienceIds: [String(npcDyn2)],
+        text: "我只告诉你泥地上的脚印。",
+        emotion: "guarded" as const,
+        answeredBeatIds: [],
+        usedFactIds: [String(factTracks)],
+        usedEventIds: [],
+      },
+      {
+        kind: "npc_line" as const,
+        npcId: String(npcDyn2),
+        audienceIds: [String(PLAYER_ENTITY_ID)],
+        text: "他提到了泥地上的脚印。",
+        emotion: "neutral" as const,
+        answeredBeatIds: [],
+        usedFactIds: [String(factTracks)],
+        usedEventIds: [],
+      },
+    ];
+    const proposal: NarrativeBundleProposal = {
+      ...validProposal(),
+      continuationScenes: [{
+        ...validProposal().continuationScenes[0]!,
+        scene: {
+          expressions,
+          objectiveLink: { questId: String(questId), objectiveIndex: 0, mode: "hint" },
+          choices: validProposal().continuationScenes[0]!.scene.choices,
+        },
+      }],
+    };
+
+    const result = approveNarrativeBundle(baseInput({ proposal, worldState: multiNpcWorld }));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.approved.bundle.steps[0]?.scene.expressions?.map((expression) => (
+      expression.kind === "npc_line" ? [expression.npcId, expression.audienceIds] : expression.kind
+    ))).toEqual([
+      "narration",
+      [npcDyn1, [npcDyn2]],
+      [npcDyn2, [PLAYER_ENTITY_ID]],
+    ]);
+  });
+
+  it("does not let a same-place NPC infer a private disclosure it did not hear", () => {
+    const listener: NpcEntry = {
+      ...templeNpc,
+      id: npcDyn2,
+      name: "酒馆老板",
+      memory: { ...templeNpc.memory, npcId: npcDyn2, knownFactIds: [], hiddenFactIds: [] },
+    };
+    const multiNpcWorld = buildWorld({
+      locations: [{ ...townLocation }, { ...templeLocation, npcIds: [npcDyn1, npcDyn2] }],
+      npcs: [{ ...templeNpc, memory: { ...templeNpc.memory, knownFactIds: [factTracks] } }, listener],
+      worldFacts: [{ ...tracksFact, discovered: true }],
+    });
+    const proposal: NarrativeBundleProposal = {
+      ...validProposal(),
+      continuationScenes: [{
+        ...validProposal().continuationScenes[0]!,
+        scene: {
+          expressions: [
+            { kind: "narration", beatId: "atmosphere", text: "私语没有传到角落。", referencedEntityIds: [] },
+            {
+              kind: "npc_line", npcId: String(npcDyn1), audienceIds: [String(PLAYER_ENTITY_ID)],
+              text: "这句话只说给你听。", emotion: "guarded", answeredBeatIds: [],
+              usedFactIds: [String(factTracks)], usedEventIds: [],
+            },
+            {
+              kind: "npc_line", npcId: String(npcDyn2), audienceIds: [String(PLAYER_ENTITY_ID)],
+              text: "我知道那串脚印。", emotion: "neutral", answeredBeatIds: [],
+              usedFactIds: [String(factTracks)], usedEventIds: [],
+            },
+          ],
+          objectiveLink: { questId: String(questId), objectiveIndex: 0, mode: "hint" },
+          choices: validProposal().continuationScenes[0]!.scene.choices,
+        },
+      }],
+    };
+
+    const result = approveNarrativeBundle(baseInput({ proposal, worldState: multiNpcWorld }));
+
+    expect(result).toEqual({ ok: false, code: "bundle_invalid_scene" });
+  });
+
+  it("rejects an expression that references an entity absent from the preview world", () => {
+    const proposal: NarrativeBundleProposal = {
+      ...validProposal(),
+      currentScene: {
+        expressions: [{
+          kind: "narration",
+          beatId: "atmosphere",
+          text: "破庙的门轴发出轻响。",
+          referencedEntityIds: ["npc_missing"],
+        }],
+        objectiveLink: { questId: String(questId), objectiveIndex: 0, mode: "progress" },
+        choices: [],
+      },
+    };
+
+    const result = approveNarrativeBundle(baseInput({ proposal }));
+
+    expect(result).toEqual({ ok: false, code: "bundle_invalid_scene" });
+  });
+
   it("rejects undisclosed facts and foreign interactions through the bundle authority gate", () => {
     const factProposal = validProposal();
     const factResult = approveNarrativeBundle(baseInput({
@@ -517,7 +646,7 @@ describe("approveNarrativeBundle", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.approved.bundle.steps[0]?.scene.npcLine).toBeNull();
-    expect(result.approved.bundle.steps[0]?.scene.segments[0]?.text).toContain("哑巴张沉默地看着你");
+    expect(result.approved.bundle.steps[0]?.scene.segments?.[0]?.text).toContain("哑巴张沉默地看着你");
   });
 
   it("rejects a dialogue boundary whose current scene omits the focus NPC line", () => {

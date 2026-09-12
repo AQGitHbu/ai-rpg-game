@@ -31,17 +31,17 @@ const initialInput = {
 } as const;
 
 describe("StoryState", () => {
-  it("initializes the v8 schema at turn zero with the supplied runtime and empty memory", () => {
+  it("initializes the v10 schema at turn zero with the supplied runtime and empty memory", () => {
     const ss = createInitialStoryState(initialInput);
 
-    expect(STORY_STATE_SCHEMA_VERSION).toBe(8);
-    expect(ss.version).toBe(8);
+    expect(STORY_STATE_SCHEMA_VERSION).toBe(10);
+    expect(ss.version).toBe(10);
     expect(ss.turnNumber).toBe(0);
     expect(ss.narrative).toBe(initialNarrative);
     expect(ss.memory).toEqual(createEmptyEpisodicMemory());
   });
 
-  it("classifies legacy v1-v7 without silently migrating them", () => {
+  it("classifies legacy v1-v9 without silently migrating them", () => {
     expect(classifyStoryStateSchemaVersion(1)).toEqual({ ok: false, code: "UNSUPPORTED_RECORD" });
     expect(classifyStoryStateSchemaVersion(2)).toEqual({
       ok: false,
@@ -64,7 +64,9 @@ describe("StoryState", () => {
       code: "UNSUPPORTED_RECORD",
     });
     expect(classifyStoryStateSchemaVersion(7)).toEqual({ ok: false, code: "UNSUPPORTED_RECORD" });
-    expect(classifyStoryStateSchemaVersion(8)).toEqual({ ok: true, version: 8 });
+    expect(classifyStoryStateSchemaVersion(8)).toEqual({ ok: false, code: "UNSUPPORTED_RECORD" });
+    expect(classifyStoryStateSchemaVersion(9)).toEqual({ ok: false, code: "UNSUPPORTED_RECORD" });
+    expect(classifyStoryStateSchemaVersion(10)).toEqual({ ok: true, version: 10 });
   });
 
   it("createInitialStoryState sets act=1, tension=30, reveal", () => {

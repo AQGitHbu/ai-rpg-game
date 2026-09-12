@@ -2055,7 +2055,7 @@ describe("projectGameSessionView", () => {
 
     function giveBundle(activeStepIds: readonly string[]): unknown {
       return {
-        contractVersion: 1,
+        contractVersion: 2,
         originJobId: "job_give",
         steps: [{
           stepId: "step_give_1",
@@ -2109,7 +2109,7 @@ describe("projectGameSessionView", () => {
         narrative: {
           ...ss.narrative,
           narrativeBundle: {
-            contractVersion: 1,
+            contractVersion: 2,
             originJobId: "job_take_gate",
             steps: [{
               stepId: "step_active",
@@ -2251,7 +2251,7 @@ describe("projectGameSessionView town read model", () => {
     const readyWithArrival: StoryState = { ...townSs, narrative: { ...townSs.narrative,
       mode: "ai",
       narrativeBundle: {
-        contractVersion: 1, originJobId: asNarrativeJobId("job-building"),
+        contractVersion: 2, originJobId: asNarrativeJobId("job-building"),
         activeStepIds: ["arrival"], terminal: { kind: "next_decision", target: { kind: "continuation_step", stepId: "arrival" } },
         steps: [{
           stepId: "arrival", objectiveKey: `${questId}:0`, consumptionGroupKey: "building-arrival",

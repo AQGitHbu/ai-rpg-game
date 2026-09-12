@@ -28,12 +28,15 @@ import { TARGET_ACTS } from "@/game/domain/storyBudget";
 import { AiGenerationError, type AiFailureKind } from "./aiGenerationFailure";
 import { runBoundedAttempts } from "@/game/core/retry";
 import { entitiesOfKind } from "@/game/domain/entity";
+import { sceneExpressionsOf, type SceneExpressionProposal } from "@/game/domain/sceneExpression";
+import { appendHistory, narrativeSceneHistoryEntries } from "@/game/domain/narrativeHistory";
 import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import {
   buildNpcSpeechAuthority,
   isValidNpcSpeechTarget,
   validateNpcSpeechReferences,
 } from "./npcSpeechAuthority";
+import { validateNarrativeSceneExpressions } from "./approveNarrativeBundle";
 
 // ---------------------------------------------------------------------------
 // Task 2：开局生成编排改为 source → parse → validate → compile。
@@ -169,8 +172,14 @@ function compileOpeningNarrative(
   ) return null;
 
   const { currentScene: scene } = proposal;
-  const npcLine = scene.npcLine;
-  if (npcLine === null || npcLine.npcId !== String(OPENING_NPC_ID)) return null;
+  const expressions = sceneExpressionsOf(scene);
+  // Keep the legacy object intact for the authority pass. Some callers use
+  // array-like proxies here to prove that validation observes the original
+  // reference instead of a normalized copy.
+  const npcLine = scene.expressions === undefined
+    ? scene.npcLine
+    : expressions.find((expression): expression is Extract<SceneExpressionProposal, { readonly kind: "npc_line" }> => expression.kind === "npc_line");
+  if (npcLine === undefined || npcLine === null || npcLine.npcId !== String(OPENING_NPC_ID)) return null;
 
   const responses = resolveOpeningResponses(candidate);
   if (responses === null) return null;
@@ -197,7 +206,10 @@ function compileOpeningNarrative(
   const currentScene: NarrativeSceneState = {
     sceneId,
     turn: 0,
-    narration: scene.segments.map((segment) => segment.text).join("\n"),
+    narration: expressions
+      .filter((expression) => expression.kind === "narration")
+      .map((expression) => expression.text)
+      .join("\n"),
     usedFactIds: npcLine.usedFactIds as never[],
     npcLine: {
       npcId: OPENING_NPC_ID,
@@ -213,6 +225,25 @@ function compileOpeningNarrative(
     })),
     source: "generated",
     event: { kind: "dialogue", focusNpcId: OPENING_NPC_ID },
+    ...(scene.expressions === undefined ? {} : {
+      expressions: expressions.map((expression) => expression.kind === "narration"
+        ? {
+            kind: "narration" as const,
+            beatId: expression.beatId,
+            text: expression.text,
+            referencedEntityIds: expression.referencedEntityIds.map((id) => id as never),
+          }
+        : {
+            kind: "npc_line" as const,
+            npcId: expression.npcId as never,
+            audienceIds: expression.audienceIds.map((id) => id as never),
+            text: expression.text,
+            emotion: expression.emotion,
+            answeredBeatIds: [...expression.answeredBeatIds],
+            usedFactIds: expression.usedFactIds.map((id) => id as never),
+            usedEventIds: expression.usedEventIds.map((id) => id as never),
+          }),
+    }),
   };
 
   return {
@@ -221,7 +252,7 @@ function compileOpeningNarrative(
     currentScene,
     choiceRegistry,
     narrativeBundle: {
-      contractVersion: 1,
+      contractVersion: 2,
       originJobId: jobId,
       steps: [],
       activeStepIds: [],
@@ -235,6 +266,10 @@ function approveOpeningSpeech(
   worldState: WorldState,
 ): boolean {
   if (narrative.status !== "ready" || narrative.currentScene.npcLine === null) return false;
+  if (narrative.currentScene.expressions !== undefined
+    && validateNarrativeSceneExpressions(narrative.currentScene.expressions, worldState) !== null) {
+    return false;
+  }
   if (!isValidNpcSpeechTarget(worldState.entityStore, PLAYER_ENTITY_ID)) return false;
   const visibleFactIds = entitiesOfKind(worldState.entityStore, "fact")
     .filter((fact) => fact.fact.discovered)
@@ -422,10 +457,31 @@ export async function createGame(
   };
   const accepted = bounded.value;
 
+  // Opening text and its visible choices are already published at revision 0.
+  // Seed History from that exact scene; no player action is manufactured for
+  // initialization and no future bundle content is included.
+  const openingStoryState = accepted.storyState.narrative.status !== "ready"
+    ? accepted.storyState
+    : {
+        ...accepted.storyState,
+        history: appendHistory(
+          accepted.storyState.history ?? { entries: [] },
+          narrativeSceneHistoryEntries({
+            history: accepted.storyState.history ?? { entries: [] },
+            scene: accepted.storyState.narrative.currentScene,
+            actionId: null,
+            jobId,
+            revision: 0,
+            turnNumber: accepted.storyState.turnNumber,
+            eventIds: accepted.worldState.eventLedger.map((event) => event.eventId),
+          }),
+        ),
+      };
+
   const persistedInput = {
     gameId: input.gameId,
     worldState: accepted.worldState,
-    storyState: accepted.storyState,
+    storyState: openingStoryState,
     createdAt: deps.now(),
     openingHistory: accepted.novelty,
   };

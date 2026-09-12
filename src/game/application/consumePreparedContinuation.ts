@@ -16,6 +16,7 @@ import {
 import { createApprovedChoice, type ApprovedChoice } from "@/game/domain/approvedChoice";
 import type { WorldState } from "@/game/domain/worldState";
 import type { EnemyId, FactId, LocationId } from "@/game/domain/worldEntity";
+import { appendHistory, narrativeSceneHistoryEntries, playerActionHistoryEntry } from "@/game/domain/narrativeHistory";
 
 export type ConsumePreparedContinuationResult =
   | { readonly ok: true; readonly nextWorldState: WorldState; readonly nextStoryState: StoryState }
@@ -109,14 +110,21 @@ function sceneForStep(
     && firstChoiceSeed?.action.type === "talk"
     ? firstChoiceSeed.action.npcId
     : undefined;
+  const narrationExpressions = step.scene.expressions?.filter((expression) => expression.kind === "narration") ?? [];
+  const narrationSegments = step.scene.segments ?? narrationExpressions.map((expression) => ({
+    beatId: expression.beatId,
+    text: expression.text,
+    referencedEntityIds: expression.referencedEntityIds,
+  }));
   const scene: NarrativeSceneState = {
     sceneId,
     turn: revision,
-    narration: step.scene.segments.map((segment) => segment.text).join("\n"),
+    narration: narrationSegments.map((segment) => segment.text).join("\n"),
     usedFactIds: step.scene.npcLine?.usedFactIds ?? [],
     npcLine: step.scene.npcLine,
     choices: choiceRegistry.map((choice) => ({ choiceToken: choice.choiceToken, label: choice.label })),
     source: step.scene.source,
+    ...(step.scene.expressions === undefined ? {} : { expressions: step.scene.expressions }),
     // A travel/battle step can end at a prepared two-choice NPC boundary.
     // Mark the presented scene as dialogue so the next fixed choice is
     // treated as a formal narrative turn instead of looking for another
@@ -162,6 +170,7 @@ export function consumePreparedContinuation(input: {
   readonly resolvedEvent: ResolvedEvent;
   readonly domainEvents: readonly CommittedNarrativeEvent[];
   readonly now: () => string;
+  readonly playerHistoryText?: string;
 }): ConsumePreparedContinuationResult {
   void input.beforeWorldState;
   void input.now;
@@ -208,6 +217,29 @@ export function consumePreparedContinuation(input: {
   const { preparedContinuation: _consumed, ...narrativeWithoutPrepared } = input.resolvedStoryState.narrative;
   const nextStoryState: StoryState = {
     ...input.resolvedStoryState,
+    history: (() => {
+      const history = input.resolvedStoryState.history ?? input.beforeStoryState.history ?? { entries: [] };
+      const withPlayer = appendHistory(history, [playerActionHistoryEntry({
+        history,
+        action: input.action,
+        actionId: input.resolvedEvent.actionId,
+        text: input.playerHistoryText ?? input.action.type,
+        sceneId: input.beforeStoryState.narrative.currentScene.sceneId,
+        revision: input.postCommitRevision,
+        turnNumber: input.resolvedStoryState.turnNumber,
+        eventIds: input.domainEvents.map((event) => event.eventId),
+        jobId: prepared.originJobId,
+      })]);
+      return appendHistory(withPlayer, narrativeSceneHistoryEntries({
+        history: withPlayer,
+        scene: materialized.scene,
+        actionId: input.resolvedEvent.actionId,
+        jobId: prepared.originJobId,
+        revision: input.postCommitRevision,
+        turnNumber: input.resolvedStoryState.turnNumber,
+        eventIds: input.domainEvents.map((event) => event.eventId),
+      }));
+    })(),
     narrative: {
       ...narrativeWithoutPrepared,
       status: "ready",

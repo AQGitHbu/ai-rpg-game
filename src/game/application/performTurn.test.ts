@@ -353,7 +353,7 @@ describe("performTurn 单次 CAS 提交", () => {
         },
         choiceRegistry: [],
         narrativeBundle: {
-          contractVersion: 1,
+          contractVersion: 2,
           originJobId: asNarrativeJobId("job_ending_pair"),
           steps: [],
           activeStepIds: [],
@@ -520,7 +520,7 @@ describe("performTurn 单次 CAS 提交", () => {
       activeStepIds: ["battle-start"],
     };
     const narrativeBundle = {
-      contractVersion: 1 as const,
+      contractVersion: 2 as const,
       originJobId: asNarrativeJobId("job-battle-checkpoint-bundle"),
       steps: [{
         stepId: "battle-start",
@@ -584,6 +584,7 @@ describe("performTurn 单次 CAS 提交", () => {
     if (activeBattle.preBattleSnapshot === undefined || activeBattle.combatants === undefined) {
       throw new Error("modern battle must retain its world snapshot");
     }
+    expect(activeBattle.preBattleSnapshot.history).toEqual(story.history);
     const midBattle = {
       ...activeBattle,
       playerHp: 1,
@@ -758,7 +759,7 @@ describe("performTurn 单次 CAS 提交", () => {
         },
         choiceRegistry: [],
         narrativeBundle: {
-          contractVersion: 1,
+          contractVersion: 2,
           originJobId: asNarrativeJobId("arrival-job"),
           activeStepIds: ["move:loc_2"],
           terminal: { kind: "next_decision", target: { kind: "continuation_step", stepId: "move:loc_2" } },

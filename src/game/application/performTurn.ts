@@ -25,6 +25,7 @@ import type { AiFailureKind } from "@/game/domain/narrativeGenerationFailure";
 import { consumeNarrativeBundle } from "./consumeNarrativeBundle";
 import { consumePreparedContinuation } from "./consumePreparedContinuation";
 import { performBattleRound } from "./performBattleRound";
+import { appendHistory, playerActionHistoryEntry } from "@/game/domain/narrativeHistory";
 
 export type PerformTurnCommand = {
   readonly gameId: GameId;
@@ -154,6 +155,9 @@ export async function performTurn(
   const dialogueChoiceLabel = fixedChoiceToken === undefined
     ? undefined
     : readyNarrative.choiceRegistry.find((entry) => entry.choiceToken === fixedChoiceToken)?.label;
+  const playerHistoryText = command.interaction.kind === "free_text"
+    ? command.interaction.text
+    : dialogueChoiceLabel ?? command.interaction.choiceToken;
 
   const isRegisteredSceneChoice = fixedChoiceToken !== undefined
     && readyNarrative.choiceRegistry.some((entry) => (
@@ -217,8 +221,22 @@ export async function performTurn(
     return { ok: false, code: "ACTION_REJECTED", feedback: "被战斗阻止" };
   }
 
+  const worldStateWithBattleHistory = resolution.nextWorldState.battle.status !== "active"
+    || resolution.nextWorldState.battle.preBattleSnapshot === undefined
+    || resolution.nextWorldState.battle.preBattleSnapshot.history !== undefined
+    ? resolution.nextWorldState
+    : {
+        ...resolution.nextWorldState,
+        battle: {
+          ...resolution.nextWorldState.battle,
+          preBattleSnapshot: {
+            ...resolution.nextWorldState.battle.preBattleSnapshot,
+            history: record.storyState.history ?? { entries: [] },
+          },
+        },
+      };
   const revealed = advanceStoryReveal({
-    worldState: resolution.nextWorldState,
+    worldState: worldStateWithBattleHistory,
     storyState: resolution.nextStoryState,
   });
 
@@ -235,7 +253,8 @@ export async function performTurn(
       || (converted.action.type === "attack"
         && (readyNarrative.preparedContinuation === undefined || readyNarrative.preparedContinuation.steps.length === 0))
     )
-  ) {
+    ) {
+    const history = revealed.storyState.history ?? { entries: [] };
     const storyForCommit = converted.action.type === "attack"
       && revealed.worldState.battle.status === "active"
       && revealed.storyState.narrative.status === "ready"
@@ -261,7 +280,19 @@ export async function performTurn(
       gameId: command.gameId,
       expectedRevision: record.revision,
       nextWorldState: revealed.worldState,
-      nextStoryState: storyForCommit,
+      nextStoryState: {
+        ...storyForCommit,
+        history: appendHistory(history, [playerActionHistoryEntry({
+          history,
+          action: converted.action,
+          actionId: command.actionId,
+          text: playerHistoryText,
+          sceneId: readyNarrative.currentScene.sceneId,
+          revision: record.revision + 1,
+          turnNumber: revealed.storyState.turnNumber,
+          eventIds: resolution.domainEvents.map((event) => event.eventId),
+        })]),
+      },
     });
     if (!commitResult.ok) {
       return {
@@ -301,6 +332,7 @@ export async function performTurn(
       objectiveTransition: narrative.objectiveTransition,
       mandatoryBeats: narrative.mandatoryBeats,
       dialogueChoiceLabel: dialogueChoiceLabel ?? endingStance?.label,
+      playerHistoryText,
       generationKind: command.interaction.kind === "free_text" ? "npc_free_text" : "npc_fixed_choice",
       sceneRequestKind: "npc_response",
     });
@@ -320,6 +352,7 @@ export async function performTurn(
         resolvedEvent: resolution.primaryResult,
         domainEvents: resolution.domainEvents,
         now: deps.now,
+        playerHistoryText,
       })
     : consumeNarrativeBundle({
         beforeStoryState: record.storyState,
@@ -330,6 +363,7 @@ export async function performTurn(
         postCommitRevision: record.revision + 1,
         resolvedEvent: resolution.primaryResult,
         domainEvents: resolution.domainEvents,
+        playerHistoryText,
       });
   if (!nextStoryState.ok) {
     return {
@@ -435,6 +469,7 @@ type CommitResolutionInput = {
   readonly objectiveTransition: ObjectiveTransition;
   readonly mandatoryBeats: readonly MandatoryNarrativeBeat[];
   readonly dialogueChoiceLabel?: string;
+  readonly playerHistoryText: string;
   readonly generationKind: ProviderGenerationKind | null;
   readonly sceneRequestKind: NarrativeSceneRequestKind | null;
 };
@@ -445,11 +480,26 @@ type CommitResolutionInput = {
  */
 async function commitResolution(input: CommitResolutionInput): Promise<PerformTurnResult> {
   if (input.generationKind === null || input.sceneRequestKind === null) {
+    const history = input.nextStoryState.history ?? { entries: [] };
     const commitResult = await commitState(input.repository, {
       gameId: input.gameId,
       expectedRevision: input.expectedRevision,
       nextWorldState: input.nextWorldState,
-      nextStoryState: input.nextStoryState,
+      nextStoryState: {
+        ...input.nextStoryState,
+        history: appendHistory(history, [playerActionHistoryEntry({
+          history,
+          action: input.action,
+          actionId: input.actionId,
+          text: input.playerHistoryText,
+          sceneId: input.nextStoryState.narrative.status === "ready"
+            ? input.nextStoryState.narrative.currentScene.sceneId
+            : `scene-${input.actionId}`,
+          revision: input.expectedRevision + 1,
+          turnNumber: input.turnNumber,
+          eventIds: input.nextWorldState.eventLedger.slice(input.baseLedgerLength).map((event) => event.eventId),
+        })]),
+      },
     });
     if (!commitResult.ok) {
       return {
@@ -515,6 +565,20 @@ async function commitResolution(input: CommitResolutionInput): Promise<PerformTu
 
   const nextStoryState: StoryState = {
     ...input.nextStoryState,
+    history: (() => {
+      const history = input.nextStoryState.history ?? { entries: [] };
+      return appendHistory(history, [playerActionHistoryEntry({
+        history,
+        action: input.action,
+        actionId: input.actionId,
+        text: input.playerHistoryText,
+        sceneId: currentNarrative.currentScene.sceneId,
+        revision: input.expectedRevision + 1,
+        turnNumber: input.turnNumber,
+        eventIds: input.nextWorldState.eventLedger.slice(input.baseLedgerLength).map((event) => event.eventId),
+        jobId: pendingJob.jobId,
+      })]);
+    })(),
     narrative: {
       status: "provider_pending",
       mode: currentNarrative.mode,

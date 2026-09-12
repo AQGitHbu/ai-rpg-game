@@ -56,7 +56,7 @@ function makeStep(stepKey: string): BundleStepProposal {
 
 function makeValidBundleState(): NarrativeBundleState {
   return {
-    contractVersion: 1,
+    contractVersion: 2,
     originJobId: asNarrativeJobId("job-1"),
     steps: [],
     activeStepIds: [],
@@ -255,6 +255,36 @@ describe("narrativeBundleTriggerKey", () => {
 describe("NarrativeBundleState parser", () => {
   it("accepts a valid current_scene terminal state", () => {
     expect(parseNarrativeBundleState(makeValidBundleState()).ok).toBe(true);
+  });
+
+  it("accepts a prepared step whose scene uses only the ordered expressions body", () => {
+    const expressionOnlyScene = {
+      expressions: [{
+        kind: "narration" as const,
+        beatId: "atmosphere",
+        text: "雨声落在残瓦上。",
+        referencedEntityIds: [],
+      }],
+      event: { kind: "observe" as const, locationId: "loc_1" },
+      npcLine: null,
+      objectiveLink: null,
+      choiceSeeds: [],
+      source: "fixture" as const,
+    } as unknown as PreparedSceneSeedState;
+    const state: NarrativeBundleState = {
+      ...makeValidBundleState(),
+      steps: [{
+        stepId: "step-1",
+        objectiveKey: "quest_1:0",
+        consumptionGroupKey: "quest_1:0:observe",
+        trigger: { kind: "move", locationId: asLocationId("loc_1") },
+        scene: expressionOnlyScene,
+        nextStepIds: [],
+      }],
+      activeStepIds: ["step-1"],
+      terminal: { kind: "next_decision", target: { kind: "continuation_step", stepId: "step-1" } },
+    };
+    expect(parseNarrativeBundleState(state).ok).toBe(true);
   });
 
   it("rejects unknown edges", () => {

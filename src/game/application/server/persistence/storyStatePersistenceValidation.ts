@@ -1,6 +1,7 @@
 import { parseEpisodicMemory, rebuildEpisodicMemory, type EpisodicMemoryState } from "@/game/domain/episodicMemory";
 import type { CommittedNarrativeEvent } from "@/game/domain/events";
 import { parseNarrativeRuntimeState } from "@/game/domain/narrative";
+import { parseNarrativeHistory } from "@/game/domain/narrativeHistory";
 import {
   classifyStoryStateSchemaVersion,
   type StoryState,
@@ -16,9 +17,9 @@ type JsonObject = Record<string, unknown>;
 const REQUIRED_STORY_KEYS = [
   "version", "turnNumber", "currentAct", "targetActs", "storyProgress", "tension", "nextPacingNeed",
   "budget", "unresolvedThreads", "candidateEventPool", "endingAllowed", "endingProposed", "narrative",
-  "prologueShown", "prologueText", "memory", "contract", "evolution",
+  "prologueShown", "prologueText", "memory", "history", "contract", "evolution",
 ] as const;
-const ALL_STORY_KEYS = [...REQUIRED_STORY_KEYS, "reveal"] as const;
+const ALL_STORY_KEYS = [...REQUIRED_STORY_KEYS, "history", "reveal"] as const;
 const PACING_NEEDS: readonly PacingNeed[] = ["reveal", "develop", "complicate", "escalate", "climax", "resolve"];
 
 function isObject(value: unknown): value is JsonObject {
@@ -54,7 +55,7 @@ function isStoryShape(value: JsonObject): value is JsonObject & {
   readonly narrative: unknown;
 } {
   return hasExactStoryKeys(value)
-    && value.version === 8
+    && value.version === 10
     && isNonNegativeInteger(value.turnNumber)
     && isNonNegativeInteger(value.currentAct)
     && isNonNegativeInteger(value.targetActs)
@@ -70,6 +71,7 @@ function isStoryShape(value: JsonObject): value is JsonObject & {
     && typeof value.prologueShown === "boolean"
     && typeof value.prologueText === "string"
     && isObject(value.evolution)
+    && parseNarrativeHistory(value.history).ok
     && (!('reveal' in value) || isReveal(value.reveal));
 }
 
@@ -81,8 +83,8 @@ function sameJson(left: unknown, right: unknown): boolean {
   }
 }
 
-/** SQLite boundary parser for v8 StoryState. Memory is accepted only when it
- * is byte-for-byte equivalent to the read model rebuilt from the supplied v6 world ledger. */
+/** SQLite boundary parser for v10 StoryState. Memory is accepted only when it
+ * is byte-for-byte equivalent to the read model rebuilt from the supplied world ledger. */
 export function parsePersistableStoryState(
   value: unknown,
   ledger: readonly CommittedNarrativeEvent[],
@@ -101,6 +103,8 @@ export function parsePersistableStoryState(
   if (!narrative.ok) return { ok: false, code: "INVALID_STORY_STATE" };
   const memory = parseEpisodicMemory(value.memory);
   if (!memory.ok) return { ok: false, code: "INVALID_STORY_STATE" };
+  const history = parseNarrativeHistory(value.history);
+  if (!history.ok) return { ok: false, code: "INVALID_STORY_STATE" };
   const rebuilt = rebuildEpisodicMemory(ledger);
   if (!sameJson(memory.value, rebuilt)) return { ok: false, code: "INVALID_STORY_STATE" };
 
@@ -110,6 +114,7 @@ export function parsePersistableStoryState(
       ...value,
       narrative: narrative.value,
       memory: memory.value as EpisodicMemoryState,
+      history: history.value,
     } as StoryState,
   };
 }

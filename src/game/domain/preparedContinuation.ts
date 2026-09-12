@@ -8,6 +8,7 @@ import type {
   QuestId,
 } from "./worldEntity";
 import { areUniqueNpcSpeechReferenceIds } from "./npcSpeechReferences";
+import { parseSceneExpressionProposal, type ApprovedSceneExpression } from "./sceneExpression";
 
 export const NARRATIVE_CONTINUATION_MISSING = "NARRATIVE_CONTINUATION_MISSING" as const;
 export const NARRATIVE_CONTINUATION_INVALID = "NARRATIVE_CONTINUATION_INVALID" as const;
@@ -43,7 +44,10 @@ export type PreparedObjectiveLinkState = {
 };
 
 export type PreparedSceneSeedState = {
-  readonly segments: readonly PreparedNarrativeSegmentState[];
+  /** Ordered expression body; omitted only for legacy offline continuation records. */
+  readonly expressions?: readonly ApprovedSceneExpression[];
+  /** Legacy projection of narration; new records may derive it from expressions. */
+  readonly segments?: readonly PreparedNarrativeSegmentState[];
   readonly event: NarrativeEventState;
   readonly npcLine: NarrativeNpcLineState | null;
   readonly npcDialogues?: readonly NpcDialogueInScene[];
@@ -238,15 +242,17 @@ function isNpcDialogue(value: unknown): value is NpcDialogueInScene {
 
 function isScene(value: unknown): value is PreparedSceneSeedState {
   if (!isRecord(value) || !hasOnlyKeys(value, [
-    "segments", "event", "npcLine", "npcDialogues", "objectiveLink", "choiceSeeds", "source",
+    "expressions", "segments", "event", "npcLine", "npcDialogues", "objectiveLink", "choiceSeeds", "source",
   ])) return false;
-  if (!Array.isArray(value.segments) || !value.segments.every((segment) => (
+  if (value.expressions === undefined && value.segments === undefined) return false;
+  if (value.expressions !== undefined && !parseSceneExpressionProposal(value.expressions).ok) return false;
+  if (value.segments !== undefined && (!Array.isArray(value.segments) || !value.segments.every((segment) => (
     isRecord(segment)
     && hasOnlyKeys(segment, ["beatId", "text", "referencedEntityIds"])
     && isNonEmptyString(segment.beatId)
     && isNonEmptyString(segment.text)
     && (segment.referencedEntityIds === undefined || isStringArray(segment.referencedEntityIds))
-  ))) return false;
+  )))) return false;
   if (!isNarrativeEvent(value.event)) return false;
   if (value.npcLine !== null && !isNpcLine(value.npcLine)) return false;
   if (value.npcDialogues !== undefined

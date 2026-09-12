@@ -86,6 +86,14 @@ function structuralSignature(record: GameRecord) {
 }
 
 describe("createGame", () => {
+  it("records the published opening scene and shown choices in narrative history", async () => {
+    const record = await createPersistedGame({ seed: "opening-history" });
+    expect(record.storyState.history?.entries.map((entry) => entry.kind)).toEqual([
+      "narration", "npc_line", "shown_choice", "shown_choice",
+    ]);
+    expect(record.storyState.history?.entries.some((entry) => entry.kind === "player_choice")).toBe(false);
+  });
+
   it("passes the latest schema rejection into the next opening attempt before saving", async () => {
     const { repo, getRecord } = createInMemoryRepo();
     const fixture = createFixtureOpeningSource();

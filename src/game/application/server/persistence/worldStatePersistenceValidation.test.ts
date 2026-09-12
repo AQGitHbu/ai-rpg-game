@@ -282,6 +282,27 @@ describe("validatePersistableWorldState", () => {
     }
   });
 
+  it("accepts and validates the history snapshot carried by an active battle", () => {
+    const valid = stateWithEnemy();
+    const battle = {
+      status: "active" as const,
+      enemyId: asEnemyId("enemy_1"),
+      playerHp: 100,
+      enemyHp: 30,
+      round: 1,
+      preBattleSnapshot: {
+        entityStore: valid.entityStore,
+        eventLedger: valid.eventLedger,
+        history: { entries: [] },
+      },
+    };
+    expect(validatePersistableWorldState({ ...valid, battle })).toMatchObject({ ok: true });
+    expect(validatePersistableWorldState({
+      ...valid,
+      battle: { ...battle, preBattleSnapshot: { ...battle.preBattleSnapshot, history: { entries: [{ bad: true }] } } },
+    })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
+  });
+
   it("rejects unknown or malformed ending requirements without throwing", () => {
     const valid = state();
     expect(() => validatePersistableWorldState({
