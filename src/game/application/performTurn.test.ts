@@ -1591,3 +1591,55 @@ describe("opening dialogue intent persistence boundaries", () => {
     expect(saved.record()!.worldState.eventLedger).toEqual(after);
   });
 });
+
+// r2 b2-science_fiction opening planner b2e69e26-cf48-424c-8921-d858a25b969f:
+// 玩家已知 fact_2，NPC 只知 fact_0/1/3/4。以下缩小到相关权限，保留实际话题和玩家原句。
+describe("performTurn — 话题引用不等于 NPC 披露", () => {
+  it.each([
+    { factId: asFactId("fact_2"), npcKnows: false, playerKnows: true,
+      text: "玩家货船的接收阵列在仪表全灭之后仍收到一封来自母站的加密求救，使用旧式军用频道。",
+      label: "那封加密求救走的是旧式军用频道，校验码一遍遍重复——你们这边，收到过一样的东西吗？" },
+    { factId: asFactId("fact_3"), npcKnows: true, playerKnows: false,
+      text: "灯塔站的储备不足三周，残存反应堆只够维持生命系统与一根低功率接收天线。",
+      label: "灯塔站现在还有多少储备？" },
+  ])("fact $factId：NPC known=$npcKnows / player known=$playerKnows 的 ask 成功提交", async (sample) => {
+    const world = buildWorldState({
+      npcs: [{ ...npc1, memory: { ...npc1.memory, knownFactIds: sample.npcKnows ? [sample.factId] : [] } }],
+      worldFacts: [{ factId: sample.factId, text: sample.text, source: "generated", discovered: sample.playerKnows }],
+    });
+    const base = buildFocusedAskDialogueStoryState();
+    if (base.narrative.status !== "ready") throw new Error("expected ready fixture");
+    const approved = createApprovedChoice({
+      sceneId: base.narrative.currentScene.sceneId, basedOnRevision: 0, label: sample.label,
+      action: { type: "talk", npcId: npc1.id, dialogueAct: "ask", topic: { kind: "fact", factId: sample.factId } },
+    });
+    if (!approved.ok) throw new Error("expected valid choice");
+    const choice = approved.choice;
+    const story: StoryState = { ...base, narrative: { ...base.narrative,
+      currentScene: { ...base.narrative.currentScene, choices: [{ choiceToken: choice.choiceToken, label: choice.label }] },
+      choiceRegistry: [choice],
+    } };
+    const store = createSpyRepo(world, story);
+    const result = await performTurn({
+      gameId: asGameId("g1"), actionId: "topic-reference", expectedRevision: 0,
+      interaction: { kind: "fixed_choice", choiceToken: choice.choiceToken },
+      choiceMap: new Map([[choice.choiceToken, choice.action]]),
+    }, { repository: store.repo, now: () => "2026-09-12T10:00:00.000Z" });
+    expect(result.ok).toBe(true);
+    expect(store.applyCalls()).toHaveLength(1);
+    const saved = store.record()!;
+    expect(saved.revision).toBe(1);
+    const memory = saved.worldState.npcs[0]!.memory;
+    expect(memory.knownFactIds).toEqual(world.npcs[0]!.memory.knownFactIds);
+    expect(memory.hiddenFactIds).toEqual(world.npcs[0]!.memory.hiddenFactIds);
+    expect(memory.interactionHistory.at(-1)).toMatchObject({
+      topic: { kind: "fact", factId: sample.factId },
+      learnedFactIds: sample.npcKnows ? [sample.factId] : [],
+      outcome: sample.npcKnows ? "positive" : "neutral",
+    });
+    // 规则记录披露；玩家发现仍由后续真实表达/传播链写入。
+    expect(saved.worldState.worldFacts[0]!.discovered).toBe(sample.playerKnows);
+    expect(world.worldFacts[0]!.discovered).toBe(sample.playerKnows);
+    expect(pendingNarrative(saved.storyState.narrative).job.generationKind).toBe("npc_fixed_choice");
+  });
+});

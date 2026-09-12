@@ -1417,9 +1417,32 @@ describe("applyEntityMutations — record_npc_interaction", () => {
     });
   });
 
-  it("fact topic 必须属于主体 NPC 自己的 knowledge，并报告越界 FactId", () => {
+  it("不存在的 fact topic 仍拒绝，并报告越界 FactId", () => {
     expectNpcWriteRejected(world(), [interaction({ topic: { kind: "fact", factId: FACT_2 } })], {
       code: "invalid_reference", entityId: FACT_2, subjectId: NPC_1,
+    });
+  });
+
+  it.each([false, true])("真实 fact 可作为 NPC 未知的话题，discovered=%s 时知识与发现状态均不改变", (discovered) => {
+    const before = world({ worldFacts: [{ ...FACT_1_ENTRY, discovered }] });
+    const next = okApply(before, [interaction({ topic: { kind: "fact", factId: FACT_1 } })]);
+    expect(lastInteraction(next).topic).toEqual({ kind: "fact", factId: FACT_1 });
+    expect(lastInteraction(next).learnedFactIds).toEqual([]);
+    expect(findNpcRecord(next, NPC_1)?.knowledge).toEqual(findNpcRecord(before, NPC_1)?.knowledge);
+    expect(next.worldFacts).toEqual(before.worldFacts);
+    expect(historyOf(before)).toEqual([]);
+  });
+
+  it("已有但 NPC 未知的 topic 不能伪装为 learnedFactIds 披露", () => {
+    expectNpcWriteRejected(world(), [interaction({
+      topic: { kind: "fact", factId: FACT_1 }, learnedFactIds: [FACT_1],
+    })], { code: "invalid_reference", entityId: FACT_1, subjectId: NPC_1 });
+  });
+
+  it("存在但类型不是 fact 的话题引用仍拒绝", () => {
+    const wrongKind = asFactId(String(LOC_1));
+    expectNpcWriteRejected(world(), [interaction({ topic: { kind: "fact", factId: wrongKind } })], {
+      code: "invalid_reference", entityId: wrongKind, subjectId: NPC_1,
     });
   });
 

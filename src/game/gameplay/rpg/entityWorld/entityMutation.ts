@@ -867,12 +867,12 @@ function applyOne(
       const subject = activeNpcSubject(records, mutation.npcId);
       if (!subject.ok) return failure(subject.code, subject.entityId);
       if (!hasKind(records, mutation.locationId, "location")) return failure("invalid_reference", mutation.locationId);
-      // interaction 声称「主体 NPC 把这些事实告诉了玩家」，所以权威是主体自己的
-      // knowledge.entries；报越界的 FactId。Quest/thread topic 引用留给 Task 7。
+      // learnedFactIds 声称主体 NPC 已披露这些事实，必须来自自己的 knowledge。
+      // topic 只记录谈论的对象，要求真实 fact 引用，不授予任何参与者知识。
       const knownFactIds = new Set(subject.npc.knowledge.entries.map((entry) => entry.factId));
       const learnedOffender = mutation.learnedFactIds.find((factId) => !knownFactIds.has(factId));
       if (learnedOffender !== undefined) return failure("invalid_reference", learnedOffender);
-      if (mutation.topic?.kind === "fact" && !knownFactIds.has(mutation.topic.factId)) {
+      if (mutation.topic?.kind === "fact" && !hasKind(records, mutation.topic.factId, "fact")) {
         return failure("invalid_reference", mutation.topic.factId);
       }
       const baseline = ensureBatchBaseline(subject.npc, batch);
