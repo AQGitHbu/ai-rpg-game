@@ -268,6 +268,11 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
   }
 
   if (deps.now() >= job.deadline) return failJob("job_deadline_exceeded");
+  // Semantic planning rejection atomically clears the plan. Honor its durable receipt
+  // before regeneration, including a crash between receipt persistence and failJob.
+  if (Object.values(job.planningDialogueReviews ?? {}).some(review => review.cycle === job.cycle
+    && review.status === "failed" && review.violations?.some(v => v.scope === "planning")))
+    return failJob("dialogue_consistency_planning_contract");
   if (job.dialogueConsistencyReview?.cycle === job.cycle && job.dialogueConsistencyReview.status === "failed"
     && job.dialogueConsistencyReview.violations?.some(v => v.scope === "legacy"))
     return failJob("legacy_dialogue_contract_mismatch");

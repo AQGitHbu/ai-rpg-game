@@ -231,3 +231,41 @@ it("planning protocol correction includes safe location and never reuses allowan
   expect(count).toBe(2);
   expect(requests.filter(r => r.stage !== "planning")).toEqual([]);
 });
+
+it("same-cycle restart after durable planning rejection must not replan", async () => {
+  const { h, requests } = await dialogueReviewHarness();
+  const save = h.jobs.save.bind(h.jobs);
+  let crashed = false;
+  h.jobs.save = async input => {
+    const result = await save(input);
+    if (!crashed && Object.values(input.job.planningDialogueReviews ?? {}).some(r => r.lastFailure === "exhausted")) {
+      crashed = true;
+      throw Error("simulated process loss after durable planning rejection, before failJob");
+    }
+    return result;
+  };
+  h.source.reviewDialogueConsistency = async request => ({ ok: true, verdict: "reject", violations: [{
+    checkId: request.checks.find(c => c.kind === "plan_answer")!.checkId,
+    type: "intent_mismatch", inquiryId: null,
+  }] });
+  await expect(h.run()).rejects.toThrow("simulated process loss");
+  const loaded = await h.readJob();
+  expect(loaded).toMatchObject({ ok: true, value: { status: "pending", cycle: 0 } });
+  const before = requests.filter(r => r.stage === "planning").length;
+  const result = await runJob({ id: h.jobId(), lease: h.lease() }, { jobs: h.jobs, source: h.source,
+    now: () => h.clock.now(), signal: new AbortController().signal });
+  expect(result).toMatchObject({ ok: false, code: "dialogue_consistency_planning_contract" });
+  expect(requests.filter(r => r.stage === "planning").length).toBe(before);
+  const after = await h.readJob();
+  if (!loaded.ok || !after.ok) throw Error("fixture");
+  expect(after.value.usedRequests).toBe(loaded.value.usedRequests);
+  await h.retry();
+  h.source.reviewDialogueConsistency = async () => ({ ok: true, verdict: "pass", violations: [] });
+  const claim = await h.jobs.claim({ id: h.jobId(), owner: "next-cycle-worker", now: h.clock.now(),
+    expiresAt: new Date(Date.parse(h.clock.now()) + 30_000).toISOString() });
+  if (!claim.ok) throw Error(claim.code);
+  const next = await runJob({ id: h.jobId(), lease: claim.value }, { jobs: h.jobs, source: h.source,
+    now: () => h.clock.now(), signal: new AbortController().signal });
+  expect(next).toMatchObject({ ok: true, value: { cycle: 1 } });
+  expect(requests.filter(r => r.stage === "planning").length).toBe(before + 1);
+});
