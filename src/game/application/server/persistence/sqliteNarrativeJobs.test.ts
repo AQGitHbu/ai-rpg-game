@@ -568,3 +568,15 @@ describe("sqliteNarrativeJobs", () => {
     expect((await jobs.start({ requestId: "init-next", digest: next.inputDigest, job: next })).ok).toBe(true);
   });
 });
+
+it.each([undefined, "fact_rumor"])("SQLite仍读取旧aspect-only及新factId定位的拒绝凭据：%s", async factId => {
+  const stores = openStores(nextDbPath());
+  const job = decisionJob();
+  const violation = { scope: "expression" as const, unitKey: "character_current", type: "missing_response" as const,
+    aspect: "source" as const, ...(factId === undefined ? {} : { factId }) };
+  const review = { version: 1 as const, cycle: 0, inputDigest: "a".repeat(64), attempts: 1,
+    status: "failed" as const, violations: [violation] };
+  expect((await stores.jobs.start({ job: { ...job, dialogueConsistencyReview: review },
+    requestId: `req-${job.id}`, digest: job.inputDigest })).ok).toBe(true);
+  expect(await stores.jobs.get(job.id)).toMatchObject({ ok: true, value: { dialogueConsistencyReview: review } });
+});

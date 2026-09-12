@@ -59,11 +59,11 @@ it("审核合同保留已安全编译的候选与历史先核实条件ID，不�
       label: "先确认告示上的说法，我再支持你。", task: { intent: "support", brief: "先核实告示再支持。",
         focusFactIds: [], contentFactIds: [], prerequisiteFactIds: ["fact_notice"], inquiries: [] } } } } } });
   h.source.reviewDialogueConsistency = async request => {
-    const selected = request.conversations.find(c => c.selected !== null)!.selected!;
-    expect(selected.contract?.prerequisiteFactIds).toEqual(["fact_notice"]);
-    expect(selected.contract?.inquiries).toEqual([]);
-    const options = request.conversations.flatMap(c => c.options);
-    expect(options.every(o => o.contract.prerequisiteFactIds?.[0] === "fact_notice")).toBe(true);
+    const selected = request.checks.find(c => c.kind === "selected")!;
+    expect(selected.prerequisiteFactIds).toEqual(["fact_notice"]);
+    expect(selected.inquiries).toEqual([]);
+    const options = request.checks.filter(c => c.kind === "option");
+    expect(options.every(o => o.prerequisiteFactIds?.[0] === "fact_notice")).toBe(true);
     expect(JSON.stringify(request)).not.toContain("entityStore");
     return { ok: true, verdict: "pass", violations: [] };
   };
@@ -88,11 +88,11 @@ it("历史brief经安全投影核对协助条件，只交给当前focus审核，
     return result;
   };
   h.source.reviewDialogueConsistency = async request => {
-    const current = request.conversations.find(c => c.speakerId === "npc_0")!;
-    expect(current.selected?.contract?.brief).toContain(brief);
-    expect(current.selected?.contract).not.toHaveProperty("focusFactIds");
+    const current = request.checks.find(c => c.kind === "selected")!;
+    expect(current.brief).toContain(brief);
+    expect(current).not.toHaveProperty("focusFactIds");
     expect(JSON.stringify(request)).not.toContain("OTHER_NPC_PRIVATE_LINE");
-    expect(request.conversations.some(c => c.speakerId === "npc_1")).toBe(false);
+    expect(request.checks.filter(c => c.kind === "answer")).toHaveLength(1);
     return { ok: true, verdict: "pass", violations: [] };
   };
   expect((await h.run()).ok).toBe(true);
@@ -121,9 +121,9 @@ it.each(["brief", "legacy_prerequisite"])("历史任务引用玩家不可见事�
 it("逐场景绑定实际问题与unknown回应，安全投影不含完整世界/私密计划", async () => {
   const { h } = await dialogueReviewHarness();
   h.source.reviewDialogueConsistency = async request => {
-    const reply = request.conversations.find(c => c.stage === "character")!;
-    expect(reply.selected).toMatchObject({ historicalChoice: true, label: "从哪儿听来的，消息可靠吗？",
-      contract: { inquiries: [{ aspects: ["source", "reliability"] }] } });
+    const reply = request.checks.find(c => c.kind === "answer")!;
+    expect(reply.selectedText).toBe("从哪儿听来的，消息可靠吗？");
+    expect(reply.inquiries.map(q => q.aspect)).toEqual(["source", "reliability"]);
     expect(reply.answers.map(answer => answer.aspect)).toEqual(["source", "reliability"]);
     expect(reply.text).toContain("从哪儿传来、是否可信");
     expect(request).not.toHaveProperty("world");

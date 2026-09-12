@@ -15,11 +15,11 @@ it.each([false, true])("free-text有selectedDialogue仍不是旧固定选项；�
   let calls = 0;
   h.source.reviewDialogueConsistency = async request => {
     calls++;
-    const reply = request.conversations.find(c => c.stage === "character")!;
-    expect(reply.selected).toMatchObject({ historicalChoice: false, contract: null });
+    const reply = request.checks.find(c => c.kind === "answer")!;
+    expect(request.checks.some(c => c.kind === "selected")).toBe(false);
+    expect(reply.selectedText).toBe("消息是从哪儿来的？");
     expect(reply.answers).toEqual([]);
-    return misclassified ? { ok: true, verdict: "reject", violations: [{ scope: "legacy", unitKey: reply.unitKey,
-      type: "intent_mismatch", aspect: null }] } : { ok: true, verdict: "pass", violations: [] };
+    return misclassified ? { ok: true, verdict: "reject", violations: [{ checkId: "nonexistent_selected_check", type: "intent_mismatch", inquiryId: null }] } : { ok: true, verdict: "pass", violations: [] };
   };
   const result = await h.run();
   expect(result).toMatchObject(misclassified ? { ok: false, code: "dialogue_consistency_review_failed" } : { ok: true });
@@ -32,8 +32,7 @@ it("第二次审核拒绝即耗尽，重启不能再发审核或表达；手动�
   let reviews = 0;
   h.source.reviewDialogueConsistency = async request => {
     reviews++;
-    return { ok: true, verdict: "reject", violations: [{ scope: "expression", candidateId:
-      request.conversations.find(c => c.stage === "choices")!.options[0]!.candidateId, type: "extra_inquiry", aspect: "source" }] };
+    return { ok: true, verdict: "reject", violations: [{ checkId: request.checks.find(c => c.kind === "option")!.checkId, type: "intent_mismatch", inquiryId: null }] };
   };
   expect(await h.run()).toMatchObject({ ok: false, code: "dialogue_consistency_review_exhausted" });
   expect(reviews).toBe(2);
@@ -94,14 +93,14 @@ it("reliability标签追加从哪儿听来：只重做choices，二次合并审�
   let reviews = 0;
   h.source.reviewDialogueConsistency = async request => {
     reviews++;
-    const choice = request.conversations.find(c => c.stage === "choices")!.options[0]!;
-    expect(choice.contract.inquiries[0]?.aspects).toEqual(["reliability"]);
+    const choice = request.checks.find(c => c.kind === "option")!;
+    expect(choice.inquiries.map(q => q.aspect)).toEqual(["reliability"]);
     if (reviews === 1) {
-      expect(choice.label).toContain("从哪儿听来");
-      return { ok: true, verdict: "reject", violations: [{ scope: "expression", candidateId: choice.candidateId,
-        type: "extra_inquiry", aspect: "source" }] };
+      expect(choice.text).toContain("从哪儿听来");
+      return { ok: true, verdict: "reject", violations: [{ checkId: choice.checkId, type: "extra_inquiry",
+        inquiryId: choice.inquiryTargets.find(q => q.aspect === "source")!.inquiryId }] };
     }
-    expect(choice.label).toBe("这告示可信吗？");
+    expect(choice.text).toBe("这告示可信吗？");
     return { ok: true, verdict: "pass", violations: [] };
   };
   const result = await h.run();
@@ -124,12 +123,12 @@ it("source+reliability计划均unknown但实际只回应reliability：失效NPC�
   };
   let reviews = 0;
   h.source.reviewDialogueConsistency = async request => {
-    const reply = request.conversations.find(c => c.stage === "character")!;
+    const reply = request.checks.find(c => c.kind === "answer")!;
     expect(reply.answers).toHaveLength(2);
     if (++reviews === 1) {
       expect(reply.text).toBe("是否可信我不知道。");
-      return { ok: true, verdict: "reject", violations: [{ scope: "expression", unitKey: reply.unitKey,
-        type: "missing_response", aspect: "source" }] };
+      return { ok: true, verdict: "reject", violations: [{ checkId: reply.checkId, type: "missing_response",
+        inquiryId: reply.inquiries.find(q => q.aspect === "source")!.inquiryId }] };
     }
     return { ok: true, verdict: "pass", violations: [] };
   };
@@ -213,20 +212,20 @@ it("reject与DAG失效原子保存，保存后重启仍带安全反馈修复", a
   };
   let reviews = 0;
   h.source.reviewDialogueConsistency = async request => ++reviews === 1
-    ? { ok: true, verdict: "reject", violations: [{ scope: "expression", candidateId: request.conversations.find(c => c.stage === "choices")!.options[0]!.candidateId,
-      type: "extra_inquiry", aspect: "source" }] }
+    ? { ok: true, verdict: "reject", violations: [{ checkId: request.checks.find(c => c.kind === "option")!.checkId,
+      type: "intent_mismatch", inquiryId: null }] }
     : { ok: true, verdict: "pass", violations: [] };
   expect((await h.run()).ok).toBe(false);
   const resumed = await runJob({ id: h.jobId(), lease: h.lease() }, { jobs: h.jobs, source: h.source,
     now: () => h.clock.now(), signal: new AbortController().signal });
   expect(resumed).toMatchObject({ ok: true, value: { usedRequests: 8, dialogueConsistencyReview: { attempts: 2 } } });
-  expect(h.calls.filter(c => c.stage === "choices").at(-1)?.repair?.detail).toContain('"aspect":"source"');
+  expect(h.calls.filter(c => c.stage === "choices").at(-1)?.repair?.detail).toContain('"type":"intent_mismatch"');
 });
 
 it.each(["planning", "legacy"] as const)("%s合同拒绝终止周期；planning手动重试不复用旧骨架", async scope => {
   const { h, requests } = await dialogueReviewHarness();
-  h.source.reviewDialogueConsistency = async request => ({ ok: true, verdict: "reject", violations: [{ scope,
-    unitKey: request.conversations.find(c => c.stage === "character")!.unitKey, type: "intent_mismatch", aspect: null }] });
+  h.source.reviewDialogueConsistency = async request => ({ ok: true, verdict: "reject", violations: [{ checkId: request.checks.find(c => c.kind === (scope === "planning" ? "plan_answer" : "selected"))!.checkId,
+    type: "intent_mismatch", inquiryId: null }] });
   expect(await h.run()).toMatchObject({ ok: false, code: scope === "legacy" ? "legacy_dialogue_contract_mismatch" : "dialogue_consistency_planning_contract" });
   if (scope !== "planning") return;
   expect(await h.readJob()).toMatchObject({ ok: true, value: { units: expect.arrayContaining([

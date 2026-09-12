@@ -3,7 +3,9 @@ import type { StoredJob } from "../server/persistence/narrativeJobRepository";
 import type { StageSource } from "./stageSource";
 import { canStartRequest } from "./jobBudget";
 import { DIALOGUE_REVIEW_MAX_ATTEMPTS, DIALOGUE_REVIEW_VERSION, dialogueConsistencyReviewInput,
-  parseDialogueConsistencyVerdict, type DialogueViolation } from "./dialogueConsistencyReview";
+  type DialogueViolation } from "./dialogueConsistencyReview";
+
+import { parseDialogueReviewVerdict, routeDialogueReviewVerdict } from "./dialogueReviewChecks";
 
 type ReviewResult = { ok: true; repair: boolean } | { ok: false; code: string };
 /** The runner owns scheduling/fences; this bounded state machine owns review charges and receipts. */
@@ -18,7 +20,7 @@ export async function runDialogueConsistencyReview(input: {
   const built = dialogueConsistencyReviewInput(input.getJob(), input.plan);
   if (!built.ok) return built;
   if (built.value === null) return { ok: true, repair: false };
-  const { request, digest } = built.value;
+  const { request, digest, compiled } = built.value;
   const current = input.getJob();
   const previous = current.dialogueConsistencyReview;
   if (previous?.cycle === current.cycle && previous.version === DIALOGUE_REVIEW_VERSION
@@ -53,21 +55,18 @@ export async function runDialogueConsistencyReview(input: {
             mechanism: review.attempts === 0 ? "initial" : "content_repair", attempt: review.attempts,
             ...(review.attempts === 0 ? {} : { reason: "dialogue_consistency_review_retry" }) } },
       });
-      verdict = result.ok ? parseDialogueConsistencyVerdict({ verdict: result.verdict, violations: result.violations }) : null;
+      const parsed = result.ok ? parseDialogueReviewVerdict({ verdict: result.verdict, violations: result.violations }, request) : null;
+      verdict = parsed === null ? null : routeDialogueReviewVerdict(parsed, compiled);
     } catch { verdict = null; }
     if (input.signal.aborted) return { ok: false, code: "JOB_ABORTED" };
     if (input.now() >= job.deadline) return { ok: false, code: "job_deadline_exceeded" };
     const violations = verdict?.violations ?? [];
-    const targetsValid = violations.every(v => request.conversations.some(c =>
-      v.unitKey === c.unitKey && (v.scope !== "legacy" || c.selected?.historicalChoice === true)
-      || v.candidateId !== undefined && v.scope !== "legacy" && c.options.some(o => o.candidateId === v.candidateId)));
-    if (!targetsValid) verdict = null;
     const reject = verdict?.verdict === "reject";
     const legacy = reject && violations.some(v => v.scope === "legacy");
     const planning = reject && !legacy && violations.some(v => v.scope === "planning");
     const invalid = new Set<string>(!reject || legacy ? [] : planning ? input.plan.units.map(u => u.key)
-      : violations.flatMap(v => request.conversations.filter(c => c.unitKey === v.unitKey
-        || c.options.some(o => o.candidateId === v.candidateId)).map(c => c.unitKey)));
+      : violations.flatMap(v => [...compiled.routes.values()].filter(c => c.unitKey === v.unitKey
+        || (v.candidateId !== undefined && c.candidateId === v.candidateId)).map(c => c.unitKey)));
     if (planning) invalid.add("planning");
     for (;;) {
       const count = invalid.size;

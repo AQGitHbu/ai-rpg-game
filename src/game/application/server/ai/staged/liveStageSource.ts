@@ -22,7 +22,8 @@ import { buildNarrationPrompt } from "./narrationPrompt";
 import { buildCharacterPrompt } from "./characterPrompt";
 import { buildChoicePrompt } from "./choicePrompt";
 import { buildDialogueConsistencyReviewPrompt } from "./dialogueConsistencyReviewPrompt";
-import { DIALOGUE_REVIEW_CONTEXT_LIMIT, parseDialogueConsistencyVerdict } from "@/game/application/narrativeGeneration/dialogueConsistencyReview";
+import { DIALOGUE_REVIEW_CONTEXT_LIMIT } from "@/game/application/narrativeGeneration/dialogueConsistencyReview";
+import { parseDialogueReviewVerdict } from "@/game/application/narrativeGeneration/dialogueReviewChecks";
 import { buildDisclosureReviewPrompt } from "./disclosureReviewPrompt";
 import { plannedReplyRejection, repeatedNpcResponseUnits } from "@/game/application/narrativeGeneration/dialogueContinuity";
 
@@ -95,7 +96,7 @@ export function createLiveStageSource(options: CreateLiveStageSourceOptions): St
       if (!response.ok) return providerFailure(response);
       if ([...response.content].length > 4_000) return invalidContent("dialogue_consistency_review_invalid");
       const parsed = parseStructuredJsonObject(response.content);
-      const verdict = parsed.ok ? parseDialogueConsistencyVerdict(parsed.value) : null;
+      const verdict = parsed.ok ? parseDialogueReviewVerdict(parsed.value, request) : null;
       return verdict === null ? invalidContent("dialogue_consistency_review_invalid") : { ok: true, ...verdict };
     },
     async reviewDisclosure(request, execution) {

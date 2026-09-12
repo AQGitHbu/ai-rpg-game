@@ -77,7 +77,7 @@ export type StageSource = {
   reviewDisclosure?(
     request: DisclosureReviewRequest, execution: StageExecution,
   ): Promise<{ readonly ok: true; readonly verdict: "pass" | "reject" | "uncertain" } | AiSourceFailure>;
-  reviewDialogueConsistency?(request: import("./dialogueConsistencyReview").DialogueConsistencyReviewRequest, execution: StageExecution): Promise<({ readonly ok: true } & import("./dialogueConsistencyReview").DialogueConsistencyVerdict) | AiSourceFailure>;
+  reviewDialogueConsistency?(request: import("./dialogueConsistencyReview").DialogueConsistencyReviewRequest, execution: StageExecution): Promise<({ readonly ok: true } & import("./dialogueReviewChecks").DialogueReviewVerdict) | AiSourceFailure>;
   generate(
     request: StageRequest,
     execution: StageExecution,
