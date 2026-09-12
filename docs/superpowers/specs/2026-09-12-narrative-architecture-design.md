@@ -2,14 +2,14 @@
 
 ## 1. 文档地位与实施入口
 
-本文是待实施 Spec，规定本次优化的目标、逻辑契约、分期边界及验收条件；不表示相关能力已经实现，不是逐文件执行 Plan。本轮交付仅包括分支/worktree、现状报告与本文。
+本文是待实施总 Spec，规定本次优化的目标、逻辑契约、分期边界及验收条件；不表示相关能力已经实现，不是逐文件执行 Plan。实施入口为 [P1 完整小故事 Plan](../plans/2026-09-12-narrative-architecture-p1.md)。
 
 - 基准 main：`ca189eb12011d493f21bb50652fbfe1324387599`。
 - 工作分支：`codex/narrative-architecture`；主仓内 worktree：`.worktrees/narrative-architecture/`。
 - 历史对照：`staged-narrative-generation` 的 `3edcee4d`，只读保留。
 - 现状、历史分数与失败证据唯一详述位置：[基准报告](../reports/2026-09-12-narrative-architecture-baseline.md)。
 
-后续先根据本文 P1 编写独立实施 Plan，再按 Task 实施。P2–P4 是范围路线图，不提前展开成必须一次完成的大 Plan。本文是用户指定的独立任务，不改 `docs/agent/current-phase.json`，不启动旧 Plan5；本次存在重叠的 Thread 能力以本文范围为准。若未来正式替换阶段，届时原子更新阶段配置及对应执行 Plan，不能维护两套执行状态。
+P1 Plan 按规则与历史闭环、真实生成接入、完整旅程验收三个里程碑展开 Task；执行状态与证据在该 Plan 维护。P2–P4 是范围路线图，不提前展开成必须一次完成的大 Plan。本文是用户指定的独立任务，不改 `docs/agent/current-phase.json`，不启动旧 Plan5；本次存在重叠的 Thread 能力以本文范围为准。若未来正式替换阶段，届时原子更新阶段配置及对应执行 Plan，不能维护两套执行状态。
 
 本次采用的依据：
 
