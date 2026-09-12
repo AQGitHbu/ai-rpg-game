@@ -252,7 +252,7 @@ it.each(["planning", "legacy"] as const)("%s合同拒绝终止周期；planning�
   if (!claimed.ok) throw Error(claimed.code);
   expect(await runJob({ id: h.jobId(), lease: claimed.value }, { jobs: h.jobs, source: h.source,
     now: () => h.clock.now(), signal: h.controller.signal })).toMatchObject({ ok: true, value: { cycle: 1, dialogueConsistencyReview: { cycle: 1, attempts: 1 } } });
-  expect(requests.filter(r => r.stage === "planning")).toHaveLength(2);
+  expect(requests.filter(r => r.stage === "planning")).toHaveLength(3);
 });
 
 it("late审核被cancel fence拒绝，不能保存pass或发布", async () => {

@@ -1,4 +1,4 @@
-import { prepareReviewAttempt, reviewOutcome, type ReviewOutcome } from "./dialogueReviewRecovery";
+import { prepareReviewAttempt, reviewAllowances, reviewOutcome, type ReviewOutcome } from "./dialogueReviewRecovery";
 import { fail, type Check, type Unit, type UnitOutput } from "@/game/domain/narrativeUnit";
 import type { ApprovedPlan } from "@/game/gameplay/rpg/narrativePlanning";
 import type { StoredJob } from "../server/persistence/narrativeJobRepository";
@@ -10,6 +10,7 @@ import { DIALOGUE_REVIEW_VERSION, DIALOGUE_REVIEW_POLICY_REVISION, DIALOGUE_REVI
 import { narrativeInputDigest } from "./narrativeInputDigest";
 import { canStartRequest } from "./jobBudget";
 import type { StageSource } from "./stageSource";
+import { PLANNING_CONTRACT, planningAnchorDigest } from "./planningSemanticRepair";
 
 type Receipt = NonNullable<StoredJob["dialogueConsistencyReview"]>;
 type Projection = { unitKey: string; digest: string; subjects: readonly DialogueReviewSubject[] };
@@ -95,6 +96,12 @@ function valid(receipt: Receipt | undefined, job: StoredJob, digest: string): bo
     && receipt.inputDigest === digest && receipt.passDigest === digest;
 }
 export function validatePlanningDialogueReviews(job: StoredJob, plan: ApprovedPlan): Check<true> {
+  if (job.planningSemanticRepair !== undefined && (job.planningSemanticRepair.cycle !== job.cycle
+    || job.planningSemanticRepair.inputDigest !== job.inputDigest
+    || job.planningSemanticRepair.reviewInFlight || job.planningSemanticRepair.reviewFailure !== undefined
+    || ["pending", "exhausted"].includes(job.planningSemanticRepair.status)
+    || (job.planningSemanticRepair.used === 1
+      && planningAnchorDigest(plan.proposal) !== planningAnchorDigest(job.planningSemanticRepair.anchor)))) return fail(PLANNING_CONTRACT);
   for (const unit of planningDialogueUnits(plan)) {
     const built = project(job, plan, unit, false);
     if (!built.ok) return built;
@@ -128,11 +135,32 @@ export async function runPlanningDialogueReview(input: {
   for (;;) {
     const job = input.getJob();
     if (input.signal.aborted) return fail("JOB_ABORTED");
+    const previousReviews = Object.values(job.planningDialogueReviews ?? {}).filter(r => r.cycle === job.cycle);
+    const recovery = job.planningSemanticRepair ?? { cycle: job.cycle, inputDigest: job.inputDigest,
+      used: 0 as const, status: "idle" as const, anchor: input.plan.proposal,
+      protocolCorrections: previousReviews.some(r => reviewAllowances(r).protocolCorrections > 0) ? 1 as const : 0 as const,
+      reviewInFlight: previousReviews.some(r => r.status === "running" || r.status === "unknown"),
+      reviewFailure: previousReviews.find(r => r.lastFailure === "protocol_error" || r.lastFailure === "provider_failure"
+        || r.lastFailure === "uncertain")?.lastFailure as "protocol_error" | "provider_failure" | "uncertain" | undefined };
+    if (recovery.cycle !== job.cycle || recovery.inputDigest !== job.inputDigest) return fail("JOB_CONFLICT");
+    if (recovery.reviewFailure === "provider_failure") return fail("AI_CALL_FAILED");
+    if (recovery.reviewFailure === "uncertain") return fail("dialogue_consistency_review_uncertain");
+    const correction = recovery.reviewInFlight || recovery.reviewFailure === "protocol_error"
+      || pending.some(p => {
+        const r = job.planningDialogueReviews?.[p.unitKey];
+        return r?.cycle === job.cycle && r.attempts > 0 && r.lastFailure !== "content_recheck";
+      });
+    if (correction && recovery.protocolCorrections === 1) return fail("dialogue_consistency_review_exhausted");
     const prepared = pending.map(p => {
       const previous = job.planningDialogueReviews?.[p.unitKey];
-      const sameCycle = previous?.cycle === job.cycle ? previous : undefined;
+      const inherited = recovery.used === 1 ? Object.values(job.planningDialogueReviews ?? {})
+        .filter(r => r.cycle === job.cycle).sort((a, b) => b.attempts - a.attempts)[0] : undefined;
+      const sameCycle = previous?.cycle === job.cycle ? previous : inherited === undefined ? undefined : {
+        ...inherited, attempts: 1 + recovery.protocolCorrections, protocolCorrections: recovery.protocolCorrections,
+        contentRepairs: 1, status: "pending" as const, lastFailure: "content_recheck" as const };
       return prepareReviewAttempt({ ...sameCycle, version: DIALOGUE_REVIEW_VERSION, cycle: job.cycle,
-        inputDigest: p.digest, attempts: sameCycle?.attempts ?? 0, status: sameCycle?.status ?? "pending", passDigest: undefined });
+        inputDigest: p.digest, attempts: sameCycle?.attempts ?? 0, status: sameCycle?.status ?? "pending", passDigest: undefined,
+        ...(recovery.reviewInFlight ? { lastFailure: "outcome_unknown" } : {}) });
     });
     for (const attempt of prepared) if (!attempt.ok) return fail(attempt.code);
     const budget = canStartRequest({ job, unitAttempts: 0, now: input.now() });
@@ -150,12 +178,17 @@ export async function runPlanningDialogueReview(input: {
                 : outcome.verdict?.verdict === "reject" ? "exhausted" : undefined) }) }];
         })) },
     });
-    const charged = await input.persist(current => ({ ...update(current, "running", false), usedRequests: current.usedRequests + 1 }));
+    const charged = await input.persist(current => ({ ...update(current, "running", false),
+      planningSemanticRepair: { ...recovery, reviewInFlight: true,
+        anchor: recovery.used === 0 ? input.plan.proposal : recovery.anchor,
+        protocolCorrections: correction ? 1 : recovery.protocolCorrections }, usedRequests: current.usedRequests + 1 }));
     if (charged !== true) return fail(charged);
     let outcome: ReviewOutcome;
     try {
+      const repair = prepared.flatMap(p => p.ok && p.repair ? [p.repair] : [])[0];
       const result = await input.source.reviewDialogueConsistency(compiled.request, {
-        repair: prepared.flatMap(p => p.ok && p.repair ? [p.repair] : [])[0],
+        repair: repair?.reason === "dialogue_consistency_content_recheck" ? { ...repair,
+          detail: "planning_content_recheck: planning tasks and contracts were revised; independently review all current planning checks. Expression text is not available." } : repair,
         signal: input.signal, timeoutMs: Math.max(1, Math.min(30_000, Date.parse(job.deadline) - Date.parse(input.now()))),
         audit: { purpose: "staged_narrative_generation", trigger: "dialogue_consistency_planning_review", jobId: job.id,
           cycle: job.cycle, inputDigest: narrativeInputDigest(pending.map(p => p.digest)) },
@@ -168,13 +201,25 @@ export async function runPlanningDialogueReview(input: {
     const rejected = verdict?.verdict === "reject";
     const passed = verdict?.verdict === "pass";
     const routed = verdict === null ? undefined : routeDialogueReviewVerdict(verdict, compiled).violations;
-    const saved = await input.persist(current => ({ ...update(current, passed ? "approved" : "failed", passed, routed, outcome),
-      ...(rejected ? { units: current.units.map(u => ({ ...u, status: "pending" as const, value: null,
-        disclosureReviewDigest: undefined })) } : {}),
-    }));
+    const saved = await input.persist(current => {
+      const updated = update(current, passed ? "approved" : "failed", passed, routed, outcome);
+      const canRepair = rejected && recovery.used === 0;
+      return { ...updated, planningSemanticRepair: { ...current.planningSemanticRepair!,
+        reviewInFlight: false, reviewFailure: outcome.failure ?? (verdict?.verdict === "uncertain" ? "uncertain" : undefined),
+        protocolIssue: outcome.issue,
+        ...(rejected ? { used: 1, status: canRepair ? "pending" : "exhausted", violations: routed } : {}),
+      }, ...(rejected ? {
+        planningDialogueReviews: Object.fromEntries(Object.entries(updated.planningDialogueReviews ?? {}).map(([key, r]) =>
+          [key, { ...r, status: "pending" as const, passDigest: undefined,
+            ...(canRepair ? { contentRepairs: 1, lastFailure: "content_recheck" as const } : {}) }])),
+        units: current.units.map(u => ({ ...u, status: "pending" as const, value: null, disclosureReviewDigest: undefined })),
+        dialogueConsistencyReview: current.dialogueConsistencyReview === undefined ? undefined
+          : { ...current.dialogueConsistencyReview, status: "pending" as const, passDigest: undefined },
+      } : {}) };
+    });
     if (saved !== true) return fail(saved);
     if (passed) return { ok: true, value: true };
-    if (rejected) return fail("dialogue_consistency_planning_contract");
+    if (rejected) return fail(PLANNING_CONTRACT);
     if (outcome.failure === "provider_failure") return fail("AI_CALL_FAILED");
     if (verdict?.verdict === "uncertain") return fail("dialogue_consistency_review_uncertain");
     if (prepared.some(p => p.ok && p.receipt.protocolCorrections === 1)) return fail("dialogue_consistency_review_failed");

@@ -45,6 +45,16 @@ export type InitializationEnvelope = {
 };
 
 export type StoredJob = {
+  readonly planningSemanticRepair?: Readonly<{
+    cycle: number; inputDigest: string; used: 0 | 1;
+    status: "idle" | "pending" | "replanned" | "exhausted";
+    anchor: PlanProposal;
+    protocolCorrections: 0 | 1;
+    reviewInFlight: boolean;
+    reviewFailure?: "protocol_error" | "provider_failure" | "uncertain";
+    protocolIssue?: import("../../narrativeGeneration/dialogueReviewChecks").ReviewProtocolIssue;
+    violations?: readonly import("../../narrativeGeneration/dialogueConsistencyReview").DialogueViolation[];
+  }>;
   readonly planningDialogueReviews?: Readonly<Record<string, NonNullable<StoredJob["dialogueConsistencyReview"]>>>;
   readonly dialogueConsistencyReview?: Readonly<{
     version: 1; cycle: number; inputDigest: string; attempts: number;

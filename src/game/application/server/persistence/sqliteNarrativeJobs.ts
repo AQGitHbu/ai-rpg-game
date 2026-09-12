@@ -1,4 +1,5 @@
 import { isStoredPlanningDialogueReviews } from "../../narrativeGeneration/planningDialogueReview";
+import { isStoredPlanningSemanticRepair } from "../../narrativeGeneration/planningSemanticRepair";
 import { isStoredDialogueReview, validateJobDialogueConsistencyReview } from "../../narrativeGeneration/dialogueConsistencyReview";
 import { approvePlanningContext } from "../../narrativeGeneration/approvePlanningContext";
 import type {
@@ -142,8 +143,12 @@ function parsePayloadJob(text: string, expectedId: string): JobCheck<StoredJob> 
   }
 
   if (!isStoredPlanningDialogueReviews(parsed["planningDialogueReviews"])) return { ok: false, code: "UNSUPPORTED_JOB" };
+  if (!isStoredPlanningSemanticRepair(parsed["planningSemanticRepair"])) return { ok: false, code: "UNSUPPORTED_JOB" };
   if (!isStoredDialogueReview(parsed["dialogueConsistencyReview"])) return { ok: false, code: "UNSUPPORTED_JOB" };
   const job = { ...(parsed as unknown as StoredJob), units };
+  if (job.planningSemanticRepair !== undefined && (job.planningSemanticRepair.cycle !== job.cycle
+    || job.planningSemanticRepair.inputDigest !== job.inputDigest
+    || !approvePlanningContext(job.input, job.planningSemanticRepair.anchor).ok)) return { ok: false, code: "UNSUPPORTED_JOB" };
   return { ok: true, value: job };
 }
 
@@ -520,6 +525,7 @@ export function createSqliteNarrativeJobs(
             usedRequests: input.operation === "retry" ? 0 : parsed.value.usedRequests,
             units: nextUnits,
             planningDialogueReviews: input.operation === "retry" ? undefined : parsed.value.planningDialogueReviews,
+            planningSemanticRepair: input.operation === "retry" ? undefined : parsed.value.planningSemanticRepair,
             dialogueConsistencyReview: input.operation === "retry" ? undefined : parsed.value.dialogueConsistencyReview,
           };
           await tx.execute({

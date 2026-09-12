@@ -211,6 +211,8 @@ function createMemoryJobRepository(): NarrativeJobRepository & { initializeSchem
           cycle: row.job.cycle + 1,
           usedRequests: 0,
           dialogueConsistencyReview: undefined,
+          planningDialogueReviews: undefined,
+          planningSemanticRepair: undefined,
           deadline: new Date(Date.parse(now) + 600_000).toISOString(),
           units: row.job.units.map((unit) => unit.status === "approved"
             ? unit

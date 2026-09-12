@@ -19,4 +19,6 @@ it("assembled structural contract scopes inquiries to player candidates, includi
   expect(prompt).toContain("玩家候选无事实问询");
   expect(prompt).toContain("玩家候选询问谁、在哪里");
   expect(prompt).not.toContain("- 询问谁、在哪里");
+  expect(prompt).toContain("须原样保留其 opening、worldDelta、steps、terminal、observations、actions");
+  expect(prompt).toContain("只修正 units 的任务内容及 decision 候选意图/brief/inquiries");
 });

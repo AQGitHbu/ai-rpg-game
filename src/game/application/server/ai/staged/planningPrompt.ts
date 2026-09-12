@@ -482,6 +482,7 @@ ${needsWorldDelta ? `# 世界演化与衔接
 # 最终结构检查（优先于自定义 key 格式）
 ${structuralContext}
 ${repairSection}
+- 修复反馈若包含 approvedProposal/approvedOpening，须原样保留其 opening、worldDelta、steps、terminal、observations、actions；它们是结构获批的世界与场景锚点。只修正 units 的任务内容及 decision 候选意图/brief/inquiries 等合同，再返回完整 PlanProposal 并接受全部审批。不得另造开局、删改事实或观察来消除语义拒绝。
 - terminal.kind=ending 时，顶层 decision 必须是 JSON null（不是 ordinary/ending 对象）；只保留 current 的最后一个 choices 单元。trust/doubt 内容由规则注入，无需在 decision.options 再定义。此条优先于普通决策的“两条候选”要求。
 - graphStatus=approved 表示场景图已经由规则编译（不是整包获批），包括有 worldDelta 的修复。terminal.kind=next_decision 时，唯一 choices 的 point.stepKey 和 decision.point.stepKey 必须同时等于 decisionPoint，二者 order 也必须一致；decision.npcId 必须等于 decisionNpcId，candidateId 沿用 candidateIds。terminal.kind=ending 则继续遵守上方 decision=null 的结局契约。不得因本回合焦点 NPC 是旧 NPC，就把下一决策也留给旧 NPC。
 - scenes[].allowsChoices=false 的场景只安排回应，不安排选项；responseNpcId 表示该场景的角色对象，不是全包共用 speaker。沿用反馈中的 approvedWorldDelta，重新规划各场景的表达意图、依赖与选项语义，不要仅改 terminal 或机械搬移旧 NPC 的对白任务。

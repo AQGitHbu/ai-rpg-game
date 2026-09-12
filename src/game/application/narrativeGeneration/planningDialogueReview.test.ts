@@ -84,6 +84,35 @@ async function conditionalHarness(unauthorized = false) {
   return { h, text };
 }
 
+it("依赖表达披露后才发现的合同拒绝沿同周期修复，并先撤销所有旧表达", async () => {
+  const { h } = await conditionalHarness();
+  let rejected = false;
+  const save = h.jobs.save.bind(h.jobs);
+  let revoked = false;
+  h.jobs.save = async input => {
+    if (!revoked && input.job.planningSemanticRepair?.status === "pending") {
+      expect(input.job.units.every(u => u.value === null && u.status === "pending")).toBe(true);
+      revoked = true;
+    }
+    return save(input);
+  };
+  h.source.reviewDialogueConsistency = async request => {
+    const check = request.checks.find(c => c.kind === "plan_option");
+    if (check !== undefined && !rejected) {
+      rejected = true;
+      expect(h.calls.some(c => c.stage === "character")).toBe(true);
+      return { ok: true, verdict: "reject", violations: [{ checkId: check.checkId, type: "intent_mismatch", inquiryId: null }] };
+    }
+    return { ok: true, verdict: "pass", violations: [] };
+  };
+  const ready = await h.run();
+  expect(ready.ok).toBe(true);
+  expect(revoked).toBe(true);
+  expect(h.calls.filter(c => c.stage === "planning")).toHaveLength(2);
+  if (!ready.ok) throw Error(ready.code);
+  expect(ready.value.planningSemanticRepair).toMatchObject({ used: 1, status: "replanned", protocolCorrections: 0 });
+});
+
 it("条件topic/brief只在上游实际批准披露后审核，逐单元覆盖凭据缺失不能发布", async () => {
   const { h, text } = await conditionalHarness();
   let planningCalls = 0;

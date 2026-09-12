@@ -34,6 +34,7 @@ import type { StoryState } from "@/game/domain/storyState";
 import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
 import type { PlanningContext } from "@/game/application/narrativeGeneration/stageSource";
 import { parsePlanProposal } from "@/game/domain/narrativePlan";
+import { dialogueReviewHarness } from "../../narrativeGeneration/dialogueConsistencyFixture.testutil";
 
 const RUN_ROOT = mkdtempSync(join(tmpdir(), "ai-rpg-game-narrative-jobs-"));
 
@@ -164,6 +165,60 @@ const OWNER_A = "worker-a";
 const OWNER_B = "worker-b";
 const NOW = "2026-09-09T08:00:00.000Z";
 const EXPIRES = "2026-09-09T08:00:30.000Z";
+
+it("规划修复各持久化状态SQLite roundtrip，并阻止旧凭据发布和篡改锚点", async () => {
+  const { h } = await dialogueReviewHarness(false);
+  let reviews = 0;
+  h.source.reviewDialogueConsistency = async request => ++reviews === 1 ? { ok: true, verdict: "reject", violations: [{
+    checkId: request.checks.find(c => c.kind === "plan_option")!.checkId, type: "intent_mismatch", inquiryId: null,
+  }] } : { ok: true, verdict: "pass", violations: [] };
+  const snapshots: StoredJob[] = [];
+  const save = h.jobs.save.bind(h.jobs);
+  h.jobs.save = async input => { snapshots.push(structuredClone(input.job)); return save(input); };
+  const ready = await h.run();
+  if (!ready.ok) throw Error(ready.code);
+  for (const job of snapshots.filter(j => j.planningSemanticRepair !== undefined)) {
+    const stores = openStores(nextDbPath());
+    await stores.jobs.start({ job: { ...job, version: 0 }, requestId: "snapshot", digest: job.inputDigest });
+    expect(await stores.jobs.get(job.id)).toMatchObject({ ok: true, value: {
+      usedRequests: job.usedRequests, planningSemanticRepair: JSON.parse(JSON.stringify(job.planningSemanticRepair)),
+    } });
+  }
+  for (const state of ["pending", "running", "anchor"] as const) {
+    const stores = openStores(nextDbPath());
+    const r = ready.value.planningSemanticRepair!;
+    const job: StoredJob = { ...ready.value, version: 0, planningSemanticRepair: { ...r,
+      ...(state === "pending" ? { status: "pending" } : state === "running" ? { reviewInFlight: true }
+        : { anchor: { ...r.anchor, actions: [{ key: "tampered_pause", actorId: "npc_0",
+          point: { stepKey: "current", order: 0 }, kind: "pause", objectId: null, audienceIds: ["player_0"] }] } }),
+    } };
+    await stores.jobs.start({ job, requestId: "tamper-semantic", digest: job.inputDigest });
+    const lease = await stores.jobs.claim({ id: job.id, owner: OWNER_A, now: NOW, expiresAt: EXPIRES });
+    if (!lease.ok) throw Error(lease.code);
+    expect(await stores.jobs.get(job.id)).toMatchObject({ ok: true });
+    expect((await stores.jobs.publish({ lease: lease.value, expectedVersion: 0, publication: h.decisionPublication() })).ok).toBe(false);
+  }
+  const stores = openStores(nextDbPath());
+  await stores.jobs.start({ job: { ...ready.value, version: 0, status: "failed" }, requestId: "semantic-retry", digest: ready.value.inputDigest });
+  const retried = await stores.jobs.control({ id: ready.value.id, operation: "retry", expectedCycle: 0, expectedVersion: 0, now: NOW });
+  expect(retried).toMatchObject({ ok: true, value: { cycle: 1, usedRequests: 0 } });
+  if (retried.ok) expect(retried.value.planningSemanticRepair).toBeUndefined();
+});
+
+it.each([{ used: 2 }, { used: 1 }, { used: 1, status: "pending", violations: [null] }, { violations: [{ scope: "expression" }] },
+  { privateText: "untrusted" }, { anchor: null }, { cycle: 9 }, { inputDigest: "different" },
+  { protocolCorrections: 2 }, { reviewInFlight: "true" }, { status: "unknown" },
+])("SQLite损坏规划修复记录返回UNSUPPORTED_JOB而不抛错：%j", async patch => {
+  const h = createStagedHarness();
+  await h.startDecision();
+  const ready = await h.run();
+  if (!ready.ok) throw Error(ready.code);
+  const stores = openStores(nextDbPath());
+  await stores.jobs.start({ job: { ...ready.value, version: 0,
+    planningSemanticRepair: { ...ready.value.planningSemanticRepair!, ...patch } as never },
+    requestId: "invalid-semantic", digest: ready.value.inputDigest });
+  expect(await stores.jobs.get(ready.value.id)).toEqual({ ok: false, code: "UNSUPPORTED_JOB" });
+});
 
 it("一致性审核在途重开SQLite保留charge，有界重审；显式retry清新周期凭据", async () => {
   const h = createStagedHarness();
