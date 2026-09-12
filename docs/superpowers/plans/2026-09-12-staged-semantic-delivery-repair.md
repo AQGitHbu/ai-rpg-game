@@ -93,9 +93,9 @@ expect(capturedRequest.timeoutMs).toBeLessThanOrEqual(remainingJobMs);
 
 **Interfaces:** 使用 production composition 的 smoke 开局+同快照两个选项，共九任务；固定对照用正确 planning/expression phase；Task 1 真实语义样本作为独立新增 controls，不能替换原 20 条来提高成绩。
 
-- [ ] **Step 1: 调用前冻结。** 保留原五维权重 25/25/20/20/10 与四维修复标准；9/9、无确认串台/越权/合同漂移、四维各均值≥4且单项≥3。原 20 控制加 Task 1 最小真实语义对照，逐条预定允许的 verdict/fact/aspect 与歧义口径，纯规划不含表达；真实剧情最多90次HTTP，对照上限按冻结条数、总时长45分钟。写文件 SHA256、输入、role 策略和发送前扣账。
-- [ ] **Step 2: 一次真实运行。** root 执行已授权 API；不重跑 main，不失败重抽，不关闭门禁。输出不足则保留失败/未启动分母，网络、协议、语义修复次数和已上报 token 分列。
-- [ ] **Step 3: 独立审核成稿与失败。** reviewer 只对 published 样本按原方案评分；root 配对同名 main 原分，并用原审计检查误报和权限。零成稿时质量为 N/A；控制通过不抵消生产失败。给出能否替换 main 的明确结论，保存报告与样本，不在评估中途继续调代码。
+- [x] **Step 1: 调用前冻结。** 保留原五维权重 25/25/20/20/10 与四维修复标准；9/9、无确认串台/越权/合同漂移、四维各均值≥4且单项≥3。原 20 控制加 Task 1 最小真实语义对照，逐条预定允许的 verdict/fact/aspect 与歧义口径，纯规划不含表达；真实剧情最多90次HTTP，对照上限按冻结条数、总时长45分钟。写文件 SHA256、输入、role 策略和发送前扣账。
+- [x] **Step 2: 一次真实运行。** root 执行已授权 API；不重跑 main，不失败重抽，不关闭门禁。输出不足则保留失败/未启动分母，网络、协议、语义修复次数和已上报 token 分列。
+- [x] **Step 3: 独立审核成稿与失败。** reviewer 只对 published 样本按原方案评分；root 配对同名 main 原分，并用原审计检查误报和权限。零成稿时质量为 N/A；控制通过不抵消生产失败。给出能否替换 main 的明确结论，保存报告与样本，不在评估中途继续调代码。
 
 ## 验收证据
 
@@ -106,3 +106,6 @@ expect(capturedRequest.timeoutMs).toBeLessThanOrEqual(remainingJobMs);
 - Task 3：`fe8949e4`。targeted 85 项、boundaries 127 项、typecheck、docs 及 diff-check 通过。root 纠正了草稿中的超时窗口续期，使 planning 重试共用 240/90 秒完整调用窗口。
 - 全量验收：在 `fe8949e4` 执行 `npm run accept`，3325 tests passed、4 gated live skipped，lint 0 errors（54 warnings），typecheck、test:fast、docs、build 通过。日志：`tmp/staged-semantic-repair/accept.log`。当前阶段仍为原 planned/not_started。
 - 独立最终代码审查：范围 `9f5e9b56..fe8949e4`，未发现确认的严重生产缺陷；指出 SQLite 发布测试可能因缺少 current_game 而假绿，以及一处事实来源措辞不一致。`f4cc3527` 增加可成功发布的真实 SQLite 对照、精确 JOB_CONFLICT 和无部分写入断言并修正文案；针对回归 62 项与 typecheck 通过，root 和原独立 reviewer 均确认两项关闭。仅测试改动后没有重复全量验收。审查和修复报告保留在 `.superpowers/sdd/2026-09-12-staged-semantic-delivery-repair/`。
+- Task 4：冻结 `ff9019a8`，252 个相关生产文件哈希在运行后均一致，main 冻结证据未改。实际 53 HTTP/ai_call（剧情27、对照26），全部 HTTP200，无 transport retry/timeout；已上报253443 token。九任务3 published、2 failed、4未启动，都市三份与main同名三份评分86.25对57.50；四维修复均值3.83/5/3.33/3.67。原20对照二分类20/20但1次错误维度路由，附加6次诊断仍有3次不支持路由，包含重复材料。独立 reviewer 审读控制、失败和成稿后由root复核，结论仍不能替换main。完整证据位于 `tmp/staged-semantic-retest-20260912/复测对比报告.md`。
+- 本次真实运行新确认旧 approved 审核凭据在结构重规划变更摘要后被误计为 outcome_unknown，提前消耗协议额度；另有开局玩家知识、结构修复范围和自然语言维度一致性问题。原始样本与代码路径已留档，未在本轮冻结测试中继续修改产品。
+- 用户随后要求停止扩展纠错链，回到规划器一次交付完整初稿、三个生成器只做忠实润色的简单职责边界。该收敛方向尚未实施，本 Plan 的执行完成不表示质量门槛通过，也不授权继续沿复杂恢复分支追加修补。
