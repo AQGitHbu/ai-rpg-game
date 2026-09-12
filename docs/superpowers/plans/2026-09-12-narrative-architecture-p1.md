@@ -617,8 +617,8 @@ register 生成的模型值/设置由可用环境读取并冻结；此命令块�
 执行者完成每个 gate 后将以下“未执行”替换为结论及报告相对链接，不追加按日期排列的进度流水：
 
 - **P1-A：** 已完成。Task 1–4 已实现并提交；Task 4 五路线、SQLite 重载、普通离场/自由输入负向探针及相关规则回归证据见 [P1-A 验收报告](../reports/2026-09-13-narrative-architecture-p1-a.md)。
-- **P1-B：** 未执行。
-- **P1-C：** 未执行。
-- **P1 总结论：** 未执行；本文件仅为实施计划。
+- **P1-B：** 实现与离线门禁已完成；Task 5–9 的实现提交和测试证据见 [P1 旅程协议](../reports/2026-09-12-narrative-p1-protocol.md) 及 [P1 验收记录](../reports/2026-09-12-narrative-p1-acceptance.md)。尚无 live 质量结论。
+- **P1-C：** 未执行；目标 worktree 缺少 RPG 自有 `.env.local`，未触发真实 provider。边界与离线门禁见 [P1 验收记录](../reports/2026-09-12-narrative-p1-acceptance.md)。
+- **P1 总结论：** 未通过/待 live 验收；本文件仍是实施计划，不能把离线测试当作六条 live 路线成绩。
 
 P2 的检索摘要与中篇验证、P3 的丰富 Entity/世界行为、P4 的扩容与性能仍只维护在总 Spec，当前不生成它们的实施 Task。
