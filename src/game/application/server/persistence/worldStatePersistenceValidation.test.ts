@@ -9,6 +9,7 @@ import { validatePersistableWorldState } from "./worldStatePersistenceValidation
 import { compileOpeningGenerationCandidate } from "@/game/gameplay/rpg/openingGeneration";
 import { makeOpeningQualityCandidate } from "@/game/domain/openingSituation.testutil";
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
+import { createMainStoryThread } from "@/game/domain/storyThreads";
 
 const state = () => createWorldStateFixtureWith({
   generation: { generationId: asGenerationId("g"), seed: "s", templateVersion: "v", inputDigest: "", gameType: "wuxia" },
@@ -300,6 +301,27 @@ describe("validatePersistableWorldState", () => {
     expect(validatePersistableWorldState({
       ...valid,
       battle: { ...battle, preBattleSnapshot: { ...battle.preBattleSnapshot, history: { entries: [{ bad: true }] } } },
+    })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
+  });
+
+  it("accepts story threads in an active battle snapshot and rejects malformed threads", () => {
+    const valid = stateWithEnemy();
+    const battle = {
+      status: "active" as const,
+      enemyId: asEnemyId("enemy_1"),
+      playerHp: 100,
+      enemyHp: 30,
+      round: 1,
+      preBattleSnapshot: {
+        entityStore: valid.entityStore,
+        eventLedger: valid.eventLedger,
+        threads: [createMainStoryThread("thread-main")],
+      },
+    };
+    expect(validatePersistableWorldState({ ...valid, battle })).toMatchObject({ ok: true });
+    expect(validatePersistableWorldState({
+      ...valid,
+      battle: { ...battle, preBattleSnapshot: { ...battle.preBattleSnapshot, threads: [{ id: "bad" }] } },
     })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
   });
 

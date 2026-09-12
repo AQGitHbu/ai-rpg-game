@@ -5,6 +5,7 @@ import type { NarrativeEventDraft, TurnId } from "@/game/domain/events";
 import { eventIdFor } from "@/game/domain/events";
 import type { ResolvedEventStatus, StateChange, FactChange } from "@/game/domain/resolvedEvent";
 import type { StoryState } from "@/game/domain/storyState";
+import { getEntity, type NpcEntityRecord } from "@/game/domain/entity";
 import { startBattle, battleAction } from "./battleResolver";
 import { resolveDialogue } from "@/game/gameplay/rpg/dialogue";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
@@ -34,6 +35,8 @@ export type ResolveDeps = {
   readonly turnNumber: number;
   /** Task 4：当前回合的稳定 turnId，用于预铸 eventId。 */
   readonly turnId: TurnId;
+  /** Current story threads, supplied by resolveTurn for abandonment cleanup. */
+  readonly storyState?: StoryState;
 };
 
 function giftRelationshipSignal(item: ItemEntry): "gave_item" | "offered_help" {
@@ -44,6 +47,40 @@ function giftRelationshipSignal(item: ItemEntry): "gave_item" | "offered_help" {
 function applyRuleMutations(ws: WorldState, mutations: readonly EntityMutation[]): WorldState | null {
   const result = applyEntityMutations(ws, mutations);
   return result.ok ? result.worldState : null;
+}
+
+function abandonmentCommitmentMutations(
+  ws: WorldState,
+  storyState: StoryState | undefined,
+  questId: string,
+  deps: ResolveDeps,
+  keepQuestItem: boolean,
+): EntityMutation[] {
+  if (storyState === undefined) return [];
+  const refs = storyState.threads
+    .filter((thread) => thread.questIds.some((id) => String(id) === questId))
+    .flatMap((thread) => thread.promiseRefs)
+    .filter((ref, index, all) => all.findIndex((candidate) => candidate.npcId === ref.npcId && candidate.promiseId === ref.promiseId) === index);
+  const supportingEventId = eventIdFor(deps.turnId, `quest_abandoned:${questId}`);
+  const mutations: EntityMutation[] = [];
+  for (const ref of refs) {
+    const npc = getEntity(ws.entityStore, ref.npcId);
+    if (npc === undefined || npc.core.kind !== "npc") continue;
+    const npcRecord = npc as NpcEntityRecord;
+    const commitment = npcRecord.relationships.outgoing
+      .flatMap((edge) => edge.commitments)
+      .find((entry) => entry.commitmentId === ref.promiseId && entry.kind === "promise" && entry.status === "open");
+    if (commitment === undefined) continue;
+    mutations.push({
+      kind: "apply_relationship_commitment",
+      fromNpcId: ref.npcId,
+      targetId: PLAYER_ENTITY_ID,
+      operation: { kind: keepQuestItem ? "break" : "release", commitmentId: ref.promiseId },
+      source: { kind: "action", actionId: deps.actionId, turnNumber: deps.turnNumber },
+      supportingEventId,
+    });
+  }
+  return mutations;
 }
 
 export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps): ResolveResult {
@@ -289,11 +326,46 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
         facts: [],
       };
     }
+    case "abandon_quest": {
+      const quest = ws.quests.find((entry) => entry.id === action.questId);
+      if (quest === undefined || quest.kind !== "main" || quest.status !== "active") {
+        return { ok: false, feedback: "当前任务不可放弃。" };
+      }
+      const draft: NarrativeEventDraft = {
+        eventKey: `quest_abandoned:${quest.id}`,
+        episodeKey: "turn",
+        actorIds: [PLAYER_ENTITY_ID],
+        targetIds: [PLAYER_ENTITY_ID],
+        locationId: ws.currentLocationId,
+        causeKeys: [],
+        factIds: [],
+        questIds: [quest.id],
+        outcome: "failure",
+        salience: 80,
+        payload: { type: "quest_abandoned", questId: quest.id },
+      };
+      const keepQuestItem = quest.objectives.some((objective) =>
+        objective.kind === "obtain_item" && ws.inventory.includes(objective.itemId));
+      const mutated = applyRuleMutations(ws, [
+        { kind: "set_quest_status", questId: quest.id, status: "failed" },
+        ...abandonmentCommitmentMutations(ws, deps.storyState, String(quest.id), deps, keepQuestItem),
+      ]);
+      if (mutated === null) return { ok: false, feedback: "世界状态不一致。" };
+      return {
+        ok: true,
+        nextWorldState: mutated,
+        drafts: [draft],
+        feedback: "你放弃了这项主线委托。",
+        status: "success",
+        stateChanges: [{ path: `quests[${String(quest.id)}].status`, description: "放弃主线任务", operation: "set" }],
+        facts: [],
+      };
+    }
     case "ack_prologue": {
       return { ok: true, nextWorldState: { ...ws }, drafts: [], feedback: "", status: "success", stateChanges: [], facts: [] };
     }
     case "attack": {
-      return startBattle(ws, action.enemyId, deps.turnId);
+      return startBattle(ws, action.enemyId, deps.turnId, deps.storyState);
     }
     case "battle_action": {
       return battleAction(ws, action.action, action.command, {

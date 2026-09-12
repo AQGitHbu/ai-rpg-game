@@ -74,7 +74,7 @@ describe("Action support matrix (Task 29)", () => {
   it("declares the canonical set of fully-supported production action types", () => {
     const expected = [
       "talk", "move", "explore", "investigate", "take_item", "give_item",
-      "attack", "battle_action", "ack_prologue", "freeform",
+      "abandon_quest", "attack", "battle_action", "ack_prologue", "freeform",
     ];
     expect([...SUPPORTED_ACTION_TYPES]).toEqual(expected);
   });

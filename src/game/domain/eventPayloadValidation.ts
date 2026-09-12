@@ -54,6 +54,7 @@ const PAYLOAD_CHECKS = {
   quest_completed: shape({ type: text, questId: id }),
   quest_unlocked: shape({ type: text, questId: id }),
   quest_failed: shape({ type: text, questId: id }),
+  quest_abandoned: shape({ type: text, questId: id }),
   item_obtained: shape({ type: text, itemId: id, locationId: id }),
   item_given: shape({ type: text, itemId: id, npcId: id, locationId: id }),
   battle_started: shape({ type: text, enemyId: id }, { enemyIds: ids }),

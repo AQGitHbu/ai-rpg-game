@@ -22,6 +22,8 @@ import { approveCandidateEvents, compileCandidateEvent } from "@/game/gameplay/r
 import { advanceStoryReveal } from "@/game/gameplay/rpg/worldEvolution";
 import { validateEntityStoreProvenance } from "@/game/domain/entity";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
+import { advanceStoryThreads } from "@/game/gameplay/rpg/storyThreads";
+import { unresolvedStoryThreadIds } from "@/game/domain/storyThreads";
 
 const DIALOGUE_REQUIRED_TURNS = 2;
 
@@ -123,7 +125,7 @@ export function resolveTurn(
   interactionKind: Interaction["kind"],
   deps: RuleEngineDeps,
 ): ResolveTurnResult {
-  const validation = validateAction(worldState, action);
+  const validation = validateAction(worldState, action, storyState);
   if (!validation.ok) {
     return { ok: false, code: validation.code, feedback: `Action rejected: ${validation.code}` };
   }
@@ -133,6 +135,7 @@ export function resolveTurn(
     actionId,
     turnNumber: storyState.turnNumber,
     turnId,
+    storyState,
   });
   if (!resolved.ok) {
     return { ok: false, code: "INTENT_NOT_ROUTED", feedback: resolved.feedback };
@@ -338,6 +341,19 @@ export function resolveTurn(
     return { ok: false, code: "INVALID_RESOLUTION", feedback: `NPC 事件证据无效: ${provenanceIssue.entityId ?? "unknown"}` };
   }
 
+  // Threads are advanced only from the events that actually entered the ledger;
+  // tentative drafts and unsaved provider output cannot close a story concern.
+  const threads = advanceStoryThreads({
+    worldState: nextWorldState,
+    threads: ending.nextStoryState.threads,
+    eventIds: committedEvents.map((event) => event.eventId),
+  });
+  const finalStoryState: StoryState = {
+    ...ending.nextStoryState,
+    threads,
+    unresolvedThreads: unresolvedStoryThreadIds(threads),
+  };
+
   // 构建最终 ResolvedEvent（作为 TurnResolution.primaryResult）
   const primaryResult: ResolvedEvent = {
     actionId,
@@ -360,7 +376,7 @@ export function resolveTurn(
     domainEvents: committedEvents,
     nextWorldState,
     previousStoryState: storyState,
-    nextStoryState,
+    nextStoryState: finalStoryState,
   });
 
   return { ok: true, resolution };

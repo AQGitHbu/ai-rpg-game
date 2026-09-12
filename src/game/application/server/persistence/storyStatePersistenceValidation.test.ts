@@ -52,4 +52,12 @@ describe("parsePersistableStoryState", () => {
       ...storyState(), memory: rebuildEpisodicMemory([second]),
     }, [first])).toMatchObject({ ok: false, code: "INVALID_STORY_STATE" });
   });
+
+  it("rejects malformed structured story threads at the persistence boundary", () => {
+    const value = storyState();
+    expect(parsePersistableStoryState({ ...value, threads: [{ id: "broken" }] }, [])).toMatchObject({
+      ok: false,
+      code: "INVALID_STORY_STATE",
+    });
+  });
 });

@@ -98,6 +98,37 @@ describe("validateOpeningGenerationCandidate", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("requires delivery verification facts to come from the opening world", () => {
+    const base = validCandidate();
+    const item = {
+      key: "sealed_letter",
+      name: "封缄信筒",
+      description: "交给接应人的信筒。",
+      kind: "quest_item",
+      tags: ["return_required"],
+    };
+    const valid = validateOpeningGenerationCandidate({
+      ...base,
+      storyContract: {
+        ...base.storyContract,
+        delivery: { itemKey: item.key, recipientKey: "ferry_contact", verificationFactKeys: ["fact_inn"] },
+      },
+      opening: { ...base.opening, item },
+    }, { gameLength: "short", targetActs: 3 });
+    expect(valid.ok).toBe(true);
+
+    const invalid = validateOpeningGenerationCandidate({
+      ...base,
+      storyContract: {
+        ...base.storyContract,
+        delivery: { itemKey: item.key, recipientKey: "ferry_contact", verificationFactKeys: ["fact_missing"] },
+      },
+      opening: { ...base.opening, item },
+    }, { gameLength: "short", targetActs: 3 });
+    expect(invalid.ok).toBe(false);
+    if (!invalid.ok) expect(invalid.issues).toContainEqual(expect.objectContaining({ code: "invalid_delivery_contract" }));
+  });
+
   it("合法开场切片通过（targetActs 与档位一致）", () => {
     const result = validateOpeningGenerationCandidate(validCandidate(), { gameLength: "short", targetActs: 3 });
     expect(result.ok).toBe(true);

@@ -1,6 +1,7 @@
 import type { WorldState } from "@/game/domain/worldState";
 import { findLocation, findNpc, findItem, findQuest, isTravelTarget } from "@/game/domain/worldState";
 import type { Action } from "@/game/domain/action";
+import type { StoryState } from "@/game/domain/storyState";
 import { DIALOGUE_ACTS } from "@/game/domain/action";
 import { getEntity, type EntityRecord, type NpcEntityRecord } from "@/game/domain/entity";
 
@@ -15,6 +16,7 @@ export type ValidationCode =
   | "UNKNOWN_FACT" | "FACT_NOT_INVESTIGABLE" | "FACT_ALREADY_DISCOVERED"
   | "INVESTIGATION_APPROACH_REQUIRED" | "UNKNOWN_INVESTIGATION_APPROACH"
   | "UNKNOWN_QUEST"
+  | "QUEST_NOT_ABANDONABLE"
   | "UNKNOWN_DIALOGUE_ACT" | "UNKNOWN_STORY_INTERACTION"
   | "UNKNOWN_ITEM" | "ITEM_NOT_AVAILABLE_HERE" | "ITEM_ALREADY_OWNED" | "ITEM_NOT_OWNED"
   | "UNKNOWN_ENEMY" | "ENEMY_NOT_AT_LOCATION" | "BATTLE_ALREADY_ACTIVE"
@@ -25,7 +27,7 @@ export type ValidateResult =
   | { readonly ok: true }
   | { readonly ok: false; readonly code: ValidationCode; readonly params: Record<string, string> };
 
-export function validateAction(ws: WorldState, action: Action): ValidateResult {
+export function validateAction(ws: WorldState, action: Action, storyState?: StoryState): ValidateResult {
   switch (action.type) {
     case "move": {
       const loc = findLocation(ws, action.locationId);
@@ -92,6 +94,17 @@ export function validateAction(ws: WorldState, action: Action): ValidateResult {
       const npc = findNpc(ws, action.npcId);
       if (npc === undefined) return { ok: false, code: "UNKNOWN_NPC", params: { npcId: String(action.npcId) } };
       if (npc.locationId !== ws.currentLocationId) return { ok: false, code: "NPC_NOT_PRESENT", params: { npcId: String(action.npcId) } };
+      return { ok: true };
+    }
+    case "abandon_quest": {
+      const quest = ws.quests.find((entry) => entry.id === action.questId);
+      if (quest === undefined || quest.kind !== "main" || quest.status !== "active") {
+        return { ok: false, code: "QUEST_NOT_ABANDONABLE", params: { questId: String(action.questId) } };
+      }
+      if (storyState?.reveal !== undefined && storyState.reveal !== null
+        && String(storyState.reveal.questId) !== String(action.questId)) {
+        return { ok: false, code: "QUEST_NOT_ABANDONABLE", params: { questId: String(action.questId) } };
+      }
       return { ok: true };
     }
     case "attack": {

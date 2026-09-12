@@ -43,6 +43,7 @@ function actionEntityIds(action: Action | undefined): readonly string[] {
     case "investigate": return [String(action.factId)];
     case "take_item": return [String(action.itemId)];
     case "give_item": return [String(action.itemId), String(action.npcId)];
+    case "abandon_quest": return [String(action.questId)];
     case "attack": return [String(action.enemyId)];
     case "explore":
     case "battle_action":
@@ -81,6 +82,7 @@ function describeSafeAction(action: Action | undefined, disclosedPublicFactIds: 
       : `type=investigate;approachId=${action.approachId ?? "无"}`;
     case "take_item": return `type=take_item;itemId=${action.itemId}`;
     case "give_item": return `type=give_item;itemId=${action.itemId};npcId=${action.npcId}`;
+    case "abandon_quest": return `type=abandon_quest;questId=${action.questId}`;
     case "attack": return `type=attack;enemyId=${action.enemyId}`;
     case "battle_action": return `type=battle_action;action=${action.action}`;
     case "explore": return "type=explore";

@@ -202,6 +202,7 @@ function actionSummaryEntityIds(action: PendingNarrativeJob["actionSummary"]): r
     case "investigate": return [String(action.factId)];
     case "take_item": return [String(action.itemId)];
     case "give_item": return [String(action.itemId), String(action.npcId)];
+    case "abandon_quest": return [String(action.questId)];
     case "attack": return [String(action.enemyId)];
     case "explore":
     case "battle_action":

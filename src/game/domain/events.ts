@@ -210,6 +210,11 @@ export type QuestFailedPayload = Readonly<{
   readonly questId: QuestId;
 }>;
 
+export type QuestAbandonedPayload = Readonly<{
+  readonly type: "quest_abandoned";
+  readonly questId: QuestId;
+}>;
+
 export type EndingReachedPayload = Readonly<{
   readonly type: "ending_reached";
   readonly endingId: EndingId;
@@ -337,6 +342,7 @@ export type NarrativeEventPayload =
   | BattleResolvedPayload
   | EnemyDefeatedPayload
   | QuestFailedPayload
+  | QuestAbandonedPayload
   | EndingReachedPayload
   | BlueprintExpandedPayload
   | NarrativeScenePresentedPayload
@@ -419,6 +425,7 @@ const PAYLOAD_TYPE_KEYS: ReadonlySet<string> = new Set<NarrativeEventPayload["ty
   "battle_resolved",
   "enemy_defeated",
   "quest_failed",
+  "quest_abandoned",
   "ending_reached",
   "blueprint_expanded",
   "narrative_scene_presented",

@@ -12,6 +12,7 @@ import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import { entitiesOfKind } from "@/game/domain/entity";
 import { resolveItemPresentation } from "@/game/domain/itemPresentation";
 import { applyEntityMutations } from "@/game/gameplay/rpg/entityWorld";
+import type { Action } from "@/game/domain/action";
 import {
   createWorldStateFixture,
   createWorldStateFixtureWith,
@@ -85,6 +86,22 @@ describe("resolveByType", () => {
     if (result.ok) {
       expect(result.drafts.map((e) => e.payload.type)).toEqual(["location_explored"]);
       // drafts are not yet committed to eventLedger at this layer; commit happens in resolveTurn
+    }
+  });
+
+  it("abandon_quest marks an active main quest failed without requiring an NPC focus", () => {
+    const quest: QuestEntry = {
+      id: asQuestId("quest_abandon"), name: "未竟的委托", description: "暂时无法完成",
+      objectives: [], onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
+      tags: [], kind: "main", stage: 1, status: "active",
+    };
+    const questWorld = createWorldStateFixtureWith({ generation: GENERATION, base: BASE }, { quests: [quest] });
+    const action = { type: "abandon_quest", questId: quest.id } as unknown as Action;
+    const result = resolveByType(questWorld, action, deps);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.nextWorldState.quests.find((entry) => entry.id === quest.id)?.status).toBe("failed");
+      expect(result.drafts.map((entry) => entry.payload.type)).toEqual(["quest_abandoned"]);
     }
   });
 

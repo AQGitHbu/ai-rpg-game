@@ -7,6 +7,7 @@ import {
   type StoryState,
   type PacingNeed,
 } from "@/game/domain/storyState";
+import { parseStoryThread, unresolvedStoryThreadIds } from "@/game/domain/storyThreads";
 
 export type PersistableStoryStateValidationResult =
   | { readonly ok: true; readonly value: StoryState }
@@ -16,7 +17,7 @@ type JsonObject = Record<string, unknown>;
 
 const REQUIRED_STORY_KEYS = [
   "version", "turnNumber", "currentAct", "targetActs", "storyProgress", "tension", "nextPacingNeed",
-  "budget", "unresolvedThreads", "candidateEventPool", "endingAllowed", "endingProposed", "narrative",
+  "budget", "threads", "unresolvedThreads", "candidateEventPool", "endingAllowed", "endingProposed", "narrative",
   "prologueShown", "prologueText", "memory", "history", "contract", "evolution",
 ] as const;
 const ALL_STORY_KEYS = [...REQUIRED_STORY_KEYS, "history", "reveal"] as const;
@@ -53,6 +54,7 @@ function isStoryShape(value: JsonObject): value is JsonObject & {
   readonly version: number;
   readonly memory: unknown;
   readonly narrative: unknown;
+  readonly threads: unknown;
 } {
   return hasExactStoryKeys(value)
     && value.version === 10
@@ -63,7 +65,13 @@ function isStoryShape(value: JsonObject): value is JsonObject & {
     && typeof value.tension === "number" && Number.isFinite(value.tension)
     && typeof value.nextPacingNeed === "string" && PACING_NEEDS.includes(value.nextPacingNeed as PacingNeed)
     && isObject(value.budget)
+    && Array.isArray(value.threads)
+    && value.threads.every((thread, index) => parseStoryThread(thread, `storyState.threads[${index}]`).ok)
     && isStringArray(value.unresolvedThreads)
+    && sameJson(value.unresolvedThreads, unresolvedStoryThreadIds(value.threads.flatMap((thread) => {
+      const parsed = parseStoryThread(thread);
+      return parsed.ok ? [parsed.value] : [];
+    })))
     && Array.isArray(value.candidateEventPool)
     && typeof value.endingAllowed === "boolean"
     && typeof value.endingProposed === "boolean"

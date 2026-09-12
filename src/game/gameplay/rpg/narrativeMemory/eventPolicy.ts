@@ -120,6 +120,11 @@ export const EVENT_POLICY = {
     defaultSalience: 80,
     summaryKeys: ["quest_failed"],
   },
+  quest_abandoned: {
+    defaultOutcome: "failure" as const,
+    defaultSalience: 80,
+    summaryKeys: ["quest_abandoned"],
+  },
   ending_reached: {
     defaultOutcome: "success" as const,
     defaultSalience: 100,

@@ -6,6 +6,7 @@ import { classifyWorldStateSchemaVersion, WORLD_STATE_SCHEMA_VERSION, type Battl
 import type { EndingEntry } from "@/game/domain/worldEntries";
 import { validateWorldStateEntityReferences, validateWorldStateEventLedger } from "@/game/domain/worldStateValidation";
 import { parseNarrativeHistory } from "@/game/domain/narrativeHistory";
+import { parseStoryThread } from "@/game/domain/storyThreads";
 import {
   MODERN_BATTLE_KEYS,
   hasExactKeys,
@@ -62,11 +63,14 @@ function isGeneration(value: unknown): value is GenerationMetadata {
 }
 
 function isBattleSnapshot(value: unknown): boolean {
-  if (!isObject(value) || !hasRequiredAndOptionalKeys(value, ["entityStore", "eventLedger"], ["history"]) || !Array.isArray(value.eventLedger)) return false;
+  if (!isObject(value) || !hasRequiredAndOptionalKeys(value, ["entityStore", "eventLedger"], ["history", "threads"]) || !Array.isArray(value.eventLedger)) return false;
   const store = parseEntityStore(value.entityStore);
   const ledger = parseCommittedEventLedger(value.eventLedger);
   if (!store.ok || !ledger.ok) return false;
   if (value.history !== undefined && !parseNarrativeHistory(value.history).ok) return false;
+  if (value.threads !== undefined
+    && (!Array.isArray(value.threads)
+      || !value.threads.every((thread, index) => parseStoryThread(thread, `battle.preBattleSnapshot.threads[${index}]`).ok))) return false;
   return validateWorldStateEventLedger(ledger.value, store.store).length === 0
     && validateEntityStoreProvenance(store.store, ledger.value).length === 0;
 }

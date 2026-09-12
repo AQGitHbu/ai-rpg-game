@@ -160,6 +160,74 @@ describe("parseOpeningGenerationCandidate", () => {
     }
   });
 
+  it("accepts the optional delivery contract and opening item without minting runtime IDs", () => {
+    const base = rawCandidate();
+    const candidate = {
+      ...base,
+      storyContract: {
+        ...base.storyContract,
+        delivery: {
+          itemKey: "sealed_letter",
+          recipientKey: "ferry_contact",
+          verificationFactKeys: ["fact_inn", "fact_pact"],
+        },
+      },
+      opening: {
+        ...base.opening,
+        item: {
+          key: "sealed_letter",
+          name: "封缄信筒",
+          description: "一件需要交给接应人的信筒。",
+          kind: "quest_item",
+          tags: ["return_required"],
+        },
+      },
+    };
+
+    const result = parseOpeningGenerationCandidate(candidate);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.storyContract.delivery).toEqual({
+        itemKey: "sealed_letter",
+        recipientKey: "ferry_contact",
+        verificationFactKeys: ["fact_inn", "fact_pact"],
+      });
+      expect(result.value.opening.item).toEqual(candidate.opening.item);
+      expect(JSON.stringify(result.value)).not.toMatch(/item_0|npc_0|quest_0/);
+    }
+  });
+
+  it("rejects a delivery contract whose item is not present in the opening", () => {
+    const base = rawCandidate();
+    const candidate = {
+      ...base,
+      storyContract: {
+        ...base.storyContract,
+        delivery: { itemKey: "sealed_letter", recipientKey: "ferry_contact", verificationFactKeys: ["fact_inn"] },
+      },
+    };
+
+    expect(parseOpeningGenerationCandidate(candidate)).toEqual({ ok: false, code: "INVALID_STORY_CONTRACT" });
+  });
+
+  it("rejects runtime-looking entity IDs in delivery-local keys", () => {
+    const base = rawCandidate();
+    const candidate = {
+      ...base,
+      storyContract: {
+        ...base.storyContract,
+        delivery: { itemKey: "item_0", recipientKey: "npc_1", verificationFactKeys: ["fact_inn"] },
+      },
+      opening: {
+        ...base.opening,
+        item: { key: "item_0", name: "信筒", description: "d", kind: "quest_item", tags: [] },
+      },
+    };
+
+    expect(parseOpeningGenerationCandidate(candidate)).toEqual({ ok: false, code: "INVALID_STORY_CONTRACT" });
+  });
+
   it("非对象输入返回 NOT_AN_OBJECT", () => {
     for (const raw of [null, "x", 42, [], true]) {
       expect(parseOpeningGenerationCandidate(raw)).toEqual({ ok: false, code: "NOT_AN_OBJECT" });

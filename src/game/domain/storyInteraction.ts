@@ -62,15 +62,19 @@ function stringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every(nonEmptyString) && new Set(value).size === value.length;
 }
 
-function condition(value: unknown): value is StoryCondition {
-  if (!isRecord(value) || !nonEmptyString(value.kind) || !CONDITION_KINDS.includes(value.kind as typeof CONDITION_KINDS[number])) return false;
+export function parseStoryCondition(value: unknown): StoryCondition | null {
+  if (!isRecord(value) || !nonEmptyString(value.kind) || !CONDITION_KINDS.includes(value.kind as typeof CONDITION_KINDS[number])) return null;
   switch (value.kind) {
-    case "has_item": return exactKeys(value, ["kind", "itemId", "ownerId"]) && nonEmptyString(value.itemId) && nonEmptyString(value.ownerId);
-    case "knows_fact": return exactKeys(value, ["kind", "actorId", "factId"]) && nonEmptyString(value.actorId) && nonEmptyString(value.factId);
-    case "promise_status": return exactKeys(value, ["kind", "npcId", "promiseId", "status"]) && nonEmptyString(value.npcId) && nonEmptyString(value.promiseId) && PROMISE_STATUSES.includes(value.status as typeof PROMISE_STATUSES[number]);
-    case "goal_status": return exactKeys(value, ["kind", "npcId", "goalId", "status"]) && nonEmptyString(value.npcId) && nonEmptyString(value.goalId) && GOAL_STATUSES.includes(value.status as typeof GOAL_STATUSES[number]);
+    case "has_item": return exactKeys(value, ["kind", "itemId", "ownerId"]) && nonEmptyString(value.itemId) && nonEmptyString(value.ownerId)
+      ? { kind: "has_item", itemId: value.itemId as ItemId, ownerId: value.ownerId as EntityId } : null;
+    case "knows_fact": return exactKeys(value, ["kind", "actorId", "factId"]) && nonEmptyString(value.actorId) && nonEmptyString(value.factId)
+      ? { kind: "knows_fact", actorId: value.actorId as EntityId, factId: value.factId as FactId } : null;
+    case "promise_status": return exactKeys(value, ["kind", "npcId", "promiseId", "status"]) && nonEmptyString(value.npcId) && nonEmptyString(value.promiseId) && PROMISE_STATUSES.includes(value.status as typeof PROMISE_STATUSES[number])
+      ? { kind: "promise_status", npcId: value.npcId as NpcId, promiseId: value.promiseId, status: value.status as "open" | "fulfilled" | "broken" | "released" } : null;
+    case "goal_status": return exactKeys(value, ["kind", "npcId", "goalId", "status"]) && nonEmptyString(value.npcId) && nonEmptyString(value.goalId) && GOAL_STATUSES.includes(value.status as typeof GOAL_STATUSES[number])
+      ? { kind: "goal_status", npcId: value.npcId as NpcId, goalId: value.goalId, status: value.status as "active" | "blocked" | "completed" | "abandoned" } : null;
   }
-  return false;
+  return null;
 }
 
 /** Strict runtime parser for interaction definitions stored in Entity. */
@@ -81,7 +85,8 @@ export function parseStoryInteraction(value: unknown, path = "interaction"): Sto
   if (!nonEmptyString(value.id) || !nonEmptyString(value.npcId) || !STORY_INTERACTION_OPERATIONS.includes(value.operation as StoryInteractionOperation)) {
     return { ok: false, code: "INVALID_INTERACTION", path };
   }
-  if (!Array.isArray(value.condition) || !value.condition.every(condition)
+  const parsedConditions = Array.isArray(value.condition) ? value.condition.map(parseStoryCondition) : [];
+  if (!Array.isArray(value.condition) || parsedConditions.some((entry) => entry === null)
     || !stringArray(value.factIds) || !stringArray(value.goalIds) || !stringArray(value.audienceIds) || !stringArray(value.evidenceEventIds)
     || !(value.evidenceEventIds as readonly string[]).every(isWellFormedEventId)
     || (value.promiseId !== null && !nonEmptyString(value.promiseId))) {
@@ -93,7 +98,7 @@ export function parseStoryInteraction(value: unknown, path = "interaction"): Sto
       id: value.id,
       npcId: value.npcId as NpcId,
       operation: value.operation as StoryInteractionOperation,
-      condition: value.condition,
+      condition: parsedConditions as StoryCondition[],
       factIds: value.factIds as FactId[],
       goalIds: value.goalIds,
       promiseId: value.promiseId,

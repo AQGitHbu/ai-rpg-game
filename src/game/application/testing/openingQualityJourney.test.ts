@@ -213,7 +213,7 @@ describe("opening quality create → ack → choice → decision context", () =>
     );
     expect(result.ok).toBe(true);
     const approved = created.record();
-    expect(approved.storyState.unresolvedThreads).not.toContain("thread_init_shutdown");
+    expect(approved.storyState.unresolvedThreads).toContain("thread_init_shutdown");
 
     const branches = [repository(approved), repository(approved)];
     for (const branch of branches) {

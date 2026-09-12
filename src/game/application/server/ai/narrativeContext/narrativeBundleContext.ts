@@ -51,6 +51,7 @@ function candidateActionProjection(action: Action): string {
     case "move": return JSON.stringify({ type: action.type, locationId: String(action.locationId) });
     case "investigate": return JSON.stringify({ type: action.type, factId: String(action.factId), approachId: action.approachId ?? null });
     case "give_item": return JSON.stringify({ type: action.type, itemId: String(action.itemId), npcId: String(action.npcId) });
+    case "abandon_quest": return JSON.stringify({ type: action.type, questId: String(action.questId) });
     case "take_item": return JSON.stringify({ type: action.type, itemId: String(action.itemId) });
     case "attack": return JSON.stringify({ type: action.type, enemyId: String(action.enemyId) });
     case "battle_action": return JSON.stringify({ type: action.type, action: action.action });
@@ -124,6 +125,7 @@ function actionSummaryEntityIds(action: PendingNarrativeJob["actionSummary"]): r
     case "investigate": return [String(action.factId)];
     case "take_item": return [String(action.itemId)];
     case "give_item": return [String(action.itemId), String(action.npcId)];
+    case "abandon_quest": return [String(action.questId)];
     case "attack": return [String(action.enemyId)];
     case "explore":
     case "battle_action":
@@ -293,11 +295,15 @@ export function buildDecisionNarrativeContextBlocks(
     ? `玩家自定义输入：${job.utterance}`
     : job.selectedDialogue?.label !== undefined
       ? `玩家选择了选项：“${job.selectedDialogue.label}”\n本次所选结构化意图：dialogueAct=${job.selectedDialogue.dialogueAct}；topic=${dialogueTopicKey(job.selectedDialogue.topic)}。若是 ask，已批准事实只代表当前已知材料，不代表其中已经含有问题的精确答案；NPC 可回答已知部分，并明确哪些部分仍待核对。`
+      : job.actionSummary.kind === "abandon_quest"
+        ? `玩家明确放弃主线任务：${String(job.actionSummary.questId)}。这是一次正式退出，不是普通移动或对话；请生成无 NPC、无 choices 的退出收束。`
       : `玩家行动：${job.actionSummary.kind}`;
   const evolutionRequirement = storyState.evolution.status === "needs_next_act"
     ? `本回合已进入第 ${storyState.currentAct} 幕：worldDelta 绝不能为 null，必须提供 newLocation、newNpc、newItem、newEnemy、nextMainQuest；其余字段可为 null。`
     : storyState.evolution.status === "needs_ending_pair"
       ? "本回合需要结局：worldDelta 绝不能为 null，且必须只提供 trust/doubt endingPair；不能创建地点、NPC、物品、敌人、任务；terminal 必须严格为 {\"kind\":\"ending\"}，continuationScenes 必须为 []。"
+      : job.actionSummary.kind === "abandon_quest"
+        ? "本回合是正式退出：worldDelta 必须为 null；不能创建实体、修改任务或承诺；terminal 必须严格为 {\"kind\":\"ending\"}，continuationScenes 必须为 []，currentScene.choices 必须为 [] 且 npcLine 必须为 null。"
       : "本回合不需要世界演化：worldDelta 必须为 null。";
   const arrivalSkeleton = projection.nextActProjection === null
     ? ""

@@ -2,6 +2,7 @@ import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { NarrativeEventDraft } from "@/game/domain/events";
 import { derivePacingNeed } from "@/game/domain/storyState";
+import { unresolvedStoryThreadIds } from "@/game/domain/storyThreads";
 
 export type StoryProgressionResult = {
   readonly nextStoryState: StoryState;
@@ -12,7 +13,9 @@ export type StoryProgressionResult = {
 // main_thread 初始 + act_N 推进的命名不一致）。实际主线 thread ID 由调用方
 // 传入 mainThreadId（compile 用 thread_main），此处以 mainThreadId 归一。
 function mainThreadId(ss: StoryState): string {
-  return ss.unresolvedThreads.find((t) => t !== undefined) ?? "main_thread";
+  return ss.threads.find((thread) => thread.kind === "question")?.id
+    ?? ss.threads[0]?.id
+    ?? "main_thread";
 }
 
 function actProgressThreshold(act: number, targetActs: number): number {
@@ -42,6 +45,19 @@ function hasCurrentActMainQuest(ws: WorldState, currentAct: number): boolean {
   return ws.quests.some((q) => q.kind === "main" && q.stage === currentAct);
 }
 
+function hasAbandonedMainQuest(ws: WorldState, drafts: readonly NarrativeEventDraft[]): boolean {
+  const abandonedQuestIds = new Set([
+    ...ws.eventLedger
+      .flatMap((event) => {
+        const payload = event.payload;
+        return payload.type === "quest_abandoned" ? [String(payload.questId)] : [];
+      }),
+    ...drafts
+      .flatMap((draft) => draft.payload.type === "quest_abandoned" ? [String(draft.payload.questId)] : []),
+  ]);
+  return ws.quests.some((quest) => quest.kind === "main" && abandonedQuestIds.has(String(quest.id)));
+}
+
 export function advanceStoryProgression(
   ws: WorldState,
   ss: StoryState,
@@ -50,8 +66,22 @@ export function advanceStoryProgression(
   let currentAct = ss.currentAct;
   let storyProgress = ss.storyProgress;
   let endingAllowed = ss.endingAllowed;
+  let threads = ss.threads;
+  // Keep accepting legacy in-memory fixtures that override only the
+  // compatibility projection; persisted v10 records validate the projection
+  // against threads at the boundary.
   let unresolvedThreads = ss.unresolvedThreads;
   const thread = mainThreadId(ss);
+  const abandonedQuestIds = new Set(
+    newDrafts
+      .flatMap((draft) => draft.payload.type === "quest_abandoned" ? [String(draft.payload.questId)] : []),
+  );
+  if (abandonedQuestIds.size > 0) {
+    threads = threads.map((entry) => (entry.id === thread || entry.questIds.some((questId) => abandonedQuestIds.has(String(questId))))
+      ? { ...entry, status: "abandoned" as const }
+      : entry);
+    unresolvedThreads = unresolvedStoryThreadIds(threads);
+  }
 
   // 主线 thread 始终以主线 ID 命名，随幕推进保持 unresolved；最终幕完成主线后回收。
   const advanced = shouldAdvanceAct(ws, ss, newDrafts) && currentAct < ss.targetActs;
@@ -65,7 +95,8 @@ export function advanceStoryProgression(
 
   // 最终幕主线全部解决 → 回收主线 thread。
   if (currentAct >= ss.targetActs && currentActMainQuestExists && mainQuestsResolved) {
-    unresolvedThreads = unresolvedThreads.filter((t) => t !== thread);
+    threads = threads.map((entry) => entry.id === thread ? { ...entry, status: "resolved" as const } : entry);
+    unresolvedThreads = unresolvedStoryThreadIds(threads);
   }
 
   // storyProgress：按主线已完成/失败任务占总主线比例推导（Spec §13.2），
@@ -82,6 +113,7 @@ export function advanceStoryProgression(
     currentAct >= ss.targetActs
     && currentActMainQuestExists
     && mainQuestsResolved
+    && !hasAbandonedMainQuest(ws, newDrafts)
     && storyProgress >= 80
     && unresolvedThreads.length === 0
   ) {
@@ -111,6 +143,7 @@ export function advanceStoryProgression(
   return {
     nextStoryState: {
       ...ss,
+      threads,
       currentAct,
       storyProgress,
       endingAllowed,

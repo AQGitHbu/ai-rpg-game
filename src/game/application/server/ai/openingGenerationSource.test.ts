@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { repairOpeningGenerationCandidate, createOpeningGenerationSource, sanitizeOpeningFactReferences } from "./openingGenerationSource";
+import { hasOnlyKnownOpeningCandidateKeys, repairOpeningGenerationCandidate, createOpeningGenerationSource, sanitizeOpeningFactReferences } from "./openingGenerationSource";
 import type { OpeningGenerationCandidate } from "@/game/domain/openingGenerationCandidate";
 import type { AiTransport } from "@ai-game/ai-transport";
 import { buildStylePolicy } from "../../stylePolicy";
@@ -93,6 +93,32 @@ describe("repairOpeningGenerationCandidate", () => {
     expect(repaired).toBe(true);
     expect(candidate?.player.baseStats).toEqual({ hp: 100, attack: 10, defense: 5 });
   });
+
+  it("保留开局交付物和故事契约的本地 key", () => {
+    const candidate = {
+      ...validCandidate(),
+      storyContract: {
+        ...validCandidate().storyContract,
+        delivery: { itemKey: "sealed_letter", recipientKey: "ferry_contact", verificationFactKeys: ["fact_inn"] },
+      },
+      opening: {
+        ...validCandidate().opening,
+        item: {
+          key: "sealed_letter",
+          name: "封缄信筒",
+          description: "交给接应人的信筒。",
+          kind: "quest_item",
+          tags: ["return_required"],
+        },
+      },
+    };
+
+    expect(hasOnlyKnownOpeningCandidateKeys(candidate)).toBe(true);
+    const result = repairOpeningGenerationCandidate(candidate);
+    expect(result.repaired).toBe(false);
+    expect(result.candidate?.opening.item?.key).toBe("sealed_letter");
+    expect(result.candidate?.storyContract.delivery?.recipientKey).toBe("ferry_contact");
+  });
 });
 
 describe("sanitizeOpeningFactReferences", () => {
@@ -159,6 +185,9 @@ describe("createOpeningGenerationSource", () => {
     }
     expect(prompt).not.toContain('\"goals\": []');
     expect(prompt).toContain("goalId/status 由服务端生成");
+    expect(prompt).toContain("递送型开局");
+    expect(prompt).toContain("verificationFactKeys");
+    expect(prompt).toContain("opening.item");
   });
 
   it("provider-shaped opening without anchors or typed goals stays an invalid response", async () => {

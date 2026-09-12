@@ -10,6 +10,7 @@ import type {
   PlayerState, QuestEntry, WorldFactEntry,
 } from "./worldEntries";
 import type { EntityStore } from "./entity/entityStore";
+import type { StoryThread } from "./storyThreads";
 import type { NpcImportedLayers } from "./entity/npcProjection";
 import {
   compileEntityStoreFromCompatibilityProjection,
@@ -38,6 +39,8 @@ export type BattleStartSnapshot = Readonly<{
   readonly eventLedger: readonly CommittedNarrativeEvent[];
   /** History visible before the battle; rollback restores this exact view. */
   readonly history?: NarrativeHistory;
+  /** Story concerns visible before the battle; rollback restores this exact view. */
+  readonly threads?: readonly StoryThread[];
 }>
 
 export type EndingState = { readonly endingId: EndingId; readonly outcome: "success" | "failure" } | null;

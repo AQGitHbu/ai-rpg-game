@@ -71,6 +71,7 @@ export type Action =
   }
   | { readonly type: "take_item"; readonly itemId: ItemId }
   | { readonly type: "give_item"; readonly itemId: ItemId; readonly npcId: NpcId }
+  | Readonly<{ type: "abandon_quest"; questId: QuestId }>
   | { readonly type: "attack"; readonly enemyId: EnemyId }
   | { readonly type: "battle_action"; readonly action: CombatActionKind; readonly command?: Omit<CombatCommand, "kind"> }
   | { readonly type: "ack_prologue" }
@@ -87,6 +88,7 @@ export const SUPPORTED_ACTION_TYPES: readonly ActionType[] = [
   "investigate",
   "take_item",
   "give_item",
+  "abandon_quest",
   "attack",
   "battle_action",
   "ack_prologue",

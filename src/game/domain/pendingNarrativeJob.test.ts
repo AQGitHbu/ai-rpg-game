@@ -308,6 +308,16 @@ describe("PendingNarrativeJob", () => {
     }).ok).toBe(true);
   });
 
+  it("story_exit + story_exit 是弃置任务的唯一生成配对，且不需要焦点 NPC", () => {
+    const result = createResult({
+      actionSummary: { kind: "abandon_quest", questId: asQuestId("quest_main") },
+      focusNpcId: undefined,
+      generationKind: "story_exit" as never,
+      sceneRequestKind: "story_exit" as never,
+    });
+    expect(result.ok).toBe(true);
+  });
+
   it("npc_fixed_choice + npc_handoff 配对合法", () => {
     expect(createResult({
       generationKind: "npc_fixed_choice",
@@ -423,6 +433,16 @@ describe("decision boundary classification", () => {
       interactionKind: "fixed_choice",
       fixedChoiceIsCurrentFormalDecision: true,
       focusedNpcId: asNpcId("npc_1"),
+    });
+    expect(result).toBe("narrative_choice");
+  });
+
+  it("正式放弃主线分类为 narrative_choice", () => {
+    const result = classifyProviderDecisionBoundary({
+      action: { type: "abandon_quest", questId: "quest_main" as never },
+      interactionKind: "fixed_choice",
+      fixedChoiceIsCurrentFormalDecision: true,
+      focusedNpcId: null,
     });
     expect(result).toBe("narrative_choice");
   });

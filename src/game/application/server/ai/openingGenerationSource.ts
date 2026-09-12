@@ -65,12 +65,14 @@ export function hasOnlyKnownOpeningCandidateKeys(value: unknown): boolean {
 
   const storyContract = value.storyContract;
   if (isRecord(storyContract)) {
-    if (!hasOnlyKeys(storyContract, ["version", "targetActs", "centralConflict", "endingDirections"])) return false;
+    if (!hasOnlyKeys(storyContract, ["version", "targetActs", "centralConflict", "endingDirections", "delivery"])) return false;
     if (!hasOnlyKeysInArray(storyContract.endingDirections, ["key", "theme"])) return false;
+    if (isRecord(storyContract.delivery)
+      && !hasOnlyKeys(storyContract.delivery, ["itemKey", "recipientKey", "verificationFactKeys"])) return false;
   }
 
   const opening = value.opening;
-  if (!isRecord(opening) || !hasOnlyKeys(opening, ["location", "npc", "quest", "situation", "firstScene", "variationProfile"])) return false;
+  if (!isRecord(opening) || !hasOnlyKeys(opening, ["location", "npc", "item", "quest", "situation", "firstScene", "variationProfile"])) return false;
 
   const location = opening.location;
   if (isRecord(location) && !hasOnlyKeys(location, ["name", "description", "buildingName", "scale"])) return false;
@@ -81,6 +83,9 @@ export function hasOnlyKnownOpeningCandidateKeys(value: unknown): boolean {
     if (isRecord(npc.anchors) && !hasOnlyKeys(npc.anchors, ["selfConcept", "values", "speechStyle", "capabilityBoundaries", "taboos"])) return false;
     if (!hasOnlyKeysInArray(npc.goals, ["horizon", "description", "priority", "reason"])) return false;
   }
+
+  const item = opening.item;
+  if (isRecord(item) && !hasOnlyKeys(item, ["key", "name", "description", "kind", "tags"])) return false;
 
   const quest = opening.quest;
   if (isRecord(quest)) {
@@ -217,6 +222,7 @@ export function repairOpeningGenerationCandidate(
           privateFactKeys: fixArray(npc.privateFactKeys),
         };
       })(),
+      ...(opening.item === undefined ? {} : { item: opening.item }),
       quest: (() => {
         const quest = isRecord(opening.quest) ? opening.quest : null;
         if (quest === null) {
@@ -416,17 +422,18 @@ ${setupSection}${noveltySection}
 1. world：summary/tone/themes/publicFacts（key 必须形如 fact_xxx，且全局唯一）
 2. player：name/identity/backgroundSummary；战斗属性由服务端规则配置，禁止生成 baseStats
 3. prologue：故事序幕（2-3 句），聚焦故事钩子、主角动机和背景冲突：说明主角为什么会来到这条故事线上、什么未解事件或危险正在逼近、以及为什么值得继续行动。它可以提及已确定的世界背景，但不是当前地点的感官镜头；不要描写雨声、光线、气味、脚步、材质等即时细节，不要写 NPC 台词、玩家选项或完整场景表演
-4. storyContract：version=1、targetActs=${targetActs}（必须与档位一致）、centralConflict、endingDirections 恰好两个（key 分别为 "trust" 与 "doubt"）
+4. storyContract：version=1、targetActs=${targetActs}（必须与档位一致）、centralConflict、endingDirections 恰好两个（key 分别为 "trust" 与 "doubt"）。递送型开局可增加 delivery={itemKey,recipientKey,verificationFactKeys}；这些都是本地 key，verificationFactKeys 必须来自 publicFacts。
 5. opening.location：开场地点，scale 必须是 "town"（小镇层级），buildingName 是该地点中承载首个 NPC 的剧情建筑名
 6. opening.npc：开场焦点 NPC，knownFactKeys/privateFactKeys 必须且只能引用 world.publicFacts 中已定义的 fact key；必须提供完整 anchors；goals 必须是 typed creation proposals。goalId/status 由服务端生成，禁止输出
-7. opening.quest：首个主线任务，objective 只能是 { "kind": "talk_to_opening_npc" }
-8. opening.variationProfile：只描述结构差异，四个字段必须从以下枚举中各选一个：
+7. opening.item：仅当玩家故事开端明确包含递送物品时输出一件唯一任务物品，字段为 key/name/description/kind/tags，key 必须与 delivery.itemKey 相同；owner 固定由服务端编译为玩家。其它开局不得生成物品。
+8. opening.quest：首个主线任务，objective 只能是 { "kind": "talk_to_opening_npc" }
+9. opening.variationProfile：只描述结构差异，四个字段必须从以下枚举中各选一个：
    sceneFrame = street | market | inn | outskirts | station | workshop | shrine | other
    npcArchetype = witness | keeper | courier | merchant | official | craftsperson | guide | other
    leadType = trace | document | testimony | token | message | object | other
    conflictMode = concealment | misdirection | dispute | pursuit | betrayal | other
 
-不得生成未来：不得输出任何未来地点、未来 NPC、未来任务、敌人、物品或结局；世界只存在开场切片的这一个地点、一个 NPC、一个任务。
+不得生成未来：不得输出任何未来地点、未来 NPC、未来任务、敌人或结局；除上述递送型开局明确建立的唯一任务物品外，不输出物品。世界只存在开场切片的这一个地点、一个 NPC、一个任务。
 叙事职责边界：prologue 只回答“为什么要继续这段故事”，通过故事钩子、人物动机和背景冲突建立期待；不要抢写首个场景的空间氛围或即时感官体验，首个场景的 atmosphere 段由场景表演源负责。
 必须严格使用以下字段名与嵌套结构（禁止改名）：
 {
@@ -441,6 +448,7 @@ ${setupSection}${noveltySection}
       "anchors": { "selfConcept": "...", "values": ["..."], "speechStyle": "...", "capabilityBoundaries": ["..."], "taboos": [] },
       "goals": [{ "horizon": "short", "description": "...", "priority": 3, "reason": "..." }]
     },
+    "item": { "key": "sealed_letter", "name": "...", "description": "...", "kind": "quest_item", "tags": ["return_required"] },
     "quest": { "name": "...", "description": "...", "objective": { "kind": "talk_to_opening_npc" } },
     "variationProfile": { "sceneFrame": "street", "npcArchetype": "witness", "leadType": "trace", "conflictMode": "concealment" }
   }

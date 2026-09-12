@@ -138,6 +138,15 @@ export function buildChoiceMap(
     }
 
     for (const stance of endingDecisionStances(worldState, storyState)) addRuntimeAction(stance.action);
+    const currentMainQuest = objective?.questId === undefined
+      ? worldState.quests.find((entry) => entry.kind === "main" && entry.status === "active" && entry.stage === storyState.currentAct)
+      : worldState.quests.find((entry) => String(entry.id) === String(objective.questId));
+    if (currentMainQuest?.kind === "main"
+      && currentMainQuest.status === "active"
+      && (storyState.reveal === undefined || storyState.reveal === null
+        || String(storyState.reveal.questId) === String(currentMainQuest.id))) {
+      addRuntimeAction({ type: "abandon_quest", questId: currentMainQuest.id });
+    }
     // Internal explore exists only as an approved, concrete building arrival.
     if (townBuildingInvestigationTargetNpcId(worldState, storyState) !== null) {
       addRuntimeAction({ type: "explore" });
@@ -193,6 +202,7 @@ function isCurrentlyLegalRegistryAction(
     case "move":
     case "take_item":
     case "give_item":
+    case "abandon_quest":
     case "attack":
     case "battle_action":
       return worldActionMap.has(deriveRuntimeChoiceToken(action, currentRevision));

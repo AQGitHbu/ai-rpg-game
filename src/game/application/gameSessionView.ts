@@ -197,6 +197,8 @@ function presentationForAction(action: Action): PlayerChoiceView["presentation"]
     case "take_item":
     case "give_item":
       return "item";
+    case "abandon_quest":
+      return "dialogue";
     case "attack":
     case "battle_action":
       return "battle";

@@ -60,4 +60,24 @@ describe("createStoryContract", () => {
     });
     expect(contract.targetActs).toBe(5);
   });
+
+  it("keeps delivery references as local story keys", () => {
+    const contract = createStoryContract({
+      gameLength: "short",
+      centralConflict: "c",
+      endingThemes: { trust: "t", doubt: "d" },
+      delivery: {
+        itemKey: "sealed_letter",
+        recipientKey: "ferry_contact",
+        verificationFactKeys: ["fact_signature"],
+      },
+    });
+
+    expect(contract.delivery).toEqual({
+      itemKey: "sealed_letter",
+      recipientKey: "ferry_contact",
+      verificationFactKeys: ["fact_signature"],
+    });
+    expect(JSON.stringify(contract)).not.toMatch(/item_0|npc_0|fact_0/);
+  });
 });

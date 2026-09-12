@@ -5,8 +5,8 @@ import type { NarrativeBundleSource, NarrativeBundleSourceResult } from "./narra
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { GenerationMetadata } from "@/game/domain/worldEntity";
-import { createWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
-import { asNpcId, asLocationId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
+import { createWorldStateFixture, updateWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
+import { asNpcId, asLocationId, asQuestId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import { asEpisodeId, asEventId, asNarrativeJobId, asTurnId, CommittedNarrativeEvent } from "@/game/domain/events";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
@@ -311,6 +311,59 @@ describe("generatePendingNarrativeBundle", () => {
     // The bundle coordinator keeps four bounded attempts so independent
     // next-act entity-name collisions can be repaired in one job.
     expect(generateMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("把 story_exit 的 B 结果提交为等待生成后的退出结局", async () => {
+    const job = {
+      ...createPendingJob(),
+      actionSummary: { kind: "abandon_quest" as const, questId: asQuestId("quest_exit") },
+      focusNpcId: undefined,
+      objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" as const },
+      generationKind: "story_exit" as const,
+      sceneRequestKind: "story_exit" as const,
+    };
+    const worldState = updateWorldStateFixture(createMinimalWorldState(), {
+      quests: [{
+        id: asQuestId("quest_exit"), name: "未竟委托", description: "一项待完成的委托", objectives: [],
+        onSuccess: { kind: "advance_story" }, onFailure: { kind: "advance_story" }, tags: [], kind: "main", status: "failed",
+      }],
+    });
+    const storyState = createMinimalStoryState({
+      status: "provider_pending",
+      mode: "ai",
+      job,
+      lastPresentedScene: null,
+    });
+    const { repo, getRecord } = createInMemoryRepo({
+      gameId: asGameId("story-exit"), worldState,
+      storyState,
+      revision: 0, createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    const source: NarrativeBundleSource = {
+      generate: vi.fn().mockResolvedValue({
+        ok: true,
+        kind: "decision",
+        proposal: {
+          worldDelta: null,
+          currentScene: {
+            segments: [{ beatId: "atmosphere", text: "你把这段委托留在身后。" }],
+            npcLine: null,
+            objectiveLink: null,
+            choices: [],
+          },
+          continuationScenes: [],
+          terminal: { kind: "ending" },
+        },
+      } as NarrativeBundleSourceResult),
+    };
+
+    const result = await generatePendingNarrativeBundle({ repository: repo, source, now: () => "2026-01-01T00:00:00.000Z" });
+
+    const saved = getRecord();
+    expect(result.ok).toBe(true);
+    expect(saved?.worldState.ending).not.toBeNull();
+    expect(saved?.worldState.eventLedger.some((event) => event.payload.type === "ending_reached")).toBe(true);
+    expect(saved?.storyState.narrative.status).toBe("ready");
   });
 
   it("forges generated current-scene choices for the revision that will be persisted", async () => {

@@ -187,7 +187,8 @@ function normalizeDecisionBundleShape(
         npcId: `npc_dyn_${storyState.evolution.nextNpcOrdinal}`,
     }
     : null;
-  const isEndingBundle = storyState.evolution.status === "needs_ending_pair";
+  const isEndingBundle = storyState.evolution.status === "needs_ending_pair"
+    || job.actionSummary.kind === "abandon_quest";
   const steps = projectedSteps(graph, nextActProjection);
   const fallbackNpcId = nextActProjection?.npcId ?? String(job.focusNpcId ?? "");
 

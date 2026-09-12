@@ -5,7 +5,7 @@ import type { OpeningGenerationCandidate } from "@/game/domain/openingGeneration
 import type { StoryState } from "@/game/domain/storyState";
 import { asGenerationId, asLocationId, asNpcId, asQuestId, asFactId } from "@/game/domain/worldEntity";
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
-import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
+import { PLAYER_ENTITY_ID, RETURN_REQUIRED_ITEM_TAG } from "@/game/domain/worldEntity";
 import { entitiesOfKind } from "@/game/domain/entity";
 import { makeOpeningQualityCandidate } from "@/game/domain/openingSituation.testutil";
 import { rebuildEpisodicMemory } from "@/game/domain/episodicMemory";
@@ -89,6 +89,59 @@ describe("compileOpeningGenerationCandidate", () => {
     expect(thread.turnNumber).toBe(0);
     expect(compiled.storyState.memory.episodes[0]?.kind).toBe("initialization");
     expect(compiled.storyState.memory).toEqual(rebuildEpisodicMemory(compiled.worldState.eventLedger));
+  });
+
+  it("promotes opening situation threads into the persistent StoryState projection", () => {
+    const candidate = makeOpeningQualityCandidate();
+    const compiled = compile(candidate);
+    const thread = compiled.storyState.threads.find((entry) => entry.id === "thread_init_shutdown");
+    expect(thread).toMatchObject({
+      kind: "question",
+      status: "open",
+      questIds: [asQuestId("quest_0")],
+      participantIds: [PLAYER_ENTITY_ID, asNpcId("npc_0")],
+      question: "技师希望先停机检查，船厂却急于恢复作业。",
+    });
+    expect(thread?.evidenceEventIds).toContain(compiled.worldState.eventLedger.at(-1)?.eventId);
+    expect(compiled.storyState.unresolvedThreads).toEqual(["thread_init_shutdown"]);
+  });
+
+  it("binds the sole opening delivery item to the player and preserves its local contract keys", () => {
+    const base = makeOpeningQualityCandidate();
+    const candidate: OpeningGenerationCandidate = {
+      ...base,
+      storyContract: {
+        ...base.storyContract,
+        delivery: {
+          itemKey: "sealed_letter",
+          recipientKey: "ferry_contact",
+          verificationFactKeys: ["fact_records"],
+        },
+      },
+      opening: {
+        ...base.opening,
+        item: {
+          key: "sealed_letter",
+          name: "封缄信筒",
+          description: "等待交给接应人的信筒。",
+          kind: "quest_item",
+          tags: ["delivery"],
+        },
+      },
+    };
+
+    const compiled = compile(candidate);
+
+    expect(compiled.worldState.items).toEqual([{
+      id: "item_0",
+      name: "封缄信筒",
+      description: "等待交给接应人的信筒。",
+      kind: "quest_item",
+      tags: ["delivery", RETURN_REQUIRED_ITEM_TAG],
+    }]);
+    expect(compiled.worldState.inventory).toEqual(["item_0"]);
+    expect(compiled.storyState.contract.delivery).toEqual(candidate.storyContract.delivery);
+    expect(compiled.storyState.evolution.nextItemOrdinal).toBe(1);
   });
 
   it("canonicalizes a thread envelope when its question is also supporting evidence", () => {

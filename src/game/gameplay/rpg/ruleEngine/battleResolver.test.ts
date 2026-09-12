@@ -9,6 +9,8 @@ import {
 import { updateWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 import { asEnemyId, asLocationId, asGenerationId } from "@/game/domain/worldEntity";
 import { asTurnId, eventIdFor } from "@/game/domain/events";
+import { createInitialStoryState } from "@/game/domain/storyState";
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 
 const FIXED_TIME = "2026-08-07T12:00:00Z";
 const deps = { now: () => FIXED_TIME };
@@ -68,6 +70,20 @@ describe("startBattle", () => {
       expect(result.drafts[0]?.payload.type).toBe("battle_started");
       expect(result.status).toBe("success");
     }
+  });
+
+  it("copies the current story threads into the battle rollback snapshot", () => {
+    const ws = makeWorldWithEnemy();
+    const storyState = createInitialStoryState({
+      gameLength: "short",
+      initialEntityCounts: { locations: 1, npcs: 1, quests: 1, events: 0 },
+      initialNarrative: createFixtureNarrativeRuntimeState(),
+      mainThreadId: "thread-main",
+    });
+    const result = startBattle(ws, asEnemyId("enemy_1"), asTurnId("turn:threads"), storyState);
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.nextWorldState.battle.status !== "active") return;
+    expect(result.nextWorldState.battle.preBattleSnapshot?.threads).toEqual(storyState.threads);
   });
 
   it("rejects when enemy does not exist", () => {

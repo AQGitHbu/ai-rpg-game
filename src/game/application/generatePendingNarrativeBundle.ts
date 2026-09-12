@@ -14,6 +14,7 @@ import { buildWorldDeltaEntityContextClosure } from "./entityContextProjection";
 import { commitEventDrafts } from "@/game/domain/eventLedger";
 import { reconcileCommittedMemory } from "./reconcileCommittedMemory";
 import { appendHistory, narrativeSceneHistoryEntries } from "@/game/domain/narrativeHistory";
+import { asEndingId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 
 // A next-act package contains five independently unique world entities. A
 // provider repair may correct one named collision at a time, so leave room for
@@ -209,6 +210,43 @@ export async function generatePendingNarrativeBundle(
   if (!bounded.ok) return failPendingJob();
 
   const approved = bounded.value;
+  const exitQuestId = job.actionSummary.kind === "abandon_quest" ? job.actionSummary.questId : undefined;
+  const exitEndingId = exitQuestId !== undefined
+    ? asEndingId(`ending_exit:${String(job.jobId)}`)
+    : undefined;
+  const exitEnding = exitEndingId === undefined
+    ? undefined
+    : {
+        id: exitEndingId,
+        name: "未竟之路",
+        description: "你选择放下这份委托，故事在未完成的承诺与仍需承担的代价中收束。",
+        requirements: [],
+      } as const;
+  const approvedWorldState = exitEnding === undefined
+    ? approved.nextWorldState
+    : {
+        ...approved.nextWorldState,
+        endings: [...approved.nextWorldState.endings, exitEnding],
+        ending: { endingId: exitEnding.id, outcome: "failure" as const },
+      };
+  const approvedEventDrafts = exitEnding === undefined
+    ? approved.eventDrafts
+    : [
+        ...approved.eventDrafts,
+        {
+          eventKey: `ending_reached:${exitEnding.id}`,
+          episodeKey: String(job.turnId),
+          actorIds: [PLAYER_ENTITY_ID],
+          targetIds: [PLAYER_ENTITY_ID],
+          locationId: approvedWorldState.currentLocationId,
+          causeKeys: job.domainEventIds.map((eventId) => ({ kind: "event_id" as const, eventId })),
+          factIds: [],
+          questIds: [exitQuestId!],
+          outcome: "failure" as const,
+          salience: 100,
+          payload: { type: "ending_reached" as const, endingId: exitEnding.id, outcome: "failure" as const },
+        },
+      ];
 
   // Build the ready narrative with the approved bundle
   const readyNarrative: NarrativeRuntimeState = {
@@ -224,14 +262,14 @@ export async function generatePendingNarrativeBundle(
 
   const eventCommit = commitEventDrafts({
     ledger: record.worldState.eventLedger,
-    drafts: approved.eventDrafts,
+    drafts: approvedEventDrafts,
     source: {
       turnId: job.turnId,
       actionId: job.actionId,
       turnNumber: job.turnNumber,
       committedAt: deps.now(),
     },
-    entityStore: approved.nextWorldState.entityStore,
+    entityStore: approvedWorldState.entityStore,
   });
   if (!eventCommit.ok) {
     // 审批已通过：事件账本提交失败是内容/基础设施契约问题，不是审批拒绝。
@@ -241,7 +279,7 @@ export async function generatePendingNarrativeBundle(
     lastRepair = { attempt: 1, reason: "invalid_schema", detail: "event_commit_failed" };
     return failPendingJob();
   }
-  const nextWorldState = { ...approved.nextWorldState, eventLedger: eventCommit.ledger };
+  const nextWorldState = { ...approvedWorldState, eventLedger: eventCommit.ledger };
 
   const history = storyState.history ?? { entries: [] };
   const nextHistory = appendHistory(history, narrativeSceneHistoryEntries({

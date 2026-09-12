@@ -1,5 +1,5 @@
 import type { StatBlock } from "./worldEntity";
-import type { StoryContract } from "./storyContract";
+import type { StoryContract, StoryDeliveryContract } from "./storyContract";
 import type { InvestigationApproach } from "./worldState";
 import { parseOpeningVariationProfile, type OpeningVariationProfile } from "./openingNovelty";
 import type { NarrativeEmotion } from "./narrative";
@@ -56,6 +56,14 @@ export type OpeningGenerationCandidate = {
       readonly anchors: NpcIdentityAnchors;
       readonly goals: readonly NpcGoalProposal[];
     };
+    /** Optional core delivery item; if present it starts with the player. */
+    readonly item?: {
+      readonly key: string;
+      readonly name: string;
+      readonly description: string;
+      readonly kind: string;
+      readonly tags: readonly string[];
+    };
     /** 描述开局结构的抽象标签，不包含实体名称。 */
     readonly variationProfile?: OpeningVariationProfile;
     readonly quest: {
@@ -103,6 +111,27 @@ function isNumber(value: unknown): value is number {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function isLocalStoryKey(value: unknown): value is string {
+  return isNonEmptyString(value)
+    && /^[a-z][a-z0-9_]*$/.test(value)
+    && !/^(?:loc|npc|item|quest|enemy|fact|ending)_\d+$/.test(value);
+}
+
+function parseDeliveryContract(value: unknown): StoryDeliveryContract | null {
+  if (!isRecord(value)
+    || !isLocalStoryKey(value.itemKey)
+    || !isLocalStoryKey(value.recipientKey)
+    || !isStringArray(value.verificationFactKeys)
+    || value.verificationFactKeys.length === 0
+    || new Set(value.verificationFactKeys).size !== value.verificationFactKeys.length
+    || value.verificationFactKeys.some((key) => !isLocalStoryKey(key))) return null;
+  return {
+    itemKey: value.itemKey,
+    recipientKey: value.recipientKey,
+    verificationFactKeys: value.verificationFactKeys,
+  };
 }
 
 const NARRATIVE_EMOTIONS: readonly string[] = [
@@ -197,6 +226,13 @@ export function parseOpeningGenerationCandidate(
   ) {
     return { ok: false, code: "INVALID_ENDING_DIRECTION" };
   }
+  const parsedDelivery = storyContract.delivery === undefined
+    ? undefined
+    : parseDeliveryContract(storyContract.delivery);
+  if (parsedDelivery === null) {
+    return { ok: false, code: "INVALID_STORY_CONTRACT" };
+  }
+  const delivery = parsedDelivery === undefined ? undefined : parsedDelivery;
 
   if (!isRecord(opening)) return { ok: false, code: "INVALID_OPENING" };
   if (!isRecord(opening.location)) return { ok: false, code: "INVALID_OPENING_LOCATION" };
@@ -226,6 +262,27 @@ export function parseOpeningGenerationCandidate(
     || goals === null
   ) {
     return { ok: false, code: "INVALID_OPENING_NPC" };
+  }
+  let item: OpeningGenerationCandidate["opening"]["item"];
+  if (opening.item !== undefined) {
+    if (!isRecord(opening.item)
+      || !isLocalStoryKey(opening.item.key)
+      || !isNonEmptyString(opening.item.name)
+      || !isNonEmptyString(opening.item.description)
+      || !isNonEmptyString(opening.item.kind)
+      || !isStringArray(opening.item.tags)) {
+      return { ok: false, code: "INVALID_OPENING_ITEM" };
+    }
+    item = {
+      key: opening.item.key,
+      name: opening.item.name,
+      description: opening.item.description,
+      kind: opening.item.kind,
+      tags: opening.item.tags,
+    };
+  }
+  if (delivery !== undefined && (item === undefined || item.key !== delivery.itemKey)) {
+    return { ok: false, code: "INVALID_STORY_CONTRACT" };
   }
   if (!isRecord(opening.quest)) return { ok: false, code: "INVALID_OPENING_QUEST" };
   if (
@@ -309,6 +366,7 @@ export function parseOpeningGenerationCandidate(
         { key: "trust", theme: trust.theme as string },
         { key: "doubt", theme: doubt.theme as string },
       ],
+      ...(delivery === undefined ? {} : { delivery }),
     },
     opening: {
       location: {
@@ -326,6 +384,7 @@ export function parseOpeningGenerationCandidate(
         anchors,
         goals,
       },
+      ...(item === undefined ? {} : { item }),
       quest: {
         name: opening.quest.name as string,
         description: opening.quest.description as string,

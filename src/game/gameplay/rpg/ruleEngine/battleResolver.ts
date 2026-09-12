@@ -4,6 +4,7 @@ import { asEventId, asTurnId, eventIdFor, type NarrativeEventDraft, type TurnId 
 import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import type { StateChange } from "@/game/domain/resolvedEvent";
 import type { ResolveResult } from "./resolveByType";
+import type { StoryState } from "@/game/domain/storyState";
 import type { ActiveBattleCombatState, BattleCombatant, CombatActionKind, CombatCommand } from "@/game/domain/combat";
 import { buildEncounter } from "./buildEncounter";
 import { advanceUntilPlayerDecision } from "./advanceBattle";
@@ -248,6 +249,7 @@ export function startBattle(
   ws: WorldState,
   enemyId: EnemyId,
   turnId: TurnId = asTurnId("battle:legacy"),
+  storyState?: StoryState,
 ): ResolveResult {
   // resolved 只表示上一场战斗的结果；没有 active battle 时可以重新挑战
   // 尚未击败的敌人，避免撤退后界面仍有“挑战”按钮却永远被规则拒绝。
@@ -304,6 +306,7 @@ export function startBattle(
     const preBattleSnapshot: BattleStartSnapshot = {
       entityStore: ws.entityStore,
       eventLedger: ws.eventLedger,
+      ...(storyState === undefined ? {} : { threads: storyState.threads }),
     };
     const nextWs: WorldState = {
       ...ws,
@@ -339,6 +342,7 @@ export function startBattle(
   const preBattleSnapshot: BattleStartSnapshot = {
     entityStore: ws.entityStore,
     eventLedger: ws.eventLedger,
+    ...(storyState === undefined ? {} : { threads: storyState.threads }),
   };
 
   const nextWs: WorldState = {

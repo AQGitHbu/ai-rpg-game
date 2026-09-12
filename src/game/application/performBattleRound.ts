@@ -11,6 +11,7 @@ import { asTurnId } from "@/game/domain/events";
 import { consumeNarrativeBundle } from "./consumeNarrativeBundle";
 import { consumePreparedContinuation } from "./consumePreparedContinuation";
 import { projectEntityStore } from "@/game/domain/entity";
+import { unresolvedStoryThreadIds } from "@/game/domain/storyThreads";
 
 // ---------------------------------------------------------------------------
 // Task 8: 专门处理活跃战斗回合的应用路径。
@@ -159,13 +160,22 @@ export async function performBattleRound(
           }
         : { ...afterWorldState, battle: { status: "idle" as const } };
 
-      const restoredStoryState: StoryState = narrativeCheckpoint === undefined
+      const restoredStoryBase: Omit<StoryState, "narrative"> = narrativeCheckpoint === undefined
         ? {
             ...beforeStoryState,
             ...(preBattleSnapshot?.history === undefined ? {} : { history: preBattleSnapshot.history }),
-            narrative: restoredNarrative,
           }
-        : { ...narrativeCheckpoint.storySnapshot, narrative: restoredNarrative };
+        : { ...narrativeCheckpoint.storySnapshot };
+      const restoredStoryState: StoryState = {
+        ...restoredStoryBase,
+        ...(preBattleSnapshot?.threads === undefined
+          ? {}
+          : {
+              threads: preBattleSnapshot.threads,
+              unresolvedThreads: unresolvedStoryThreadIds(preBattleSnapshot.threads),
+            }),
+        narrative: restoredNarrative,
+      };
 
       const commitResult = await commitState(deps.repository, {
         gameId: input.gameId,

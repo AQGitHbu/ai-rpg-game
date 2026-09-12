@@ -1,13 +1,13 @@
 import type { GameLength } from "@/game/domain/newGame";
 import type { OpeningGenerationCandidate } from "@/game/domain/openingGenerationCandidate";
 import type { GenerationMetadata } from "@/game/domain/worldEntity";
-import { asLocationId, asNpcId, asQuestId, asFactId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
+import { asLocationId, asNpcId, asQuestId, asFactId, asItemId, PLAYER_ENTITY_ID, RETURN_REQUIRED_ITEM_TAG } from "@/game/domain/worldEntity";
 import type { WorldState } from "@/game/domain/worldState";
 import { createWorldStateFromProjection } from "@/game/domain/worldState";
 import { commitInitializationEvent } from "@/game/domain/eventLedger";
 import { canonicalOpeningThreadEnvelopeFactIds, type NarrativeEventDraft } from "@/game/domain/events";
 import type {
-  LocationEntry, NpcEntry, QuestEntry, WorldFactEntry,
+  ItemEntry, LocationEntry, NpcEntry, QuestEntry, WorldFactEntry,
 } from "@/game/domain/worldEntries";
 import type { StoryState } from "@/game/domain/storyState";
 import { createInitialStoryState } from "@/game/domain/storyState";
@@ -174,6 +174,19 @@ export function compileOpeningGenerationCandidate(
       : { investigationApproaches: fact.investigationApproaches }),
   }));
 
+  const openingItems: readonly ItemEntry[] = candidate.opening.item === undefined
+    ? []
+    : [{
+        id: asItemId("item_0"),
+        name: candidate.opening.item.name,
+        description: candidate.opening.item.description,
+        kind: candidate.opening.item.kind,
+        tags: [...new Set([
+          ...candidate.opening.item.tags,
+          ...(candidate.storyContract.delivery === undefined ? [] : [RETURN_REQUIRED_ITEM_TAG]),
+        ])],
+      }];
+
   const openingQuest: QuestEntry = {
     id: questId,
     name: candidate.opening.quest.name,
@@ -202,8 +215,8 @@ export function compileOpeningGenerationCandidate(
       unlockedLocationIds: [locationId],
       visitedLocationIds: [locationId],
       npcs: [openingNpc],
-      items: [],
-      inventory: [],
+      items: openingItems,
+      inventory: openingItems.map((item) => item.id),
       worldFacts: openingFacts,
       quests: [openingQuest],
       enemies: [],
@@ -270,13 +283,38 @@ export function compileOpeningGenerationCandidate(
   if (!initCommit.ok) throw new Error("Failed to commit game_initialized event");
   const committedWorldState: WorldState = { ...worldState, eventLedger: initCommit.ledger };
 
+  const openingThreads = candidate.opening.situation.threads.map((thread) => {
+    const questionFactId = factIdByKey.get(thread.questionFactKey)!;
+    const evidenceEventId = initCommit.eventIdByKey.get(`thread_${thread.key}`);
+    const causeEventIds = thread.causeHistoryKeys
+      .map((key) => initCommit.eventIdByKey.get(`history_${key}`))
+      .filter((eventId): eventId is NonNullable<typeof eventId> => eventId !== undefined);
+    return {
+      id: `thread_init_${thread.key}`,
+      kind: "question" as const,
+      participantIds: thread.participantRefs.map(participantId),
+      causeEventIds,
+      questIds: [questId],
+      goalRefs: [],
+      promiseRefs: [],
+      question: factIds.find((fact) => fact.factId === questionFactId)?.text ?? thread.questionFactKey,
+      status: "open" as const,
+      evidenceEventIds: evidenceEventId === undefined ? [] : [evidenceEventId],
+      closure: [],
+      tentativeDirections: [],
+    };
+  });
+
   const baseStoryState = createInitialStoryState({
     gameLength,
     initialEntityCounts: { locations: 1, npcs: 1, quests: 1, events: 0 },
     initialNarrative: input.initialNarrative,
+    mainThreadId: openingThreads[0]?.id,
   });
   const storyState: StoryState = {
     ...baseStoryState,
+    threads: openingThreads,
+    unresolvedThreads: openingThreads.map((thread) => thread.id),
     memory: rebuildEpisodicMemory(committedWorldState.eventLedger),
     targetActs: candidate.storyContract.targetActs,
     contract: candidate.storyContract,
@@ -284,7 +322,7 @@ export function compileOpeningGenerationCandidate(
     evolution: {
       nextLocationOrdinal: 1,
       nextNpcOrdinal: 1,
-      nextItemOrdinal: 0,
+      nextItemOrdinal: openingItems.length,
       nextEnemyOrdinal: 0,
       nextFactOrdinal: factIds.length,
       nextQuestOrdinal: 1,

@@ -101,6 +101,8 @@ function rebuildAction(action: Action): Action {
       return { type: "take_item", itemId: action.itemId };
     case "give_item":
       return { type: "give_item", itemId: action.itemId, npcId: action.npcId };
+    case "abandon_quest":
+      return { type: "abandon_quest", questId: action.questId };
     case "attack":
       return { type: "attack", enemyId: action.enemyId };
     case "battle_action":
@@ -133,6 +135,7 @@ export function semanticSummaryOf(action: Action): string {
     case "investigate": return `investigate:${escapeSummaryPart(action.factId)}${action.approachId === undefined ? "" : `:${escapeSummaryPart(action.approachId)}`}`;
     case "take_item": return `take_item:${escapeSummaryPart(action.itemId)}`;
     case "give_item": return `give_item:${escapeSummaryPart(action.itemId)}:${escapeSummaryPart(action.npcId)}`;
+    case "abandon_quest": return `abandon_quest:${escapeSummaryPart(action.questId)}`;
     case "attack": return `attack:${escapeSummaryPart(action.enemyId)}`;
     case "battle_action": return `battle_action:${escapeSummaryPart(action.action)}:${escapeSummaryPart(action.command?.actorId ?? "")}:${escapeSummaryPart(action.command?.targetId ?? "")}`;
     case "ack_prologue": return "ack_prologue";
@@ -172,6 +175,7 @@ function serializeAction(action: Action): string {
     case "investigate": return `investigate|${part(action.factId)}${action.approachId === undefined ? "" : `|${part(action.approachId)}`}`;
     case "take_item": return `take_item|${part(action.itemId)}`;
     case "give_item": return `give_item|${part(action.itemId)}|${part(action.npcId)}`;
+    case "abandon_quest": return `abandon_quest|${part(action.questId)}`;
     case "attack": return `attack|${part(action.enemyId)}`;
     case "battle_action": return `battle_action|${part(action.action)}|${part(action.command?.actorId ?? "")}|${part(action.command?.targetId ?? "")}`;
     case "ack_prologue": return "ack_prologue";

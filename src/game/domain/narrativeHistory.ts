@@ -77,6 +77,7 @@ function entityIdsForAction(action: Action): readonly EntityId[] {
     case "investigate": return [PLAYER_ENTITY_ID, action.factId];
     case "take_item": return [PLAYER_ENTITY_ID, action.itemId];
     case "give_item": return [PLAYER_ENTITY_ID, action.itemId, action.npcId];
+    case "abandon_quest": return [PLAYER_ENTITY_ID, action.questId];
     case "attack": return [PLAYER_ENTITY_ID, action.enemyId];
     case "battle_action": return [PLAYER_ENTITY_ID];
     case "explore":

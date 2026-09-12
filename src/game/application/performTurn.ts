@@ -86,6 +86,7 @@ export function buildActionSummary(action: Action): StructuredActionSummary {
     case "investigate": return { kind: "investigate", factId: action.factId };
     case "take_item": return { kind: "take_item", itemId: action.itemId };
     case "give_item": return { kind: "give_item", itemId: action.itemId, npcId: action.npcId };
+    case "abandon_quest": return { kind: "abandon_quest", questId: action.questId };
     case "attack": return { kind: "attack", enemyId: action.enemyId };
     case "battle_action": return { kind: "battle_action", action: action.action };
     case "ack_prologue": return { kind: "ack_prologue" };
@@ -167,9 +168,9 @@ export async function performTurn(
     ));
   const isFormalNarrativeChoice = command.interaction.kind === "fixed_choice"
     && fixedChoiceToken !== undefined
-    && readyNarrative.currentScene.event?.kind === "dialogue"
-    && converted.action.type === "talk"
-    && isRegisteredSceneChoice;
+    && isRegisteredSceneChoice
+    && (converted.action.type === "abandon_quest"
+      || (readyNarrative.currentScene.event?.kind === "dialogue" && converted.action.type === "talk"));
 
   // A server-authored NPC talk entry point can follow a rule-owned scene
   // (notably after battle victory). It still starts a provider response and
@@ -333,8 +334,10 @@ export async function performTurn(
       mandatoryBeats: narrative.mandatoryBeats,
       dialogueChoiceLabel: dialogueChoiceLabel ?? endingStance?.label,
       playerHistoryText,
-      generationKind: command.interaction.kind === "free_text" ? "npc_free_text" : "npc_fixed_choice",
-      sceneRequestKind: "npc_response",
+      generationKind: converted.action.type === "abandon_quest"
+        ? "story_exit"
+        : command.interaction.kind === "free_text" ? "npc_free_text" : "npc_fixed_choice",
+      sceneRequestKind: converted.action.type === "abandon_quest" ? "story_exit" : "npc_response",
     });
   }
 

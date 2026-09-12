@@ -9,6 +9,7 @@ import type { StoryEvolutionState } from "./worldDelta";
 import type { QuestId } from "./worldEntity";
 import { createEmptyEpisodicMemory, type EpisodicMemoryState } from "./episodicMemory";
 import type { NarrativeHistory } from "./narrativeHistory";
+import { createMainStoryThread, unresolvedStoryThreadIds, type StoryThread } from "./storyThreads";
 
 // 结构化候选事件契约由 candidateEvent.ts 定义并在此再导出，保持既有调用点兼容。
 export type { EventCandidate, EventCandidateKind, ProposedEffect } from "./candidateEvent";
@@ -64,6 +65,8 @@ export type StoryState = {
   readonly tension: number;
   readonly nextPacingNeed: PacingNeed;
   readonly budget: StoryBudget;
+  /** Structured story concerns; unresolvedThreads is its compatibility projection. */
+  readonly threads: readonly StoryThread[];
   readonly unresolvedThreads: readonly ThreadId[];
   readonly candidateEventPool: readonly EventCandidate[];
   readonly endingAllowed: boolean;
@@ -103,6 +106,7 @@ export function createInitialStoryState(input: CreateInitialStoryStateInput): St
     centralConflict: "",
     endingThemes: { trust: "", doubt: "" },
   });
+  const threads = [createMainStoryThread(input.mainThreadId ?? "main_thread")];
   return {
     version: STORY_STATE_SCHEMA_VERSION,
     turnNumber: 0,
@@ -112,7 +116,8 @@ export function createInitialStoryState(input: CreateInitialStoryStateInput): St
     tension: 30,
     nextPacingNeed: "reveal",
     budget,
-    unresolvedThreads: [input.mainThreadId ?? "main_thread"],
+    threads,
+    unresolvedThreads: unresolvedStoryThreadIds(threads),
     candidateEventPool: [],
     endingAllowed: false,
     endingProposed: false,

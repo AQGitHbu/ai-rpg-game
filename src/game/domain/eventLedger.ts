@@ -173,6 +173,7 @@ export function commitEventDrafts(input: {
       "battle_resolved",
       "enemy_defeated",
       "quest_failed",
+      "quest_abandoned",
       "ending_reached",
       "blueprint_expanded",
       "narrative_scene_presented",
@@ -184,6 +185,7 @@ export function commitEventDrafts(input: {
       "npc_interaction_recorded",
       "npc_knowledge_changed",
       "npc_relationship_changed",
+      "story_interaction_resolved",
     ]);
     if (
       typeof draft.payload !== "object" ||

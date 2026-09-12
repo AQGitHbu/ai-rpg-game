@@ -23,6 +23,8 @@ export type OpeningGenerationIssueCode =
   | "invalid_investigation_approaches"
   | "invalid_npc_anchors"
   | "invalid_npc_goals"
+  | "invalid_delivery_contract"
+  | "invalid_opening_item"
   | "invalid_opening_situation";
 
 export type OpeningGenerationIssue = {
@@ -47,6 +49,11 @@ function validOpeningGoals(value: unknown): boolean {
   return parseNpcGoalProposals(value) !== null;
 }
 
+function validLocalStoryKey(value: string): boolean {
+  return /^[a-z][a-z0-9_]*$/.test(value)
+    && !/^(?:loc|npc|item|quest|enemy|fact|ending)_\d+$/.test(value);
+}
+
 export function validateOpeningGenerationCandidate(
   candidate: OpeningGenerationCandidate,
   context: OpeningGenerationValidationContext,
@@ -68,6 +75,16 @@ export function validateOpeningGenerationCandidate(
     issues.push({ code: "invalid_npc_goals" });
   }
 
+  if (candidate.opening.item !== undefined) {
+    const item = candidate.opening.item;
+    if ([item.key, item.name, item.description, item.kind].some((value) => value.trim() === "")
+      || !validLocalStoryKey(item.key)
+      || item.tags.some((tag) => tag.trim() === "")
+      || new Set(item.tags).size !== item.tags.length) {
+      issues.push({ code: "invalid_opening_item", params: { key: item.key } });
+    }
+  }
+
   const factKeys = new Set<string>();
   for (const fact of candidate.world.publicFacts) {
     if (factKeys.has(fact.key)) {
@@ -83,6 +100,18 @@ export function validateOpeningGenerationCandidate(
   for (const key of [...candidate.opening.npc.knownFactKeys, ...candidate.opening.npc.privateFactKeys]) {
     if (!factKeys.has(key)) {
       issues.push({ code: "unknown_fact_key", params: { key } });
+    }
+  }
+
+  const delivery = candidate.storyContract.delivery;
+  if (delivery !== undefined) {
+    if (candidate.opening.item === undefined || candidate.opening.item.key !== delivery.itemKey
+      || !validLocalStoryKey(delivery.itemKey)
+      || !validLocalStoryKey(delivery.recipientKey)
+      || delivery.verificationFactKeys.length === 0
+      || new Set(delivery.verificationFactKeys).size !== delivery.verificationFactKeys.length
+      || delivery.verificationFactKeys.some((key) => !validLocalStoryKey(key) || !factKeys.has(key))) {
+      issues.push({ code: "invalid_delivery_contract", params: { key: delivery.itemKey } });
     }
   }
 

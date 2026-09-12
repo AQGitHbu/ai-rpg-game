@@ -247,6 +247,46 @@ function buildPendingStoryState(): StoryState {
 describe("performTurn 单次 CAS 提交", () => {
   const talkAction: Action = { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" };
 
+  it("正式放弃主线只提交一次 A，并创建无焦点 NPC 的 story_exit pending job", async () => {
+    const world = buildWorldWithMainQuest();
+    const base = buildStoryState();
+    if (base.narrative.status !== "ready") throw new Error("expected ready narrative fixture");
+    const abandon = createApprovedChoice({
+      sceneId: base.narrative.currentScene.sceneId,
+      basedOnRevision: 0,
+      label: "放弃这项委托",
+      action: { type: "abandon_quest", questId: asQuestId("quest_0") },
+    });
+    if (!abandon.ok) throw new Error("abandon choice fixture invalid");
+    const story: StoryState = {
+      ...base,
+      narrative: {
+        ...base.narrative,
+        currentScene: { ...base.narrative.currentScene, choices: [{ choiceToken: abandon.choice.choiceToken, label: abandon.choice.label }] },
+        choiceRegistry: [abandon.choice],
+      },
+    };
+    const { repo, applyCalls, record } = createSpyRepo(world, story);
+
+    const result = await performTurn({
+      gameId: asGameId("g1"),
+      actionId: "act_abandon",
+      interaction: { kind: "fixed_choice", choiceToken: abandon.choice.choiceToken },
+      expectedRevision: 0,
+      choiceMap: new Map([[abandon.choice.choiceToken, abandon.choice.action]]),
+    }, { repository: repo, now: () => "2026-01-02" });
+
+    expect(result.ok).toBe(true);
+    expect(applyCalls()).toHaveLength(1);
+    const saved = record();
+    expect(saved?.worldState.eventLedger.some((event) => event.kind === "quest_abandoned")).toBe(true);
+    const job = saved?.storyState.narrative.status === "provider_pending" ? saved.storyState.narrative.job : undefined;
+    expect(job?.generationKind).toBe("story_exit");
+    expect(job?.sceneRequestKind).toBe("story_exit");
+    expect(job?.focusNpcId).toBeUndefined();
+    expect(job?.actionSummary).toEqual({ kind: "abandon_quest", questId: "quest_0" });
+  });
+
   it("最终正式选择结算结局后仍创建 pending，由叙事包生成最终文本", async () => {
     const finalWorld = buildWorldState({
       quests: [{

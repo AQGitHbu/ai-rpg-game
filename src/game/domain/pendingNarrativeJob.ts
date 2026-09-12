@@ -6,6 +6,7 @@ import type {
   ItemId,
   LocationId,
   NpcId,
+  QuestId,
 } from "./worldEntity";
 import type { Action } from "./action";
 import { MAX_MANDATORY_BEATS, type MandatoryNarrativeBeat, type ObjectiveTransition } from "./narrativeBeat";
@@ -52,7 +53,7 @@ export function classifyProviderDecisionBoundary(
   // Formal fixed choice: must be a talk action with a fixed_choice interaction
   // that has been proven to belong to the current formal decision.
   if (
-    input.action.type === "talk"
+    (input.action.type === "talk" || input.action.type === "abandon_quest")
     && input.interactionKind === "fixed_choice"
     && input.fixedChoiceIsCurrentFormalDecision
   ) {
@@ -77,16 +78,18 @@ export const PROVIDER_GENERATION_KINDS = [
   "opening",
   "npc_fixed_choice",
   "npc_free_text",
+  "story_exit",
 ] as const;
 
 export type ProviderGenerationKind = (typeof PROVIDER_GENERATION_KINDS)[number];
 
 /** 场景请求种类：与 generationKind 配对，决定 prompt 路由。 */
-export type NarrativeSceneRequestKind = "opening" | "npc_response" | "npc_handoff";
+export type NarrativeSceneRequestKind = "opening" | "npc_response" | "npc_handoff" | "story_exit";
 const NARRATIVE_SCENE_REQUEST_KINDS = [
   "opening",
   "npc_response",
   "npc_handoff",
+  "story_exit",
 ] as const satisfies readonly NarrativeSceneRequestKind[];
 
 /** 合法的 generationKind + sceneRequestKind 配对。 */
@@ -94,6 +97,7 @@ const VALID_KIND_PAIRS: ReadonlyMap<string, readonly NarrativeSceneRequestKind[]
   ["opening", ["opening"]],
   ["npc_fixed_choice", ["npc_response", "npc_handoff"]],
   ["npc_free_text", ["npc_response", "npc_handoff"]],
+  ["story_exit", ["story_exit"]],
 ]);
 
 function isValidKindPair(
@@ -124,6 +128,7 @@ export type StructuredActionSummary =
   | { readonly kind: "investigate"; readonly factId: FactId }
   | { readonly kind: "take_item"; readonly itemId: ItemId }
   | { readonly kind: "give_item"; readonly itemId: ItemId; readonly npcId: NpcId }
+  | { readonly kind: "abandon_quest"; readonly questId: QuestId }
   | { readonly kind: "attack"; readonly enemyId: EnemyId }
   | { readonly kind: "battle_action"; readonly action: "attack" | "skill" | "guard" | "flee" }
   | { readonly kind: "ack_prologue" }

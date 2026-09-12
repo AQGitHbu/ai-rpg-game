@@ -64,6 +64,9 @@ export function isActionReleased(
     case "give_item":
       return isObjectiveEntityReleased(worldState, storyState, (objective) =>
         objective.kind === "obtain_item" && String(objective.itemId) === String(action.itemId));
+    case "abandon_quest":
+      return worldState.quests.some((quest) => quest.id === action.questId && quest.kind === "main" && quest.status === "active")
+        && (storyState.reveal === undefined || storyState.reveal === null || String(storyState.reveal.questId) === String(action.questId));
     case "attack":
       return isObjectiveEntityReleased(worldState, storyState, (objective) =>
         objective.kind === "defeat_enemy" && String(objective.enemyId) === String(action.enemyId));

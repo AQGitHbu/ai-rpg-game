@@ -892,6 +892,42 @@ describe("createNarrativeBundleSource", () => {
     expect(result.proposal.worldDelta).toMatchObject({ endingPair: [{ themeKey: "trust" }, { themeKey: "doubt" }] });
   });
 
+  it("为 story_exit 归一化无 NPC 的退出终局，不把 provider 选项变成第二次行动", async () => {
+    const complete = vi.fn().mockResolvedValue({
+      ok: true,
+      content: JSON.stringify({
+        worldDelta: null,
+        currentScene: {
+          segments: [{ beatId: "atmosphere", text: "你转身离开了这段委托。" }],
+          npcLine: null,
+          objectiveLink: null,
+          choices: [{ candidateId: "untrusted", label: "继续" }],
+        },
+        continuationScenes: [],
+        terminal: { kind: "next_decision", target: { kind: "current_scene" } },
+      }),
+    });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+
+    const result = await source.generate({
+      kind: "decision",
+      worldState: makeWorldState(),
+      storyState: makeStoryState(),
+      job: {
+        ...makeJob(),
+        actionSummary: { kind: "abandon_quest", questId: "quest_exit" as never },
+        focusNpcId: undefined,
+        generationKind: "story_exit",
+        sceneRequestKind: "story_exit",
+      },
+    });
+
+    expect(result).toMatchObject({ ok: true, kind: "decision" });
+    if (!result.ok || result.kind !== "decision") return;
+    expect(result.proposal.currentScene.choices).toEqual([]);
+    expect(result.proposal.terminal).toEqual({ kind: "ending" });
+  });
+
   it("drops only a malformed optional investigation list while keeping a valid next-act delta", async () => {
     const stepKey = `move:loc_dyn_${makeNextActStoryState().evolution.nextLocationOrdinal}`;
     const complete = vi.fn().mockResolvedValue({

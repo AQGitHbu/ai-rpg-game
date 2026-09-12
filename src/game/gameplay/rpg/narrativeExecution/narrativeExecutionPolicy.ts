@@ -42,6 +42,9 @@ export function intentProviderAllowedFor(input: {
 }
 
 export function decideNarrativeExecution(input: NarrativeExecutionInput): NarrativeExecutionDecision {
+  if (input.action.type === "abandon_quest" && input.interactionKind === "fixed_choice") {
+    return { kind: "provider", generationKind: "story_exit", sceneRequestKind: "story_exit" };
+  }
   if (input.interactionKind === "free_text" && input.action.type === "freeform") {
     return { kind: "provider", generationKind: "npc_free_text", sceneRequestKind: "npc_response" };
   }

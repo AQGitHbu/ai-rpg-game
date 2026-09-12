@@ -19,6 +19,7 @@ import { asEventId } from "@/game/domain/events";
 import { asTurnId } from "@/game/domain/events";
 import { rebuildEpisodicMemory } from "@/game/domain/episodicMemory";
 import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
+import { createMainStoryThread } from "@/game/domain/storyThreads";
 
 function makeWorldContext(need: EvolutionNeed) {
   const locA = asLocationId("loc_a");
@@ -177,6 +178,7 @@ function makeWorldContext(need: EvolutionNeed) {
         events: { opening: 1, expanded: 2, max: 6 },
         hardLimit: { locations: 40, npcs: 30 },
       },
+      threads: [createMainStoryThread("merchant_caravan")],
       unresolvedThreads: ["merchant_caravan"],
       candidateEventPool: [],
       endingAllowed: false,

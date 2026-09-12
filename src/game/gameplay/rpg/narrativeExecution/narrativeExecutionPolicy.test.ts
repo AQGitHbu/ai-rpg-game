@@ -110,6 +110,17 @@ describe("narrative execution provider whitelist", () => {
     })).toEqual({ kind: "rule_only" });
   });
 
+  it("abandon_quest always routes through the provider-owned story exit", () => {
+    expect(decideNarrativeExecution({
+      action: { type: "abandon_quest", questId: "quest_main" as never },
+      interactionKind: "fixed_choice",
+      advancesObjective: true,
+      hasPreparedStep: false,
+      battleWillResolve: false,
+      dialogueWillComplete: false,
+    })).toEqual({ kind: "provider", generationKind: "story_exit", sceneRequestKind: "story_exit" });
+  });
+
   it("allows intent AI only for free text bound to the authoritative focused NPC", () => {
     const npcId = "npc_1" as never;
     expect(intentProviderAllowedFor({
