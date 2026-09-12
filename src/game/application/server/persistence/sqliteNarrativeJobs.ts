@@ -298,7 +298,7 @@ export function createSqliteNarrativeJobs(
           await tx.commit();
           return { ok: true, value: job };
         } finally {
-          tx.close();
+          await tx.close();
         }
       } catch (error) {
         logError("narrativeJobs.start failed", error);
@@ -409,7 +409,7 @@ export function createSqliteNarrativeJobs(
             value: { jobId: input.id, owner: input.owner, fence: nextFence, expiresAt: input.expiresAt },
           };
         } finally {
-          tx.close();
+          await tx.close();
         }
       } catch (error) {
         logError("narrativeJobs.claim failed", error);
@@ -442,7 +442,7 @@ export function createSqliteNarrativeJobs(
             value: { ...input.lease, expiresAt: input.expiresAt },
           };
         } finally {
-          tx.close();
+          await tx.close();
         }
       } catch (error) {
         logError("narrativeJobs.renew failed", error);
@@ -467,7 +467,7 @@ export function createSqliteNarrativeJobs(
           await tx.commit();
           return { ok: true, value: true };
         } finally {
-          tx.close();
+          await tx.close();
         }
       } catch (error) {
         logError("narrativeJobs.release failed", error);
@@ -535,7 +535,7 @@ export function createSqliteNarrativeJobs(
           await tx.commit();
           return { ok: true, value: nextJob };
         } finally {
-          tx.close();
+          await tx.close();
         }
       } catch (error) {
         logError("narrativeJobs.control failed", error);
@@ -581,7 +581,7 @@ export function createSqliteNarrativeJobs(
           await tx.commit();
           return { ok: true, value: nextJob };
         } finally {
-          tx.close();
+          await tx.close();
         }
       } catch (error) {
         logError("narrativeJobs.save failed", error);
@@ -716,7 +716,7 @@ export function createSqliteNarrativeJobs(
           await tx.commit();
           return { ok: true, value: publishedJob };
         } finally {
-          tx.close();
+          await tx.close();
         }
       } catch (error) {
         logError("narrativeJobs.publish failed", error);

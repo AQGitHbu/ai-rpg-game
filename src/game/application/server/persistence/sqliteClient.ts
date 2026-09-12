@@ -1,4 +1,4 @@
-import { createClient, type Client, type InStatement } from "@libsql/client";
+import { createClient, LibsqlError, type Client, type InArgs, type InStatement, type TransactionMode } from "@libsql/client";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
@@ -15,7 +15,16 @@ if (typeof window !== "undefined") {
 }
 
 /** adapter 层唯一允许使用的 libsql 客户端类型别名：其余文件不得直接 import @libsql/client。 */
-export type SqliteClient = Client;
+export type SqliteTransaction = Readonly<{
+  execute: Client["execute"];
+  commit(): Promise<void>;
+  rollback(): Promise<void>;
+  close(): Promise<void>;
+  closed: boolean;
+}>;
+export type SqliteClient = Omit<Client, "transaction"> & {
+  transaction(mode?: TransactionMode): Promise<SqliteTransaction>;
+};
 
 /** 参数化语句别名：adapter 只能用 args 传值，禁止拼接 SQL 字符串值。 */
 export type SqliteStatement = InStatement;
@@ -50,7 +59,69 @@ function toFileUrl(databasePath: string): string {
 
 /** 创建本地 SQLite 客户端：路径无法打开时同步抛错（由 repository 统一映射失败代码）。 */
 export function createSqliteClient(databasePath: string): SqliteClient {
-  return createClient({ url: toFileUrl(databasePath) });
+  const config = { url: toFileUrl(databasePath) };
+  const parent = createClient(config);
+  async function transaction(mode: TransactionMode = "write"): Promise<SqliteTransaction> {
+    if (parent.closed) throw new LibsqlError("The client is closed", "CLIENT_CLOSED");
+    const begin = mode === "write" ? "BEGIN IMMEDIATE"
+      : mode === "read" ? "BEGIN TRANSACTION READONLY"
+        : mode === "deferred" ? "BEGIN DEFERRED" : null;
+    if (begin === null) throw new RangeError("Unknown transaction mode");
+    // The SDK detaches its native transaction connection without closing it.
+    // Own this connection instead; ordinary statements stay on execute.
+    const owned = createClient(config);
+    try { await owned.execute(begin); }
+    catch (error) {
+      try { owned.close(); }
+      catch (closeError) { throw new AggregateError([error, closeError], "BEGIN and connection close failed"); }
+      throw error;
+    }
+    let terminal: Promise<void> | undefined;
+    let disposed = false;
+    const closedError = () => new LibsqlError("The transaction is closed", "TRANSACTION_CLOSED");
+    function finish(sql: "COMMIT" | "ROLLBACK"): Promise<void> {
+      if (terminal !== undefined) return Promise.reject(closedError());
+      terminal = (async () => {
+        const errors: unknown[] = [];
+        // Fixed terminal SQL uses local SDK db.exec, which finalizes a failed
+        // COMMIT statement and rolls back in finally. Prepared execute(COMMIT)
+        // can retain a lock even after ROLLBACK and native close.
+        try { await owned.executeMultiple(sql); }
+        catch (error) { errors.push(error); }
+        try { owned.close(); }
+        catch (closeError) { errors.push(closeError); }
+        disposed = true;
+        if (errors.length === 1) throw errors[0];
+        if (errors.length > 1) throw new AggregateError(errors, "Transaction termination failed");
+      })();
+      return terminal;
+    }
+    return {
+      async execute(statement: InStatement, args?: InArgs) {
+        if (terminal !== undefined) throw closedError();
+        return typeof statement === "string" && args !== undefined
+          ? owned.execute(statement, args) : owned.execute(statement);
+      },
+      commit: () => finish("COMMIT"),
+      rollback: () => finish("ROLLBACK"),
+      close: () => disposed ? Promise.resolve() : terminal ?? finish("ROLLBACK"),
+      get closed() { return terminal !== undefined; },
+    };
+  }
+  // Parent close affects only the parent; already-started transactions retain
+  // their own connection. Keep SDK receivers for all remaining client methods.
+  return {
+    transaction,
+    execute: parent.execute.bind(parent),
+    batch: parent.batch.bind(parent),
+    migrate: parent.migrate.bind(parent),
+    executeMultiple: parent.executeMultiple.bind(parent),
+    sync: parent.sync.bind(parent),
+    reconnect: parent.reconnect.bind(parent),
+    close: parent.close.bind(parent),
+    get closed() { return parent.closed; },
+    get protocol() { return parent.protocol; },
+  };
 }
 
 /** 生产组合根（Task 3）用的工厂：读 env/默认路径并确保父目录（db/）存在。 */

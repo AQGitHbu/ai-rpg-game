@@ -300,7 +300,7 @@ export function createSqliteGameRepository(
         await tx.commit();
         return { ok: true };
       } finally {
-        tx.close();
+        await tx.close();
       }
     } catch (error) {
       logError("createInitialGame transaction failed, rolled back", error);
@@ -406,7 +406,7 @@ export function createSqliteGameRepository(
         await tx.commit();
         return { ok: true };
       } finally {
-        tx.close();
+        await tx.close();
       }
     } catch (error) {
       logError("replaceCurrentGame transaction failed, rolled back", error);
@@ -536,7 +536,7 @@ export function createSqliteGameRepository(
         await tx.commit();
         return { ok: true, record };
       } finally {
-        tx.close();
+        await tx.close();
       }
     } catch (error) {
       logError("applyState transaction failed, rolled back", error);
@@ -572,7 +572,7 @@ export function createSqliteGameRepository(
         await tx.commit();
         return { ok: true };
       } finally {
-        tx.close();
+        await tx.close();
       }
     } catch (error) {
       logError("clearCurrentGame failed", error);
