@@ -25,6 +25,7 @@
 - Modify: `src/game/domain/openingGenerationCandidate.ts`
 - Modify: `src/game/gameplay/rpg/openingGeneration/validateOpeningGenerationCandidate.ts`、`compileOpeningGenerationCandidate.ts` 及同目录测试
 - Modify: `src/game/application/narrativeGeneration/approvePlanningContext.ts` 及同目录测试
+- Modify: `src/game/application/server/ai/openingGenerationSource.ts` 的 player 字段白名单及对应测试
 - Modify: `docs/agent/NPC人格知识与关系图.md`
 
 **Interfaces:** `OpeningGenerationCandidate.player.knownFactKeys?: readonly string[]`。显式字段决定玩家初始 discovered，不依赖 NPC 已知集合；缺省只保留旧存档/fixture 的原行为，不改变 NPC knowledge。新 live prompt 在 Task 2 要求提供该字段。
@@ -83,6 +84,10 @@ type PolishReviewVerdict = {
 
 The implementation may retain the existing review role name/config and public helper names, but its live request/response must implement only this polish responsibility. Server generates item IDs and maps them to units/candidates; reviewer never chooses scope, fact aspect or a replan route. Facts contain only existing per-unit SafeContext data. Bounded scene/speaker and actual selected-label context may be included to check pronouns and continuity, not global hidden planning data.
 
+**Main reference and planner burden:** Reuse main's creative order: preserve explicit player inputs and established causes, establish the present situation and NPC's need, then write the complete scene and two meaningful direct replies together. Preserve bounded history/novelty, actual selected words, style and the server's scene graph. Historical main published 9/9 in the prior matrix; this is delivery evidence, not proof of perfect dialogue or permissions. Do not copy its permissive legacy text aliases/defaults or restore a second production generator. Remove the current blanket 20–60-character NPC brief restriction; answer length follows the actual question and NPC voice.
+
+Fresh provider output has one content source: `Unit.draft`. It does **not** emit `task` on units or ordinary options, and does not emit unit `taskFactIds`. Ordinary `publicIntent` supplies only the existing facts/evidence/beatIds metadata; it does not duplicate text. A small strict live adapter copies the uniquely matched `draft.labels[].label` into `publicIntent.text`, derives narration/character `taskFactIds` from the unique draft part fact references (choices uses an empty unit-level array), then runs the existing parser and approval chain. Reject supplied duplicate text/task/taskFactIds, missing or mismatched candidate IDs, malformed reference metadata and unsupported keys. Never infer facts from prose or manufacture a draft. Preserve existing internal/storage shapes and legacy parsers. Every draft reference must still pass the independent role/time/knowledge authority; requiredBeats/observations/actions and graph constraints stay independently declared/approved, not inferred from whatever the model happened to write. Option fact references remain in publicIntent so conditions are not reduced to a topic ID. This supersedes the earlier idea of retaining fresh ExpressionTask intent/focus/content/prerequisite scaffolding; those fields are legacy-only.
+
 - [ ] **Step 1: Complete draft and metadata regressions first.** Parse a real complete narration, NPC and both choice drafts; reject mismatched stage/speaker/candidate, missing fresh-live draft, extra polish keys, wrong count/order and overlong labels. Preserve same text if no stylistic change is needed; do not turn task instructions into a draft after generation.
 
 ```ts
@@ -92,7 +97,7 @@ expect(applyPolish(draft, { texts: [], facts: [] }).ok).toBe(false);
 expect(parsePlanProposal(withWrongDraftStage).ok).toBe(false);
 ```
 
-- [ ] **Step 2: Single content authority.** Planning prompt produces `unit.draft` as complete usable text with required metadata; character/choice text is first person, not “问/告诉/描述……”指令。Remove duplicate live brief and inquiries/answers generation requirements, while keeping needed intent/topic/fact/action structure. Ordinary and ending choice drafts both live in the choices unit. Add explicit player.knownFactKeys and preserve selected label in dialogue history; do not reconstruct the question from legacy dimensions. New planner sees actual selected words and same-NPC shown history, deciding the answer and two next choices in one call.
+- [ ] **Step 2: Single content authority.** Planning prompt produces `unit.draft` as complete usable text with required metadata; character/choice text is first person, not “问/告诉/描述……”指令。Remove all fresh task/brief/inquiries/answers and mechanically duplicated reference/text generation requirements as specified above, while keeping needed dialogueAct/topic/fact/action structure. Ordinary and ending choice drafts both live in the choices unit. Add explicit player.knownFactKeys and preserve selected label in dialogue history; do not reconstruct the question from legacy dimensions. New planner sees actual selected words and same-NPC shown history, deciding the answer and two next choices in one call. Measure assembled prompt and output burden against main and the prior staged samples; shorten repeated instructions rather than appending more exceptions.
 
 ```ts
 // A fixed selection remains the exact displayed utterance across persistence/history.
