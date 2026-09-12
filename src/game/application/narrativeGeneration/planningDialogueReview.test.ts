@@ -181,7 +181,7 @@ it("前置审核先扣费保存running，恢复未知结果保留次数和预算
   expect(resumed.value.usedRequests).toBe(resumed.value.baselineRequests + 1);
 });
 
-it.each(["uncertain", "invalid_id"])("前置审核%s两次后失败，所有表达为零", async mode => {
+it.each(["uncertain", "invalid_id"])("前置审核%s分类后有界失败，所有表达为零", async mode => {
   const { h, requests } = await dialogueReviewHarness();
   let count = 0;
   h.source.reviewDialogueConsistency = async () => {
@@ -190,12 +190,13 @@ it.each(["uncertain", "invalid_id"])("前置审核%s两次后失败，所有表�
       : { ok: true, verdict: "reject", violations: [{ checkId: "foreign", type: "intent_mismatch", inquiryId: null }] };
   };
   expect(await h.run()).toMatchObject({ ok: false, code: mode === "uncertain" ? "dialogue_consistency_review_uncertain" : "dialogue_consistency_review_failed" });
-  expect(count).toBe(2);
+  const attempts = mode === "uncertain" ? 1 : 2;
+  expect(count).toBe(attempts);
   expect(requests.filter(r => r.stage !== "planning")).toEqual([]);
   const row = await h.readJob();
   if (!row.ok) throw Error(row.code);
-  expect(row.value.usedRequests).toBe(3);
-  expect(Object.values(row.value.planningDialogueReviews!).every(r => r.status === "failed" && r.attempts === 2)).toBe(true);
+  expect(row.value.usedRequests).toBe(1 + attempts);
+  expect(Object.values(row.value.planningDialogueReviews!).every(r => r.status === "failed" && r.attempts === attempts)).toBe(true);
 });
 
 it("辨认/可信度固定对照保留原始合同，地址不能冒充已编码维度", () => {
@@ -212,4 +213,21 @@ it("辨认/可信度固定对照保留原始合同，地址不能冒充已编码
       expect(routeDialogueReviewVerdict(verdict, compiled).violations[0]?.aspect).toBe(sample.expectedAspect);
     }
   }
+});
+
+it("planning protocol correction includes safe location and never reuses allowance after restart", async () => {
+  const { h, requests } = await dialogueReviewHarness();
+  let count = 0;
+  h.source.reviewDialogueConsistency = async (_request, execution) => {
+    if (++count === 2) expect(execution.repair?.detail).toContain("$.violations[0].checkId");
+    return { ok: true, verdict: "reject", violations: [{ checkId: "private_unknown", type: "intent_mismatch", inquiryId: null }] };
+  };
+  expect(await h.run()).toMatchObject({ ok: false, code: "dialogue_consistency_review_failed" });
+  const row = await h.readJob();
+  if (!row.ok) throw Error(row.code);
+  expect(Object.values(row.value.planningDialogueReviews!).every(r => r.protocolCorrections === 1 && r.attempts === 2)).toBe(true);
+  await h.jobs.save({ lease: h.lease(), expectedVersion: row.value.version, job: { ...row.value, status: "pending" } });
+  expect((await h.run()).ok).toBe(false);
+  expect(count).toBe(2);
+  expect(requests.filter(r => r.stage !== "planning")).toEqual([]);
 });

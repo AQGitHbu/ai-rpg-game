@@ -1,8 +1,9 @@
+import { prepareReviewAttempt, reviewOutcome, type ReviewOutcome } from "./dialogueReviewRecovery";
 import { fail, type Check, type Unit, type UnitOutput } from "@/game/domain/narrativeUnit";
 import type { ApprovedPlan } from "@/game/gameplay/rpg/narrativePlanning";
 import type { StoredJob } from "../server/persistence/narrativeJobRepository";
 import { projectUnitContext, type SafeContext } from "./perspectiveContext";
-import { compileDialogueReviewChecks, parseDialogueReviewVerdict, routeDialogueReviewVerdict,
+import { compileDialogueReviewChecks, routeDialogueReviewVerdict,
   type DialogueReviewSubject, type CompiledDialogueReview } from "./dialogueReviewChecks";
 import { DIALOGUE_REVIEW_VERSION, DIALOGUE_REVIEW_POLICY_REVISION, DIALOGUE_REVIEW_MAX_ATTEMPTS,
   DIALOGUE_REVIEW_CONTEXT_LIMIT, isStoredDialogueReview, shouldReviewDialogueConsistency } from "./dialogueConsistencyReview";
@@ -127,42 +128,55 @@ export async function runPlanningDialogueReview(input: {
   for (;;) {
     const job = input.getJob();
     if (input.signal.aborted) return fail("JOB_ABORTED");
-    const attempts = Math.max(...pending.map(p => {
-      const r = job.planningDialogueReviews?.[p.unitKey]; return r?.cycle === job.cycle ? r.attempts : 0;
-    }));
-    if (attempts >= DIALOGUE_REVIEW_MAX_ATTEMPTS) return fail("dialogue_consistency_review_exhausted");
+    const prepared = pending.map(p => {
+      const previous = job.planningDialogueReviews?.[p.unitKey];
+      const sameCycle = previous?.cycle === job.cycle ? previous : undefined;
+      return prepareReviewAttempt({ ...sameCycle, version: DIALOGUE_REVIEW_VERSION, cycle: job.cycle,
+        inputDigest: p.digest, attempts: sameCycle?.attempts ?? 0, status: sameCycle?.status ?? "pending", passDigest: undefined });
+    });
+    for (const attempt of prepared) if (!attempt.ok) return fail(attempt.code);
     const budget = canStartRequest({ job, unitAttempts: 0, now: input.now() });
     if (!budget.ok) return budget;
-    const update = (current: StoredJob, status: Receipt["status"], pass: boolean, violations?: Receipt["violations"]): StoredJob => ({
+    const update = (current: StoredJob, status: Receipt["status"], pass: boolean,
+      violations?: Receipt["violations"], outcome?: ReviewOutcome): StoredJob => ({
       ...current, planningDialogueReviews: { ...current.planningDialogueReviews,
-        ...Object.fromEntries(pending.map(p => [p.unitKey, { version: DIALOGUE_REVIEW_VERSION, cycle: current.cycle,
-          inputDigest: p.digest, attempts: attempts + 1, status,
-          ...(pass ? { passDigest: p.digest } : {}), ...(violations?.length ? { violations } : {}) }])) },
+        ...Object.fromEntries(pending.map((p, index) => {
+          const attempt = prepared[index]!;
+          if (!attempt.ok) throw Error("unprepared review");
+          return [p.unitKey, { ...attempt.receipt, status, passDigest: pass ? p.digest : undefined,
+            violations: pass ? undefined : violations ?? attempt.receipt.violations,
+            ...(outcome === undefined ? {} : { protocolIssue: outcome.issue,
+              lastFailure: outcome.failure ?? (outcome.verdict?.verdict === "uncertain" ? "uncertain"
+                : outcome.verdict?.verdict === "reject" ? "exhausted" : undefined) }) }];
+        })) },
     });
     const charged = await input.persist(current => ({ ...update(current, "running", false), usedRequests: current.usedRequests + 1 }));
     if (charged !== true) return fail(charged);
-    let verdict = null;
+    let outcome: ReviewOutcome;
     try {
       const result = await input.source.reviewDialogueConsistency(compiled.request, {
+        repair: prepared.flatMap(p => p.ok && p.repair ? [p.repair] : [])[0],
         signal: input.signal, timeoutMs: Math.max(1, Math.min(30_000, Date.parse(job.deadline) - Date.parse(input.now()))),
         audit: { purpose: "staged_narrative_generation", trigger: "dialogue_consistency_planning_review", jobId: job.id,
           cycle: job.cycle, inputDigest: narrativeInputDigest(pending.map(p => p.digest)) },
       });
-      verdict = result.ok ? parseDialogueReviewVerdict({ verdict: result.verdict, violations: result.violations }, compiled.request) : null;
-    } catch { /* provider/protocol failure stays bounded by the same review attempt limit */ }
+      outcome = reviewOutcome(result, compiled.request);
+    } catch { outcome = { verdict: null, failure: "provider_failure" }; }
+    const verdict = outcome.verdict;
     if (input.signal.aborted) return fail("JOB_ABORTED");
     if (input.now() >= job.deadline) return fail("job_deadline_exceeded");
     const rejected = verdict?.verdict === "reject";
     const passed = verdict?.verdict === "pass";
     const routed = verdict === null ? undefined : routeDialogueReviewVerdict(verdict, compiled).violations;
-    const saved = await input.persist(current => ({ ...update(current, passed ? "approved" : "failed", passed, routed),
+    const saved = await input.persist(current => ({ ...update(current, passed ? "approved" : "failed", passed, routed, outcome),
       ...(rejected ? { units: current.units.map(u => ({ ...u, status: "pending" as const, value: null,
         disclosureReviewDigest: undefined })) } : {}),
     }));
     if (saved !== true) return fail(saved);
     if (passed) return { ok: true, value: true };
     if (rejected) return fail("dialogue_consistency_planning_contract");
-    if (attempts + 1 >= DIALOGUE_REVIEW_MAX_ATTEMPTS)
-      return fail(verdict === null ? "dialogue_consistency_review_failed" : "dialogue_consistency_review_uncertain");
+    if (outcome.failure === "provider_failure") return fail("AI_CALL_FAILED");
+    if (verdict?.verdict === "uncertain") return fail("dialogue_consistency_review_uncertain");
+    if (prepared.some(p => p.ok && p.receipt.protocolCorrections === 1)) return fail("dialogue_consistency_review_failed");
   }
 }

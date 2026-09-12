@@ -23,7 +23,7 @@ import { buildCharacterPrompt } from "./characterPrompt";
 import { buildChoicePrompt } from "./choicePrompt";
 import { buildDialogueConsistencyReviewPrompt } from "./dialogueConsistencyReviewPrompt";
 import { DIALOGUE_REVIEW_CONTEXT_LIMIT } from "@/game/application/narrativeGeneration/dialogueConsistencyReview";
-import { parseDialogueReviewVerdict } from "@/game/application/narrativeGeneration/dialogueReviewChecks";
+import { validateDialogueReviewVerdict, reviewProtocolDetail } from "@/game/application/narrativeGeneration/dialogueReviewChecks";
 import { buildDisclosureReviewPrompt } from "./disclosureReviewPrompt";
 import { plannedReplyRejection, repeatedNpcResponseUnits } from "@/game/application/narrativeGeneration/dialogueContinuity";
 
@@ -91,13 +91,15 @@ export function createLiveStageSource(options: CreateLiveStageSourceOptions): St
       if ([...JSON.stringify(request)].length > DIALOGUE_REVIEW_CONTEXT_LIMIT)
         return invalidContent("dialogue_consistency_context_limit");
       const response = await options.client.complete("dialogue_consistency_review",
-        [{ role: "user", content: buildDialogueConsistencyReviewPrompt(request) }], execution.audit,
+        [{ role: "user", content: buildDialogueConsistencyReviewPrompt(request, execution.repair) }], execution.repair === undefined ? execution.audit
+          : { ...execution.audit, retry: aiRepairAuditContext(execution.repair, execution.audit.retry) },
         { signal: execution.signal, timeoutMs: Math.min(30_000, execution.timeoutMs) });
       if (!response.ok) return providerFailure(response);
-      if ([...response.content].length > 4_000) return invalidContent("dialogue_consistency_review_invalid");
+      if ([...response.content].length > 4_000) return invalidContent("dialogue_consistency_review_invalid", reviewProtocolDetail({ code: "response_too_long", path: "$" }));
       const parsed = parseStructuredJsonObject(response.content);
-      const verdict = parsed.ok ? parseDialogueReviewVerdict(parsed.value, request) : null;
-      return verdict === null ? invalidContent("dialogue_consistency_review_invalid") : { ok: true, ...verdict };
+      const verdict = parsed.ok ? validateDialogueReviewVerdict(parsed.value, request)
+        : { ok: false as const, issue: { code: "invalid_json" as const, path: "$" } };
+      return !verdict.ok ? invalidContent("dialogue_consistency_review_invalid", reviewProtocolDetail(verdict.issue)) : { ok: true, ...verdict.value };
     },
     async reviewDisclosure(request, execution) {
       const prompt = buildDisclosureReviewPrompt(request);

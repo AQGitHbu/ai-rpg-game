@@ -1,3 +1,5 @@
+import { isReviewProtocolIssue } from "./dialogueReviewChecks";
+import { REVIEW_MAX_REQUESTS } from "./dialogueReviewRecovery";
 import { validatePlanningDialogueReviews } from "./planningDialogueReview";
 import { narrativeInputDigest } from "./narrativeInputDigest";
 import { INQUIRY_ASPECTS, type InquiryAspect } from "@/game/domain/expressionTask";
@@ -11,8 +13,8 @@ import { compileDialogueReviewChecks, type CompiledDialogueReview, type Dialogue
 
 export const DIALOGUE_REVIEW_VERSION = 1;
 /** Bump whenever review policy/prompt changes; storage schema remains readable. */
-export const DIALOGUE_REVIEW_POLICY_REVISION = 4;
-export const DIALOGUE_REVIEW_MAX_ATTEMPTS = 2;
+export const DIALOGUE_REVIEW_POLICY_REVISION = 5;
+export const DIALOGUE_REVIEW_MAX_ATTEMPTS = REVIEW_MAX_REQUESTS;
 export const DIALOGUE_REVIEW_CONTEXT_LIMIT = 16_000;
 export type DialogueViolation = Readonly<{
   scope: "expression" | "planning" | "legacy";
@@ -148,9 +150,15 @@ export function isStoredDialogueReview(value: unknown): boolean {
   if (value === undefined) return true;
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   const r = value as Record<string, unknown>;
-  return Object.keys(r).every(key => ["version", "cycle", "inputDigest", "attempts", "status", "passDigest", "violations"].includes(key))
+  return Object.keys(r).every(key => ["version", "cycle", "inputDigest", "attempts", "status", "passDigest", "violations", "protocolCorrections", "contentRepairs", "lastFailure", "protocolIssue"].includes(key))
     && r.version === DIALOGUE_REVIEW_VERSION && Number.isInteger(r.cycle) && Number(r.cycle) >= 0
     && Number.isInteger(r.attempts) && Number(r.attempts) >= 0 && Number(r.attempts) <= DIALOGUE_REVIEW_MAX_ATTEMPTS
+    && ((r.protocolCorrections === undefined && r.contentRepairs === undefined && Number(r.attempts) <= 2)
+      || ([r.protocolCorrections, r.contentRepairs].every(n => n === 0 || n === 1)
+        && Number(r.protocolCorrections) + Number(r.contentRepairs) <= Number(r.attempts)
+        && Number(r.attempts) <= 1 + Number(r.protocolCorrections) + Number(r.contentRepairs)))
+    && (r.lastFailure === undefined || ["protocol_error", "provider_failure", "uncertain", "outcome_unknown", "content_recheck", "exhausted"].includes(r.lastFailure as string))
+    && (r.protocolIssue === undefined || isReviewProtocolIssue(r.protocolIssue))
     && typeof r.inputDigest === "string" && /^[a-f0-9]{64}$/.test(r.inputDigest)
     && ["pending", "running", "approved", "failed", "unknown"].includes(r.status as string)
     && (r.passDigest === undefined || (r.status === "approved" && typeof r.passDigest === "string" && /^[a-f0-9]{64}$/.test(r.passDigest)))

@@ -49,6 +49,9 @@ export type StoredJob = {
   readonly dialogueConsistencyReview?: Readonly<{
     version: 1; cycle: number; inputDigest: string; attempts: number;
     status: StoredUnitStatus; passDigest?: string;
+    protocolCorrections?: number; contentRepairs?: number;
+    lastFailure?: "protocol_error" | "provider_failure" | "uncertain" | "outcome_unknown" | "content_recheck" | "exhausted";
+    protocolIssue?: import("../../narrativeGeneration/dialogueReviewChecks").ReviewProtocolIssue;
     violations?: readonly import("../../narrativeGeneration/dialogueConsistencyReview").DialogueViolation[];
   }>;
   readonly schemaVersion: 1;

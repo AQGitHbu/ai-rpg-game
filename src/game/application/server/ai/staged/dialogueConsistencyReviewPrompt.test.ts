@@ -52,3 +52,19 @@ it("16000 Unicode码点上限不能截断待审内容，超限不请求", async 
   expect(JSON.stringify(result)).toContain("dialogue_consistency_context_limit");
   expect(complete).toHaveBeenCalledTimes(1);
 });
+
+it("source diagnosis is rendered in second review prompt and audit without private model values", async () => {
+  const { repairFromSourceFailure } = await import("@/game/application/aiGenerationRetry");
+  const complete = vi.fn().mockResolvedValueOnce({ ok: true, content: JSON.stringify({ verdict: "reject", violations: [
+    { checkId: "PRIVATE_MODEL_VALUE", type: "intent_mismatch", inquiryId: null }] }), latencyMs: 1 })
+    .mockResolvedValueOnce({ ok: true, content: '{"verdict":"pass","violations":[]}', latencyMs: 1 });
+  const source = createLiveStageSource({ client: { complete } as unknown as RpgAiClient });
+  const first = await source.reviewDialogueConsistency!(request, execution);
+  if (first.ok) throw Error("expected invalid");
+  await source.reviewDialogueConsistency!(request, { ...execution, repair: repairFromSourceFailure(first, 1) });
+  const second = complete.mock.calls[1]!;
+  expect(second[1][0].content).toContain("$.violations[0].checkId");
+  expect(second[1][0].content).toContain("unknown_checkId");
+  expect(second[1][0].content).not.toContain("PRIVATE_MODEL_VALUE");
+  expect(second[2].retry).toMatchObject({ attempt: 1, reason: "dialogue_consistency_review_invalid" });
+});

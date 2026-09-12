@@ -68,31 +68,52 @@ export function compileDialogueReviewChecks(subjects: readonly DialogueReviewSub
   return { request: { version: 1, checks }, routes };
 }
 
-/** Exact wire schema, then check-local type and inquiry allowlists. No model-owned repair routing. */
-export function parseDialogueReviewVerdict(value: unknown, request: DialogueReviewRequest): DialogueReviewVerdict | null {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+export const REVIEW_PROTOCOL_CODES = ["invalid_schema", "unknown_checkId", "foreign_inquiryId", "duplicate_plan_checkId", "invalid_type", "invalid_inquiryId", "invalid_json", "response_too_long"] as const;
+export type ReviewProtocolIssue = Readonly<{ code: typeof REVIEW_PROTOCOL_CODES[number]; path: string }>;
+export function isReviewProtocolIssue(value: unknown): value is ReviewProtocolIssue {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const r = value as Record<string, unknown>;
+  return Object.keys(r).length === 2 && REVIEW_PROTOCOL_CODES.includes(r.code as ReviewProtocolIssue["code"])
+    && typeof r.path === "string" && /^(\$|\$\.violations\[[0-7]\](\.(checkId|inquiryId|type))?)$/.test(r.path);
+}
+/** Server-owned path and error type only; unknown model keys/values are never echoed. */
+export function reviewProtocolDetail(issue: ReviewProtocolIssue): string {
+  return JSON.stringify({ ...issue, allowedKeys: ["verdict", "violations"],
+    violationKeys: ["checkId", "type", "inquiryId"], rule: "Use only this checkId's inquiryId allowlist; one witness per plan checkId." });
+}
+/** One validator for source and runner, including actionable protocol diagnostics. */
+export function validateDialogueReviewVerdict(value: unknown, request: DialogueReviewRequest):
+  { ok: true; value: DialogueReviewVerdict } | { ok: false; issue: ReviewProtocolIssue } {
+  const invalid = (code: ReviewProtocolIssue["code"] = "invalid_schema", path = "$") => ({ ok: false as const, issue: { code, path } });
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return invalid();
   const r = value as Record<string, unknown>;
   if (Object.keys(r).some(k => !["verdict", "violations"].includes(k))
     || !["pass", "reject", "uncertain"].includes(r.verdict as string) || !Array.isArray(r.violations)
-    || r.violations.length > 8 || (r.verdict === "reject" ? r.violations.length === 0 : r.violations.length !== 0)) return null;
+    || r.violations.length > 8 || (r.verdict === "reject" ? r.violations.length === 0 : r.violations.length !== 0)) return invalid();
   const planWitnesses = new Set<string>();
-  for (const v of r.violations) {
+  for (const [index, v] of r.violations.entries()) {
+    const path = `$.violations[${index}]`;
     if (v === null || typeof v !== "object" || Array.isArray(v)
-      || Object.keys(v).length !== 3 || Object.keys(v).some(k => !["checkId", "type", "inquiryId"].includes(k))) return null;
+      || Object.keys(v).length !== 3 || Object.keys(v).some(k => !["checkId", "type", "inquiryId"].includes(k))) return invalid("invalid_schema", path);
     const check = request.checks.find(c => c.checkId === v.checkId);
-    if (check === undefined || !["extra_inquiry", "missing_response", "answer_mismatch", "intent_mismatch"].includes(v.type)) return null;
+    if (check === undefined) return invalid("unknown_checkId", `${path}.checkId`);
+    if (!["extra_inquiry", "missing_response", "answer_mismatch", "intent_mismatch"].includes(v.type)) return invalid("invalid_type", `${path}.type`);
     if (check.kind === "plan_answer" || check.kind === "plan_option") {
-      if (planWitnesses.has(check.checkId)) return null;
+      if (planWitnesses.has(check.checkId)) return invalid("duplicate_plan_checkId", `${path}.checkId`);
       planWitnesses.add(check.checkId);
     }
-    if (v.type === "intent_mismatch") { if (v.inquiryId !== null) return null; continue; }
-    if (typeof v.inquiryId !== "string") return null;
+    if (v.type === "intent_mismatch") { if (v.inquiryId !== null) return invalid("invalid_inquiryId", `${path}.inquiryId`); continue; }
+    if (typeof v.inquiryId !== "string") return invalid("invalid_inquiryId", `${path}.inquiryId`);
+    if (!check.inquiryTargets.some(q => q.inquiryId === v.inquiryId)) return invalid("foreign_inquiryId", `${path}.inquiryId`);
     const required = check.inquiries.some(q => q.inquiryId === v.inquiryId);
-    if (v.type === "extra_inquiry") {
-      if (required || !check.inquiryTargets.some(q => q.inquiryId === v.inquiryId)) return null;
-    } else if (!required || (v.type === "answer_mismatch" && check.kind !== "answer" && check.kind !== "plan_answer")) return null;
+    if (v.type === "extra_inquiry" ? required : !required || (v.type === "answer_mismatch" && check.kind !== "answer" && check.kind !== "plan_answer"))
+      return invalid("invalid_inquiryId", `${path}.inquiryId`);
   }
-  return r as unknown as DialogueReviewVerdict;
+  return { ok: true, value: r as unknown as DialogueReviewVerdict };
+}
+export function parseDialogueReviewVerdict(value: unknown, request: DialogueReviewRequest): DialogueReviewVerdict | null {
+  const result = validateDialogueReviewVerdict(value, request);
+  return result.ok ? result.value : null;
 }
 
 /** The runner revalidates before calling this mapper; only server-compiled routes survive. */

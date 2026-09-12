@@ -464,3 +464,20 @@ describe("createLiveStageSource", () => {
     expect(prompt).toContain("json_object是传输格式设置");
   });
 });
+
+it("urban character extra type feedback survives source and next expression prompt", async () => {
+  // Source: urban character response in staged-retest-20260912; protocol defect only.
+  const output = { stage: "character", type: "json_object", private_secret_key: "PRIVATE_BODY", parts: [] };
+  const { client, calls } = recordingClient([OK_JSON(output), OK_JSON(output)]);
+  const source = createLiveStageSource({ client });
+  const request = { stage: "character" as const, context: contextFor(approvedPlan(), FIXTURE_NPC_A_UNIT) };
+  const execution = executionWith(new AbortController().signal);
+  const first = await source.generate(request, execution);
+  if (first.ok) throw Error("expected failure");
+  expect(first.repairDetail).toContain("$.type");
+  expect(first.repairDetail).toContain("allowedKeys");
+  expect(first.repairDetail).not.toMatch(/PRIVATE_BODY|private_secret_key/);
+  const { repairFromSourceFailure } = await import("@/game/application/aiGenerationRetry");
+  await source.generate(request, { ...execution, repair: repairFromSourceFailure(first, 1) });
+  expect(calls[1]!.messages.map(m => m.content).join("\n")).toContain(first.repairDetail!);
+});

@@ -592,3 +592,28 @@ it.each([null, [], { choices_current: { version: 1, cycle: 0, inputDigest: "a".r
       requestId: `planning-review-${job.id}`, digest: job.inputDigest });
     expect(await stores.jobs.get(job.id)).toMatchObject({ ok: false, code: "UNSUPPORTED_JOB" });
   });
+
+it("SQLite reopen preserves final and planning protocol recovery counters and safe diagnostic", async () => {
+  const path = nextDbPath();
+  const stores = openStores(path);
+  const job = decisionJob();
+  const receipt = { version: 1 as const, cycle: 0, inputDigest: "a".repeat(64), attempts: 2,
+    status: "failed" as const, protocolCorrections: 1, contentRepairs: 0,
+    lastFailure: "protocol_error" as const,
+    protocolIssue: { code: "foreign_inquiryId" as const, path: "$.violations[0].inquiryId" } };
+  await stores.jobs.start({ job: { ...job, usedRequests: 4, dialogueConsistencyReview: receipt,
+    planningDialogueReviews: { choices_current: receipt } }, requestId: "recovery-counters", digest: job.inputDigest });
+  await stores.jobs.close();
+  const reopened = openStores(path);
+  expect(await reopened.jobs.get(job.id)).toMatchObject({ ok: true, value: { usedRequests: 4,
+    dialogueConsistencyReview: receipt, planningDialogueReviews: { choices_current: receipt } } });
+});
+it.each([{ protocolCorrections: 2 }, { contentRepairs: -1 }, { protocolIssue: { code: "invalid_schema", path: "$.PRIVATE_KEY" } }])(
+  "SQLite rejects corrupt recovery allowances and unsafe paths: %j", async patch => {
+    const stores = openStores(nextDbPath());
+    const job = decisionJob();
+    const receipt = { version: 1, cycle: 0, inputDigest: "a".repeat(64), attempts: 1, status: "failed",
+      protocolCorrections: 0, contentRepairs: 0, ...patch };
+    await stores.jobs.start({ job: { ...job, dialogueConsistencyReview: receipt as never }, requestId: "corrupt-recovery", digest: job.inputDigest });
+    expect(await stores.jobs.get(job.id)).toMatchObject({ ok: false, code: "UNSUPPORTED_JOB" });
+  });

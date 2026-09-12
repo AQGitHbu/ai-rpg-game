@@ -1,3 +1,4 @@
+import { REVIEW_MAX_REQUESTS } from "./dialogueReviewRecovery";
 import { runPlanningDialogueReview, validatePlanningDialogueReviews } from "./planningDialogueReview";
 // 可恢复 DAG 调度（Plan 2026-09-09 / Task 8）。
 //
@@ -274,7 +275,8 @@ async function runJobWithinDeadline(input: RunJobInput, deps: RunJobDeps): Promi
     && job.dialogueConsistencyReview.violations?.some(v => v.scope === "planning"))
     return failJob("dialogue_consistency_planning_contract");
   if (job.dialogueConsistencyReview?.cycle === job.cycle && job.dialogueConsistencyReview.status !== "approved"
-    && job.dialogueConsistencyReview.attempts >= 2) return failJob("dialogue_consistency_review_exhausted");
+    && (job.dialogueConsistencyReview.lastFailure === "exhausted" || job.dialogueConsistencyReview.attempts >= REVIEW_MAX_REQUESTS
+      || (job.dialogueConsistencyReview.attempts > 0 && job.dialogueConsistencyReview.protocolCorrections === undefined))) return failJob("dialogue_consistency_review_exhausted");
 
   // -----------------------------------------------------------------------
   // planning：固定逻辑 key，成功后 approvePlan 并铸造表达单元。

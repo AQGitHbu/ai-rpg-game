@@ -1,6 +1,7 @@
+import { renderAiRepairFeedback, type AiContentRepair } from "@/game/application/aiGenerationRetry";
 import type { DialogueConsistencyReviewRequest } from "@/game/application/narrativeGeneration/dialogueConsistencyReview";
 
-export function buildDialogueConsistencyReviewPrompt(request: DialogueConsistencyReviewRequest): string {
+export function buildDialogueConsistencyReviewPrompt(request: DialogueConsistencyReviewRequest, repair?: AiContentRepair): string {
   const planningOnly = request.checks.every(check => check.kind === "plan_answer" || check.kind === "plan_option");
   const planningFocus = planningOnly ? `本次只审核表达前的规划合同；没有实际成稿。对每个plan_option，先根据brief的实际含义判断它索取了什么事实信息，再逐项对照inquiries是否编码；不能倒过来因为inquiries为空便假定没有问题。陈述句中的要求说明、质疑后要求交代具体人物或事件同样可能索取信息，不以问号或关键词判定。
 brief写出了问题、intent=ask/challenge、facts含话题或inquiryTargets提供地址，都不能代替inquiries编码。inquiries=[]且brief确实索取可定位的事实信息，必须reject extra_inquiry；从本项inquiryTargets选择对应factId/aspect的地址。只报告由具体含义独立支持的维度，不列举所有可能维度。“认不认得某物/见过谁佩戴”是辨认、身份或接触经历，不等于消息真假；reliability仅指说法是否真实或可信。不能把不熟悉、认不出或不知道出处额外标为reliability。每个计划check最多报告一条你最确信且足以拒绝的违规，作为最小反例；不要求穷举维度。多个问题也只报告一个确信遗漏的维度，其他维度不确定不影响已确定违规。先判断是否违规，再定位；不能因报告地址多便把它们当成已批准问题。
@@ -18,5 +19,5 @@ intent按话语目的判断：offer是自己提出协助；support是表明支�
 prerequisiteFactIds是已批准的先核实条件，只允许核实自己brief/facts中的已授权说法，不等同新增开放问题，不要求复制到inquiries，也不能扩展来源、时间等维度。动作提议“沿着脚印方向一起排查”没有询问方向。
 只返回JSON对象{"verdict":"pass|reject|uncertain","violations":[]}。pass/uncertain的violations必须为空；reject必须1至8项。每项严格为{"checkId":"该检查项给定的ID","type":"extra_inquiry|missing_response|answer_mismatch|intent_mismatch","inquiryId":"该项给定的问题ID或JSON null"}。
 intent_mismatch必须inquiryId=null；其余类型必须使用合法inquiryId。answer_mismatch只用于answer/plan_answer中已有问题的回答结果不符。禁止返回scope、unitKey、candidateId、aspect、解释、引用、改写、执行指令或其他字段；修复层级和目标完全由服务器决定。无法确信必须uncertain。通过不构成语义的数学保证。
-审核数据JSON：\n${JSON.stringify(request)}`;
+审核数据JSON：\n${JSON.stringify(request)}\n${renderAiRepairFeedback(repair)}`;
 }

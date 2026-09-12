@@ -332,6 +332,10 @@ export function parseUnit(value: unknown): Unit | null {
 }
 
 /** 逐字段重建生成单元输出；未知字段、越界长度和未知枚举一律拒绝。 */
+function unknownOutputKey(raw: Record<string, unknown>, allowedKeys: readonly string[]): Check<never> {
+  return failWithDetail("unit_output_unknown_key", JSON.stringify({ error: "unknown_key",
+    path: Object.hasOwn(raw, "type") ? "$.type" : "$", allowedKeys }));
+}
 export function parseUnitOutput(raw: unknown): Check<UnitOutput> {
   if (!isPlainRecord(raw)) return fail("unit_output_not_object");
   const stage = raw.stage;
@@ -341,7 +345,7 @@ export function parseUnitOutput(raw: unknown): Check<UnitOutput> {
   }
 
   if (stage === "narration") {
-    if (!hasOnlyKeys(raw, ["stage", "parts", "actionKeys"])) return fail("unit_output_unknown_key");
+    if (!hasOnlyKeys(raw, ["stage", "parts", "actionKeys"])) return unknownOutputKey(raw, ["stage", "parts", "actionKeys"]);
     const parts = parseTextParts(raw.parts);
     if (parts === null) return fail("unit_output_parts_invalid");
     const actionKeys = parseKeys(raw.actionKeys);
@@ -351,7 +355,7 @@ export function parseUnitOutput(raw: unknown): Check<UnitOutput> {
 
   if (stage === "character") {
     if (!hasOnlyKeys(raw, ["stage", "speakerId", "parts", "emotion", "actions", "answeredBeatIds"])) {
-      return fail("unit_output_unknown_key");
+      return unknownOutputKey(raw, ["stage", "speakerId", "parts", "emotion", "actions", "answeredBeatIds"]);
     }
     const speakerId = parseKey(raw.speakerId);
     if (speakerId === null) return fail("unit_output_speaker_invalid");
@@ -382,7 +386,7 @@ export function parseUnitOutput(raw: unknown): Check<UnitOutput> {
     };
   }
 
-  if (!hasOnlyKeys(raw, ["stage", "labels"])) return fail("unit_output_unknown_key");
+  if (!hasOnlyKeys(raw, ["stage", "labels"])) return unknownOutputKey(raw, ["stage", "labels"]);
   if (!Array.isArray(raw.labels) || raw.labels.length !== 2) return fail("unit_output_labels_count_invalid");
   const labels: ChoiceLabel[] = [];
   const seen = new Set<string>();
