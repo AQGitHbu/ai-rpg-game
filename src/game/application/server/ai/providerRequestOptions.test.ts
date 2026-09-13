@@ -9,6 +9,20 @@ describe("createProviderRequestOptions", () => {
     });
   });
 
+  it("passes an explicit low DeepSeek reasoning effort only with thinking enabled", () => {
+    expect(createProviderRequestOptions(240_000, undefined, "prompt_only", "on", "low")).toEqual({
+      timeoutMs: 240_000,
+      extraBody: {
+        thinking: { type: "enabled" },
+        reasoning_effort: "low",
+      },
+    });
+    expect(createProviderRequestOptions(240_000, undefined, "prompt_only", "off", "max")).toEqual({
+      timeoutMs: 240_000,
+      extraBody: { thinking: { type: "disabled" } },
+    });
+  });
+
   it("adds a bounded low-temperature completion budget for small runtime JSON", () => {
     expect(createProviderRequestOptions(30_000, 800)).toEqual({
       timeoutMs: 30_000,

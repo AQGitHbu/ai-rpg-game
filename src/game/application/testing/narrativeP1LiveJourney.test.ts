@@ -55,6 +55,11 @@ describe("narrative P1 live journey protocol", () => {
       const protocol = JSON.parse(readFileSync(paths.protocolPath, "utf8")) as Record<string, unknown>;
       expect(protocol.plannedRoutes).toBe(NARRATIVE_P1_PLANNED_ROUTES);
       expect((protocol.input as Record<string, unknown>).characterName).toBe("沈行");
+      expect(protocol.policy).toEqual(expect.objectContaining({
+        authorTimeoutMs: 240_000,
+        reviewTimeoutMs: 240_000,
+        reasoningEffort: "low",
+      }));
       expect(protocol.protocolHash).toEqual(expect.any(String));
     } finally {
       rmSync(paths.root, { recursive: true, force: true });

@@ -20,6 +20,7 @@ export type NarrativeRequestClient = Readonly<{
 
 const AUTHOR_POLICY: Partial<RpgAiRolePolicy> = {
   thinking: "on",
+  reasoningEffort: "low",
   jsonMode: "prompt_only",
   timeoutMs: 240_000,
   maxTokens: undefined,
@@ -28,8 +29,9 @@ const AUTHOR_POLICY: Partial<RpgAiRolePolicy> = {
 const NPC_POLICY: Partial<RpgAiRolePolicy> = AUTHOR_POLICY;
 const REVIEW_POLICY: Partial<RpgAiRolePolicy> = {
   thinking: "on",
+  reasoningEffort: "low",
   jsonMode: "prompt_only",
-  timeoutMs: 120_000,
+  timeoutMs: 240_000,
   maxTokens: undefined,
   maxAttempts: 2,
 };

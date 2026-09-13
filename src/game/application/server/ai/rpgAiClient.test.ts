@@ -80,6 +80,30 @@ describe("createRpgAiClient", () => {
     expect(complete).toHaveBeenCalledTimes(1);
   });
 
+  it("passes the selected DeepSeek reasoning effort through the transport body", async () => {
+    const complete = vi.fn(async (_config, _messages, options) => {
+      expect(options).toEqual({
+        timeoutMs: 45_000,
+        temperature: 0.2,
+        extraBody: {
+          thinking: { type: "enabled" },
+          reasoning_effort: "low",
+          max_tokens: 3_000,
+          response_format: { type: "json_object" },
+        },
+      });
+      return { ok: true as const, content: "{}", latencyMs: 1 };
+    });
+    const client = createRpgAiClient({
+      transport: transportFor(complete),
+      config,
+      policies: { scene: { thinking: "on", reasoningEffort: "low", jsonMode: "json_object" } },
+    });
+
+    await client.complete("scene", messages);
+    expect(complete).toHaveBeenCalledTimes(1);
+  });
+
   it("does not repeat an empty final channel with the same request", async () => {
     const complete = vi.fn(async () => ({
       ok: false as const,

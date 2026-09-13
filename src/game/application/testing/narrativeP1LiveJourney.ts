@@ -99,11 +99,12 @@ export type NarrativeP1Protocol = Readonly<{
   readonly policy: Readonly<{
     readonly jsonMode: "prompt_only";
     readonly thinking: "enabled";
+    readonly reasoningEffort: "low";
     readonly temperature: null;
     readonly maxTokens: null;
     readonly authorTimeoutMs: 240_000;
     readonly npcTimeoutMs: 240_000;
-    readonly reviewTimeoutMs: 120_000;
+    readonly reviewTimeoutMs: 240_000;
     readonly transportAttempts: 2;
   }>;
   readonly budget: Readonly<{
@@ -147,11 +148,12 @@ type RouteArtifact = Readonly<{
 const FIXED_POLICY = Object.freeze({
   jsonMode: "prompt_only" as const,
   thinking: "enabled" as const,
+  reasoningEffort: "low" as const,
   temperature: null,
   maxTokens: null,
   authorTimeoutMs: 240_000 as const,
   npcTimeoutMs: 240_000 as const,
-  reviewTimeoutMs: 120_000 as const,
+  reviewTimeoutMs: 240_000 as const,
   transportAttempts: 2 as const,
 });
 

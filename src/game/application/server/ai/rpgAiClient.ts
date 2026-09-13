@@ -7,13 +7,14 @@ import {
 } from "@ai-game/ai-transport";
 import type { GameLogger } from "@/game/logging";
 import { parseAiRuntimeConfig } from "./aiRuntimeConfig";
-import { createProviderRequestOptions, type ProviderJsonMode, type ProviderThinking } from "./providerRequestOptions";
+import { createProviderRequestOptions, type ProviderJsonMode, type ProviderReasoningEffort, type ProviderThinking } from "./providerRequestOptions";
 import type { AiRetryContext, AiTextAuditContext, AiTextAuditRecorder, AiTextAuditRequestOptions, AiTextAuditRole } from "./textAuditTypes";
 
 export const RPG_AI_ROLES = ["intent", "opening", "scene", "world", "narrative_bundle"] as const;
 /** Reuses the AiTextAuditRole union from textAuditTypes.ts; textAuditTypes never imports rpgAiClient, eliminating a type-cycle. */
 export type RpgAiRole = AiTextAuditRole;
 export type RpgAiThinking = ProviderThinking;
+export type RpgAiReasoningEffort = ProviderReasoningEffort;
 
 /** NPC judgment reuses the existing transport/audit role; only its purpose differs. */
 export const RPG_AI_NPC_DELIBERATION_ROLE: RpgAiRole = "narrative_bundle";
@@ -21,6 +22,7 @@ export const RPG_AI_NPC_DELIBERATION_PURPOSE = "npc_deliberation" as const;
 
 export type RpgAiRolePolicy = Readonly<{
   readonly thinking: RpgAiThinking;
+  readonly reasoningEffort?: RpgAiReasoningEffort;
   readonly timeoutMs: number;
   readonly maxTokens?: number;
   readonly jsonMode: ProviderJsonMode;
@@ -218,6 +220,7 @@ export function createRpgAiClient(options: CreateRpgAiClientOptions): RpgAiClien
           policy.maxTokens,
           policy.jsonMode,
           policy.thinking,
+          policy.reasoningEffort,
           ),
           ...(completeOptions?.signal === undefined ? {} : { signal: completeOptions.signal }),
         };

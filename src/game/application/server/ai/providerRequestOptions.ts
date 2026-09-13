@@ -5,8 +5,10 @@
 /** 只启用已实测兼容的 OpenAI JSON object 模式；strict schema 仍由各角色另行定义。 */
 export type ProviderJsonMode = "json_object" | "prompt_only";
 export type ProviderThinking = "off" | "on";
+/** DeepSeek V4 reasoning_effort values; medium/xhigh are intentionally omitted because the API maps them. */
+export type ProviderReasoningEffort = "low" | "high" | "max";
 
-/** 为所有 RPG live source 统一构建 provider 兼容的非推理请求参数。 */
+/** 为所有 RPG live source 统一构建 provider 兼容的请求参数。 */
 export type ProviderRequestOptions = Readonly<{
   timeoutMs: number;
   temperature?: number;
@@ -23,6 +25,7 @@ export function createProviderRequestOptions(
   maxTokens?: number,
   jsonMode: ProviderJsonMode = "prompt_only",
   thinking: ProviderThinking = "off",
+  reasoningEffort?: ProviderReasoningEffort,
 ): ProviderRequestOptions {
   return {
     timeoutMs,
@@ -34,6 +37,7 @@ export function createProviderRequestOptions(
     // every later narrative turn.
     extraBody: {
       thinking: { type: thinking === "on" ? "enabled" : "disabled" },
+      ...(thinking === "on" && reasoningEffort !== undefined ? { reasoning_effort: reasoningEffort } : {}),
       ...(maxTokens === undefined ? {} : { max_tokens: maxTokens }),
       ...(jsonMode === "json_object" ? { response_format: { type: "json_object" } } : {}),
     },
