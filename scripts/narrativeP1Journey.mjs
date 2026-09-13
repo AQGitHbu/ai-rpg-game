@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import { registerHooks } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { projectRoot, readAiEnv } from "./aiEnv.mjs";
 
 const SCRIPT_ROOT = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = resolve(SCRIPT_ROOT, "..");
@@ -14,6 +15,18 @@ export const DEFAULT_NARRATIVE_P1_PROTOCOL_PATH = resolve(NARRATIVE_P1_ARTIFACT_
 export const DEFAULT_NARRATIVE_P1_OUTPUT_ROOT = NARRATIVE_P1_ARTIFACT_ROOT;
 
 const VALID_MODES = new Set(["register", "live", "replay"]);
+
+export function resolveNarrativeP1ArtifactDirectory(args, outputWasProvided) {
+  return resolve(REPOSITORY_ROOT, args.output, outputWasProvided ? "" : args.runId);
+}
+
+export async function closeNarrativeP1Entry(entry) {
+  try {
+    await entry?.close();
+  } catch {
+    // Preserve the route result when audit/logger cleanup fails.
+  }
+}
 
 export function parseNarrativeP1Args(argv) {
   const parsed = {
@@ -109,13 +122,25 @@ function selectProductionChoice(view, routeKind) {
     ?? choices[0];
 }
 
-async function createProductionRouteRunner() {
+function readConfiguredAiEnvironment() {
+  const source = resolve(projectRoot, ".env.local");
+  if (!existsSync(source)) return null;
+  const values = readAiEnv(source);
+  const configured = { ...process.env };
+  for (const key of ["AI_API_BASE_URL", "AI_MODEL", "AI_API_KEY", "AI_OUTPUT_FORMAT"]) {
+    const value = values.get(key)?.decoded;
+    if (value !== undefined) configured[key] = value;
+  }
+  return configured;
+}
+
+async function createProductionRouteRunner(runtimeEnv) {
   const { createServerGameEntryPoints } = await import("../src/game/application/server/compositionRoot.ts");
   return async ({ mode, route, setup, budget, artifactDirectory }) => {
     if (mode !== "live") return { completed: false, httpAttempts: 0, failureCode: "UNEXPECTED_ROUTE_MODE" };
     const databasePath = resolve(artifactDirectory, `${route.routeId}.sqlite`);
     const entryEnv = {
-      ...process.env,
+      ...runtimeEnv,
       NODE_ENV: "test",
       GAME_DB_PATH: databasePath,
       AI_TEXT_AUDIT: "full",
@@ -123,11 +148,12 @@ async function createProductionRouteRunner() {
       AI_TEXT_AUDIT_RUN_ID: route.routeId,
     };
     const createEntry = () => createServerGameEntryPoints(entryEnv, undefined, undefined, { beforeNarrativeHttpAttempt: budget.reserve });
-    let entry = createEntry();
+    let entry = null;
     const steps = [];
     let actionCount = 0;
     let verifySubmitted = false;
     try {
+      entry = createEntry();
       const created = await entry.createGame({
         gameType: setup.gameType,
         gameLength: setup.gameLength,
@@ -191,16 +217,22 @@ async function createProductionRouteRunner() {
         });
         if (!after.ok) return { completed: false, httpAttempts: budget.used, actionCount, failureCode: after.code };
         if (actionCount === 3) {
-          await entry.close();
+          await closeNarrativeP1Entry(entry);
           entry = createEntry();
           steps.push({ kind: "reload", revision: after.revision });
         }
       }
       return { completed: false, httpAttempts: budget.used, actionCount, failureCode: "ROUTE_ACTION_BUDGET_EXHAUSTED" };
+    } catch {
+      return { completed: false, httpAttempts: budget.used, actionCount, failureCode: "PRODUCTION_ROUTE_CRASHED" };
     } finally {
-      mkdirSync(artifactDirectory, { recursive: true });
-      writeFileSync(resolve(artifactDirectory, `${route.routeId}.steps.json`), `${JSON.stringify(steps, null, 2)}\n`, "utf8");
-      await entry.close();
+      try {
+        mkdirSync(artifactDirectory, { recursive: true });
+        writeFileSync(resolve(artifactDirectory, `${route.routeId}.steps.json`), `${JSON.stringify(steps, null, 2)}\n`, "utf8");
+      } catch {
+        // The route result is still more useful than an artifact write exception.
+      }
+      await closeNarrativeP1Entry(entry);
     }
   };
 }
@@ -218,29 +250,32 @@ async function main() {
     process.exitCode = 2;
     return;
   }
-  if (args.mode === "register" && (!process.env.AI_MODEL?.trim() || !process.env.AI_API_BASE_URL?.trim())) {
-    console.error("[narrative-p1] register requires non-empty AI_MODEL and AI_API_BASE_URL");
+  installTsHooks();
+  freezeCurrentCodeIdentity();
+  const runtimeEnv = readConfiguredAiEnvironment();
+  if (runtimeEnv === null || !runtimeEnv.AI_MODEL?.trim() || !runtimeEnv.AI_API_BASE_URL?.trim()) {
+    console.error("[narrative-p1] missing non-empty AI_MODEL or AI_API_BASE_URL in .env.local");
     process.exitCode = 2;
     return;
   }
-
-  installTsHooks();
-  freezeCurrentCodeIdentity();
   const { runNarrativeP1Journey } = await import("../src/game/application/testing/narrativeP1LiveJourney.ts");
   const protocolPath = args.protocolPath === DEFAULT_NARRATIVE_P1_PROTOCOL_PATH
     ? resolve(REPOSITORY_ROOT, args.output, args.runId, "protocol.json")
     : resolve(REPOSITORY_ROOT, args.protocolPath);
-  const routeRunner = args.mode === "live" ? await createProductionRouteRunner() : undefined;
+  const routeRunner = args.mode === "live" ? await createProductionRouteRunner(runtimeEnv) : undefined;
   const result = await runNarrativeP1Journey({
     mode: args.mode,
     runId: args.runId,
     protocolPath,
-    artifactDirectory: resolve(REPOSITORY_ROOT, args.output, args.runId),
+    artifactDirectory: resolveNarrativeP1ArtifactDirectory(
+      args,
+      process.argv.slice(2).some((argument) => /^--output(?:=|$)/.test(argument)),
+    ),
   }, {
     codeFingerprint: process.env.NARRATIVE_P1_CODE_FINGERPRINT,
     environment: {
-      model: process.env.AI_MODEL ?? "",
-      apiBaseUrl: process.env.AI_API_BASE_URL ?? "",
+      model: runtimeEnv.AI_MODEL,
+      apiBaseUrl: runtimeEnv.AI_API_BASE_URL,
     },
     ...(routeRunner === undefined ? {} : { routeRunner }),
   });

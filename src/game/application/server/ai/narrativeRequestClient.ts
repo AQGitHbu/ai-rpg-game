@@ -19,12 +19,16 @@ export type NarrativeRequestClient = Readonly<{
 }>;
 
 const AUTHOR_POLICY: Partial<RpgAiRolePolicy> = {
+  thinking: "on",
+  jsonMode: "prompt_only",
   timeoutMs: 240_000,
   maxTokens: undefined,
   maxAttempts: 2,
 };
 const NPC_POLICY: Partial<RpgAiRolePolicy> = AUTHOR_POLICY;
 const REVIEW_POLICY: Partial<RpgAiRolePolicy> = {
+  thinking: "on",
+  jsonMode: "prompt_only",
   timeoutMs: 120_000,
   maxTokens: undefined,
   maxAttempts: 2,

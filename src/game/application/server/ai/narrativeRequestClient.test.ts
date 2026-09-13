@@ -35,14 +35,14 @@ describe("narrative request client", () => {
       "narrative_bundle",
       messages,
       expect.objectContaining({ purpose: "narrative_bundle_generation" }),
-      expect.objectContaining({ policyOverride: expect.objectContaining({ timeoutMs: 240_000, maxAttempts: 2 }) }),
+      expect.objectContaining({ policyOverride: expect.objectContaining({ timeoutMs: 240_000, maxAttempts: 2, thinking: "on", jsonMode: "prompt_only", maxTokens: undefined }) }),
     );
     expect(complete).toHaveBeenNthCalledWith(
       2,
       "narrative_bundle",
       messages,
       expect.objectContaining({ purpose: "narrative_candidate_review" }),
-      expect.objectContaining({ policyOverride: expect.objectContaining({ timeoutMs: 120_000, maxAttempts: 2 }) }),
+      expect.objectContaining({ policyOverride: expect.objectContaining({ timeoutMs: 120_000, maxAttempts: 2, thinking: "on", jsonMode: "prompt_only", maxTokens: undefined }) }),
     );
   });
 
