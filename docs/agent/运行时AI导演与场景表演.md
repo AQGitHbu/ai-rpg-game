@@ -9,7 +9,7 @@
 ## 当前契约
 
 - 生产 provider 只有 `initialization`、`narrative_choice`、`npc_free_text` 三类触发。开局由 opening source 直接编译为 ready；正式选择和焦点 NPC 自定义输入进入 pending job。
-- 初始化由唯一的 `buildOpeningNarrativePrompt` 传入完整 `GameSetup`、叙事风格策略和最多三条近期 novelty 摘要；玩家设定优先于 novelty。开局 source 与后续叙事共用生产 `RpgAiClient`、transport 策略和 application 审批；结构预检通过后调用统一候选语义审阅。作者与审阅器共享开局字段语义、事实 key→正式 ID 映射及披露边界，事实目录中存有秘密不等于玩家已获知。
+- 初始化由唯一的 `buildOpeningNarrativePrompt` 传入完整 `GameSetup`、叙事风格策略和最多三条近期 novelty 摘要；玩家设定优先于 novelty。开局 source 与后续叙事共用生产 `RpgAiClient`、transport 策略和 application 审批；结构预检通过后调用统一候选语义审阅。作者与审阅器共享开局字段语义、事实 key→正式 ID 映射及披露边界，事实目录中存有秘密不等于玩家已获知。递送型开局还须建立具体身份核验依据及知情来源，单纯持有物品或接受委托不构成接应资格证明；允许保密条件暂缓告知，不预写未来核验成功。
 - 初始化最多三次完整尝试；source、候选校验、场景审批和 novelty 拒绝都通过统一修复反馈传到下一次 opening context。调查方式须符合对象数组契约，陌生人关系仍要求 neutral 且无历史依据；格式或关系失败不靠补造字段放行。
 - `NarrativeBundleSource.generate` 一次返回原子提案：可选 `worldDelta`、`currentScene`、`continuationScenes` 和 `terminal`。生产续接图唯一存放在 `storyState.narrative.narrativeBundle`。
 - `generatePendingNarrativeBundle` 每个持久化 epoch 最多三个不可复用的候选版本。后续版本携带稳定解析、引用或审批拒绝原因；仍失败则保留同一 `jobId` 的 `provider_failed`，由显式 `{ "retry": true }` 手动重试。候选版本、候选 hash、lease 和 HTTP 预算均随 pending job 落盘，恢复 worker 先抢 10 分钟 lease；旧 worker 的完整 attempt predicate 不匹配时只能得到 stale。

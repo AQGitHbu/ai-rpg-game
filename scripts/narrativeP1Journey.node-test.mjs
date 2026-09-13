@@ -76,7 +76,7 @@ test("production runner creates two openings and copies each closed checkpoint i
         close: async () => { closed.add(env.GAME_DB_PATH); },
       }),
       createSqliteClient: (path) => ({ execute: async () => { assert.equal(closed.has(path), true); checkpoints.push(path); return { rows: [{ busy: 0 }] }; }, close() {} }),
-      createSqliteGameRepository: () => ({ getCurrentGame: async () => ({ ok: true, status: "active", record: { revision: 0, worldState: { entityStore: { records: [] } }, storyState: {} } }) }),
+      createSqliteGameRepository: () => ({ getCurrentGame: async () => ({ ok: true, status: "active", record: { revision: 0, worldState: { entityStore: { records: [] } }, storyState: { delivery: { itemId: "letter", giverNpcId: "giver", recipientNpcId: "receiver" } } } }) }),
       createServerSqliteClientFactory: () => {}, buildChoiceMap: () => new Map([["deliver", { type: "give_item", itemId: "letter", npcId: "receiver" }]]),
     });
     for (const scenarioId of ["S1", "S2"]) for (const kind of ["private", "public", "verify_first"]) {

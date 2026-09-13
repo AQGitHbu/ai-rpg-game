@@ -15,6 +15,7 @@ import {
   RPG_AI_NPC_DELIBERATION_ROLE,
   type RpgAiClient,
 } from "./rpgAiClient";
+import { storyInteractionPrompt } from "./storyInteractionPrompt";
 import type { NarrativeRequestClient } from "./narrativeRequestClient";
 
 export type LiveNpcDeliberationSourceDeps = Readonly<{
@@ -27,6 +28,9 @@ export type LiveNpcDeliberationSourceDeps = Readonly<{
 }>;
 
 const SYSTEM_PROMPT = [
+  "selectedExpression records the current selected player action or freeform input; a player_choice label is not necessarily spoken dialogue. Evidence references must come from currentEvidence; discloseFactIds must be in outwardAuthority.allowedDiscloseFactIds. Knowing a private fact does not authorize disclosing it.",
+  storyInteractionPrompt(false),
+  "Return only NPC deliberation and interactionProposals; do not output choices, continuationScenes or worldDelta.",
   "你正在进行一次单个 NPC 的私下角色判断。",
   "只依据输入中该 NPC 自己知道的事实、目标、关系、承诺、已提交证据和本次行动上下文作决定。",
   "输出严格 JSON，不输出解释、叙事、玩家文案或思维链。",

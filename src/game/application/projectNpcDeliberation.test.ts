@@ -14,6 +14,7 @@ import type { ResolvedEvent } from "@/game/domain/resolvedEvent";
 import { createEntityStore, entitiesOfKind, type NpcEntityRecord, type RelationshipCommitment } from "@/game/domain/entity";
 import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
+import { playerActionHistoryEntry } from "@/game/domain/narrativeHistory";
 import { projectNpcDeliberation } from "./projectNpcDeliberation";
 
 const LOCATION = asLocationId("loc:old_bridge");
@@ -190,6 +191,10 @@ describe("projectNpcDeliberation", () => {
     expect(input.privateContext).toContain("你为什么不肯让接应人知道路线？");
     expect(input.privateContext).not.toContain("接应人的私人记忆");
     expect(input.privateContext).not.toContain("authorPrompt");
+    const envelope = JSON.parse(input.privateContext);
+    expect(envelope.outwardAuthority.allowedDiscloseFactIds).not.toContain(PRIVATE_FACT);
+    expect(envelope.currentEvidence.map((event: { eventId: string }) => event.eventId))
+      .toEqual(envelope.outwardAuthority.allowedEvidenceEventIds);
   });
 
   it("preserves the initial_world provenance boundary for a newly materialized NPC", () => {
@@ -230,4 +235,19 @@ it("shows only this NPC's open and resolved confidentiality terms in private del
   ]);
   expect(input.privateContext).not.toContain("其他NPC的秘密约定");
   expect(input.privateContext).not.toContain(`${RECIPIENT}:broken`);
+});
+
+
+it("recovers only the current focused player expression without turning labels into utterances", () => {
+  const base = pendingStoryState();
+  if (base.narrative.status !== "provider_pending") throw new Error("fixture");
+  const job = { ...base.narrative.job, utterance: undefined, selectedDialogue: { dialogueAct: "ask" as const } };
+  const entry = playerActionHistoryEntry({ history: base.history, action: { type: "talk", npcId: BOSS, dialogueAct: "ask" },
+    actionId: job.actionId, text: "actual selected words", sceneId: "selected", revision: 1, turnNumber: 1, eventIds: [EVENT_ID] });
+  const storyState = { ...base, narrative: { ...base.narrative, job }, history: { entries: [entry, { ...entry, id: "other", actionId: "other", text: "unrelated private words" }] } };
+  const project = (npcId: typeof BOSS) => JSON.parse(projectNpcDeliberation({ worldState: worldState(), storyState, npcId, jobId: JOB_ID, candidateVersion: 1 }).privateContext);
+  expect(project(BOSS).currentJob.selectedExpression).toEqual([{ kind: "player_choice", text: "actual selected words" }]);
+  expect(project(BOSS).currentJob.utterance).toBeUndefined();
+  expect(JSON.stringify(project(BOSS))).not.toContain("unrelated private words");
+  expect(project(RECIPIENT).currentJob.selectedExpression).toBeUndefined();
 });

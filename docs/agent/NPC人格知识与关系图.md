@@ -16,7 +16,7 @@ NPC 的人格锚点、动态目标、知识、关系、承诺与结构化交互�
 - `projectNpcDeliberation` 的私密关系上下文只读取本人 outgoing edges；openCommitments 与 resolvedCommitments 均保留 status 和 confidentiality 条款，供本人判断持续义务及已发生违约，不把其他 NPC 私密关系或该私密 envelope 传给作者。`NpcDeliberationSource` 的 proposal 只允许返回 response、目标引用、依据事件、事实披露引用和结构化互动提议；live source 复用 `narrative_bundle` AI role，但审计 purpose 单独记为 `npc_deliberation`。服务端再按实际 audience 运行 authority，拒绝秘密、失效依据、非当前目标和越权互动。
 - 生产 `prepareNpcNarrativeContext` 只在当前同场焦点需要条件/承诺/互动判断时调用该 source；开局和普通问候跳过。私密输入不进入作者上下文，获准 outward 投影进入同版作者与审阅，HTTP 使用同一 job 的预算与取消信号。
 - 每条 NPC line/dialogue 必须提供 `usedFactIds` 与 `usedEventIds`；缺失、重复、非 speaker 所有或不在 allowlist 的引用会拒绝整包。
-- prompt 不带其他 NPC 私密正文、其他 NPC history、玩家自由文本历史或裸关系数字。focus context 只投影最近五条结构化交互、active goals、关系 stage/trend/open commitments 和有限 evidence。
+- 私下判断 prompt 不带其他 NPC 私密正文、其他 NPC history、无关玩家自由文本历史或裸关系数字；本轮选择/发言只从当前 actionId、player speaker 与焦点匹配的正式 History 读取，并保留 label 与 spoken 的表达类型。focus context 投影最近五条结构化交互、active goals、关系 stage/trend/open commitments 和有限 evidence。当前 job 的已提交事件须经过 ledger 存在性与 NPC 参与校验；私下判断、outward、作者和当前/预备场景审批使用一致的明确允许 Event ID 集合，不以缺少兼容 history 行拒绝真实核验事件。
 - 新 NPC 的正式 focus scene 未准备好时，read model 只开放单一 `ask`；不合成问候、不开放自由输入、不投影默认 support/challenge。
 - 开场 NPC 的 `npcConnection` 可审批为 stranger/neutral，或依据至少一条公开初始化历史建立 known 关系。known 会同步初始化 `met`；known/neutral 使用 acquainted stage，非 neutral 姿态使用 `INITIAL_RELATIONSHIP_SEED_POLICY` 对应的 stage 与受限维度。公开历史只作为关系的 initial-world origin/basis，所有初始 evidence 数组保持为空，不伪造行动证据；关系方向仍指向玩家，AI 不提交任意数值，也不能用秘密历史作为玩家可见的关系依据。
 

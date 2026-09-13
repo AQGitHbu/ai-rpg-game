@@ -3,8 +3,9 @@ import type { EventId, NarrativeJobId } from "@/game/domain/events";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { StoryState } from "@/game/domain/storyState";
 import type { WorldState } from "@/game/domain/worldState";
-import type { NpcId } from "@/game/domain/worldEntity";
+import { PLAYER_ENTITY_ID, type NpcId } from "@/game/domain/worldEntity";
 import type { NpcKnowledgeEntry, NpcKnowledgeSource, RelationshipCommitment } from "@/game/domain/entity";
+import { buildNpcSpeechAuthority } from "./npcSpeechAuthority";
 import type { NpcDeliberationInput } from "./npcDeliberationSource";
 
 type NpcPrivateFact = Readonly<{
@@ -152,16 +153,23 @@ function interactionContext(npc: NpcEntityRecord): readonly NpcPrivateInteractio
     }));
 }
 
+function outwardAuthority(worldState: WorldState, npc: NpcEntityRecord, job: PendingNarrativeJob) {
+  const player = getEntity(worldState.entityStore, PLAYER_ENTITY_ID);
+  return buildNpcSpeechAuthority({
+    store: worldState.entityStore, speakerNpcId: npc.core.id,
+    sceneVisibleFactIds: player?.core.kind === "player_character" ? (player as import("@/game/domain/entity").PlayerEntityRecord).knowledge.knownFactIds : [],
+    eventLedger: worldState.eventLedger,
+    targetContext: { targetId: PLAYER_ENTITY_ID, currentEventIds: job.domainEventIds },
+  });
+}
+
 function evidenceContext(
   worldState: WorldState,
   npc: NpcEntityRecord,
   job: PendingNarrativeJob,
 ): readonly unknown[] {
-  const eventIds = new Set<string>(job.domainEventIds.map(String));
-  for (const interaction of npc.history.interactions) eventIds.add(String(interaction.eventId));
-  for (const entry of npc.knowledge.entries) {
-    if (entry.source.kind === "action") eventIds.add(String(entry.source.eventId));
-  }
+  const authority = outwardAuthority(worldState, npc, job);
+  const eventIds = new Set<string>(authority?.allowedEventIds.map(String) ?? []);
   const events = new Map(worldState.eventLedger.map((event) => [String(event.eventId), event] as const));
   const result: Array<{
     readonly eventId: string;
@@ -178,10 +186,19 @@ function evidenceContext(
         kind: event.kind,
         turnNumber: event.turnNumber,
         outcome: event.outcome,
-        factIds: event.factIds.map(String),
+        factIds: event.factIds.filter(id => npc.knowledge.entries.some(entry => entry.factId === id)).map(String),
       });
   }
   return result.sort((left, right) => compareId(left.eventId, right.eventId));
+}
+
+/** The selected action expression is distinct from a claimed spoken utterance. */
+export function currentNpcPlayerExpressions(storyState: StoryState, job: PendingNarrativeJob, npcId: NpcId) {
+  if (job.focusNpcId !== npcId) return [];
+  return storyState.history.entries
+    .filter(entry => entry.actionId === job.actionId && entry.speakerId === PLAYER_ENTITY_ID
+      && (entry.kind === "player_choice" || entry.kind === "player_freeform"))
+    .map(entry => ({ kind: entry.kind, text: entry.text }));
 }
 
 /**
@@ -198,6 +215,7 @@ export function projectNpcDeliberation(input: {
 }): NpcDeliberationInput {
   const npc = npcOf(input.worldState.entityStore, input.npcId);
   const job = currentJobOf(input.storyState, input.jobId);
+  const authority = outwardAuthority(input.worldState, npc, job);
   const privateContext = JSON.stringify({
     schema: "npc_deliberation.v1",
     npc: {
@@ -214,12 +232,19 @@ export function projectNpcDeliberation(input: {
     relationships: relationshipContext(input.worldState.entityStore, npc),
     recentInteractions: interactionContext(npc),
     currentEvidence: evidenceContext(input.worldState, npc, job),
+    outwardAuthority: {
+      allowedDiscloseFactIds: authority?.allowedFactIds ?? [],
+      allowedEvidenceEventIds: authority?.allowedEventIds ?? [],
+    },
     currentJob: {
       jobId: String(job.jobId),
       actionId: job.actionId,
       actionSummary: job.actionSummary,
       utterance: job.utterance,
       selectedDialogue: job.selectedDialogue,
+      // Choice labels are recorded expressions, not necessarily spoken dialogue.
+      selectedExpression: job.focusNpcId === npc.core.id
+        ? currentNpcPlayerExpressions(input.storyState, job, npc.core.id) : undefined,
       resolvedEvent: job.resolvedEvent,
       domainEventIds: job.domainEventIds.map((eventId: EventId) => String(eventId)),
     },

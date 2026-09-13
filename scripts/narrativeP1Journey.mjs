@@ -8,6 +8,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { createNarrativeP1ReplayRuntime } from "./narrativeP1Replay.mjs";
 import { projectRoot, readAiEnv } from "./aiEnv.mjs";
 
+import { currentStoryInteractions, offeredProductionChoices, selectProductionChoice, findOfferedStoryDelivery } from './narrativeP1Choices.mjs';
+export { currentStoryInteractions, offeredProductionChoices, selectProductionChoice } from './narrativeP1Choices.mjs';
+
 const SCRIPT_ROOT = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = resolve(SCRIPT_ROOT, "..");
 const NARRATIVE_P1_ARTIFACT_ROOT = resolve(REPOSITORY_ROOT, "artifacts", "narrative-p1");
@@ -156,39 +159,6 @@ export function createScenarioSnapshotCache(initialize) {
   };
 }
 
-export function currentStoryInteractions(worldState) {
-  return worldState.entityStore.records.flatMap((entity) => entity.core.kind === "npc" ? entity.interactions ?? [] : []);
-}
-
-export function offeredProductionChoices(view) {
-  return [...new Map([...view.narrative.choices, ...view.currentLocation.actions].map((choice) => [choice.choiceToken, choice])).values()];
-}
-
-export function selectProductionChoice(view, routeKind, actionMap, interactions, performed, performedActions = new Set()) {
-  const choices = offeredProductionChoices(view);
-  const operation = (choice) => {
-    const action = actionMap.get(choice.choiceToken);
-    return action?.type === "talk" ? interactions.find((entry) => entry.id === action.interactionId)?.operation : undefined;
-  };
-  const wanted = (routeKind === "private" || routeKind === "diagnostic")
-    ? (!performed.has("promise_confidentiality") ? "promise_confidentiality" : !performed.has("request_introduction") ? "request_introduction" : routeKind === "diagnostic" && !performed.has("verify_freeform_submitted") ? "await_delivery_opportunity" : routeKind === "diagnostic" && !performed.has("request_verification") ? "request_verification" : null)
-    : routeKind === "verify_first" && !performed.has("verify_freeform_submitted")
-      ? "await_delivery_opportunity"
-      : (!performed.has("request_verification") ? "request_verification" : null);
-  const specific = choices.find((choice) => wanted !== null && operation(choice) === wanted && !performedActions.has(JSON.stringify(actionMap.get(choice.choiceToken))));
-  if (specific !== undefined) return specific;
-  // Only the current objective may bridge locations. Never pick arbitrary prose.
-  return choices.find((choice) => {
-    if (choice.choiceToken !== view.story.currentObjectiveChoiceToken) return false;
-    const action = actionMap.get(choice.choiceToken);
-    if (action === undefined || action.type === "abandon_quest") return false;
-    if (performedActions.has(JSON.stringify(action))) return false;
-    if (action.type === "give_item" && wanted !== null) return false;
-    const op = operation(choice);
-    return op === undefined || (wanted === null && !performed.has(op) && ((routeKind === "private" || routeKind === "diagnostic") || !["promise_confidentiality", "request_introduction"].includes(op)));
-  });
-}
-
 function readConfiguredAiEnvironment() {
   const source = resolve(projectRoot, ".env.local");
   if (!existsSync(source)) return null;
@@ -319,7 +289,8 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
         let interaction;
         let selectedAction;
         const offeredChoices = offeredProductionChoices(view);
-        const delivery = offeredChoices.map((choice) => actionMap.get(choice.choiceToken)).find((action) => action?.type === "give_item");
+        const deliveryChoice = findOfferedStoryDelivery(view, actionMap, state.record.storyState.delivery);
+        const delivery = deliveryChoice === undefined ? undefined : actionMap.get(deliveryChoice.choiceToken);
         if ((route.kind === "verify_first" || route.kind === "diagnostic") && !verifySubmitted
           && delivery !== undefined) {
           const targetNpcId = view.narrative.npcDialogues.find((dialogue) => dialogue.freeInputEnabled && dialogue.npcId === delivery.npcId)?.npcId;
@@ -333,7 +304,7 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
           } else return routeResult({ completed: false, actionCount, failureCode: "ROUTE_POLICY_UNSUPPORTED" });
         }
         if (interaction === undefined) {
-          const selected = selectProductionChoice(view, route.kind, actionMap, interactions, performed, performedActions);
+          const selected = selectProductionChoice(view, route.kind, actionMap, interactions, performed, performedActions, state.record.storyState.delivery);
           if (selected === undefined) return routeResult({ completed: false, httpAttempts: budget.used - httpBefore, actionCount, failureCode: "ROUTE_POLICY_UNSUPPORTED" });
           selectedAction = actionMap.get(selected.choiceToken);
           interaction = { kind: "fixed_choice", choiceToken: selected.choiceToken };
@@ -349,7 +320,7 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
             revision: current.revision,
             location: view.currentLocation.name,
             narration: view.narrative.narration ?? null,
-            choices: view.narrative.choices.map((choice) => ({ label: choice.label, presentation: choice.presentation })),
+            choices: offeredChoices.map((choice) => ({ choiceToken: choice.choiceToken, label: choice.label, presentation: choice.presentation })),
           },
           after: after.ok && after.view !== undefined
             ? { revision: after.revision, location: after.view.currentLocation.name, ending: after.view.ending?.name ?? null }

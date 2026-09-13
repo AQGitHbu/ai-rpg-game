@@ -570,6 +570,7 @@ function buildStepState(
   proposal: BundleStepProposal,
   descriptor: BundleStepDescriptor,
   worldState: WorldState,
+  currentEventIds: readonly import("@/game/domain/events").EventId[] = [],
 ): NarrativeBundleStepState | NarrativeBundleRejection {
   // The proposal stepKey must match the descriptor stepKey (after symbol resolution)
   if (proposal.stepKey !== descriptor.stepKey) {
@@ -581,6 +582,7 @@ function buildStepState(
     worldState,
     descriptor.arrivalNpc?.id,
     presentNpcIdsAtLocation(worldState, sceneLocationId),
+    currentEventIds,
   ) !== null) {
     return "bundle_invalid_scene";
   }
@@ -730,6 +732,7 @@ function validateBundleNpcSpeech(
   worldState: WorldState,
   presentNpcIds?: ReadonlySet<string>,
   incomingFactIds: readonly string[] = [],
+  currentEventIds: readonly import("@/game/domain/events").EventId[] = [],
 ): SceneContentRejection | null {
   const visibleFactIds = entitiesOfKind(worldState.entityStore, "fact")
     .filter((fact) => fact.fact.discovered)
@@ -753,7 +756,7 @@ function validateBundleNpcSpeech(
       speakerNpcId: line.npcId as never,
       sceneVisibleFactIds: visibleFactIds,
       eventLedger: worldState.eventLedger,
-      targetContext: { targetId: targetId as never },
+      targetContext: { targetId: targetId as never, currentEventIds },
     });
     if (authority === null) return { code: "bundle_invalid_scene", detail: "missing_speaker" };
     const result = validateNpcSpeechReferences({
@@ -779,6 +782,7 @@ function validateBundleSceneNpcSpeech(
   worldState: WorldState,
   expectedNpcId?: string,
   presentNpcIds?: ReadonlySet<string>,
+  currentEventIds: readonly import("@/game/domain/events").EventId[] = [],
 ): SceneContentRejection | null {
   const parts = normalizedSceneParts(scene);
   const dialogues = scene.npcDialogues ?? [];
@@ -812,6 +816,7 @@ function validateBundleSceneNpcSpeech(
         worldState,
         presentNpcIds,
         disclosedFactsByNpc.get(line.npcId) ?? [],
+        currentEventIds,
       );
       if (rejection !== null) return rejection;
       for (const targetId of line.audienceIds) {
@@ -824,7 +829,7 @@ function validateBundleSceneNpcSpeech(
     if (expectedNpcId !== undefined && parts.npcLine.npcId !== expectedNpcId) {
       return { code: "bundle_invalid_scene", detail: "missing_speaker" };
     }
-    const rejection = validateBundleNpcSpeech(parts.npcLine, worldState, presentNpcIds);
+    const rejection = validateBundleNpcSpeech(parts.npcLine, worldState, presentNpcIds, [], currentEventIds);
     if (rejection !== null) return rejection;
   }
   for (const dialogue of dialogues) {
@@ -832,7 +837,7 @@ function validateBundleSceneNpcSpeech(
       npcId: dialogue.npcId,
       usedFactIds: dialogue.usedFactIds,
       usedEventIds: dialogue.usedEventIds,
-    }, worldState, presentNpcIds);
+    }, worldState, presentNpcIds, [], currentEventIds);
     if (rejection !== null) return rejection;
   }
   return null;
@@ -897,6 +902,7 @@ function bundleSceneLocationId(
 function validateCurrentSceneContent(input: {
   readonly scene: BundleSceneProposal;
   readonly mandatoryBeats: readonly MandatoryNarrativeBeat[];
+  readonly currentEventIds: readonly import("@/game/domain/events").EventId[];
   readonly dialogueFocusNpcId: string | undefined;
   readonly transition: ObjectiveTransition;
   readonly worldState: WorldState;
@@ -967,6 +973,7 @@ function validateCurrentSceneContent(input: {
     worldState,
     undefined,
     presentNpcIdsAtLocation(worldState, String(worldState.currentLocationId)),
+    input.currentEventIds,
   );
   if (speechRejection !== null) return speechRejection;
 
@@ -1201,6 +1208,7 @@ export function approveNarrativeBundle(
       { ...proposalStep, scene: resolvedStep.scene! },
       descriptor,
       previewWorldState,
+      eventContext.domainEventIds,
     );
     if (typeof stepResult === "string") {
       return { ok: false, code: stepResult };
@@ -1249,6 +1257,7 @@ export function approveNarrativeBundle(
     : undefined;
   const contentRejection = validateCurrentSceneContent({
     scene: resolvedCurrentScene,
+    currentEventIds: eventContext.domainEventIds,
     mandatoryBeats: input.mandatoryBeats,
     dialogueFocusNpcId: currentDialogueFocusNpcId === undefined
       ? undefined

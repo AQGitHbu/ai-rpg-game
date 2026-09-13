@@ -158,7 +158,7 @@ function focusNpcContent(worldState: WorldState, job: PendingNarrativeJob): stri
     sceneVisibleFactIds: entitiesOfKind(worldState.entityStore, "fact")
       .filter((fact) => fact.fact.discovered)
       .map((fact) => fact.core.id),
-    targetContext: { targetId: PLAYER_ENTITY_ID },
+    targetContext: { targetId: PLAYER_ENTITY_ID, currentEventIds: job.domainEventIds },
   });
   if (authority === null) return "本回合没有焦点 NPC；currentScene.npcLine 仅在权威图明确要求时出现。";
 
@@ -175,7 +175,8 @@ function focusNpcContent(worldState: WorldState, job: PendingNarrativeJob): stri
     `当前情绪=${focusNpc.dynamicState.emotion}；目标=${list(authority.activeGoals)}`,
     `本轮关系信号=${thisTurn === undefined ? "neutral" : thisTurn.outcome}`,
     `允许披露事实=${list(speakableFacts)}`,
-    "npcLine.usedFactIds 只能引用上述事实 ID；npcLine.usedEventIds 只能引用最近五条结构化交互中的 Event ID；没有引用时必须输出显式空数组。",
+    "npcLine.usedFactIds 只能引用上述事实 ID；npcLine.usedEventIds 只能引用下列已授权证据 Event ID；没有引用时必须输出显式空数组。",
+    `已授权证据 Event ID=${list(authority.allowedEventIds.map(String))}`,
     `最近五条结构化交互：\n${interactions.length === 0 ? "（无）" : interactions.map((entry) => `- ${entry}`).join("\n")}`,
     "私密事实正文与未授权知识不在本上下文中；不得自行补全。",
   ].join("\n");

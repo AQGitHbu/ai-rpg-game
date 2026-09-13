@@ -4,7 +4,7 @@ import { createAiSourceFailure, type AiSourceFailure } from "./aiGenerationRetry
 import type { NarrativeBundleRepairReason, NarrativeBundleSourceContext } from "./narrativeBundleSource";
 import type { NpcDeliberationSource } from "./npcDeliberationSource";
 import { authorizeNpcDeliberationOutward } from "./npcSpeechAuthority";
-import { projectNpcDeliberation } from "./projectNpcDeliberation";
+import { currentNpcPlayerExpressions, projectNpcDeliberation } from "./projectNpcDeliberation";
 
 /** One focused NPC may deliberate; this function never mutates committed state. */
 export async function prepareNpcNarrativeContext(
@@ -22,7 +22,8 @@ export async function prepareNpcNarrativeContext(
     || npc.position.locationId !== context.worldState.currentLocationId) {
     return { ok: true, context };
   }
-  const text = (context.job.utterance ?? context.job.selectedDialogue?.label ?? "").trim();
+  const text = (context.job.utterance ?? context.job.selectedDialogue?.label
+    ?? currentNpcPlayerExpressions(context.storyState, context.job, focus).map(entry => entry.text).join("\n")).trim();
   // A salutation alone is not a new interaction proposal. These checks select
   // whether to call a source; they never infer or commit an action from prose.
   const greetingOnly = /^(你好|您好|嗨|在吗|hello|hi)[！!。.?？\s]*$/iu.test(text);
@@ -49,7 +50,7 @@ export async function prepareNpcNarrativeContext(
     const authorized = authorizeNpcDeliberationOutward({
       store: context.worldState.entityStore, speakerNpcId: focus,
       sceneVisibleFactIds: player?.knowledge.knownFactIds ?? [],
-      eventLedger: context.worldState.eventLedger, targetContext: { targetId: PLAYER_ENTITY_ID },
+      eventLedger: context.worldState.eventLedger, targetContext: { targetId: PLAYER_ENTITY_ID, currentEventIds: context.job.domainEventIds },
       proposal: result.proposal,
     });
     if (!authorized.ok) return fail("invalid_reference", authorized.code);

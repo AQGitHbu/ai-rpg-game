@@ -516,3 +516,44 @@ describe("NpcSpeechAuthority", () => {
     expect(result).toEqual({ ok: false, code: "invalid_interaction_proposal" });
   });
 });
+
+
+it("accepts the diagnostic npc_met companion evidence through deliberation and scene speech gates", () => {
+  // p1-diag-01 returned both event IDs twice; npc_met has no separate interaction row.
+  const actionId = "S1-diagnostic-action-0";
+  const npcId = asNpcId("npc_0");
+  const raw = '{"npcId":"npc_0","goalIds":["npc_0_goal_1","npc_0_goal_2"],"response":"question","evidenceEventIds":["S1-diagnostic-action-0:npc_interaction_recorded:npc_0:S1-diagnostic-action-0","S1-diagnostic-action-0:npc_met:npc_0"],"discloseFactIds":[],"interactionProposals":[]}';
+  const proposal = JSON.parse(raw);
+  const met = makeCommittedEvent({ type: "npc_met", npcId }, {
+    eventId: asEventId(proposal.evidenceEventIds[1]), actionId, actorIds: [PLAYER_ENTITY_ID], targetIds: [npcId],
+  });
+  const talked = makeCommittedEvent({ type: "npc_interaction_recorded", npcId, dialogueAct: "ask" }, {
+    eventId: asEventId(proposal.evidenceEventIds[0]), actionId, actorIds: [PLAYER_ENTITY_ID], targetIds: [npcId],
+  });
+  const original = npcRecord();
+  const speaker: NpcEntityRecord = { ...original, core: { ...original.core, id: npcId },
+    dynamicState: { ...original.dynamicState, goals: proposal.goalIds.map((goalId: string) => ({ ...original.dynamicState.goals[0]!, goalId })) },
+    history: { interactions: [{ ...interaction(actionId, 1), eventId: talked.eventId }] },
+  };
+  const store = { version: 3 as const, records: [...records().filter(record => record.core.id !== NPC_A), speaker] };
+  const input = { store, speakerNpcId: npcId, sceneVisibleFactIds: [FACT_PUBLIC],
+    eventLedger: [met, talked], targetContext: { targetId: PLAYER_ENTITY_ID }, proposal };
+  expect(authorizeNpcDeliberationOutward(input).ok).toBe(true);
+  const authority = buildNpcSpeechAuthority(input)!;
+  expect(validateNpcSpeechReferences({ authority, usedFactIds: [], usedEventIds: proposal.evidenceEventIds,
+    eventLedger: input.eventLedger, speakerNpcId: npcId })).toEqual({ ok: true });
+  expect(authorizeNpcDeliberationOutward({ ...input, eventLedger: [talked] }).ok).toBe(false);
+  expect(authorizeNpcDeliberationOutward({ ...input, eventLedger: [talked, { ...met, targetIds: [NPC_B] }] }).ok).toBe(false);
+  expect(authorizeNpcDeliberationOutward({ ...input, proposal: { ...proposal, discloseFactIds: [FACT_SECRET] } }).ok).toBe(false);
+});
+
+it("only accepts explicit current events with ledger proof and NPC participation", () => {
+  const event = makeCommittedEvent({ type: "npc_met", npcId: NPC_A }, {
+    eventId: asEventId("current:npc_met:npc_a"), actorIds: [PLAYER_ENTITY_ID], targetIds: [NPC_A],
+  });
+  const input = { store: { version: 3 as const, records: records() }, speakerNpcId: NPC_A, sceneVisibleFactIds: [],
+    targetContext: { targetId: PLAYER_ENTITY_ID, currentEventIds: [event.eventId] } };
+  expect(buildNpcSpeechAuthority({ ...input, eventLedger: [event] })?.allowedEventIds).toContain(event.eventId);
+  expect(buildNpcSpeechAuthority(input)?.allowedEventIds).not.toContain(event.eventId);
+  expect(buildNpcSpeechAuthority({ ...input, eventLedger: [{ ...event, targetIds: [NPC_B] }] })?.allowedEventIds).not.toContain(event.eventId);
+});

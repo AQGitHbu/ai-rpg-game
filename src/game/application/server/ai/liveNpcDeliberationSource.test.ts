@@ -60,6 +60,9 @@ describe("liveNpcDeliberationSource", () => {
     expect(role).toBe("narrative_bundle");
     expect(messages[1]?.content).toContain("PRIVATE NPC CONTEXT");
     expect(messages[0]?.content).not.toContain("PRIVATE_ONLY_MARKER");
+    for (const field of ["promise_confidentiality", "request_introduction", "request_verification", "share_known_fact", "protectedFactIds", "allowedAudienceIds", "promise_status", "selectedExpression"]) {
+      expect(messages[0]?.content).toContain(field);
+    }
     expect(context).toMatchObject({ purpose: "npc_deliberation", trigger: "npc_deliberation", jobId: String(JOB_ID) });
   });
 

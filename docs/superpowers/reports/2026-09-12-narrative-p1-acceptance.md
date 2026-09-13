@@ -2,7 +2,7 @@
 
 ## 结论
 
-P1 仍未通过。历史完整批次 `p1-07` 为 0/6、HTTP 44 次；旧 runner 实际为六次独立开局，不能称为同开局三策略的固定矩阵。P1-A 的保密—真实引荐—交付/违约/归还规则闭环现已通过 SQLite 旅程与独立复审，P1-B 原生产调用链断点已修复；真实响应 replay 已实现并通过生产装配集成测试，新 live 矩阵仍待执行。根因、修复与复核范围见 [失败分析](2026-09-13-narrative-p1-failure-analysis.md)。
+P1 仍未通过。历史完整批次 `p1-07` 为 0/6、HTTP 44 次；旧 runner 实际为六次独立开局，不能称为同开局三策略的固定矩阵。P1-A 的保密—真实引荐—交付/违约/归还规则闭环现已通过 SQLite 旅程与独立复审，P1-B 原生产调用链断点已修复；真实响应 replay 已实现并通过生产装配集成测试，首条新诊断 p1-diag-01 在 1 个行动后失败（8 HTTP、226916 ms），未形成完整故事；正式六矩阵仍待执行。根因、修复与复核范围见 [失败分析](2026-09-13-narrative-p1-failure-analysis.md)。
 
 `S1-private` 已持久化到第 5 个有效行动，随后因 `approval_rejected` 结束；其他路线在开局或审阅阶段结束。审阅耗尽背后存在作者/reviewer 契约冲突、缺少上一稿的修订，以及互动未接入作者等本地根因，不能仅归因于模型质量。`p1-08` 使用 DeepSeek `reasoning_effort=low` 与 240 秒审阅超时，长时间等待后中止且没有 summary；现存完成请求审计不足以判断中断时卡在哪一层。没有完整 live 轨迹，不填写人工质量分，也不能开始 P2。
 
@@ -17,7 +17,7 @@ P1 仍未通过。历史完整批次 `p1-07` 为 0/6、HTTP 44 次；旧 runner 
 
 ## 门禁结果
 
-- `npm run accept`：通过；lint 0 errors，215 个测试文件通过，2733 tests passed、1 skipped，typecheck、fast gates、build 均通过。
+- `npm run accept`：通过；lint 0 errors，216 个测试文件通过，2739 tests passed、1 skipped，typecheck、fast gates、build 均通过。
 - `npm run test:narrative-p1-script`：通过；13 passed。
 - `npm run check:docs`、`npm run test:docs`、`git diff --check`：通过。
 - `npm run env:check`：通过；`.env.local` 仅注入当前进程，密钥未写入协议、审计摘要或报告。
@@ -58,4 +58,10 @@ P1 仍未通过。历史完整批次 `p1-07` 为 0/6、HTTP 44 次；旧 runner 
 - `85ca21af`：移除叙事包本地 8,000 estimated-token 拒绝闸门，并更新 TDD 覆盖；provider 失败仍走既有失败协议。
 - `4970e11e`：审阅单次超时调整为 240 秒，并按 DeepSeek 官方字段显式发送 `thinking.type=enabled` 与 `reasoning_effort=low`；参数透传和协议冻结均有 TDD 覆盖。
 
-具体保密条件、真实引荐、真实归还及送达后禁止弃约的规则闭环已补齐；后续完成响应 replay，并按冻结协议新建诊断与正式矩阵批次。修复后的离线门禁见 [失败分析](2026-09-13-narrative-p1-failure-analysis.md)；本报告门禁数字为本次修复后的工程检查，输出见本地 artifacts/p1-four-step-accept.log；不代表已完成 live 验收。响应 replay 已实现：新 SQLite 重走原始响应解析、NPC 判断、审阅、审批和规则写入，严格比对请求与逻辑存档；协议绑定、原始审计哈希和零网络集成测试通过。真实诊断/矩阵的 replay 仍待运行。
+具体保密条件、真实引荐、真实归还及送达后禁止弃约的规则闭环已补齐；后续完成响应 replay，并按冻结协议新建诊断与正式矩阵批次。修复后的离线门禁见 [失败分析](2026-09-13-narrative-p1-failure-analysis.md)；本报告门禁数字为本次修复后的工程检查，输出见本地 artifacts/p1-diag-contract-accept.log；不代表已完成 live 验收。响应 replay 已实现：新 SQLite 重走原始响应解析、NPC 判断、审阅、审批和规则写入，严格比对请求与逻辑存档；协议绑定、原始审计哈希和零网络集成测试通过。真实诊断/矩阵的 replay 仍待运行。
+
+
+## 当前诊断样本
+
+- p1-diag-01（575354ca）：0/1，8 HTTP，1 个行动，226916 ms。开局首次结构错误经修订后通过；随后 NPC 输入列出 npc_met，outward 却拒绝该 ID，消耗两次候选机会。第三版作者补造接应人识别方式，被审阅正确拒绝。未完成路线不评分。
+- 诊断同时暴露 runner 漏读 NPC 面板选择，只点到地点通用交谈；对应完整读模型及最终显式交付回归已补齐。NPC 证据、真实当前表达、互动 schema 和开局核验依据契约已统一，独立审核通过；待新冻结批次验证。

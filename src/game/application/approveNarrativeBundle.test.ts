@@ -1053,3 +1053,21 @@ describe("bounded delivery return proposal", () => {
     expect(approveNarrativeBundle(baseInput({ worldState: current, storyState: elsewhere, proposal: proposalFor(`give_item:${itemId}:${npcDyn2}`) })).ok).toBe(false);
   });
 });
+
+
+it("accepts committed current NPC evidence without an interaction-history projection and still rejects unrelated or missing events", () => {
+  const event = makeCommittedEvent({ type: "npc_met", npcId: npcDyn1 }, {
+    actorIds: [PLAYER_ENTITY_ID], targetIds: [npcDyn1], actionId: "current-introduction",
+  });
+  const base = directTalkWorld();
+  const world = { ...base, eventLedger: [event] };
+  const proposal = currentSceneProposal();
+  const withEvidence = { ...proposal, currentScene: { ...proposal.currentScene,
+    npcLine: { ...proposal.currentScene.npcLine!, usedEventIds: [String(event.eventId)] } } };
+  const input = baseInput({ worldState: world, proposal: withEvidence,
+    eventContext: { turnId: event.turnId, turnNumber: event.turnNumber, domainEventIds: [event.eventId], episodeKey: "current" } });
+  expect(approveNarrativeBundle(input).ok).toBe(true);
+  expect(approveNarrativeBundle({ ...input, eventContext: { ...input.eventContext!, domainEventIds: [] } }).ok).toBe(false);
+  expect(approveNarrativeBundle({ ...input, worldState: { ...world, eventLedger: [] } }).ok).toBe(false);
+  expect(approveNarrativeBundle({ ...input, worldState: { ...world, eventLedger: [{ ...event, targetIds: [] }] } }).ok).toBe(false);
+});

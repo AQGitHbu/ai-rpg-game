@@ -44,6 +44,8 @@ export type NpcSpeechAuthorityInput = Readonly<{
   readonly targetContext?: Readonly<{
     readonly targetId?: PlayerEntityId | NpcId;
     readonly interactionEventIds?: readonly EventId[];
+    /** Current committed job events, independently checked for speaker participation. */
+    readonly currentEventIds?: readonly EventId[];
   }>;
 }>;
 
@@ -454,13 +456,22 @@ export function buildNpcSpeechAuthority(input: NpcSpeechAuthorityInput): NpcSpee
     : targetEdge.evidence
         .slice(-3)
         .flatMap((evidence) => evidence.supportingEventIds);
+  // One committed interaction can emit multiple events (for example npc_met
+  // and npc_interaction_recorded). Every speech path shares this evidence set;
+  // a missing denormalized history row must not invalidate the same action.
+  const interactionActionIds = new Set(speakerRecord.history.interactions.map(entry => entry.actionId));
+  const interactionCompanionEventIds = (input.eventLedger ?? [])
+    .filter(event => event.actionId !== undefined && interactionActionIds.has(event.actionId)
+      && eventInvolvesNpc(event, input.speakerNpcId))
+    .map(event => event.eventId);
   const requestedEventIds = input.targetContext?.interactionEventIds;
   const candidateEventIds = requestedEventIds === undefined
     ? [...recentInteractionEventIds, ...knowledgeEventIds, ...evidenceEventIds]
     : requestedEventIds.filter((eventId) =>
         recentInteractionEventIds.some((id) => String(id) === String(eventId)));
   const allowedEventIds = uniqueSorted(
-    [...candidateEventIds, ...knowledgeEventIds, ...evidenceEventIds]
+    [...candidateEventIds, ...knowledgeEventIds, ...evidenceEventIds, ...interactionCompanionEventIds,
+      ...(input.eventLedger === undefined ? [] : input.targetContext?.currentEventIds ?? [])]
       .filter((eventId) => validEventIdForSpeaker(eventId, input.speakerNpcId, input.eventLedger)),
     String,
   );
