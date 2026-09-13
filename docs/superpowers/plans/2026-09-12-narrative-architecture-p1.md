@@ -210,7 +210,7 @@ client.close();
 
 **正式消费：** performTurn 按实际 endingId 消费获批结果场景，与 Action/ending_reached/场景已展示记录/History 一次 CAS 提交；不再沿用选择前 currentScene，不新增结局后的 provider 调用。不匹配、缺失或失效场景须在写入前失败，不授予空正文结局。重放、重复提交、重载、失败零写入沿用现有契约。旧 offline fixture 可以明确走既有 fixture 路径，生产不得静默回退。
 
-- [ ] 写失败回归并实现：两个分支绑定与未知/重复/缺失拒绝，未选择结果不发布，实际选中结果更新场景与 History，重复 Action 不二次写入，保密强制 doubt 消费真实结果，无合法结果零写入；开场问话不闭合中心 Thread，后续主线绑定及 ending 证据闭合，无关约束不被忽略。
+- [x] 写失败回归并实现：两个分支绑定与未知/重复/缺失拒绝，未选择结果不发布，实际选中结果更新场景与 History，重复 Action 不二次写入，保密强制 doubt 消费真实结果，无合法结果零写入；开场问话不闭合中心 Thread，后续主线绑定及 ending 证据闭合，无关约束不被忽略。
 
 ```ts
 expect(before.worldState.ending).toBeNull();
@@ -222,8 +222,8 @@ expect(publishedScene.narration).toBe(approvedOutcomeScene.narration);
 expect(newEndingEvents).toHaveLength(1);
 ```
 
-- [ ] 完成独立范围审核、受影响回归、typecheck、boundaries、完整 npm test 与 check:docs；用保存的中篇失败形态验证根因，不修改旧存档/审计或补写旧正文。
-- [ ] 冻结实现后只登记一局普通短篇，正式 createGame → 实际选择 → 成功 ending/ready → 严格零网络 replay，阅读全文核对起因、阻碍、选择、后果与收束。保留失败，不连续抽样或追加剧情提示批次。本任务不执行交付/退出扩展、实机 UI 全流程专项或 main 对照；结局正文实际可见的最小 UI 接入属于本任务。
+- [x] 完成独立范围审核及限定复审；受影响回归、typecheck、131 项 boundaries、完整 2834 tests（1 skipped）与 check:docs 通过，lint 无错误（50 项既有 warning）。中篇选择后保留旧正文的失败形态由实际结果消费回归覆盖，不修改旧存档/审计或补写旧正文。
+- [ ] 冻结实现后只登记一局普通短篇，正式 createGame → 实际选择 → 成功 ending/ready → 严格零网络 replay，阅读全文核对起因、阻碍、选择、后果与收束。已冻结 2f6b2dd7 执行 short-closure-01：2 行动、13 HTTP 后换幕审批失败，无 ending；严格零网络重放 13 响应、5 状态一致。尚未到中途重载及终幕，不能勾选通关或终幕 live 验证。失败证据保留，不连续抽样或追加剧情提示批次。本任务不执行交付/退出扩展、实机 UI 全流程专项或 main 对照；结局正文实际可见的最小 UI 接入属于本任务。
 
 ## 后续 P1 验收边界
 
