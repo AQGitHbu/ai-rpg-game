@@ -29,7 +29,11 @@ import {
 import { renderAiRepairFeedback } from "../../../aiGenerationRetry";
 import { buildOpeningHandoffContext } from "./openingHandoffContext";
 
-export const NARRATIVE_BUNDLE_CONTEXT_MAX_ESTIMATED_TOKENS = 8_000;
+// P1 live journeys may run in provider thinking mode, whose effective input
+// budget is provider-specific. Keep the compiler's bounded mode available for
+// other callers, but do not reject a narrative bundle locally on an arbitrary
+// 8,000-token estimate.
+export const NARRATIVE_BUNDLE_CONTEXT_MAX_ESTIMATED_TOKENS = Number.MAX_SAFE_INTEGER;
 
 type DecisionNarrativeContextInput = Readonly<{
   worldState: WorldState;

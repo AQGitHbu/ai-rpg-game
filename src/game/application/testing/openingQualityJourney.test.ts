@@ -138,7 +138,7 @@ describe("opening quality create → ack → choice → decision context", () =>
     expect(thread.factIds).toEqual(["fact_1", "fact_0", "fact_2"]);
   });
 
-  it("rejects a real oversized first-turn opening context before calling the production provider", async () => {
+  it("passes a real oversized first-turn context through to the production provider", async () => {
     const created = repository();
     const repeated = "公开背景。".repeat(100);
     const result = await createGame(
@@ -188,9 +188,9 @@ describe("opening quality create → ack → choice → decision context", () =>
     const pending = created.record();
     if (pending.storyState.narrative.status !== "provider_pending") throw new Error("missing first-turn job");
     const compilation = compileDecisionNarrativeContext({ worldState: pending.worldState, storyState: pending.storyState, job: pending.storyState.narrative.job });
-    expect(compilation.manifest.overflowEstimatedTokens).toBeGreaterThan(0);
+    expect(compilation.manifest.overflowEstimatedTokens).toBe(0);
 
-    const complete = vi.fn();
+    const complete = vi.fn().mockResolvedValue({ ok: false as const, code: "service_error" as const, retryable: false, latencyMs: 1 });
     const aiClient: RpgAiClient = {
       complete,
       policy: () => ({ thinking: "off", timeoutMs: 1_000, maxTokens: 5_000, jsonMode: "prompt_only", maxAttempts: 1 }),
@@ -202,8 +202,8 @@ describe("opening quality create → ack → choice → decision context", () =>
       job: pending.storyState.narrative.job,
     });
 
-    expect(sourceResult).toMatchObject({ ok: false, repairReason: "context_budget_exceeded" });
-    expect(complete).not.toHaveBeenCalled();
+    expect(sourceResult).toMatchObject({ ok: false, repairDetail: "service_error" });
+    expect(complete).toHaveBeenCalledTimes(1);
   });
   it("carries each real approved choice and the selected thread's public causal chain", async () => {
     const created = repository();

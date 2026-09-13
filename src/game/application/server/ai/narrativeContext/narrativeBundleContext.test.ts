@@ -5,7 +5,7 @@ import { NARRATIVE_BUNDLE_CONTEXT_MAX_ESTIMATED_TOKENS } from "./narrativeBundle
 describe("opening handoff context budget", () => {
   it("retains mandatory causal refs while dropping oversized optional prose within 8,000 tokens", () => {
     const result = compileNarrativeContext({
-      maxEstimatedTokens: NARRATIVE_BUNDLE_CONTEXT_MAX_ESTIMATED_TOKENS,
+      maxEstimatedTokens: 8_000,
       blocks: [
         { id: "bundle:opening-handoff", slot: "relevant_events", title: "开局背景与本次回应", content: "公开因果", authority: "event", retention: "mandatory", priority: 985, source: { kind: "committed_event", refs: ["init:g:history", "init:g:thread"] } },
         { id: "oversized-optional", slot: "recent_scenes", title: "超大可选正文", content: "冗".repeat(20_000), authority: "memory", retention: "optional", priority: 1, source: { kind: "test", refs: [] } },
@@ -14,5 +14,26 @@ describe("opening handoff context budget", () => {
     expect(result.selectedEstimatedTokens).toBeLessThanOrEqual(8_000);
     expect(result.selected.find((block) => block.id === "bundle:opening-handoff")?.source.refs).toEqual(["init:g:history", "init:g:thread"]);
     expect(result.dropped).toContainEqual(expect.objectContaining({ id: "oversized-optional", reason: "budget" }));
+  });
+
+  it("accepts the larger decision context required by a long committed story", () => {
+    const result = compileNarrativeContext({
+      maxEstimatedTokens: NARRATIVE_BUNDLE_CONTEXT_MAX_ESTIMATED_TOKENS,
+      blocks: [
+        {
+          id: "bundle:long-committed-history",
+          slot: "relevant_events",
+          title: "长篇已提交历史",
+          content: "因果".repeat(6_000),
+          authority: "event",
+          retention: "mandatory",
+          priority: 1_000,
+          source: { kind: "narrative_history", refs: ["history:long"] },
+        },
+      ],
+    });
+
+    expect(result.overflowEstimatedTokens).toBe(0);
+    expect(result.selectedEstimatedTokens).toBeLessThanOrEqual(NARRATIVE_BUNDLE_CONTEXT_MAX_ESTIMATED_TOKENS);
   });
 });

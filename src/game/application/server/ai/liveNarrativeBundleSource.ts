@@ -398,13 +398,6 @@ export function createNarrativeBundleSource(
               ...(context.contentRepair === undefined ? {} : { contentRepair: context.contentRepair }),
             })
           : undefined;
-        if (decisionCompilation !== undefined && decisionCompilation.manifest.overflowEstimatedTokens > 0) {
-          logger?.warn("narrative_bundle_context_budget_exceeded", {
-            selectedEstimatedTokens: decisionCompilation.manifest.selectedEstimatedTokens,
-            overflowEstimatedTokens: decisionCompilation.manifest.overflowEstimatedTokens,
-          });
-          return failBundle("invalid_schema", "context_budget_exceeded");
-        }
         const prompt = decisionCompilation?.prompt ?? buildOpeningNarrativePrompt(
           context as Extract<NarrativeBundleSourceContext, { readonly kind: "opening" }>,
         );

@@ -24,6 +24,7 @@ import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory"
 import { rebuildEpisodicMemory } from "@/game/domain/episodicMemory";
 import { createFixtureOpeningCandidateSource } from "../../createGame";
 import { createWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
+import { NARRATIVE_BUNDLE_CONTEXT_MAX_ESTIMATED_TOKENS } from "./narrativeContext/narrativeBundleContext";
 
 function mockAiClient(complete: ReturnType<typeof vi.fn>): RpgAiClient {
   return {
@@ -318,7 +319,7 @@ describe("createNarrativeBundleSource", () => {
     expect(auditContext).toEqual(expect.objectContaining({
       narrativeContext: expect.objectContaining({
         compilerVersion: 1,
-        maxEstimatedTokens: 8_000,
+        maxEstimatedTokens: NARRATIVE_BUNDLE_CONTEXT_MAX_ESTIMATED_TOKENS,
         overflowEstimatedTokens: 0,
         selected: expect.arrayContaining([
           expect.objectContaining({ id: "bundle:rules" }),
