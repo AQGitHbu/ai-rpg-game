@@ -17,12 +17,24 @@ export function findOfferedStoryDelivery(view, actionMap, delivery) {
   });
 }
 
-export function selectProductionChoice(view, routeKind, actionMap, interactions, performed, performedActions = new Set(), delivery) {
+export function selectProductionChoice(view, routeKind, actionMap, interactions, performed, performedActions = new Set(), delivery, actionCount = 0) {
   const choices = offeredProductionChoices(view);
   const operation = (choice) => {
     const action = actionMap.get(choice.choiceToken);
     return action?.type === "talk" ? interactions.find((entry) => entry.id === action.interactionId)?.operation : undefined;
   };
+  if (routeKind === "deliver" || routeKind === "withdraw") {
+    if (routeKind === "withdraw" && actionCount >= 4) return choices.find(choice => actionMap.get(choice.choiceToken)?.type === "abandon_quest");
+    const deliveryChoice = findOfferedStoryDelivery(view, actionMap, delivery);
+    if (routeKind === "deliver" && deliveryChoice) return deliveryChoice;
+    const allowed = choice => {
+      const action = actionMap.get(choice.choiceToken);
+      return action && !["give_item", "abandon_quest"].includes(action.type) && !performedActions.has(JSON.stringify(action));
+    };
+    const objective = choices.find(choice => choice.choiceToken === view.story.currentObjectiveChoiceToken && allowed(choice));
+    if (objective && actionMap.get(objective.choiceToken)?.type !== "talk") return objective;
+    return [...view.narrative.choices, ...(view.narrative.npcDialogues ?? []).flatMap(dialogue => dialogue.choices ?? [])].find(allowed) ?? objective;
+  }
   const wanted = (routeKind === "private" || routeKind === "diagnostic")
     ? (!performed.has("promise_confidentiality") ? "promise_confidentiality" : !performed.has("request_introduction") ? "request_introduction" : routeKind === "diagnostic" && !performed.has("verify_freeform_submitted") ? "await_delivery_opportunity" : routeKind === "diagnostic" && !performed.has("request_verification") ? "request_verification" : null)
     : routeKind === "verify_first" && !performed.has("verify_freeform_submitted")

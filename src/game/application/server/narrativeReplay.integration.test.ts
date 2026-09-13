@@ -37,7 +37,14 @@ it("replays raw opening, NPC and reviewer responses through production parsing a
               ? { kind: "decision", worldState: current.record.worldState, storyState: current.record.storyState, job: current.record.storyState.narrative.job }
               : { kind: "opening", jobId: asNarrativeJobId("fixture-opening"), input: { gameType: "wuxia", gameLength: "short", seed: "fixture" } });
             if (!result.ok) throw new Error("FIXTURE_FAILED");
-            payload = result.proposal;
+            payload = "worldDelta" in result.proposal ? {
+              worldDelta: result.proposal.worldDelta,
+              interactionProposals: result.proposal.interactionProposals,
+              sceneDrafts: [
+                { slotKey: "current", scene: result.proposal.currentScene },
+                ...result.proposal.continuationScenes.map(step => ({ slotKey: step.stepKey, scene: step.scene })),
+              ],
+            } : result.proposal;
           }
           return { ok: true, content: JSON.stringify(payload), latencyMs: 1 };
         }),

@@ -998,7 +998,7 @@ describe("approveNarrativeBundle", () => {
       objectiveTransition: input.transition, mandatoryBeats: [], generationKind: "npc_fixed_choice", sceneRequestKind: "npc_response",
     });
     if (!pending.ok) throw new Error(JSON.stringify(pending.errors));
-    const parsed = await createNarrativeBundleSource({ aiClient: {
+    const parsed = await createNarrativeBundleSource({ allowLegacyDecisionDto: true, aiClient: {
       complete: async () => ({ ok: true, content: JSON.stringify(proposal), latencyMs: 1 }),
       policy: () => ({ thinking: "off", timeoutMs: 100, jsonMode: "prompt_only", maxAttempts: 1 }),
     } }).generate({ kind: "decision", worldState: populatedInput.worldState, storyState: input.storyState, job: pending.job });

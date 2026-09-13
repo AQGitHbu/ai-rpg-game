@@ -180,12 +180,44 @@ function nextActOverPlanResponse(input: {
 }
 
 describe("createNarrativeBundleSource", () => {
+  it("rejects missing drafts and legacy positional scenes by default", async () => {
+    const complete = vi.fn();
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+    const context: NarrativeBundleSourceContext = { kind: "decision", worldState: makeWorldState(), storyState: makeNextActStoryState(), job: makeJob() };
+    for (const [payload, repairDetail] of [
+      [{ worldDelta: null }, "invalid_slots at $.sceneDrafts"],
+      [nextActOverPlanResponse({ choicesAt: 4, totalScenes: 13 }), "unknown_field at $.currentScene"],
+    ] as const) {
+      complete.mockResolvedValue({ ok: true, content: JSON.stringify(payload) });
+      expect(await source.generate(context)).toMatchObject({ ok: false, repairReason: "invalid_schema", repairDetail });
+    }
+    expect(complete).toHaveBeenCalledTimes(2);
+  });
+
+  it("compiles a new draft by slotKey and exposes unknown-slot repair paths", async () => {
+    const stepKey = `move:loc_dyn_${makeStoryState().evolution.nextLocationOrdinal}`;
+    const currentScene = { ...validBundleResponse.currentScene, npcLine: null, choices: [] };
+    const arrival = { ...validBundleResponse.currentScene, npcLine: { ...validBundleResponse.currentScene.npcLine, npcId: `npc_dyn_${makeStoryState().evolution.nextNpcOrdinal}` }, choices: [
+      { candidateId: `${stepKey}_choice_1`, label: "表明身份。" },
+      { candidateId: `${stepKey}_choice_2`, label: "先问来意。" },
+    ] };
+    const draft = { worldDelta: null, sceneDrafts: [{ slotKey: stepKey, scene: arrival }, { slotKey: "current", scene: currentScene }] };
+    const complete = vi.fn().mockResolvedValue({ ok: true, content: JSON.stringify(draft) });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+    const context: NarrativeBundleSourceContext = { kind: "decision", worldState: makeWorldState(), storyState: makeNextActStoryState(), job: makeJob() };
+    const result = await source.generate(context);
+    expect(result).toMatchObject({ ok: true, kind: "decision", proposal: { currentScene, continuationScenes: [{ stepKey, scene: arrival }], terminal: { kind: "next_decision", target: { kind: "continuation_step", stepKey } } } });
+    complete.mockResolvedValue({ ok: true, content: JSON.stringify({ ...draft, sceneDrafts: [...draft.sceneDrafts, { slotKey: "invented", scene: currentScene }] }) });
+    expect(await source.generate(context)).toMatchObject({ ok: false, repairReason: "invalid_schema", repairDetail: "unknown_slot at $.sceneDrafts[2].slotKey" });
+    expect(complete).toHaveBeenCalledTimes(2);
+  });
+
   it("calls aiClient.complete with narrative_bundle role exactly once", async () => {
     const complete = vi.fn().mockResolvedValue({
       ok: true,
       content: JSON.stringify(validBundleResponse),
     });
-    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete), allowLegacyDecisionDto: true });
 
     const context: NarrativeBundleSourceContext = {
       kind: "decision",
@@ -210,7 +242,7 @@ describe("createNarrativeBundleSource", () => {
       ok: true,
       content: JSON.stringify(validBundleResponse),
     });
-    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete), allowLegacyDecisionDto: true });
     const base = makeWorldState();
     const focusNpcId = asNpcId("npc_1");
     const privateFactId = asFactId("fact_private");
@@ -338,7 +370,7 @@ describe("createNarrativeBundleSource", () => {
       ok: true,
       content: JSON.stringify(validBundleResponse),
     });
-    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete), allowLegacyDecisionDto: true });
     const base = makeWorldState();
     const carriedId = asItemId("item_carried");
     const groundId = asItemId("item_ground");
@@ -414,7 +446,7 @@ describe("createNarrativeBundleSource", () => {
       },
     };
     const complete = vi.fn().mockResolvedValue({ ok: true, content: JSON.stringify(legacy) });
-    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete), allowLegacyDecisionDto: true });
 
     const result = await source.generate({
       kind: "decision",
@@ -452,7 +484,7 @@ describe("createNarrativeBundleSource", () => {
       ok: true,
       content: JSON.stringify(validBundleResponse),
     });
-    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete), allowLegacyDecisionDto: true });
 
     await source.generate({
       kind: "decision",
@@ -466,10 +498,11 @@ describe("createNarrativeBundleSource", () => {
     const systemPrompt = messages[0]!.content as string;
     expect(systemPrompt).toContain("@new.location");
     expect(systemPrompt).toContain("@new.npc");
-    expect(systemPrompt).toContain("必须与第 8 条投影的步骤完全一致");
+    expect(systemPrompt).toContain("sceneDrafts 必须与本节槽位投影完全一致");
     expect(systemPrompt).toContain("不得投影之外自行规划未来步骤");
-    expect(systemPrompt).toContain("current_scene");
-    expect(systemPrompt).toContain("continuation_step");
+    expect(systemPrompt).toContain('slotKey:"current"');
+    expect(systemPrompt).toContain('slotKey:"精确服务端步骤key"');
+    expect(systemPrompt).toContain("不得输出 currentScene、continuationScenes 或 terminal，服务器按槽投影组装它们");
     expect(systemPrompt).toContain("禁止鬼魂");
     expect(systemPrompt).toContain("只能是 scene 或 npc_gift");
     expect(systemPrompt).toContain("该 NPC 的约定对话完成后由规则交给玩家");
@@ -481,7 +514,7 @@ describe("createNarrativeBundleSource", () => {
       ok: true,
       content: JSON.stringify(validBundleResponse),
     });
-    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete), allowLegacyDecisionDto: true });
 
     await source.generate({
       kind: "decision",
@@ -522,7 +555,7 @@ describe("createNarrativeBundleSource", () => {
         },
       }),
     });
-    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete), allowLegacyDecisionDto: true });
 
     const result = await source.generate({
       kind: "decision",
@@ -540,7 +573,7 @@ describe("createNarrativeBundleSource", () => {
       ok: true,
       content: JSON.stringify(validBundleResponse),
     });
-    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete), allowLegacyDecisionDto: true });
 
     const worldState = makeWorldState();
     const npcId = asNpcId("npc_1");
@@ -608,7 +641,7 @@ describe("createNarrativeBundleSource", () => {
       ok: true,
       content: JSON.stringify(validBundleResponse),
     });
-    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete), allowLegacyDecisionDto: true });
 
     await source.generate({
       kind: "decision",
@@ -634,7 +667,7 @@ describe("createNarrativeBundleSource", () => {
       ok: true,
       content: JSON.stringify(validBundleResponse),
     });
-    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete), allowLegacyDecisionDto: true });
     const storyState = {
       ...makeStoryState(),
       currentAct: 2,
@@ -652,7 +685,8 @@ describe("createNarrativeBundleSource", () => {
     const systemPrompt = messages[0]!.content as string;
     const locationId = `loc_dyn_${storyState.evolution.nextLocationOrdinal}`;
     const npcId = `npc_dyn_${storyState.evolution.nextNpcOrdinal}`;
-    expect(systemPrompt).toContain(`move:${locationId}`);
+    expect(systemPrompt).toContain(`下一幕抵达场景骨架：{"slotKey":"move:${locationId}","scene":`);
+    expect(systemPrompt).not.toContain('下一幕抵达场景骨架：{"stepKey"');
     expect(systemPrompt).toContain(`move:${locationId}_choice_1`);
     expect(systemPrompt).toContain(npcId);
     expect(systemPrompt).toContain('"kind":"continuation_step"');
@@ -664,7 +698,7 @@ describe("createNarrativeBundleSource", () => {
       ok: true,
       content: JSON.stringify(validBundleResponse),
     });
-    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete), allowLegacyDecisionDto: true });
     const base = makeWorldState();
     const npcMemory: NpcMemory = {
       npcId: asNpcId("npc_7"),
@@ -723,7 +757,7 @@ describe("createNarrativeBundleSource", () => {
       ok: true,
       content: JSON.stringify(validBundleResponse),
     });
-    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete), allowLegacyDecisionDto: true });
 
     await source.generate({
       kind: "decision",
@@ -752,7 +786,7 @@ describe("createNarrativeBundleSource", () => {
       ok: true,
       content: JSON.stringify(validBundleResponse),
     });
-    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete), allowLegacyDecisionDto: true });
 
     await source.generate({
       kind: "decision",
@@ -769,7 +803,7 @@ describe("createNarrativeBundleSource", () => {
     const messages = complete.mock.calls[0]![1] as readonly AiMessage[];
     const systemPrompt = messages[0]!.content as string;
     expect(systemPrompt).toContain("细分原因=terminal_step_requires_two_choices（步骤 battle_resolved:victory:enemy_dyn_3）");
-    expect(systemPrompt).toContain("终点步骤（terminal.target.stepKey 指向的那一步）必须给出该步骤列出的全部 candidateId 选项");
+    expect(systemPrompt).toContain("选择槽必须有两个合法 candidateId 和中文 label；其他槽 choices=[]");
   });
 
   it.each(["scene", "npc_gift"])("preserves %s acquisition while normalizing a next-act continuation", async (acquisition) => {
@@ -811,7 +845,7 @@ describe("createNarrativeBundleSource", () => {
         terminal: { kind: "next_decision", target: { kind: "continuation_step", stepKey: `move:loc_dyn_${nextLocationOrdinal}` } },
       }),
     });
-    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete), allowLegacyDecisionDto: true });
     const storyState = {
       ...makeStoryState(),
       currentAct: 2,
@@ -872,7 +906,7 @@ describe("createNarrativeBundleSource", () => {
         terminal: { kind: "ending", target: { kind: "current_scene" } },
       }),
     });
-    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete), allowLegacyDecisionDto: true });
     const storyState: StoryState = {
       ...makeStoryState(),
       evolution: { ...makeStoryState().evolution, status: "needs_ending_pair" },
@@ -908,7 +942,7 @@ describe("createNarrativeBundleSource", () => {
         terminal: { kind: "next_decision", target: { kind: "current_scene" } },
       }),
     });
-    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete), allowLegacyDecisionDto: true });
 
     const result = await source.generate({
       kind: "decision",
@@ -976,7 +1010,7 @@ describe("createNarrativeBundleSource", () => {
         terminal: { kind: "next_decision", target: { kind: "continuation_step", stepKey } },
       }),
     });
-    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete), allowLegacyDecisionDto: true });
 
     const result = await source.generate({
       kind: "decision",
@@ -1001,7 +1035,7 @@ describe("createNarrativeBundleSource", () => {
       ok: true,
       content: JSON.stringify(nextActOverPlanResponse({ choicesAt: 0, totalScenes: 13 })),
     });
-    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete), allowLegacyDecisionDto: true });
 
     const result = await source.generate({
       kind: "decision",
@@ -1031,7 +1065,7 @@ describe("createNarrativeBundleSource", () => {
       ok: true,
       content: JSON.stringify(nextActOverPlanResponse({ choicesAt: 4, totalScenes: 13 })),
     });
-    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete), allowLegacyDecisionDto: true });
 
     const result = await source.generate({
       kind: "decision",
@@ -1058,7 +1092,7 @@ describe("createNarrativeBundleSource", () => {
       ok: true,
       content: JSON.stringify(nextActOverPlanResponse({ choicesAt: -1, totalScenes: 13 })),
     });
-    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete), allowLegacyDecisionDto: true });
 
     const result = await source.generate({
       kind: "decision",

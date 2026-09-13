@@ -24,6 +24,7 @@ import { compileDecisionNarrativeContext } from "./narrativeContext";
 import { parseWorldDeltaProposal } from "./liveWorldEvolutionSource";
 import { hasOnlyKnownOpeningCandidateKeys } from "./openingGenerationSource";
 import { buildOpeningNarrativePrompt } from "./openingNarrativePrompt";
+import { compileNarrativeDraft } from "./narrativeDraftProjection";
 
 // ---------------------------------------------------------------------------
 // Task 5：统一叙事生成包 live source。
@@ -32,6 +33,8 @@ import { buildOpeningNarrativePrompt } from "./openingNarrativePrompt";
 // ---------------------------------------------------------------------------
 
 export type LiveNarrativeBundleSourceDeps = {
+  /** Explicit historical fixture adapter; production never enables this. */
+  readonly allowLegacyDecisionDto?: boolean;
   readonly aiClient?: RpgAiClient;
   readonly requestClient?: NarrativeRequestClient;
   readonly logger?: GameLogger;
@@ -454,7 +457,10 @@ export function createNarrativeBundleSource(
         }
 
         if (context.kind === "decision") {
-          const normalizedBundle = normalizeDecisionBundleShape(
+          const isDraft = !deps.allowLegacyDecisionDto || asRecord(parsed.value)?.sceneDrafts !== undefined;
+          const compiled = isDraft ? compileNarrativeDraft(parsed.value, context) : null;
+          if (compiled !== null && !compiled.ok) return failBundle("invalid_schema", "invalid_schema", `${compiled.code} at ${compiled.path}`);
+          const normalizedBundle = compiled?.ok ? compiled.value : normalizeDecisionBundleShape(
             parsed.value,
             context.worldState,
             context.storyState,

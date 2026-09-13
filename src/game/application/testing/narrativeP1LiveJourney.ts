@@ -13,13 +13,15 @@ export const NARRATIVE_P1_BATCH_WALL_CLOCK_MS = 10_800_000 as const;
 
 export type NarrativeP1JourneyMode = "register" | "live" | "replay";
 export type NarrativeP1ScenarioId = "S1" | "S2";
-export type NarrativeP1RouteKind = "private" | "public" | "verify_first" | "diagnostic";
+export type NarrativeP1RouteKind = "private" | "public" | "verify_first" | "diagnostic" | "deliver" | "withdraw";
 
 export type NarrativeP1Route = Readonly<{
   readonly routeId: `${NarrativeP1ScenarioId}-${NarrativeP1RouteKind}`;
   readonly scenarioId: NarrativeP1ScenarioId;
   readonly kind: NarrativeP1RouteKind;
 }>;
+
+const FOCUSED_ROUTES = [{ routeId: "S1-deliver", scenarioId: "S1", kind: "deliver" }, { routeId: "S1-withdraw", scenarioId: "S1", kind: "withdraw" }] as const;
 
 export const NARRATIVE_P1_ROUTES: readonly NarrativeP1Route[] = Object.freeze([
   { routeId: "S1-private", scenarioId: "S1", kind: "private" },
@@ -86,6 +88,7 @@ export type NarrativeP1JourneyEnvironment = Readonly<{
 
 export type NarrativeP1JourneyDeps = Readonly<{
   readonly replaySourceDirectory?: string;
+  readonly openingSource?: Readonly<Record<string, unknown>>;
   /** Test seam; production defaults to the composition/SQLite route runner. */
   readonly routeRunner?: (input: NarrativeP1RouteRunnerInput) => Promise<NarrativeP1RouteRunnerResult>;
   /** Frozen code identity. A changed identity refuses live/replay before I/O. */
@@ -97,8 +100,9 @@ export type NarrativeP1JourneyDeps = Readonly<{
 
 export type NarrativeP1Protocol = Readonly<{
   readonly protocolVersion: typeof NARRATIVE_P1_PROTOCOL_VERSION;
-  readonly claimScope: "matrix" | "diagnostic";
-  readonly plannedRoutes: 1 | typeof NARRATIVE_P1_PLANNED_ROUTES;
+  readonly claimScope: "matrix" | "diagnostic" | "fixed_opening_story";
+  readonly openingSource?: Readonly<Record<string, unknown>>;
+  readonly plannedRoutes: 1 | 2 | typeof NARRATIVE_P1_PLANNED_ROUTES;
   readonly routes: readonly NarrativeP1Route[];
   readonly input: ValidatedNewGameInput;
   readonly inputHash: string;
@@ -118,7 +122,7 @@ export type NarrativeP1Protocol = Readonly<{
     readonly httpBatch: 200 | typeof NARRATIVE_P1_HTTP_BATCH_BUDGET;
     readonly maxRouteActions: typeof NARRATIVE_P1_MAX_ROUTE_ACTIONS;
     readonly maxCandidateVersions: typeof NARRATIVE_P1_MAX_CANDIDATE_VERSIONS;
-    readonly wallClockMs: 1_800_000 | typeof NARRATIVE_P1_BATCH_WALL_CLOCK_MS;
+    readonly wallClockMs: 1_800_000 | 5_400_000 | typeof NARRATIVE_P1_BATCH_WALL_CLOCK_MS;
   }>;
   readonly environment: NarrativeP1JourneyEnvironment;
   readonly code: Readonly<{
@@ -131,7 +135,7 @@ export type NarrativeP1Protocol = Readonly<{
 
 export type NarrativeP1JourneyInput = Readonly<{
   readonly mode: NarrativeP1JourneyMode;
-  readonly profile?: "matrix" | "diagnostic";
+  readonly profile?: "matrix" | "diagnostic" | "focused";
   readonly runId: string;
   readonly protocolPath: string;
   readonly artifactDirectory: string;
@@ -139,7 +143,7 @@ export type NarrativeP1JourneyInput = Readonly<{
 
 export type NarrativeP1JourneyResult = Readonly<{
   readonly completedRoutes: number;
-  readonly plannedRoutes: 1 | typeof NARRATIVE_P1_PLANNED_ROUTES;
+  readonly plannedRoutes: 1 | 2 | typeof NARRATIVE_P1_PLANNED_ROUTES;
   readonly passed: boolean;
 }>;
 
@@ -206,19 +210,21 @@ function protocolWithoutHash(protocol: NarrativeP1Protocol | Omit<NarrativeP1Pro
   return withoutHash as Omit<NarrativeP1Protocol, "protocolHash">;
 }
 
-function createProtocol(deps: NarrativeP1JourneyDeps, profile: "matrix" | "diagnostic" = "matrix"): NarrativeP1Protocol | null {
+function createProtocol(deps: NarrativeP1JourneyDeps, profile: "matrix" | "diagnostic" | "focused" = "matrix"): NarrativeP1Protocol | null {
+  if (profile === "focused" && !deps.openingSource) return null;
   const input = validatedFixedInput();
   if (input === null) return null;
   const codeFingerprint = currentCodeFingerprint(deps);
   const protocol = {
     protocolVersion: NARRATIVE_P1_PROTOCOL_VERSION,
-    claimScope: profile,
-    plannedRoutes: profile === "diagnostic" ? 1 : NARRATIVE_P1_PLANNED_ROUTES,
-    routes: profile === "diagnostic" ? [{ routeId: "S1-diagnostic", scenarioId: "S1", kind: "diagnostic" }] as const : NARRATIVE_P1_ROUTES,
+    claimScope: profile === "focused" ? "fixed_opening_story" : profile,
+    ...(profile === "focused" ? { openingSource: deps.openingSource } : {}),
+    plannedRoutes: profile === "focused" ? 2 : profile === "diagnostic" ? 1 : NARRATIVE_P1_PLANNED_ROUTES,
+    routes: profile === "focused" ? FOCUSED_ROUTES : profile === "diagnostic" ? [{ routeId: "S1-diagnostic", scenarioId: "S1", kind: "diagnostic" }] as const : NARRATIVE_P1_ROUTES,
     input,
     inputHash: sha256(input),
     policy: FIXED_POLICY,
-    budget: profile === "diagnostic" ? { ...FIXED_BUDGET, httpBatch: 200 as const, wallClockMs: 1_800_000 as const } : FIXED_BUDGET,
+    budget: profile === "focused" ? { ...FIXED_BUDGET, httpBatch: 200 as const, wallClockMs: 5_400_000 as const } : profile === "diagnostic" ? { ...FIXED_BUDGET, httpBatch: 200 as const, wallClockMs: 1_800_000 as const } : FIXED_BUDGET,
     environment: currentEnvironment(deps),
     code: {
       fingerprint: codeFingerprint,
@@ -244,14 +250,16 @@ export function validateNarrativeP1Protocol(
   const protocol = value as Partial<NarrativeP1Protocol>;
   const issues: string[] = [];
   if (protocol.protocolVersion !== NARRATIVE_P1_PROTOCOL_VERSION) issues.push("PROTOCOL_VERSION_MISMATCH");
+  const focused = protocol.claimScope === "fixed_opening_story";
+  if (focused && !protocol.openingSource) issues.push("OPENING_SOURCE_MISSING");
   const diagnostic = protocol.claimScope === "diagnostic";
-  if (!["matrix", "diagnostic"].includes(protocol.claimScope ?? "")) issues.push("CLAIM_SCOPE_MISMATCH");
-  if (protocol.plannedRoutes !== (diagnostic ? 1 : NARRATIVE_P1_PLANNED_ROUTES)) issues.push("PLANNED_ROUTES_MISMATCH");
-  if (!Array.isArray(protocol.routes) || canonicalJson(protocol.routes) !== canonicalJson(diagnostic ? [{ routeId: "S1-diagnostic", scenarioId: "S1", kind: "diagnostic" }] : NARRATIVE_P1_ROUTES)) issues.push("ROUTES_MISMATCH");
+  if (!["matrix", "diagnostic", "fixed_opening_story"].includes(protocol.claimScope ?? "")) issues.push("CLAIM_SCOPE_MISMATCH");
+  if (protocol.plannedRoutes !== (focused ? 2 : diagnostic ? 1 : NARRATIVE_P1_PLANNED_ROUTES)) issues.push("PLANNED_ROUTES_MISMATCH");
+  if (!Array.isArray(protocol.routes) || canonicalJson(protocol.routes) !== canonicalJson(focused ? FOCUSED_ROUTES : diagnostic ? [{ routeId: "S1-diagnostic", scenarioId: "S1", kind: "diagnostic" }] : NARRATIVE_P1_ROUTES)) issues.push("ROUTES_MISMATCH");
   if (protocol.inputHash !== sha256(protocol.input)) issues.push("INPUT_HASH_MISMATCH");
   if (protocol.code?.fingerprint !== expectedCodeFingerprint) issues.push("CODE_FINGERPRINT_MISMATCH");
   if (canonicalJson(protocol.policy) !== canonicalJson(FIXED_POLICY)) issues.push("POLICY_MISMATCH");
-  if (canonicalJson(protocol.budget) !== canonicalJson(diagnostic ? { ...FIXED_BUDGET, httpBatch: 200, wallClockMs: 1_800_000 } : FIXED_BUDGET)) issues.push("BUDGET_MISMATCH");
+  if (canonicalJson(protocol.budget) !== canonicalJson(focused ? { ...FIXED_BUDGET, httpBatch: 200, wallClockMs: 5_400_000 } : diagnostic ? { ...FIXED_BUDGET, httpBatch: 200, wallClockMs: 1_800_000 } : FIXED_BUDGET)) issues.push("BUDGET_MISMATCH");
   const fixedInput = validatedFixedInput();
   if (fixedInput === null || canonicalJson(protocol.input) !== canonicalJson(fixedInput)) issues.push("FIXED_INPUT_MISMATCH");
   if (protocol.environment?.model === undefined || protocol.environment.model.trim() === "" || protocol.environment.model === "unconfigured-model") issues.push("MODEL_MISSING");
@@ -269,7 +277,7 @@ function writeJson(path: string, value: unknown): void {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
-function result(completedRoutes: number, passed: boolean, plannedRoutes: 1 | 6 = 6): NarrativeP1JourneyResult {
+function result(completedRoutes: number, passed: boolean, plannedRoutes: 1 | 2 | 6 = 6): NarrativeP1JourneyResult {
   return {
     completedRoutes,
     plannedRoutes,
@@ -309,11 +317,12 @@ export async function runNarrativeP1Journey(
   if (issues.length > 0 || protocolValue === null || typeof protocolValue !== "object") return result(0, false);
   const protocol = protocolValue as NarrativeP1Protocol;
   if (canonicalJson(protocol.environment) !== canonicalJson(currentEnvironment(deps))) return result(0, false, protocol.plannedRoutes);
+  if (protocol.claimScope === "fixed_opening_story" && canonicalJson(protocol.openingSource) !== canonicalJson(deps.openingSource)) return result(0, false, protocol.plannedRoutes);
   const validatedInput = validateNewGameInput(protocol.input);
   if (!validatedInput.ok) return result(0, false);
   const replaySource = input.mode === "replay" && deps.replaySourceDirectory ? {
     directory: deps.replaySourceDirectory,
-    tapes: [...new Set(protocol.routes.flatMap(route => [`${route.scenarioId}-opening`, route.routeId]))].map(stream => {
+    tapes: [...new Set(protocol.routes.flatMap(route => protocol.claimScope === "fixed_opening_story" ? [route.routeId] : [`${route.scenarioId}-opening`, route.routeId]))].map(stream => {
       const file = `${stream}.runtime.json`;
       try { return { file, sha256: createHash("sha256").update(readFileSync(join(deps.replaySourceDirectory!, file))).digest("hex") }; }
       catch { return { file, sha256: null }; }
@@ -335,7 +344,7 @@ export async function runNarrativeP1Journey(
   const checkpoint = () => writeJson(join(input.artifactDirectory, "summary.json"), {
     protocolHash: protocol.protocolHash, runId: input.runId, mode: input.mode, replaySource,
     input: protocol.input, environment: protocol.environment, code: protocol.code,
-    claimScope: protocol.claimScope, plannedRoutes: protocol.plannedRoutes, completedRoutes, passed: false,
+    openingSource: protocol.openingSource, claimScope: protocol.claimScope, plannedRoutes: protocol.plannedRoutes, completedRoutes, passed: false,
     httpAttempts: budget.used, replayedTransportAttempts, elapsedMs: Date.now() - startedAt,
     routes: protocol.routes.map((route) => routeArtifacts.find((artifact) => artifact.routeId === route.routeId)
       ?? { ...route, completed: false, httpAttempts: 0, failureCode: controller.signal.aborted ? stopCode : "ROUTE_NOT_FINISHED" }),
@@ -346,7 +355,9 @@ export async function runNarrativeP1Journey(
     const httpBefore = budget.used;
     let listener: (() => void) | undefined;
     try {
-      if (controller.signal.aborted || budget.used >= budget.max) {
+      if (protocol.claimScope === "fixed_opening_story" && route.kind === "withdraw" && completedRoutes !== 1) {
+        routeResult = { completed: false, httpAttempts: 0, failureCode: "DELIVER_FAILED_WITHDRAW_NOT_RUN" };
+      } else if (controller.signal.aborted || budget.used >= budget.max) {
         routeResult = { completed: false, httpAttempts: 0, failureCode: controller.signal.aborted ? stopCode : "BATCH_HTTP_BUDGET_EXHAUSTED" };
       } else {
         const stopped = new Promise<NarrativeP1RouteRunnerResult>((resolve) => {
@@ -395,7 +406,7 @@ export async function runNarrativeP1Journey(
     input: protocol.input,
     environment: protocol.environment,
     code: protocol.code,
-    claimScope: protocol.claimScope,
+    openingSource: protocol.openingSource, claimScope: protocol.claimScope,
     plannedRoutes: protocol.plannedRoutes,
     completedRoutes,
     passed,

@@ -6,6 +6,7 @@ import { registerHooks } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createNarrativeP1ReplayRuntime } from "./narrativeP1Replay.mjs";
+import { loadNarrativeP1Seed, validateNarrativeP1SeedState } from "./narrativeP1Seed.mjs";
 import { projectRoot, readAiEnv } from "./aiEnv.mjs";
 
 import { currentStoryInteractions, offeredProductionChoices, selectProductionChoice, findOfferedStoryDelivery } from './narrativeP1Choices.mjs';
@@ -68,6 +69,7 @@ export function parseNarrativeP1Args(argv) {
     runId: "",
     profile: "matrix",
     replaySource: "",
+    openingSource: "",
     protocolPath: DEFAULT_NARRATIVE_P1_PROTOCOL_PATH,
     output: DEFAULT_NARRATIVE_P1_OUTPUT_ROOT,
   };
@@ -77,7 +79,8 @@ export function parseNarrativeP1Args(argv) {
     const equal = argument.indexOf("=");
     const key = equal >= 0 ? argument.slice(2, equal) : argument.slice(2);
     const value = equal >= 0 ? argument.slice(equal + 1) : argv[++index];
-    if (key === "profile" || key === "replay-source" || key === "mode" || key === "run-id" || key === "protocol" || key === "output") {
+    if (key === "opening-source" || key === "profile" || key === "replay-source" || key === "mode" || key === "run-id" || key === "protocol" || key === "output") {
+      if (key === "opening-source") parsed.openingSource = value ?? "";
       if (key === "profile") parsed.profile = value ?? "";
       if (key === "replay-source") parsed.replaySource = value ?? "";
       if (key === "mode") parsed.mode = value ?? "";
@@ -90,7 +93,7 @@ export function parseNarrativeP1Args(argv) {
 }
 
 export function validateNarrativeP1Args(args) {
-  if (args.profile !== undefined && !["matrix", "diagnostic"].includes(args.profile)) return "INVALID_PROFILE";
+  if (args.profile !== undefined && !["matrix", "diagnostic", "focused"].includes(args.profile)) return "INVALID_PROFILE";
   if (!VALID_MODES.has(args?.mode)) return "INVALID_MODE";
   if (typeof args?.runId !== "string" || args.runId.trim() === "") return "MISSING_RUN_ID";
   if (typeof args?.protocolPath !== "string" || args.protocolPath.trim() === "") return "MISSING_PROTOCOL";
@@ -171,7 +174,7 @@ function readConfiguredAiEnvironment() {
   return configured;
 }
 
-export async function createProductionRouteRunner(runtimeEnv, adapters, replaySource, binding) {
+export async function createProductionRouteRunner(runtimeEnv, adapters, replaySource, binding, seed) {
   const { createServerGameEntryPoints } = adapters ?? await import("../src/game/application/server/compositionRoot.ts");
   const { createSqliteGameRepository } = adapters ?? await import("../src/game/application/server/persistence/sqliteGameRepository.ts");
   const { createServerSqliteClientFactory, createSqliteClient } = adapters ?? await import("../src/game/application/server/persistence/sqliteClient.ts");
@@ -190,6 +193,12 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
   const initialize = createScenarioSnapshotCache(async (scenarioId, { setup, budget, artifactDirectory, signal, mode }) => {
     const databasePath = resolve(artifactDirectory, `${scenarioId}-opening.sqlite`);
     if (existsSync(databasePath)) return { ok: false, code: "OPENING_ARTIFACT_ALREADY_EXISTS" };
+    if (seed) {
+      loadNarrativeP1Seed(seed.directory, seed.manifest);
+      copyFileSync(seed.databasePath, databasePath, constants.COPYFILE_EXCL);
+      writeFileSync(resolve(artifactDirectory, `${scenarioId}-seed.json`), JSON.stringify({ reusedApprovedOpening:true, httpAttempts:0, manifest:seed.manifest }, null, 2));
+      return {ok:true, databasePath};
+    }
     const env = { ...runtimeEnv, NODE_ENV: "test", GAME_DB_PATH: databasePath, AI_TEXT_AUDIT: "full", AI_TEXT_AUDIT_DIR: resolve(artifactDirectory, "audit"), AI_TEXT_AUDIT_RUN_ID: `${scenarioId}-opening` };
     const runtime = makeRuntime({ mode, directory: artifactDirectory, sourceDirectory: replaySource, stream: `${scenarioId}-opening`, binding, auditFiles: [`audit/${scenarioId}-opening/events.jsonl`] });
     let repository;
@@ -205,7 +214,7 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
       entry = null;
       runtime.finish();
       result = created.ok ? { ok: true, databasePath } : { ok: false, code: created.code ?? "CREATE_FAILED" };
-    } catch (error) { result = { ok: false, code: runtime.failureCode ?? (error.message?.startsWith("REPLAY_") ? error.message : "OPENING_RUNNER_CRASHED") }; }
+    } catch (error) { result = { ok: false, code: runtime.failureCode ?? ((error.message?.startsWith("REPLAY_") || error.message?.startsWith("SEED_")) ? error.message : "OPENING_RUNNER_CRASHED") }; }
     finally { await closeNarrativeP1Entry(entry); }
     if (result.ok) {
       const client = createSqliteClient(databasePath);
@@ -225,7 +234,7 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
     const routeResult = (value) => (outcome = { ...value, httpAttempts: budget.used - httpBefore, replayedTransportAttempts: replayedAttempts - replayBefore });
     let opening;
     try { opening = await initialize(route.scenarioId, { setup, budget, artifactDirectory, signal, mode }); }
-    catch (error) { return routeResult({ completed: false, failureCode: error.message?.startsWith("REPLAY_") ? error.message : "OPENING_RUNNER_CRASHED" }); }
+    catch (error) { return routeResult({ completed: false, failureCode: (error.message?.startsWith("REPLAY_") || error.message?.startsWith("SEED_")) ? error.message : "OPENING_RUNNER_CRASHED" }); }
     if (!opening.ok) return routeResult({ completed: false, failureCode: opening.code });
     if (signal?.aborted) return routeResult({ completed: false, failureCode: "BATCH_INTERRUPTED" });
     const databasePath = resolve(artifactDirectory, `${route.routeId}.sqlite`);
@@ -242,7 +251,7 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
     const auditFiles = [];
     let runtime;
     try { runtime = makeRuntime({ mode, directory: artifactDirectory, sourceDirectory: replaySource, stream: route.routeId, binding, auditFiles: () => auditFiles.filter(file => existsSync(resolve(artifactDirectory, file))) }); }
-    catch (error) { return routeResult({ completed: false, failureCode: error.message?.startsWith("REPLAY_") ? error.message : "PRODUCTION_ROUTE_CRASHED" }); }
+    catch (error) { return routeResult({ completed: false, failureCode: (error.message?.startsWith("REPLAY_") || error.message?.startsWith("SEED_")) ? error.message : "PRODUCTION_ROUTE_CRASHED" }); }
     let repository;
     const createEntry = () => {
       const auditStream = auditFiles.length === 0 ? route.routeId : `${route.routeId}-reload-${auditFiles.length}`;
@@ -260,6 +269,11 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
     const performedActions = new Set();
     try {
       entry = createEntry();
+      if (seed) {
+        const initial = await repository.getCurrentGame();
+        validateNarrativeP1SeedState(seed, initial);
+        runtime.state("seed", initial);
+      }
       await entry.ackPrologue(`${route.routeId}-ack`);
 
       while (actionCount <= 24) {
@@ -280,7 +294,7 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
           entry = null;
           runtime.finish();
           finalized = true;
-          const routeSatisfied = route.kind === "diagnostic" ? performed.has("promise_confidentiality") && performed.has("request_introduction") && performed.has("request_verification") && verifySubmitted : route.kind === "private" ? performed.has("promise_confidentiality") && performed.has("request_introduction") : performed.has("request_verification") && (route.kind !== "verify_first" || verifySubmitted);
+          const routeSatisfied = route.kind === "deliver" ? performed.has("give_item") : route.kind === "withdraw" ? performed.has("abandon_quest") : route.kind === "diagnostic" ? performed.has("promise_confidentiality") && performed.has("request_introduction") && performed.has("request_verification") && verifySubmitted : route.kind === "private" ? performed.has("promise_confidentiality") && performed.has("request_introduction") : performed.has("request_verification") && (route.kind !== "verify_first" || verifySubmitted);
           return routeResult({ completed: routeSatisfied, actionCount, ...(!routeSatisfied ? { failureCode: "ROUTE_POLICY_NOT_EXERCISED" } : {}) });
         }
         if (actionCount === 24) return routeResult({ completed: false, actionCount, failureCode: "ROUTE_ACTION_BUDGET_EXHAUSTED" });
@@ -312,7 +326,7 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
           } else return routeResult({ completed: false, actionCount, failureCode: "ROUTE_POLICY_UNSUPPORTED" });
         }
         if (interaction === undefined) {
-          const selected = selectProductionChoice(view, route.kind, actionMap, interactions, performed, performedActions, state.record.storyState.delivery);
+          const selected = selectProductionChoice(view, route.kind, actionMap, interactions, performed, performedActions, state.record.storyState.delivery, actionCount);
           if (selected === undefined) return routeResult({ completed: false, httpAttempts: budget.used - httpBefore, actionCount, failureCode: "ROUTE_POLICY_UNSUPPORTED" });
           selectedAction = actionMap.get(selected.choiceToken);
           interaction = { kind: "fixed_choice", choiceToken: selected.choiceToken };
@@ -328,6 +342,8 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
             revision: current.revision,
             location: view.currentLocation.name,
             narration: view.narrative.narration ?? null,
+            npcDialogues: view.narrative.npcDialogues,
+            stateReference: `before:${actionCount}`,
             choices: offeredChoices.map((choice) => ({ choiceToken: choice.choiceToken, label: choice.label, presentation: choice.presentation })),
           },
           after: after.ok && after.view !== undefined
@@ -344,6 +360,10 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
           return routeResult({ completed: false, actionCount, failureCode: "ROUTE_ACTION_NOT_SETTLED" });
         }
         actionCount += 1;
+        if (selectedAction && ["give_item", "abandon_quest"].includes(selectedAction.type)) {
+          const success = settled.record.worldState.eventLedger.some(event => event.actionId === command.actionId && (selectedAction.type === "give_item" ? event.outcome === "success" && event.payload.type === "item_given" && event.payload.itemId === selectedAction.itemId && event.payload.npcId === selectedAction.npcId : event.outcome === "failure" && event.payload.type === "quest_abandoned" && event.payload.questId === selectedAction.questId));
+          if (success) performed.add(selectedAction.type);
+        }
         if (interaction.kind === "free_text" && (route.kind === "verify_first" || route.kind === "diagnostic")) performed.add("verify_freeform_submitted");
         if (selectedAction !== undefined) performedActions.add(JSON.stringify(selectedAction));
         if (selectedAction?.type === "talk") {
@@ -363,7 +383,7 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
       }
       return routeResult({ completed: false, httpAttempts: budget.used - httpBefore, actionCount, failureCode: "ROUTE_ACTION_BUDGET_EXHAUSTED" });
     } catch (error) {
-      return routeResult({ completed: false, actionCount, failureCode: runtime.failureCode ?? (error.message?.startsWith("REPLAY_") ? error.message : "PRODUCTION_ROUTE_CRASHED") });
+      return routeResult({ completed: false, actionCount, failureCode: runtime.failureCode ?? ((error.message?.startsWith("REPLAY_") || error.message?.startsWith("SEED_")) ? error.message : "PRODUCTION_ROUTE_CRASHED") });
     } finally {
       try {
         mkdirSync(artifactDirectory, { recursive: true });
@@ -383,7 +403,7 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
           runtime.finish();
         } catch (error) {
           outcome.completed = false;
-          outcome.failureCode = runtime.failureCode ?? (error.message?.startsWith("REPLAY_") ? error.message : "REPLAY_FINALIZATION_FAILED");
+          outcome.failureCode = runtime.failureCode ?? ((error.message?.startsWith("REPLAY_") || error.message?.startsWith("SEED_")) ? error.message : "REPLAY_FINALIZATION_FAILED");
         }
       }
       await closeNarrativeP1Entry(entry);
@@ -422,8 +442,12 @@ async function main() {
   }
   const { runNarrativeP1Journey } = await import("../src/game/application/testing/narrativeP1LiveJourney.ts");
   const registered = args.mode === "register" ? null : JSON.parse(readFileSync(protocolPath, "utf8"));
+  const sourceDirectory = args.openingSource || registered?.openingSource?.sourceDirectory;
+  if (sourceDirectory && (registered ? registered.claimScope !== "fixed_opening_story" : args.profile !== "focused")) throw new Error("SEED_SCOPE_MISMATCH");
+  const seed = sourceDirectory ? loadNarrativeP1Seed(sourceDirectory, registered?.openingSource) : undefined;
+  if ((args.profile === "focused" || registered?.claimScope === "fixed_opening_story") && !seed) throw new Error("SEED_REQUIRED");
   const binding = registered ? { protocolHash: registered.protocolHash, codeFingerprint: registered.code.fingerprint, inputHash: registered.inputHash } : undefined;
-  const routeRunner = args.mode !== "register" ? await createProductionRouteRunner(runtimeEnv, undefined, args.replaySource || dirname(protocolPath), binding) : undefined;
+  const routeRunner = args.mode !== "register" ? await createProductionRouteRunner(runtimeEnv, undefined, args.replaySource || dirname(protocolPath), binding, seed) : undefined;
   const controller = new AbortController();
   const interrupt = () => controller.abort();
   process.once("SIGINT", interrupt);
@@ -439,6 +463,7 @@ async function main() {
     ),
   }, {
     signal: controller.signal,
+    ...(seed ? { openingSource: seed.manifest } : {}),
     ...(args.mode === "replay" ? { replaySourceDirectory: resolve(args.replaySource || dirname(protocolPath)) } : {}),
     codeFingerprint: process.env.NARRATIVE_P1_CODE_FINGERPRINT,
     environment: {

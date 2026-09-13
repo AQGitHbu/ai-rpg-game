@@ -26,6 +26,7 @@
 - 本地离线回归：`npm run journey:foundation`
 - 真实 AI smoke：`RUN_REAL_AI_SMOKE=1 npm run smoke:ai:phase4b`；该命令是受门禁的 smoke，不是完整旅程。
 - P1 旅程协议：先用 `npm run journey:narrative:p1 -- --mode=register --run-id=<id>` 登记固定输入，再由 `RUN_REAL_AI_JOURNEY=1 npm run journey:narrative:p1 -- --mode=live --run-id=<id>` 执行；`--mode=replay --protocol=<live 协议路径> --replay-source=<live 产物目录> --output=<独立输出目录>` 在新的 SQLite 中消费原始响应磁带，输出写入该目录的 `replay/`，不读取密钥或创建网络 transport。旧产物缺少身份/领域时间磁带时拒绝重放。`--profile=diagnostic` 登记独立的一条完整故事诊断，不改变正式六条矩阵分母。协议和产物规则见 [P1 旅程协议](../superpowers/reports/2026-09-12-narrative-p1-protocol.md)。
+- 固定开局核心诊断：登记时传 `--profile=focused --opening-source=artifacts/narrative-p1/p1-diag-03`；协议冻结源协议、代码、runtime/audit/SQLite 和 opening 语义哈希。每路复制源 SQLite 后由正式仓储核对全状态，原库不打开写连接；先 deliver 成功再 withdraw，预算 200 HTTP/90 分钟。后续 live 全走生产，replay 只重放本批后续响应，旧 opening 仅作为独立来源证据；范围为 `fixed_opening_story`。
 - provider：`src/game/application/server/ai/rpgAiClient.ts`、`src/game/application/server/ai/sourceFactory.ts`、`src/game/application/server/ai/aiRuntimeConfig.ts`
 - 装配：`src/game/application/server/compositionRoot.ts`
 - 测试：`src/game/application/server/ai/rpgAiClient.test.ts`、`src/game/application/server/ai/worldEvolutionSource.test.ts`、`src/game/application/server/compositionRoot.test.ts`

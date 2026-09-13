@@ -100,6 +100,7 @@ test("parses register/live/replay arguments without accepting unknown modes", ()
     mode: "register",
     profile: "matrix",
     replaySource: "",
+    openingSource: "",
     runId: "sample-1",
     protocolPath: "protocol.json",
     output: "artifacts",
@@ -287,4 +288,47 @@ test("waits for background narrative generation without consuming an action", as
   assert.equal(result.ok, true);
   assert.equal(reads, 2);
   assert.equal(ensures, 1);
+});
+
+test('focused uses visible structured choices and defers withdrawal until four settled actions', () => {
+  const view = { narrative: { choices: [{choiceToken:'talk',label:'abandon'}, {choiceToken:'exit',label:'deliver'}], npcDialogues:[] }, currentLocation:{actions:[{choiceToken:'give',label:'verify'}]}, story:{currentObjectiveChoiceToken:'talk'} };
+  const actions = new Map([['talk',{type:'talk',npcId:'npc'}],['exit',{type:'abandon_quest',questId:'q'}],['give',{type:'give_item',npcId:'receiver',itemId:'letter'}]]);
+  const delivery={itemId:'letter',recipientNpcId:'receiver'};
+  assert.equal(selectProductionChoice(view,'deliver',actions,[],new Set(),new Set(),delivery,5).choiceToken,'give');
+  assert.equal(selectProductionChoice(view,'withdraw',actions,[],new Set(),new Set(),delivery,3).choiceToken,'talk');
+  assert.equal(selectProductionChoice(view,'withdraw',actions,[],new Set(),new Set(),delivery,4).choiceToken,'exit');
+  view.narrative.choices=[];
+  assert.equal(selectProductionChoice(view,'withdraw',actions,[],new Set(),new Set(),delivery,4),undefined);
+});
+
+test("withdraw runner accepts the formal quest-failure consequence after four actions and reload", async () => {
+  const root = mkdtempSync(join(tmpdir(), "p1-withdraw-"));
+  let turn = 0;
+  const events = [];
+  const state = () => ({ ok:true, status:"active", record:{ revision:turn, storyState:{turnNumber:turn}, worldState:{entityStore:{records:[]},eventLedger:events} } });
+  const view = () => ({ ending:turn===5?{name:"离开"}:null, narrativeGeneration:{status:"ready"}, narrative:{choices:[{choiceToken:`talk-${turn}`,label:"继续"},{choiceToken:"exit",label:"放弃"}],npcDialogues:[]}, currentLocation:{name:"庙",actions:[]},story:{} });
+  try {
+    const runner = await createProductionRouteRunner({}, {
+      createServerGameEntryPoints:env => ({
+        createGame:async()=>{writeFileSync(env.GAME_DB_PATH,"seed");return {ok:true};},
+        ackPrologue:async()=>({ok:true}),
+        getCurrentGame:async()=>({ok:true,status:"active",revision:turn,view:view()}),
+        performTurn:async command=>{
+          turn++;
+          if(command.interaction.choiceToken==="exit") {
+            assert.equal(turn,5);
+            events.push({actionId:command.actionId,outcome:"failure",payload:{type:"quest_abandoned",questId:"q"}});
+          }
+          return {ok:true,revision:turn,view:view()};
+        }, close:async()=>{},
+      }),
+      createSqliteGameRepository:()=>({getCurrentGame:async()=>structuredClone(state())}),
+      createServerSqliteClientFactory:()=>{},
+      createSqliteClient:()=>({execute:async()=>({rows:[{busy:0}]}),close(){}}),
+      buildChoiceMap:()=>new Map([[`talk-${turn}`,{type:"talk",npcId:`npc-${turn}`}],["exit",{type:"abandon_quest",questId:"q"}]]),
+    });
+    const result = await runner({mode:"live",route:{routeId:"S1-withdraw",scenarioId:"S1",kind:"withdraw"},setup:{personalityTags:[]},budget:{used:0,reserve:()=>true},artifactDirectory:root});
+    assert.equal(result.completed,true,JSON.stringify(result));
+    assert.equal(result.actionCount,5);
+  } finally { rmSync(root,{recursive:true,force:true}); }
 });

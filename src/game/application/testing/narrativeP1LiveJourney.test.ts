@@ -217,3 +217,22 @@ describe("narrative P1 live journey protocol", () => {
     }
   });
 });
+
+it("focused freezes source and skips withdraw after failed deliver", async () => {
+ const paths=tempPaths();
+ try {
+ const input={profile:"focused" as const,runId:"focused",...paths};
+ const openingSource={sourceDirectory:"approved",databaseHash:"frozen"};
+ await runNarrativeP1Journey({...input,mode:"register"},fakeDeps({openingSource}));
+ const protocol=JSON.parse(readFileSync(paths.protocolPath,"utf8"));
+ expect(protocol).toMatchObject({claimScope:"fixed_opening_story",plannedRoutes:2,openingSource,budget:{httpBatch:200,wallClockMs:5_400_000}});
+ expect(protocol.routes.map((r:{kind:string})=>r.kind)).toEqual(["deliver","withdraw"]);
+ const runner=vi.fn(async()=>({completed:false,httpAttempts:0}));
+ expect(await runNarrativeP1Journey({...input,mode:"live"},fakeDeps({openingSource:{...openingSource,databaseHash:"changed"},routeRunner:runner}))).toMatchObject({passed:false,plannedRoutes:2});
+ expect(runner).not.toHaveBeenCalled();
+ expect(await runNarrativeP1Journey({...input,mode:"live"},fakeDeps({openingSource,routeRunner:runner}))).toEqual({passed:false,plannedRoutes:2,completedRoutes:0});
+ expect(runner).toHaveBeenCalledTimes(1);
+ const summary=JSON.parse(readFileSync(join(paths.artifactDirectory,"summary.json"),"utf8"));
+ expect(summary.routes[1].failureCode).toBe("DELIVER_FAILED_WITHDRAW_NOT_RUN");
+ }finally{rmSync(paths.root,{recursive:true,force:true});}
+});
