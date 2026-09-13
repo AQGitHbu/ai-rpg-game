@@ -65,6 +65,18 @@ function makeValidBundleState(): NarrativeBundleState {
 }
 
 describe("NarrativeBundleProposal parser", () => {
+  it("accepts exactly one trust and doubt outcome and rejects unknown, duplicate, or choice-bearing results", () => {
+    const resultScene = { ...makeValidScene(), npcLine: null, choices: [] };
+    const ending = { ...makeValidBundle(), currentScene: resultScene, terminal: { kind: "ending" as const }, endingOutcomes: [
+      { themeKey: "trust" as const, choiceLabel: "相信", scene: resultScene },
+      { themeKey: "doubt" as const, choiceLabel: "存疑", scene: resultScene },
+    ] };
+    expect(parseNarrativeBundleProposal(ending).ok).toBe(true);
+    expect(parseNarrativeBundleProposal({ ...ending, endingOutcomes: [ending.endingOutcomes[0], ending.endingOutcomes[0]] }).ok).toBe(false);
+    expect(parseNarrativeBundleProposal({ ...ending, endingOutcomes: [{ ...ending.endingOutcomes[0], extra: true }, ending.endingOutcomes[1]] }).ok).toBe(false);
+    expect(parseNarrativeBundleProposal({ ...ending, endingOutcomes: [{ ...ending.endingOutcomes[0], scene: makeValidScene() }, ending.endingOutcomes[1]] }).ok).toBe(false);
+  });
+
   it("requires speech reference arrays in the provider DTO construction type", () => {
     // @ts-expect-error v4 provider dialogue construction must include both arrays.
     const missingReferences: ScenePerformanceNpcDialogue = {

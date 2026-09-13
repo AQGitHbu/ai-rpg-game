@@ -59,7 +59,8 @@ describe("narrative draft projection and compilation", () => {
     const input = context("needs_ending_pair");
     expect(projectNarrativeDraft(input)).toMatchObject({ slots: [{ slotKey: "current", choiceCount: 0 }], stepKeys: [], terminal: { kind: "ending" } });
     const currentScene = scene("结局原文。", 0);
-    expect(compileNarrativeDraft({ worldDelta: null, sceneDrafts: [{ slotKey: "current", scene: currentScene }] }, input)).toEqual({ ok: true, value: { worldDelta: null, currentScene, continuationScenes: [], terminal: { kind: "ending" } } });
+    const endingOutcomes = [{ themeKey: "trust", choiceLabel: "相信", scene: scene("共同收束。", 0) }, { themeKey: "doubt", choiceLabel: "存疑", scene: scene("独自收束。", 0) }];
+    expect(compileNarrativeDraft({ worldDelta: null, sceneDrafts: [{ slotKey: "current", scene: currentScene }], endingOutcomes }, input)).toEqual({ ok: true, value: { worldDelta: null, currentScene, continuationScenes: [], endingOutcomes, terminal: { kind: "ending" } } });
   });
 
   it("projects the ending handoff without another world delta when an approved pair already exists", () => {
@@ -76,7 +77,7 @@ describe("narrative draft projection and compilation", () => {
       slots: [{ slotKey: "current", choiceCount: 0 }],
       terminal: { kind: "ending" },
     });
-    expect(compileNarrativeDraft({ worldDelta: null, sceneDrafts: [{ slotKey: "current", scene: scene("终幕回应。", 0) }] }, input))
+    expect(compileNarrativeDraft({ worldDelta: null, sceneDrafts: [{ slotKey: "current", scene: scene("终幕回应。", 0) }], endingOutcomes: [{ themeKey: "trust", choiceLabel: "相信", scene: scene("共同结果。", 0) }, { themeKey: "doubt", choiceLabel: "存疑", scene: scene("独自结果。", 0) }] }, input))
       .toMatchObject({ ok: true, value: { worldDelta: null, terminal: { kind: "ending" } } });
   });
 

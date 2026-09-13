@@ -2,6 +2,7 @@ import { renderAiRepairFeedback } from "../../../aiGenerationRetry";
 import type { Action } from "@/game/domain/action";
 import type { EvolutionNeed } from "@/game/domain/worldDelta";
 import type { QuestObjective, WorldState } from "@/game/domain/worldState";
+import type { StoryState } from "@/game/domain/storyState";
 import { entitiesOfKind, projectEntityStore, type EntityId } from "@/game/domain/entity";
 import type { WorldEvolutionSourceContext } from "@/game/application/worldEvolutionSource";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
@@ -104,13 +105,13 @@ function objectiveEntityId(objective: QuestObjective | undefined): string | unde
   }
 }
 
-function outputContract(need: EvolutionNeed): string {
+function outputContract(need: EvolutionNeed, storyState: StoryState): string {
   const commonFields = `可用增量字段（只在需要时出现）：\n- newLocation={"name":"2-40字名称","description":"非空且≤200字","scale":"scene或town","placement":"world或town_building","connectFromLocationId":"已有地点ID"}\n- newNpc={"name":"2-40字名称","role":"非空且≤200字","description":"非空且≤200字","locationRef":{"kind":"existing","id":"已有地点ID"}或{"kind":"new_location"},"anchors":{"selfConcept":"非空且≤200字","values":["1-4条非空价值"],"speechStyle":"非空且≤200字","capabilityBoundaries":["1-4条非空能力边界"],"taboos":["0-4条非空禁区"]},"goals":[{"horizon":"short或long","description":"非空且≤200字","priority":1到5,"reason":"非空且≤200字"}]}；anchors 五个字段都必需，goals 至少 1 条且最多 4 条；goalId/status 由服务端生成，禁止输出。\n- newItem={"name":"2-40字名称","description":"非空且≤200字","locationRef":"current或new_location","acquisition":"可选，scene或npc_gift"}；省略 acquisition 表示场景点击拾取；npc_gift 必须与同地点 newNpc 和 nextMainQuest 同时提出，由该 NPC 完成约定对话后按规则给予，不能直接修改背包或提交 giftFromNpcId。\n- newEnemy={"name":"2-40字名称","tier":"normal或boss","locationRef":"current或new_location"}\n- newFact={"text":"非空且≤200字","visibility":"public或npc_private","investigationLabel":"可选，2-40字","investigationApproaches":[{"approachId":"非空ID","label":"非空提示","hint":"可选非空提示","evidenceQuality":"clean或noisy","tensionDelta":-5..20}]}；investigationApproaches 若出现，必须且只能有 2-3 条，tensionDelta=-5..20；label/hint 可以引用事实中的地点、人物或线索关键词，但不得完整复制 newFact.text。`;
   const outer = "只输出 JSON，不能解释或 Markdown。外层必须是 {\"proposal\":{...}}；proposal 必须有 beatSummary（非空且≤200字）。所有未使用字段必须完全省略，绝不写 null。newNpc 必须包含 {\"relationshipSeeds\":[{\"targetNpcId\":\"既有 active NPC ID\",\"stance\":\"ally|protective_of|indebted_to|rival|wary\",\"reason\":\"...\"}]}；relationshipSeeds 必须出现，无关系时必须输出 []；每项只能包含 targetNpcId、stance、reason，其中 targetNpcId 只能引用实体规则闭包中的既有 active NPC，reason 必须非空且≤200字；不得提交 affinity、stage、evidence 或 actionId。";
 
   switch (need.kind) {
     case "next_act":
-      return `${outer}\n${commonFields}\n本次是下一幕需求：必须输出 nextMainQuest={"name":"2-40字名称","description":"非空且≤200字","objectiveText":"非空且≤200字"}，并且必须输出一个 placement="world" 的 newLocation，connectFromLocationId 必须等于当前地点 ID；这条任务必须把玩家带到该新地点，不能直接叙述中心冲突已解决或写出结局。newNpc/newItem/newEnemy/newFact 均为可选，只有对应剩余容量大于 0 才能输出。禁止输出 endingPair，endingPair 字段必须完全省略。`;
+      return `${outer}\n${commonFields}\n本次是下一幕需求：必须输出 nextMainQuest={"name":"2-40字名称","description":"非空且≤200字","objectiveText":"非空且≤200字"}，并且必须输出一个 placement="world" 的 newLocation，connectFromLocationId 必须等于当前地点 ID；${need.act >= storyState.targetActs ? "这是最终幕：新地点、新 NPC 与主线目标必须让玩家在本幕实际处理中心冲突，不能把核心处理转交给不存在的下一幕；此时仍只建立可执行的终幕任务，不提前宣告结局或替玩家选择。" : "这是非最终幕：任务承接并推进中心冲突，但不能提前叙述中心冲突已解决或写出结局。"}newNpc/newItem/newEnemy/newFact 均为可选，只有对应剩余容量大于 0 才能输出。禁止输出 endingPair，endingPair 字段必须完全省略。`;
     case "ending_pair":
       return `${outer}\n${commonFields}\n本次是终幕结局对需求：必须输出 endingPair=[{"name":"2-40字名称","description":"非空且≤200字","themeKey":"trust"},{"name":"2-40字名称","description":"非空且≤200字","themeKey":"doubt"}]；必须恰好一条 trust 和一条 doubt，不能提交 requirements。禁止输出 nextMainQuest，nextMainQuest 字段必须完全省略。`;
     case "pacing":
@@ -278,7 +279,7 @@ export function buildWorldNarrativeContextBlocks(
     worldBlock({
       id: "world:output-contract", slot: "output_contract", title: "WorldDelta 输出契约", sourceKind: "world_delta_parser", sourceRefs: [],
       authority: "rule", retention: "mandatory", priority: 1000,
-      content: outputContract(context.need),
+      content: outputContract(context.need, context.storyState),
     }),
   ];
 

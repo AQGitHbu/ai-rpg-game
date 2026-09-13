@@ -143,6 +143,7 @@ export type GameSessionView = {
     readonly hasScene: boolean;
     readonly eventKind?: string;
     readonly narration?: string;
+    readonly expressions?: readonly { readonly kind: "narration" | "npc_line"; readonly text: string; readonly speaker?: string }[];
     readonly choices: readonly PlayerChoiceView[];
     readonly npcLine: { readonly text: string; readonly emotion: string; readonly speaker?: string } | null;
     readonly npcDialogues: readonly NpcDialogueView[];
@@ -564,8 +565,10 @@ export function projectGameSessionView(
       expression.kind === "npc_line"
         && expression.audienceIds.some((audienceId) => String(audienceId) === String(PLAYER_ENTITY_ID))
     )) ?? [];
-  const sceneNpcLineForPlayer = visibleExpressionLines[0] === undefined
+  const sceneNpcLineForPlayer = scene?.expressions === undefined
     ? scene?.npcLine
+    : visibleExpressionLines[0] === undefined
+      ? null
     : {
         npcId: visibleExpressionLines[0].npcId,
         text: visibleExpressionLines[0].text,
@@ -580,6 +583,32 @@ export function projectGameSessionView(
       .filter((expression) => expression.kind === "narration")
       .map((expression) => expression.text)
       .join("\n");
+  const projectedExpressions: GameSessionView["narrative"]["expressions"] = scene === null || scene === undefined
+    ? undefined
+    : scene.expressions === undefined
+      ? [
+          ...(scene.narration.trim() === "" ? [] : [{ kind: "narration" as const, text: decorateNarrativeText(scene.narration, scene.source) }]),
+          ...(sceneNpcLineForPlayer === null || sceneNpcLineForPlayer === undefined ? [] : [{
+            kind: "npc_line" as const,
+            text: decorateNarrativeText(normalizeNpcSpeech(sceneNpcLineForPlayer.text), scene.source),
+            speaker: worldState.npcs.find((npc) => npc.id === sceneNpcLineForPlayer.npcId)?.name,
+          }]),
+          ...(scene.npcDialogues ?? [])
+            .filter((dialogue) => sceneNpcLineForPlayer === null || sceneNpcLineForPlayer === undefined || dialogue.npcId !== sceneNpcLineForPlayer.npcId)
+            .flatMap((dialogue) => {
+              const text = dialogue.speechPages.join("").trim();
+              return text === "" ? [] : [{ kind: "npc_line" as const, text: decorateNarrativeText(text, scene.source), speaker: dialogue.npcName }];
+            }),
+        ]
+      : scene.expressions.flatMap((expression): NonNullable<GameSessionView["narrative"]["expressions"]> => expression.kind === "narration"
+        ? [{ kind: "narration", text: decorateNarrativeText(expression.text, scene.source) }]
+        : expression.audienceIds.some((audienceId) => String(audienceId) === String(PLAYER_ENTITY_ID))
+          ? [{
+              kind: "npc_line",
+              text: decorateNarrativeText(normalizeNpcSpeech(expression.text), scene.source),
+              speaker: worldState.npcs.find((npc) => npc.id === expression.npcId)?.name,
+            }]
+          : []);
   const registry = restoredDialogue?.choiceRegistry
     ?? (scene === null ? [] : readyNarrative?.choiceRegistry)
     ?? [];
@@ -739,7 +768,8 @@ export function projectGameSessionView(
     : endingStances.map((stance) => choice(
         stance.action,
         revision,
-        stance.label,
+        readyNarrative?.narrativeBundle?.endingOutcomes?.find((outcome) =>
+          outcome.themeKey === (stance.action.dialogueAct === "support" ? "trust" : "doubt"))?.choiceLabel ?? stance.label,
         presentationForAction(stance.action),
       ));
   const endingStanceNpcId = endingStances.length === 2 ? String(endingStances[0].action.npcId) : null;
@@ -978,6 +1008,7 @@ export function projectGameSessionView(
       ...(scene === null ? {} : {
         eventKind: scene.event?.kind,
         narration: decorateNarrativeText(sceneNarrationText, scene.source),
+        expressions: projectedExpressions,
       }),
       choices: isDialogueScene || isSingleChoiceHandoff ? [] : [...projectedSceneChoices, ...endingStanceChoices],
       npcLine: projectedNpcLine,

@@ -1166,6 +1166,28 @@ export function approveNarrativeBundle(
     symbolFocusNpcId,
   );
   if (resolvedCurrentScene === null) return { ok: false, code: "bundle_invalid_scene" };
+  const endingOutcomeStates = proposal.endingOutcomes?.map((outcome) => {
+    const resolved = resolveSceneExpressions(outcome.scene, previewWorldState, approvedDelta, symbolFocusNpcId);
+    const ending = previewWorldState.endings.find((candidate) => candidate.requirements.some((requirement) =>
+      outcome.themeKey === "trust" ? requirement.kind === "npc_affinity_at_least" : requirement.kind === "npc_affinity_at_most"));
+    if (resolved === null || ending === undefined || resolved.objectiveLink !== null
+      || validateBundleSceneNpcSpeech(
+        resolved,
+        previewWorldState,
+        undefined,
+        presentNpcIdsAtLocation(previewWorldState, String(previewWorldState.currentLocationId)),
+        eventContext.domainEventIds,
+      ) !== null) return null;
+    return {
+      themeKey: outcome.themeKey,
+      endingId: String(ending.id),
+      choiceLabel: outcome.choiceLabel,
+      scene: buildSceneFromProposal(resolved, `${`scene-${String(jobId)}`}-ending-${outcome.themeKey}`, previewStoryState.turnNumber, previewWorldState),
+    };
+  });
+  if (endingOutcomeStates !== undefined && endingOutcomeStates.some((outcome) => outcome === null)) {
+    return { ok: false, code: "bundle_invalid_scene", detail: "ending_outcomes_missing_or_misbound" };
+  }
   resolvedCurrentScene = resolveInteractionChoiceAliases(resolvedCurrentScene, graph.currentChoiceCandidates, jobId);
   const resolvedContinuationScenes: BundleStepProposal[] = [];
   for (const proposalStep of proposal.continuationScenes) {
@@ -1343,6 +1365,7 @@ export function approveNarrativeBundle(
       : { candidateVersion: input.candidateVersion, candidateHash: input.candidateHash }),
     steps: stepStates,
     activeStepIds: [...graph.activeStepKeys],
+    ...(endingOutcomeStates === undefined ? {} : { endingOutcomes: endingOutcomeStates.filter((outcome): outcome is NonNullable<typeof outcome> => outcome !== null) }),
     terminal: terminalState,
   };
 

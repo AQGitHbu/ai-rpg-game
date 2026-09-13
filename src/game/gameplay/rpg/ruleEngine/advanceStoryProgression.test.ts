@@ -228,8 +228,8 @@ describe("advanceStoryProgression", () => {
     } as unknown as NarrativeEventDraft]);
 
     expect(result.nextStoryState.threads.map((entry) => [entry.id, entry.status])).toEqual([
-      ["thread:ferry", "resolved"],
-      ["thread:first_run", "resolved"],
+      ["thread:ferry", "advanced"],
+      ["thread:first_run", "advanced"],
       ["thread:unrelated", "open"],
       ["thread:explicit", "open"],
     ]);
@@ -254,6 +254,6 @@ describe("advanceStoryProgression", () => {
       causeKeys: [], factIds: [], questIds: [questId], outcome: "success", salience: 80,
       payload: { type: "quest_completed", questId },
     } as unknown as NarrativeEventDraft]);
-    expect(result.nextStoryState).toMatchObject({ endingAllowed: true, evolution: { status: "stable" }, unresolvedThreads: [] });
+    expect(result.nextStoryState).toMatchObject({ endingAllowed: true, evolution: { status: "stable" }, unresolvedThreads: ["main_thread"] });
   });
 });

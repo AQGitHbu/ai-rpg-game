@@ -274,7 +274,7 @@ function isNpcDialogue(value: unknown): value is NpcDialogueInScene {
     ));
 }
 
-function isNarrativeScene(value: unknown): value is NarrativeSceneState {
+export function isNarrativeScene(value: unknown): value is NarrativeSceneState {
   return isRecord(value)
     && hasOnlyKeys(value, [
       "sceneId", "turn", "narration", "usedFactIds", "npcLine", "choices",

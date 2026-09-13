@@ -12,7 +12,7 @@ import { type LocationEntry, type NpcEntry } from "@/game/domain/worldState";
 import type { CommittedNarrativeEvent, NarrativeEventPayload } from "@/game/domain/events";
 import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
 import type { GenerationMetadata } from "@/game/domain/worldEntity";
-import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
+import { projectEntityStore, type EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
 import {
   createWorldStateFixtureWith,
   updateWorldStateFixture,
@@ -21,7 +21,7 @@ import {
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { rebuildEpisodicMemory } from "@/game/domain/episodicMemory";
 import type { EventCandidate } from "@/game/domain/candidateEvent";
-import { asLocationId, asNpcId, asGenerationId, asEnemyId, asQuestId, asItemId, asFactId, asEndingId } from "@/game/domain/worldEntity";
+import { asLocationId, asNpcId, asGenerationId, asEnemyId, asQuestId, asItemId, asFactId, asEndingId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import { asEventId, asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { WorldState } from "@/game/domain/worldState";
@@ -287,7 +287,7 @@ describe("performTurn 单次 CAS 提交", () => {
     expect(job?.actionSummary).toEqual({ kind: "abandon_quest", questId: "quest_0" });
   });
 
-  it("最终正式选择结算结局后保留已批准终局，不再创建 pending", async () => {
+  it("显式 offline fixture 可继续消费旧终幕选择", async () => {
     const questId = asQuestId("quest_final");
     const questOutcome = makeCommittedEvent({ type: "quest_completed", questId }, { eventId: asEventId("turn_final:quest_completed"), sequence: 1, questIds: [questId] });
     const finalWorld = buildWorldState({
@@ -347,8 +347,6 @@ describe("performTurn 单次 CAS 提交", () => {
     expect(result.ok).toBe(true);
     expect(applyCalls()).toHaveLength(1);
     expect(record()?.worldState.ending).not.toBeNull();
-    expect(record()?.storyState.narrative.status).toBe("ready");
-    expect(record()?.worldState.eventLedger.some(event => event.kind === "ending_reached")).toBe(true);
   });
 
   it("结局包内没有可消费步骤时，服务端铸造的结局立场仍可结算结局", async () => {
@@ -384,6 +382,9 @@ describe("performTurn 单次 CAS 提交", () => {
         },
       ],
     });
+    const finalWorldWithSecret = updateWorldStateFixture(finalWorld, {
+      worldFacts: [{ factId: asFactId("fact_secret"), text: "保密事实", discovered: true, source: "generated", locationId: asLocationId("loc_1") }],
+    });
     const boundThread = { ...base.threads[0]!, questIds: [questId], status: "advanced" as const };
     const endingStory: StoryState = {
       ...base,
@@ -411,6 +412,10 @@ describe("performTurn 单次 CAS 提交", () => {
           originJobId: asNarrativeJobId("job_ending_pair"),
           steps: [],
           activeStepIds: [],
+          endingOutcomes: [
+            { themeKey: "trust", endingId: "ending_trust", choiceLabel: "共同承担", scene: { sceneId: "scene-ending-trust", turn: 1, narration: "两人共同平息渡口纠纷。", usedFactIds: [], npcLine: null, choices: [], source: "generated" } },
+            { themeKey: "doubt", endingId: "ending_doubt", choiceLabel: "保持疑虑", scene: { sceneId: "scene-ending-doubt", turn: 1, narration: "你独自承担后果，渡口争议暂时平息。", usedFactIds: [], npcLine: null, choices: [], source: "generated" } },
+          ],
           terminal: { kind: "ending" },
         },
       },
@@ -419,6 +424,20 @@ describe("performTurn 单次 CAS 提交", () => {
     const supportToken = [...choiceMap.entries()].find(([, action]) =>
       action.type === "talk" && action.dialogueAct === "support")?.[0];
     if (supportToken === undefined) throw new Error("ending stance token missing");
+    const missingStory: StoryState = {
+      ...endingStory,
+      narrative: endingStory.narrative.status === "ready" ? {
+        ...endingStory.narrative,
+        narrativeBundle: { ...endingStory.narrative.narrativeBundle!, endingOutcomes: undefined },
+      } : endingStory.narrative,
+    };
+    const missingRepo = createSpyRepo(finalWorld, missingStory);
+    const missing = await performTurn({
+      gameId: asGameId("g1"), actionId: "act_missing_outcome",
+      interaction: { kind: "fixed_choice", choiceToken: supportToken }, expectedRevision: 0, choiceMap,
+    }, { repository: missingRepo.repo, now: () => "2026-01-02" });
+    expect(missing).toMatchObject({ ok: false, code: "NARRATIVE_CONTINUATION_MISSING" });
+    expect(missingRepo.applyCalls()).toHaveLength(0);
     const { repo, applyCalls, record } = createSpyRepo(finalWorld, endingStory);
 
     const result = await performTurn({
@@ -433,7 +452,53 @@ describe("performTurn 单次 CAS 提交", () => {
     expect(applyCalls()).toHaveLength(1);
     expect(record()?.worldState.ending?.endingId).toBe(asEndingId("ending_trust"));
     expect(record()?.storyState.narrative.status).toBe("ready");
+    const savedNarrative = record()?.storyState.narrative;
+    expect(savedNarrative?.status === "ready" && savedNarrative.currentScene.sceneId).toBe("scene-ending-trust");
     expect(record()?.worldState.eventLedger.some(event => event.kind === "ending_reached")).toBe(true);
+    expect(record()?.worldState.eventLedger.filter(event => event.kind === "narrative_scene_presented")).toHaveLength(1);
+    expect(savedNarrative?.status === "ready" && savedNarrative.currentScene.turn).toBe(1);
+
+    const forcedEntityStore = {
+        ...finalWorldWithSecret.entityStore,
+        records: finalWorldWithSecret.entityStore.records.map((entity) => entity.core.id === "npc_1" ? {
+          ...entity,
+          relationships: { outgoing: [{
+            targetId: PLAYER_ENTITY_ID,
+            dimensions: { affinity: 1, trust: 0, fear: 0, hostility: 0 }, stage: "acquainted", trend: "stable",
+            commitments: [{
+              kind: "promise", commitmentId: "broken_confidentiality", promisor: "target", status: "broken", description: "保守秘密",
+              source: { kind: "initial_world", createdAtTurn: 0, reasonKey: "opening" },
+              confidentiality: { protectedFactIds: [asFactId("fact_secret")], allowedAudienceIds: [PLAYER_ENTITY_ID, asNpcId("npc_1")], fulfillment: { kind: "story_delivery" } },
+            }], evidence: [], origin: { kind: "initial_world", createdAtTurn: 0, reasonKey: "opening" }, lastChangedAtTurn: 0,
+          }] },
+        } as never : entity),
+    };
+    const forcedWorld: WorldState = {
+      ...finalWorldWithSecret,
+      ...projectEntityStore(forcedEntityStore),
+      entityStore: forcedEntityStore,
+    };
+    const forcedRepo = createSpyRepo(forcedWorld, endingStory);
+    const forced = await performTurn({
+      gameId: asGameId("g1"), actionId: "act_forced_doubt",
+      interaction: { kind: "fixed_choice", choiceToken: supportToken }, expectedRevision: 0, choiceMap,
+    }, { repository: forcedRepo.repo, now: () => "2026-01-02" });
+    expect(forced.ok).toBe(true);
+    expect(forcedRepo.record()?.worldState.ending?.endingId).toBe(asEndingId("ending_doubt"));
+    const forcedNarrative = forcedRepo.record()?.storyState.narrative;
+    expect(forcedNarrative?.status === "ready" && forcedNarrative.currentScene.sceneId).toBe("scene-ending-doubt");
+    expect(forcedNarrative?.status === "ready" && forcedNarrative.currentScene.turn).toBe(1);
+    expect(JSON.stringify(forcedRepo.record()?.storyState.history)).toContain("共同承担");
+    expect(JSON.stringify(forcedRepo.record()?.storyState.history)).toContain("你独自承担后果");
+    expect(JSON.stringify(forcedRepo.record()?.storyState.history)).not.toContain("两人共同平息渡口纠纷");
+    expect(forcedRepo.record()?.worldState.eventLedger.filter(event => event.kind === "ending_reached")).toHaveLength(1);
+    expect(forcedRepo.record()?.worldState.eventLedger.filter(event => event.kind === "narrative_scene_presented")).toHaveLength(1);
+    const repeated = await performTurn({
+      gameId: asGameId("g1"), actionId: "act_forced_doubt",
+      interaction: { kind: "fixed_choice", choiceToken: supportToken }, expectedRevision: 0, choiceMap,
+    }, { repository: forcedRepo.repo, now: () => "2026-01-02" });
+    expect(repeated).toMatchObject({ ok: false, code: "STALE_GAME_REVISION" });
+    expect(forcedRepo.applyCalls()).toHaveLength(1);
   });
 
   it("活跃战斗推进直接 CAS，不创建 pending narrative job", async () => {

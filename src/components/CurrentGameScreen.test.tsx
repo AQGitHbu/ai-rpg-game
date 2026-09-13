@@ -54,6 +54,22 @@ afterEach(() => {
 });
 
 describe("CurrentGameScreen ending restart", () => {
+  it("shows the approved resolved outcome prose on the ending screen", async () => {
+    vi.mocked(fetchCurrentGame).mockResolvedValue({ ok: true, status: "active", view: {
+      ...endedView,
+      narrative: { ...endedView.narrative, hasScene: true, narration: "这是实际选择后获批的完整结果。", expressions: [
+        { kind: "narration", text: "这是实际选择后获批的完整结果。" },
+        { kind: "npc_line", speaker: "舟子", text: "渡口今日重开。" },
+        { kind: "npc_line", speaker: "掌柜", text: "旧账也有了交代。" },
+      ] },
+    } });
+    render(<CurrentGameScreen />);
+    expect(await screen.findByText("这是实际选择后获批的完整结果。")).toBeInTheDocument();
+    expect(screen.queryByText("故事结束。")).not.toBeInTheDocument();
+    expect(screen.getByText("舟子：渡口今日重开。")).toBeInTheDocument();
+    expect(screen.getByText("掌柜：旧账也有了交代。")).toBeInTheDocument();
+  });
+
   it("已保存结局优先于旧的场景失败状态，刷新后仍进入结局页", async () => {
     const endedAfterStaleFailure: GameSessionView = {
       ...endedView,

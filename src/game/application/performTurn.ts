@@ -25,7 +25,11 @@ import type { AiFailureKind } from "@/game/domain/narrativeGenerationFailure";
 import { consumeNarrativeBundle } from "./consumeNarrativeBundle";
 import { consumePreparedContinuation } from "./consumePreparedContinuation";
 import { performBattleRound } from "./performBattleRound";
-import { appendHistory, playerActionHistoryEntry } from "@/game/domain/narrativeHistory";
+import { appendHistory, narrativeSceneHistoryEntries, playerActionHistoryEntry } from "@/game/domain/narrativeHistory";
+import type { NarrativeSceneState } from "@/game/domain/narrative";
+import { commitEventDrafts } from "@/game/domain/eventLedger";
+import { buildNarrativeScenePresentedDraft } from "./approveAndWriteScene";
+import { reconcileCommittedMemory } from "./reconcileCommittedMemory";
 
 export type PerformTurnCommand = {
   readonly gameId: GameId;
@@ -156,7 +160,7 @@ export async function performTurn(
   const dialogueChoiceLabel = fixedChoiceToken === undefined
     ? undefined
     : readyNarrative.choiceRegistry.find((entry) => entry.choiceToken === fixedChoiceToken)?.label;
-  const playerHistoryText = command.interaction.kind === "free_text"
+  let playerHistoryText = command.interaction.kind === "free_text"
     ? command.interaction.text
     : dialogueChoiceLabel ?? command.interaction.choiceToken;
 
@@ -188,6 +192,16 @@ export async function performTurn(
       .find((stance) => stance.action.dialogueAct === submittedAction.dialogueAct
         && String(stance.action.npcId) === String(submittedAction.npcId))
     : undefined;
+  if (endingStance !== undefined && readyNarrative.mode !== "offline") {
+    const outcomes = readyNarrative.narrativeBundle?.endingOutcomes;
+    if (outcomes === undefined || outcomes.length !== 2
+      || new Set(outcomes.map((outcome) => outcome.endingId)).size !== 2
+      || outcomes.some((outcome) => !record.worldState.endings.some((ending) => String(ending.id) === outcome.endingId))) {
+      return { ok: false, code: "NARRATIVE_CONTINUATION_MISSING", feedback: "结局结果场景缺失或已失效。" };
+    }
+    playerHistoryText = outcomes.find((outcome) => outcome.themeKey ===
+      (endingStance.action.dialogueAct === "support" ? "trust" : "doubt"))?.choiceLabel ?? endingStance.label;
+  }
 
   // 战斗回合是纯规则操作，必须在通用规则/叙事路径之前短路。
   if (
@@ -238,10 +252,17 @@ export async function performTurn(
           },
         },
       };
-  const revealed = advanceStoryReveal({
+  let revealed = advanceStoryReveal({
     worldState: worldStateWithBattleHistory,
     storyState: resolution.nextStoryState,
   });
+  const endingEventIds = resolution.domainEvents.filter((event) => event.kind === "ending_reached").map((event) => event.eventId);
+  if (endingEventIds.length > 0) {
+    const threads = revealed.storyState.threads.map((thread) => thread.status === "resolved" && thread.kind === "question"
+      ? { ...thread, evidenceEventIds: [...new Set([...thread.evidenceEventIds, ...endingEventIds])] }
+      : thread);
+    revealed = { ...revealed, storyState: { ...revealed.storyState, threads } };
+  }
 
   // Offline fixture worlds may expose a deterministic item pickup without a
   // provider-owned continuation graph. It is still a normal rule mutation:
@@ -323,6 +344,31 @@ export async function performTurn(
   const settledEndingStance = endingStance !== undefined
     && revealed.worldState.ending !== null
     && resolution.domainEvents.some(event => event.kind === "ending_reached");
+  const endingOutcome = settledEndingStance
+    ? readyNarrative.narrativeBundle?.endingOutcomes?.find((outcome) => outcome.endingId === String(revealed.worldState.ending?.endingId))
+    : undefined;
+  if (settledEndingStance && readyNarrative.mode !== "offline" && endingOutcome === undefined) {
+    return { ok: false, code: "NARRATIVE_CONTINUATION_INVALID", feedback: "实际结局没有匹配的已批准结果场景。" };
+  }
+  if (endingOutcome !== undefined) {
+    const source = resolution.domainEvents.at(-1);
+    if (source === undefined) return { ok: false, code: "NARRATIVE_CONTINUATION_INVALID", feedback: "结局事件缺失。" };
+    const draft = buildNarrativeScenePresentedDraft({
+      turnId: source.turnId,
+      domainEventIds: resolution.domainEvents.map((event) => event.eventId),
+      currentLocationId: revealed.worldState.currentLocationId,
+      nextPacingNeed: revealed.storyState.nextPacingNeed,
+      mandatoryBeats: endingOutcome.scene.expressions?.filter((expression) => expression.kind === "narration").map((expression) => ({ beatId: expression.beatId })) ?? [],
+      objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
+      scene: endingOutcome.scene,
+    });
+    const committed = commitEventDrafts({ ledger: revealed.worldState.eventLedger, drafts: [draft], source, entityStore: revealed.worldState.entityStore });
+    if (!committed.ok) return { ok: false, code: "NARRATIVE_CONTINUATION_INVALID", feedback: "结局场景事件无法提交。" };
+    revealed = {
+      worldState: { ...revealed.worldState, eventLedger: committed.ledger },
+      storyState: { ...revealed.storyState, memory: reconcileCommittedMemory({ previous: revealed.storyState.memory, ledger: committed.ledger }) },
+    };
+  }
   if (isFormalNarrativeChoice
     || isNpcTalkEntryPoint
     || endingStance !== undefined
@@ -349,6 +395,7 @@ export async function performTurn(
         ? "story_exit"
         : command.interaction.kind === "free_text" ? "npc_free_text" : "npc_fixed_choice",
       sceneRequestKind: settledEndingStance ? null : converted.action.type === "abandon_quest" ? "story_exit" : "npc_response",
+      ...(endingOutcome === undefined ? {} : { endingOutcomeScene: endingOutcome.scene }),
     });
   }
 
@@ -486,6 +533,7 @@ type CommitResolutionInput = {
   readonly playerHistoryText: string;
   readonly generationKind: ProviderGenerationKind | null;
   readonly sceneRequestKind: NarrativeSceneRequestKind | null;
+  readonly endingOutcomeScene?: NarrativeSceneState;
 };
 
 /**
@@ -495,24 +543,38 @@ type CommitResolutionInput = {
 async function commitResolution(input: CommitResolutionInput): Promise<PerformTurnResult> {
   if (input.generationKind === null || input.sceneRequestKind === null) {
     const history = input.nextStoryState.history ?? { entries: [] };
+    const endingScene = input.endingOutcomeScene;
+    const playerEntry = playerActionHistoryEntry({
+      history,
+      action: input.action,
+      actionId: input.actionId,
+      text: input.playerHistoryText,
+      sceneId: endingScene?.sceneId ?? (input.nextStoryState.narrative.status === "ready"
+        ? input.nextStoryState.narrative.currentScene.sceneId
+        : `scene-${input.actionId}`),
+      revision: input.expectedRevision + 1,
+      turnNumber: input.turnNumber,
+      eventIds: input.nextWorldState.eventLedger.slice(input.baseLedgerLength).map((event) => event.eventId),
+    });
+    const historyWithPlayer = appendHistory(history, [playerEntry]);
     const commitResult = await commitState(input.repository, {
       gameId: input.gameId,
       expectedRevision: input.expectedRevision,
       nextWorldState: input.nextWorldState,
       nextStoryState: {
         ...input.nextStoryState,
-        history: appendHistory(history, [playerActionHistoryEntry({
-          history,
-          action: input.action,
+        history: endingScene === undefined ? historyWithPlayer : appendHistory(historyWithPlayer, narrativeSceneHistoryEntries({
+          history: historyWithPlayer,
+          scene: endingScene,
           actionId: input.actionId,
-          text: input.playerHistoryText,
-          sceneId: input.nextStoryState.narrative.status === "ready"
-            ? input.nextStoryState.narrative.currentScene.sceneId
-            : `scene-${input.actionId}`,
+          jobId: null,
           revision: input.expectedRevision + 1,
           turnNumber: input.turnNumber,
           eventIds: input.nextWorldState.eventLedger.slice(input.baseLedgerLength).map((event) => event.eventId),
-        })]),
+        })),
+        ...(endingScene === undefined || input.nextStoryState.narrative.status !== "ready" ? {} : {
+          narrative: { ...input.nextStoryState.narrative, currentScene: endingScene, choiceRegistry: [] },
+        }),
       },
     });
     if (!commitResult.ok) {

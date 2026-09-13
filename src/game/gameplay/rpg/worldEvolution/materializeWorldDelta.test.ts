@@ -11,7 +11,7 @@ import {
   type WorldStateFixtureOverrides,
 } from "@/game/domain/testing/worldStateFixture.testutil";
 import type { WorldDeltaProposal } from "@/game/domain/worldDelta";
-import { asFactId, asItemId, asLocationId, asNpcId, asGenerationId, type GenerationMetadata } from "@/game/domain/worldEntity";
+import { asFactId, asItemId, asLocationId, asNpcId, asQuestId, asGenerationId, type GenerationMetadata } from "@/game/domain/worldEntity";
 import { entitiesOfKind } from "@/game/domain/entity";
 import { approveWorldDelta, type ApprovedWorldDeltaCore } from "./approveWorldDelta";
 import { createTownRuntime, bindNpcToTownSlot } from "@/game/gameplay/rpg/town";
@@ -117,6 +117,27 @@ function nextActProposal(): WorldDeltaProposal {
 }
 
 describe("materializeWorldDelta", () => {
+  it("extends only a pure all-main question concern with the next main quest", () => {
+    const mainId = asQuestId("quest_main_0");
+    const sideId = asQuestId("quest_side_0");
+    const quest = (id: typeof mainId, kind: "main" | "side") => ({ id, name: String(id), description: "", objectives: [], onSuccess: { kind: "closed" as const }, onFailure: { kind: "closed" as const }, tags: [], kind, stage: 1, status: "completed" as const });
+    const ws = makeWorld({ quests: [quest(mainId, "main"), quest(sideId as typeof mainId, "side")] });
+    const base = makeStory({ currentAct: 2, targetActs: 3 });
+    const seed = { ...base.threads[0]!, questIds: [mainId] };
+    const ss = { ...base, threads: [
+      seed,
+      { ...seed, id: "promise", promiseRefs: [{ npcId: asNpcId("npc_0"), promiseId: "p1" }] },
+      { ...seed, id: "mixed", questIds: [mainId, sideId] },
+      { ...seed, id: "conflict", kind: "conflict" as const },
+    ] };
+    const approved = approve({ proposal: nextActProposal(), need: { kind: "next_act", act: 2 }, ws, ss });
+    const result = materializeWorldDelta({ approved, need: { kind: "next_act", act: 2 }, ws, ss, now: () => "2026-01-02" });
+    const nextId = approved.mintedQuestIds[0]!;
+    expect(result.previewStoryState.threads.map((thread) => thread.questIds)).toEqual([
+      [mainId, nextId], [mainId], [mainId, sideId], [mainId],
+    ]);
+  });
+
   it("binds the deferred delivery recipient only when the final main act is materialized", () => {
     const ws = makeWorld();
     const delivery = { itemId: asItemId("item_0"), giverNpcId: asNpcId("npc_0"), recipientNpcId: null };

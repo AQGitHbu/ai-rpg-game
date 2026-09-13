@@ -281,7 +281,11 @@ export function CurrentGameScreen() {
               {ending.outcome === "success" ? "胜利" : "失败"}
             </Tag>
             <h2>{ending.name}</h2>
-            <p>{ending.description || "你的冒险至此结束。"}</p>
+            {view.narrative.expressions !== undefined && view.narrative.expressions.length > 0
+              ? view.narrative.expressions.map((expression, index) => (
+                  <p key={`${expression.kind}-${index}`}>{expression.speaker === undefined ? "" : `${expression.speaker}：`}{expression.text}</p>
+                ))
+              : <p>{view.narrative.narration || ending.description || "你的冒险至此结束。"}</p>}
             <InlineButton onClick={() => {
               const restart = {
                 identity: ending.restartIdentity,

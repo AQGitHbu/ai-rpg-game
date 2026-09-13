@@ -2364,4 +2364,41 @@ describe("projectGameSessionView town read model", () => {
       jobKey: "job_2",
     });
   });
+
+  it("projects all player-visible ending expressions in order without legacy private-line fallback", () => {
+    const baseStory = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 0, events: 0 } });
+    const endingStory: StoryState = {
+      ...baseStory,
+      narrative: {
+        status: "ready", mode: "ai", choiceRegistry: [],
+        currentScene: {
+          sceneId: "scene-ending", turn: 3, narration: "兼容旁白", usedFactIds: [], choices: [], source: "generated",
+          npcLine: { npcId: asNpcId("npc_1"), text: "这句只对自己说。", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedEventIds: [] },
+          expressions: [
+            { kind: "narration", beatId: "result", text: "渡口重新开放。", referencedEntityIds: [] },
+            { kind: "npc_line", npcId: asNpcId("npc_1"), audienceIds: [asNpcId("npc_1")], text: "这句只对自己说。", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedEventIds: [] },
+            { kind: "npc_line", npcId: asNpcId("npc_1"), audienceIds: ["player_0" as never], text: "第一句公开回应。", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedEventIds: [] },
+            { kind: "npc_line", npcId: asNpcId("npc_1"), audienceIds: ["player_0" as never], text: "第二句公开回应。", emotion: "warm", answeredBeatIds: [], usedFactIds: [], usedEventIds: [] },
+          ],
+        },
+      },
+    };
+    const view = projectGameSessionView(buildTownWorld(), endingStory, 0, "ending");
+    expect(view.narrative.expressions?.map((entry) => entry.text)).toEqual([
+      "渡口重新开放。", "第一句公开回应。", "第二句公开回应。",
+    ]);
+    expect(view.narrative.npcLine?.text).toBe("第一句公开回应。");
+    const legacyScene = endingStory.narrative.status === "ready" ? endingStory.narrative.currentScene : null;
+    const legacy = projectGameSessionView(buildTownWorld(), {
+      ...endingStory,
+      narrative: endingStory.narrative.status === "ready" && legacyScene !== null ? {
+        ...endingStory.narrative,
+        currentScene: {
+          ...legacyScene, expressions: undefined,
+          npcDialogues: [{ npcId: asNpcId("npc_2"), npcName: "掌柜", npcRole: "掌柜", speechPages: ["另一人的结果回应。"], usedFactIds: [], usedEventIds: [] }],
+        },
+      } : endingStory.narrative,
+    }, 0, "ending");
+    expect(legacy.narrative.expressions?.map((entry) => entry.text)).toContain("另一人的结果回应。");
+  });
 });

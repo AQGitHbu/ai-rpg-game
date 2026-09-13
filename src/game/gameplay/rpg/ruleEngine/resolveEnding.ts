@@ -4,6 +4,8 @@ import type { NarrativeEventDraft } from "@/game/domain/events";
 import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import { entitiesOfKind } from "@/game/domain/entity";
 import { isStoryDeliveryComplete } from "@/game/gameplay/rpg/storyDelivery";
+import { reconcileRuleDerivedStoryThreads } from "@/game/gameplay/rpg/storyThreads";
+import { unresolvedStoryThreadIds } from "@/game/domain/storyThreads";
 
 export type EndingResolveResult = {
   readonly nextWorldState: WorldState;
@@ -74,7 +76,10 @@ export function resolveEnding(ws: WorldState, ss: StoryState): EndingResolveResu
         ...ws,
         ending: { endingId: matchingEnding.id, outcome: "success" },
       },
-      nextStoryState: ss,
+      nextStoryState: (() => {
+        const threads = reconcileRuleDerivedStoryThreads({ worldState: ws, threads: ss.threads, eventDrafts: [draft] });
+        return { ...ss, threads, unresolvedThreads: unresolvedStoryThreadIds(threads) };
+      })(),
       drafts: [draft],
     };
   }

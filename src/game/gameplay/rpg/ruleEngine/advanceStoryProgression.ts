@@ -59,6 +59,22 @@ function hasAbandonedMainQuest(ws: WorldState, drafts: readonly NarrativeEventDr
   return ws.quests.some((quest) => quest.kind === "main" && abandonedQuestIds.has(String(quest.id)));
 }
 
+function blocksEndingDecision(ws: WorldState, ss: StoryState): boolean {
+  return ss.threads.some((thread) => {
+    if (thread.status === "resolved" || thread.status === "abandoned") return false;
+    const isClosingMainConcern = thread.kind === "question"
+      && thread.questIds.length > 0
+      && thread.closure.length === 0
+      && thread.goalRefs.length === 0
+      && thread.promiseRefs.length === 0
+      && thread.questIds.every((questId) => {
+        const quest = ws.quests.find((entry) => String(entry.id) === String(questId));
+        return quest?.kind === "main" && (quest.status === "completed" || quest.status === "failed" || quest.status === "closed");
+      });
+    return !isClosingMainConcern;
+  });
+}
+
 export function advanceStoryProgression(
   ws: WorldState,
   ss: StoryState,
@@ -118,7 +134,7 @@ export function advanceStoryProgression(
     && mainQuestsResolved
     && !hasAbandonedMainQuest(ws, newDrafts)
     && storyProgress >= 80
-    && unresolvedThreads.length === 0
+    && !blocksEndingDecision(ws, { ...ss, threads })
   ) {
     endingAllowed = true;
   } else {

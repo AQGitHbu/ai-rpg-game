@@ -8,6 +8,8 @@
 
 ## 当前契约
 
+- 正式 trust/doubt 终幕候选在同一 bundle 中携带两条有界 `endingOutcomes`；每条只有主题、玩家选择标签和完整结果场景。两条结果与当前决策场景一同做结构、引用、听众权限和语义审阅，审批后由服务端绑定真实 ending ID，选择前不会发布或写入 History。实际规则结局按 ending ID 消费唯一结果，缺失、重复或错绑时零写入；显式 offline fixture 可继续使用旧终幕内容。
+
 - 生产 provider 只有 `initialization`、`narrative_choice`、`npc_free_text` 三类触发。开局由 opening source 直接编译为 ready；正式选择和焦点 NPC 自定义输入进入 pending job。
 - 初始化由唯一的 `buildOpeningNarrativePrompt` 传入完整 `GameSetup`、叙事风格策略和最多三条近期 novelty 摘要；玩家设定优先于 novelty。开局 source 与后续叙事共用生产 `RpgAiClient`、transport 策略和 application 审批；结构预检通过后调用统一候选语义审阅。作者与审阅器共享开局字段语义、事实 key→正式 ID 映射及披露边界，事实目录中存有秘密不等于玩家已获知。递送型开局还须建立具体身份核验依据及知情来源，单纯持有物品或接受委托不构成接应资格证明；允许保密条件暂缓告知，不预写未来核验成功。
 - 初始化最多三次完整尝试；source、候选校验、场景审批和 novelty 拒绝都通过统一修复反馈传到下一次 opening context。调查方式须符合对象数组契约，陌生人关系仍要求 neutral 且无历史依据；格式或关系失败不靠补造字段放行。

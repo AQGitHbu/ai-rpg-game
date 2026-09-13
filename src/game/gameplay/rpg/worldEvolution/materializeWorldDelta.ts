@@ -211,6 +211,17 @@ export function materializeWorldDelta(input: MaterializeWorldDeltaInput): Approv
 
   const previewStoryState: StoryState = {
     ...ss,
+    ...(stagedQuest?.kind !== "main" ? {} : {
+      threads: ss.threads.map((thread) => thread.kind === "question"
+        && thread.closure.length === 0
+        && thread.goalRefs.length === 0
+        && thread.promiseRefs.length === 0
+        && thread.questIds.length > 0
+        && thread.questIds.every((questId) =>
+          ws.quests.some((quest) => String(quest.id) === String(questId) && quest.kind === "main"))
+        ? { ...thread, questIds: [...new Set([...thread.questIds, stagedQuest.id])] }
+        : thread),
+    }),
     // The final main-act interlocutor occupies the deferred recipient role.
     // Bind once at materialization; never infer identity from names or final prose.
     ...(ss.delivery !== undefined && ss.delivery.recipientNpcId === null && stagedQuest?.stage === ss.targetActs

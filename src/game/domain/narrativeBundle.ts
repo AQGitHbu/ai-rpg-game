@@ -1,4 +1,4 @@
-import type { NarrativeEmotion } from "./narrative";
+import { isNarrativeScene, type NarrativeEmotion, type NarrativeSceneState } from "./narrative";
 import { isWellFormedEventId, type NarrativeJobId } from "./events";
 import type {
   EnemyId,
@@ -97,7 +97,14 @@ export type NarrativeBundleProposal = {
   readonly npcOutwardProposals?: readonly NarrativeNpcOutwardProposal[];
   readonly currentScene: BundleSceneProposal;
   readonly continuationScenes: readonly BundleStepProposal[];
+  readonly endingOutcomes?: readonly EndingOutcomeProposal[];
   readonly terminal: NarrativeBundleTerminal;
+};
+
+export type EndingOutcomeProposal = {
+  readonly themeKey: "trust" | "doubt";
+  readonly choiceLabel: string;
+  readonly scene: BundleSceneProposal;
 };
 
 export const NARRATIVE_NPC_DELIBERATION_RESPONSES = [
@@ -171,7 +178,15 @@ export type NarrativeBundleState = {
   readonly candidateHash?: string;
   readonly steps: readonly NarrativeBundleStepState[];
   readonly activeStepIds: readonly string[];
+  readonly endingOutcomes?: readonly EndingOutcomeState[];
   readonly terminal: NarrativeBundleTerminalState;
+};
+
+export type EndingOutcomeState = {
+  readonly themeKey: "trust" | "doubt";
+  readonly endingId: string;
+  readonly choiceLabel: string;
+  readonly scene: NarrativeSceneState;
 };
 
 // ---------------------------------------------------------------------------
@@ -201,6 +216,7 @@ export const NARRATIVE_BUNDLE_PROPOSAL_REJECTION_REASONS = [
   "duplicate_step_keys",
   "interaction_proposals_invalid",
   "npc_outward_proposals_invalid",
+  "ending_outcomes_invalid",
 ] as const;
 
 export type NarrativeBundleProposalRejectionReason = typeof NARRATIVE_BUNDLE_PROPOSAL_REJECTION_REASONS[number];
@@ -372,7 +388,7 @@ function isBundleStepProposal(value: unknown): value is BundleStepProposal {
 
 export function parseNarrativeBundleProposal(value: unknown): ParseNarrativeBundleProposalResult {
   if (!isRecord(value)) return invalidProposal("not_object");
-  if (!hasOnlyKeys(value, ["worldDelta", "interactionProposals", "npcOutwardProposals", "currentScene", "continuationScenes", "terminal"])) return invalidProposal("unknown_keys");
+  if (!hasOnlyKeys(value, ["worldDelta", "interactionProposals", "npcOutwardProposals", "currentScene", "continuationScenes", "endingOutcomes", "terminal"])) return invalidProposal("unknown_keys");
   if (value.interactionProposals !== undefined
     && (!Array.isArray(value.interactionProposals)
       || !value.interactionProposals.every((proposal, index) => parseStoryInteractionProposal(proposal, `interactionProposals[${index}]`).ok))) {
@@ -389,6 +405,16 @@ export function parseNarrativeBundleProposal(value: unknown): ParseNarrativeBund
 
   const continuationScenes = value.continuationScenes as readonly BundleStepProposal[];
   const terminal = value.terminal as NarrativeBundleTerminal;
+  const endingOutcomes = value.endingOutcomes;
+  const validEndingOutcomes = Array.isArray(endingOutcomes)
+    && endingOutcomes.length === 2
+    && new Set(endingOutcomes.map((entry) => isRecord(entry) ? entry.themeKey : null)).size === 2
+    && endingOutcomes.every((entry) => isRecord(entry)
+      && hasOnlyKeys(entry, ["themeKey", "choiceLabel", "scene"])
+      && (entry.themeKey === "trust" || entry.themeKey === "doubt")
+      && isNonEmptyString(entry.choiceLabel)
+      && isBundleSceneProposal(entry.scene)
+      && entry.scene.choices.length === 0);
 
   // current_scene terminal must have empty continuation
   if (terminal.kind === "next_decision" && terminal.target.kind === "current_scene") {
@@ -418,6 +444,9 @@ export function parseNarrativeBundleProposal(value: unknown): ParseNarrativeBund
     if (continuationScenes.length > 0 || value.currentScene.choices.length !== 0) {
       return invalidProposal("ending_terminal_requires_empty_bundle");
     }
+    if (endingOutcomes !== undefined && !validEndingOutcomes) return invalidProposal("ending_outcomes_invalid");
+  } else if (endingOutcomes !== undefined) {
+    return invalidProposal("ending_outcomes_invalid");
   }
 
   // step limit
@@ -605,7 +634,7 @@ function isAcyclic(steps: readonly NarrativeBundleStepState[]): boolean {
 
 export function parseNarrativeBundleState(value: unknown): ParseNarrativeBundleStateResult {
   if (!isRecord(value)) return INVALID_STATE;
-  if (!hasOnlyKeys(value, ["contractVersion", "originJobId", "candidateVersion", "candidateHash", "steps", "activeStepIds", "terminal"])) return INVALID_STATE;
+  if (!hasOnlyKeys(value, ["contractVersion", "originJobId", "candidateVersion", "candidateHash", "steps", "activeStepIds", "endingOutcomes", "terminal"])) return INVALID_STATE;
   if (value.contractVersion !== 2) return INVALID_STATE;
   if (!isNonEmptyString(value.originJobId)) return INVALID_STATE;
   if ((value.candidateVersion !== undefined
@@ -645,6 +674,17 @@ export function parseNarrativeBundleState(value: unknown): ParseNarrativeBundleS
   }
 
   const terminal = value.terminal as NarrativeBundleTerminalState;
+  const endingOutcomes = value.endingOutcomes;
+  const validEndingOutcomes = Array.isArray(endingOutcomes)
+    && endingOutcomes.length === 2
+    && new Set(endingOutcomes.map((entry) => isRecord(entry) ? entry.themeKey : null)).size === 2
+    && new Set(endingOutcomes.map((entry) => isRecord(entry) ? entry.endingId : null)).size === 2
+    && endingOutcomes.every((entry) => isRecord(entry)
+      && hasOnlyKeys(entry, ["themeKey", "endingId", "choiceLabel", "scene"])
+      && (entry.themeKey === "trust" || entry.themeKey === "doubt")
+      && isNonEmptyString(entry.endingId)
+      && isNonEmptyString(entry.choiceLabel)
+      && isNarrativeScene(entry.scene));
 
   // continuation_step terminal: stepId must exist
   if (terminal.kind === "next_decision" && terminal.target.kind === "continuation_step") {
@@ -659,6 +699,9 @@ export function parseNarrativeBundleState(value: unknown): ParseNarrativeBundleS
   // ending terminal: no continuation steps
   if (terminal.kind === "ending") {
     if (steps.length > 0) return INVALID_STATE;
+    if (endingOutcomes !== undefined && !validEndingOutcomes) return INVALID_STATE;
+  } else if (endingOutcomes !== undefined) {
+    return INVALID_STATE;
   }
 
   return { ok: true, value: value as NarrativeBundleState };

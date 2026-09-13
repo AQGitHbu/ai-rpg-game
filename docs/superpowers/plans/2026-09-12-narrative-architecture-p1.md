@@ -194,6 +194,37 @@ client.close();
 - [x] 独立审核、受影响测试及 typecheck/boundaries/check:docs 通过；完整测试 2830 passed、1 skipped，lint 0 errors（保留既有 warning）。冻结后执行同局续跑。
 - [x] 冻结 3c40de6e，从 medium-story-01 副本正式 retry 一次；新增 3 HTTP、1 次结局立场行动后成功 ending 且 narrative ready，累计 29 行动/72 HTTP。新段严格 replay 0 HTTP、3 响应/4 状态一致，原证据哈希未变，全文已读。规则通关成立，正文结果收束仍不足；原失败运行不改为单一版本无中断通过。
 
+### Task 13：中心冲突与终幕结果闭环
+
+**目标：** 普通短篇中，最终幕实际处理开局冲突；玩家看到针对该冲突的两种选择，正式选择后展示对应已批准结果。禁止用完成开场问话或旧场景加结局标题冒充收束。
+
+**范围与接口：** 保留现有 Action、trust/doubt、主线目标类型、唯一 author/reviewer、A/B 与 SQLite。不新增 Entity 字段、记忆、规划器、互动枚举或生成链。允许在现有 NarrativeBundle 提案/状态增加有界 endingOutcomes 呈现契约（两条固定分支），因为现有 endingPair 仅有名称/200字描述，不能承载选择与完整场景；不增加通用分支图。
+
+**Files:** `src/game/domain/narrativeBundle.ts`；`src/game/gameplay/rpg/narrativeBundle/endingDecision.ts`；`src/game/gameplay/rpg/worldEvolution/materializeWorldDelta.ts`、`approveWorldDelta.ts`；`src/game/gameplay/rpg/storyThreads/advanceStoryThreads.ts`、`src/game/gameplay/rpg/ruleEngine/advanceStoryProgression.ts` 与结算 facade；`src/game/application/server/ai/narrativeDraftProjection.ts`、`narrativeContext/narrativeBundleContext.ts`、必要的 `worldNarrativeContext.ts`；`src/game/application/approveNarrativeBundle.ts`、`performTurn.ts`、`gameSessionView.ts` 与现有审阅投影；`src/components/CurrentGameScreen.tsx` 及测试只接入获批结果正文的结局显示；对应测试及系统文档。可抽出同目录 ending outcome helper，禁止顺手重构其他系统。
+
+**终幕职责：** 从 currentAct/targetActs 派生最终幕职责，作者与审批投影一致。最终幕的地点、NPC 和现有目标应承接中心冲突处理，而非继续把核心处理推给不存在的下一幕。清除对最终幕仍一律禁止收束的冲突指令。模型不得把普通分享/核验/引荐操作解释为通用开船效果，不得替未在场且无依据的人达成协议。
+
+**Thread：** 仅沿已有明确主线 Quest 绑定延续后续获批主线 ID，不自动绑定无关/承诺线程。完成问话只证明准备推进。最终决策许可与 Thread 已解决分开：满足全部绑定任务及其他现有约束可进入终幕决定，但主线 concern 的收束依据须包含实际 ending 事件。未满足显式 closure/goal/promise 的问题不可被清空；终局文字必须明确说明仍保留的争议，不把任务状态当成开船事实。
+
+**有界结果契约：** 作者提交 `endingOutcomes` 两项，每项只有 `themeKey: trust|doubt`、`choiceLabel` 与现有 `BundleSceneProposal` 场景；服务端绑定真实 ending ID 与既有 support/challenge Action，标签不改变动作能力。结果场景无后续 choices，仅在相应结果真正结算后发布。当前场景在选择前停止，两结果作为条件内容接受同次完整候选审批/审阅，不提前写 History、知识或事实。结果中只能使用已有授权事实、事件与当前规则可产生的结局后果，不能发明未结算行动。实际 resolveEnding 结果优先于按钮主题，保密违约强制 doubt 等既有规则保持。
+
+**正式消费：** performTurn 按实际 endingId 消费获批结果场景，与 Action/ending_reached/场景已展示记录/History 一次 CAS 提交；不再沿用选择前 currentScene，不新增结局后的 provider 调用。不匹配、缺失或失效场景须在写入前失败，不授予空正文结局。重放、重复提交、重载、失败零写入沿用现有契约。旧 offline fixture 可以明确走既有 fixture 路径，生产不得静默回退。
+
+- [ ] 写失败回归并实现：两个分支绑定与未知/重复/缺失拒绝，未选择结果不发布，实际选中结果更新场景与 History，重复 Action 不二次写入，保密强制 doubt 消费真实结果，无合法结果零写入；开场问话不闭合中心 Thread，后续主线绑定及 ending 证据闭合，无关约束不被忽略。
+
+```ts
+expect(before.worldState.ending).toBeNull();
+expect(after.worldState.ending?.endingId).toBe(expectedEndingId);
+expect(after.storyState.narrative.status).toBe("ready");
+// 结果正文必须来自对应获批槽，不能复制选择前正文或未选分支。
+expect(publishedScene.sceneId).not.toBe(decisionScene.sceneId);
+expect(publishedScene.narration).toBe(approvedOutcomeScene.narration);
+expect(newEndingEvents).toHaveLength(1);
+```
+
+- [ ] 完成独立范围审核、受影响回归、typecheck、boundaries、完整 npm test 与 check:docs；用保存的中篇失败形态验证根因，不修改旧存档/审计或补写旧正文。
+- [ ] 冻结实现后只登记一局普通短篇，正式 createGame → 实际选择 → 成功 ending/ready → 严格零网络 replay，阅读全文核对起因、阻碍、选择、后果与收束。保留失败，不连续抽样或追加剧情提示批次。本任务不执行交付/退出扩展、实机 UI 全流程专项或 main 对照；结局正文实际可见的最小 UI 接入属于本任务。
+
 ## 后续 P1 验收边界
 
 普通生产短篇通过后执行交付/退出专项、同条件 main 共同玩法对照及实际 UI 创建→中途重载→终局；这部分仍属于 P1，未完成前不合并 main、不进入 P2。六路线保密/公开/核验综合矩阵保留为扩展验收，非首个故事前置。

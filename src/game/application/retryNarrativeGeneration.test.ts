@@ -189,11 +189,11 @@ describe("retryNarrativeGeneration", () => {
     expect(saved.revision).toBe(record.revision);
     expect(saved.storyState).toMatchObject({
       endingAllowed: true,
-      unresolvedThreads: [],
+      unresolvedThreads: ["thread:final"],
       evolution: { status: "stable" },
       narrative: { status: "provider_pending", job: { jobId: beforeJob.jobId, actionId: beforeJob.actionId } },
     });
-    expect(saved.storyState.threads[0]).toMatchObject({ status: "resolved", evidenceEventIds: [outcome.eventId] });
+    expect(saved.storyState.threads[0]).toMatchObject({ status: "advanced", evidenceEventIds: [outcome.eventId] });
   });
 
   it("two concurrent retries only requeue once", async () => {

@@ -68,7 +68,7 @@ export function compileNarrativeDraft(value: unknown, context: NarrativeDraftCon
   const fail = (code: string, path: string) => ({ ok: false as const, code, path });
   const raw = record(value);
   if (raw === null) return fail("invalid_draft", "$");
-  const unknownKey = Object.keys(raw).find(key => !["worldDelta", "sceneDrafts", "interactionProposals", "graph"].includes(key));
+  const unknownKey = Object.keys(raw).find(key => !["worldDelta", "sceneDrafts", "endingOutcomes", "interactionProposals", "graph"].includes(key));
   if (unknownKey !== undefined) return fail("unknown_field", `$.${unknownKey}`);
   if (raw.graph !== undefined && raw.graph !== "default" && raw.graph !== "return_delivery") return fail("unknown_graph", "$.graph");
   const projection = projectNarrativeDraft({ ...context, includeDeliveryReturn: raw.graph === "return_delivery" });
@@ -95,6 +95,35 @@ export function compileNarrativeDraft(value: unknown, context: NarrativeDraftCon
   }
   const missing = projection.slots.find(slot => !byKey.has(slot.slotKey));
   if (missing !== undefined) return fail("missing_slot", `$.sceneDrafts[slotKey=${missing.slotKey}]`);
+  let endingOutcomes: unknown = undefined;
+  if (projection.terminal.kind === "ending" && context.job.actionSummary.kind !== "abandon_quest") {
+    if (!Array.isArray(raw.endingOutcomes) || raw.endingOutcomes.length !== 2) {
+      const delta = record(raw.worldDelta);
+      if (typeof delta?.beatSummary === "string" && delta.beatSummary.trim() !== "" || context.worldState.endings.length >= 2) {
+        return fail("invalid_ending_outcomes", "$.endingOutcomes");
+      }
+    } else {
+    const themes = new Set<string>();
+    const normalized = [];
+    for (let index = 0; index < raw.endingOutcomes.length; index += 1) {
+      const outcome = record(raw.endingOutcomes[index]);
+      if (outcome === null || !["trust", "doubt"].includes(String(outcome.themeKey))
+        || typeof outcome.choiceLabel !== "string" || outcome.choiceLabel.trim() === ""
+        || record(outcome.scene) === null) return fail("invalid_ending_outcome", `$.endingOutcomes[${index}]`);
+      const extra = Object.keys(outcome).find(key => !["themeKey", "choiceLabel", "scene"].includes(key));
+      if (extra !== undefined) return fail("unknown_field", `$.endingOutcomes[${index}].${extra}`);
+      if (themes.has(String(outcome.themeKey))) return fail("duplicate_ending_theme", `$.endingOutcomes[${index}].themeKey`);
+      themes.add(String(outcome.themeKey));
+      const scene = record(outcome.scene)!;
+      if (!Array.isArray(scene.choices) || scene.choices.length !== 0) return fail("invalid_choice_count", `$.endingOutcomes[${index}].scene.choices`);
+      const npcLine = record(scene.npcLine);
+      normalized.push({ themeKey: outcome.themeKey, choiceLabel: outcome.choiceLabel, scene: npcLine === null ? outcome.scene : { ...scene, npcLine: {
+        emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedEventIds: [], ...npcLine,
+      } } });
+    }
+      endingOutcomes = normalized;
+    }
+  } else if (raw.endingOutcomes !== undefined) return fail("unexpected_ending_outcomes", "$.endingOutcomes");
   if (!("worldDelta" in raw)) return fail("missing_field", "$.worldDelta");
   const delta = record(raw.worldDelta);
   const location = record(delta?.newLocation);
@@ -106,6 +135,7 @@ export function compileNarrativeDraft(value: unknown, context: NarrativeDraftCon
     ...(raw.interactionProposals === undefined ? {} : { interactionProposals: raw.interactionProposals }),
     currentScene: byKey.get("current"),
     continuationScenes: projection.stepKeys.map(stepKey => ({ stepKey, scene: byKey.get(stepKey) })),
+    ...(endingOutcomes === undefined ? {} : { endingOutcomes }),
     terminal: projection.terminal,
   } };
 }

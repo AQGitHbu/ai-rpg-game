@@ -58,8 +58,10 @@ export function reconcileRuleDerivedStoryThreads(
   input: ReconcileRuleDerivedStoryThreadsInput,
 ): readonly StoryThread[] {
   const questOutcomeIds = new Set<string>();
+  let hasEndingOutcome = false;
   const committedOutcomeEventIds = new Map<string, EventId[]>();
   const collect = (payload: { readonly type: string; readonly questId?: unknown }, eventId?: EventId) => {
+    if (payload.type === "ending_reached") hasEndingOutcome = true;
     if ((payload.type === "quest_completed" || payload.type === "quest_failed") && payload.questId !== undefined) {
       const questId = String(payload.questId);
       questOutcomeIds.add(questId);
@@ -86,6 +88,11 @@ export function reconcileRuleDerivedStoryThreads(
     });
     if (!boundQuestsConcluded) return thread;
     const committedEvidence = thread.questIds.flatMap((questId) => committedOutcomeEventIds.get(String(questId)) ?? []);
+    if (thread.kind === "question" && !hasEndingOutcome) return {
+      ...thread,
+      status: "advanced" as const,
+      evidenceEventIds: [...new Set([...thread.evidenceEventIds, ...committedEvidence])],
+    };
     return {
       ...thread,
       status: "resolved" as const,

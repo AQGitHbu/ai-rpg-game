@@ -83,8 +83,8 @@ describe("advanceStoryThreads", () => {
     ] });
 
     expect(result.map((entry) => [entry.id, entry.status])).toEqual([
-      ["thread:ferry_block", "resolved"],
-      ["thread:first_run", "resolved"],
+      ["thread:ferry_block", "advanced"],
+      ["thread:first_run", "advanced"],
       ["thread:explicit", "open"],
       ["thread:promise", "open"],
       ["thread:unbound", "open"],
