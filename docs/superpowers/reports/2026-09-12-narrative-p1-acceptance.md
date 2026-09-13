@@ -6,7 +6,7 @@
 
 恢复段严格 replay 为 HTTP 0、9 次响应、12 个状态匹配。原中断段缺正常封存，不能称全程无中断或整条严格 replay 通过。全文仍有物品拾取时序、终幕通用标签和收束偏弱的问题；前两项已按规则契约修复并回归。core03 已实际验证取物时序，但 16 行动后终局结构失败，36 次响应严格失败重放一致，完整流程仍未通过。
 
-当前最先阻断继续验收的是原生持久化稳定性：core05 及其同故事恢复均崩溃，已捕获 @libsql/win32-x64-msvc 0.5.29 内部异常转储，并确认准确上游源码存在重复关闭缺陷。终局作者结构、已结算终局停止生成、审阅路径契约均已修复；不能继续将原生崩溃归为剧情生成失败。依赖修复尚未实施，无新的完整无中断通过样本。
+数据库依赖修复已完成：RPG 存档与共享日志改用 Node 24.15.0 内置 SQLite，未自编译原生驱动；独立审核、跨项目完整门禁与真实进程关闭重开检查通过。随后唯一新样本 core06 正常退出，4 行动、15 HTTP 后因剧情审批失败结束；数据库完整性、重载及全部响应的严格重放通过，无原生崩溃。当前阻断已转为新 NPC 知识授权、可回答内容与剧情任务的契约不一致，仍无新的完整无中断通关样本。
 
 本轮四项工作的状态如下。首要目标“完整小故事”已取得恢复后通关证据，正式六矩阵和创建到终局的实机 UI 验收没有执行，不记为通过，也不进入 P2。历史 `p1-07` 的 0/6 来自六次独立开局，不是新协议矩阵。根因与后续架构方向见 [失败分析](2026-09-13-narrative-p1-failure-analysis.md)。
 
@@ -30,12 +30,23 @@
 
 ## 门禁结果
 
-- `npm run accept`：通过；lint 0 errors，218 个测试文件通过，2806 tests passed、1 skipped，typecheck、fast gates、build 均通过。终局结构、终止边界与审阅路径均完成独立审核；原 core04 审阅响应归一化后仍保留两条缺陷并进入修订，不转为通过。
+- foundation 同名工作树 `npm run ready:family`：通过，日志公共测试、SLG 消费者快速门禁/共享 UI/Next 构建及 RPG 完整门禁均执行。RPG 为 lint 0 errors/49 warnings、218 个测试文件通过/1 skipped、2811 tests passed/1 skipped、typecheck、fast gates、131 项边界与 Next webpack build 通过；覆盖 `accept` 的各项命令。完整输出 `artifacts/node-sqlite-family-02.log`，退出码 0。第一轮只因目录测试仍断言旧 logging 版本而失败，修正版本断言后重新完整执行，保留第一轮日志。
 - `npm run test:narrative-p1-script`：通过；20 passed。
 - `npm run check:docs`、`npm run test:docs`、`git diff --check`：通过。
 - `npm run env:check`：通过；`.env.local` 仅注入当前进程，密钥未写入协议、审计摘要或报告。
 
 ## 普通生产主线
+
+### 数据库替换与 p1-core-06
+
+- 冻结：RPG `cec82659`、foundation `03dbd44`（驱动实现 `ebccae8`）、SLG 消费者 `d9c39545`。`@ai-game/logging` 为 `0.2.0`，运行时 Node ≥24.15.0。RPG 与共享日志的 manifest/lock 不再包含 libsql；SLG 自有存档不在本次 RPG 修复范围内，其驱动未替换。所有修改留在独立同名 worktree，未合并 main。
+- 使用 Node 发行版现成 `node:sqlite`，没有 Rust/C++/Node/SQLite 自编译，没有旧存档迁移。保留事务、CAS、未提交回滚、幂等关闭、异步锁竞争及日志查询/保留契约；Next 原 libsql external 与测试 alias 已移除。
+- 独立新进程验证真实 production composition 与日志 40 次关闭重开，40 条日志全部查回。模块解析守卫拒绝 libsql，进程 native module 清单无 libsql。现成依赖重新安装后的检查同样通过，证据 `artifacts/node-sqlite-validation/runtime-verification.json`；日志 CLI 合同通过。独立代码审核结论为 PASS。
+- 唯一新故事 `p1-core-06`：`claimScope=production_core_story`，正式 createGame、新数据库、原 core 输入与实际 opaque choices；4 行动、1 次重载、15 HTTP、427747 ms，完成 0/1。开局“青芦渡”与移动至“芦荡滩”成功，最终 Node 正常退出码 1，失败码 `AI_GENERATION_FAILED`，不是原生异常。
+- 末段 job 的 epoch 0：v1 输出额外 `graph` 字段被结构校验拒绝；v2 无依据补写修船用料与账目被审阅要求修订；v3 未回答差额、披露未授权事实并补写亲手造船历史，最终 `approval_rejected`。该 job 的 5 次 HTTP 均成功返回，不是传输或数据库失败。
+- 关键状态：赵拴 `knowledge.entries=[]`，事实 `fact_1` 虽玩家已知但 `speakerMayDisclose=false`。玩家已选“修船差多少，咱们一起理个明白”，而可用状态没有具体差额。不能通过放开所有公开事实的角色知情权限、虚构金额或把全部拒绝当审阅误判来取巧。后续应先核对新 NPC 具象化时的事实知情和任务可回答性契约，不追加提示补丁或另开故事重采。
+- 最终存档 revision 7/turn 4、22 个正式事件、`narrative=provider_failed`、lease 已释放、无 ending；`PRAGMA integrity_check=ok`。严格零网络 replay 消费 15 次响应，opening 与 route 的全部 6 个语义状态匹配，保留同一 4 行动失败。replay 退出码 1 表示忠实复现失败故事，两个 comparison 均 `passed=true`，不冒充成功通关。
+- 原产物 `artifacts/narrative-p1/p1-core-06/`，重放 `artifacts/narrative-p1/p1-core-06-replay/replay/`；完整可见正文、数据库核验和独立失败归因分别见该原产物中的 `complete-story.md`、`database-final-check.json`、`independent-failure-review.md`。原故事支持正式 `{retry:true}`，本次未重复采样或执行无依据的额外重试。
 
 - `p1-core-01`：冻结 `bb9b2177`，`claimScope=production_core_story`；0/1、10 HTTP、310848 ms、2 有效动作。真实开局通过；第二次行动后的新幕和续接场景已正式提交，最后一次 reviewer 为 pass。
 - 阻断为 runner `ROUTE_POLICY_UNSUPPORTED`：只收集对话/当前地点按钮，漏掉 `worldMap.locations[].travelChoice`。实际状态已有合法 `move:loc_dyn_1` 和对应地图按钮，不是生成失败或游戏无路可走。
@@ -88,7 +99,7 @@
 
 准确 `libsql-js v0.5.29` 的 Cargo.lock 锁定 libsql 0.9.30；从官方 crate 下载的 SHA256 与锁文件一致。其外层 LibsqlConnection 和内层 Connection 的 Drop 均调用 disconnect，disconnect 在 sqlite3_close_v2 后没有清空句柄，确含[上游 2251](https://github.com/tursodatabase/libsql/issues/2251)所述重复关闭缺陷；异常类型、版本与局部调用特征均吻合，构成当前最强根因证据，仍待修复前后对照。核验时[修复 PR 2261](https://github.com/tursodatabase/libsql/pull/2261)尚未合并，client 0.18.0 仍依赖同一原生版本范围，不能宣称升级即解决。详细证据为 `artifacts/native-tools/upstream-assessment.md`、`core05-first-frame.json`。
 
-游戏仓储与共享日志均依赖该原生库；只更换其中一个入口不能证明排除故障。本轮未修改依赖或 foundation。后续先隔离验证关闭幂等修复及供应链方案，再恢复普通故事验收，不以保留连接不释放、删除 close、换 Node 或反复抽样掩盖缺陷。
+当时游戏仓储与共享日志均依赖该原生库；只更换其中一个入口不能证明排除故障。该诊断批次没有修改依赖或 foundation。其后用户明确禁止自编译并允许舍弃旧存档，隔离原生补丁方案已停止；实际采用的 Node 内置 SQLite 替换和 core06 证据见本报告上节，不以保留连接不释放、删除 close 或反复抽样掩盖缺陷。
 
 ## 固定初态核心诊断
 
