@@ -6,7 +6,7 @@
 
 恢复段严格 replay 为 HTTP 0、9 次响应、12 个状态匹配。原中断段缺正常封存，不能称全程无中断或整条严格 replay 通过。全文仍有物品拾取时序、终幕通用标签和收束偏弱的问题；前两项已按规则契约修复并回归。core03 已实际验证取物时序，但 16 行动后终局结构失败，36 次响应严格失败重放一致，完整流程仍未通过。
 
-数据库依赖修复已完成：RPG 存档与共享日志改用 Node 24.15.0 内置 SQLite，未自编译原生驱动；独立审核、跨项目完整门禁与真实进程关闭重开检查通过。随后唯一新样本 core06 正常退出，4 行动、15 HTTP 后因剧情审批失败结束；数据库完整性、重载及全部响应的严格重放通过，无原生崩溃。当前阻断已转为新 NPC 知识授权、可回答内容与剧情任务的契约不一致，仍无新的完整无中断通关样本。
+数据库依赖修复已完成：RPG 存档与共享日志改用 Node 24.15.0 内置 SQLite，未自编译原生驱动；独立审核、跨项目完整门禁与真实进程关闭重开检查通过。随后唯一新样本 core06 正常退出，4 行动、15 HTTP 后因剧情审批失败结束；数据库完整性、重载及全部响应的严格重放通过，无原生崩溃。该样本暴露的 NPC 创建知识与说话权限契约已由 801139ff 修复并完成离线验证；未给旧 NPC 回填知识，也未补造可回答金额。原故事重试因外部端点授权被自动审批阻止，尚未发送请求，仍无新的完整无中断通关样本。
 
 本轮四项工作的状态如下。首要目标“完整小故事”已取得恢复后通关证据，正式六矩阵和创建到终局的实机 UI 验收没有执行，不记为通过，也不进入 P2。历史 `p1-07` 的 0/6 来自六次独立开局，不是新协议矩阵。根因与后续架构方向见 [失败分析](2026-09-13-narrative-p1-failure-analysis.md)。
 
@@ -34,7 +34,7 @@
 
 独立复审 SpecPASS/QualityPASS。完整 accept 通过（2816 tests/1 skipped、131 boundaries、typecheck、lint、fast、Next build）；复审后的身份、投影修正及新增拒绝矩阵另经定向回归与 typecheck。`artifacts/p1-npc-minimal-accept.log` 保存完整门禁。`artifacts/verify-core06-npc.mjs` 用 core06 原始创建 delta 构造明确标记的离线测试：原包无声明仍为空，显式加入 fact_1 才获知识，经真实 SQLite 保存/关闭/重开后权限一致，原 NPC/玩家知识与原始审计/runtime 哈希未变；该测试不是原故事恢复或通关。
 
-原故事的后续验证使用 `artifacts/retry-core-06-npc.mjs`，独立审核通过。固定原 game/job/action/revision，复制原库到单独目录后仅正式 retry 一次，不重做第四行动。原始 4 行动、15 HTTP 保留；新增最多 20 行动、185 HTTP，独立登记 90 分钟窗口，后续磁带单独严格 replay。此处修复通过不代表原故事或整个 P1 已通过；live 结果待执行。
+原故事的后续验证使用 `artifacts/retry-core-06-npc.mjs`，独立审核通过。固定原 game/job/action/revision，复制原库到单独目录后仅正式 retry 一次，不重做第四行动。原始 4 行动、15 HTTP 保留；新增最多 20 行动、185 HTTP，独立登记 90 分钟窗口，后续磁带单独严格 replay。修复冻结为 `801139ff`；此处修复通过不代表原故事或整个 P1 已通过。正式 retry 尚未启动：自动审批两次拒绝向既有项目端点 `http://api.aqliang.site:3100/v1` 发送故事上下文，第二次是在核对与 core05/core06 的端点、模型、输入一致及原请求不含凭据/仓库路径后提交。拒绝理由仍为缺少可信用户对该具体目的地与数据范围的明确授权。新增 HTTP 为 0，未创建 retry 存档或 manifest；待用户确认后执行已审核脚本。只读核验在 `artifacts/core06-npc-retry-endpoint-verification.json`。
 ## 门禁结果
 
 - foundation 同名工作树 `npm run ready:family`：通过，日志公共测试、SLG 消费者快速门禁/共享 UI/Next 构建及 RPG 完整门禁均执行。RPG 为 lint 0 errors/49 warnings、218 个测试文件通过/1 skipped、2811 tests passed/1 skipped、typecheck、fast gates、131 项边界与 Next webpack build 通过；覆盖 `accept` 的各项命令。完整输出 `artifacts/node-sqlite-family-02.log`，退出码 0。第一轮只因目录测试仍断言旧 logging 版本而失败，修正版本断言后重新完整执行，保留第一轮日志。
