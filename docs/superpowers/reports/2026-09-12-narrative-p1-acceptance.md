@@ -6,6 +6,8 @@
 
 恢复段严格 replay 为 HTTP 0、9 次响应、12 个状态匹配。原中断段缺正常封存，不能称全程无中断或整条严格 replay 通过。全文仍有物品拾取时序、终幕通用标签和收束偏弱的问题；前两项已按规则契约修复并回归。core03 已实际验证取物时序，但 16 行动后终局结构失败，36 次响应严格失败重放一致，完整流程仍未通过。
 
+当前最先阻断继续验收的是原生持久化稳定性：core05 及其同故事恢复均崩溃，已捕获 @libsql/win32-x64-msvc 0.5.29 内部异常转储，并确认准确上游源码存在重复关闭缺陷。终局作者结构、已结算终局停止生成、审阅路径契约均已修复；不能继续将原生崩溃归为剧情生成失败。依赖修复尚未实施，无新的完整无中断通过样本。
+
 本轮四项工作的状态如下。首要目标“完整小故事”已取得恢复后通关证据，正式六矩阵和创建到终局的实机 UI 验收没有执行，不记为通过，也不进入 P2。历史 `p1-07` 的 0/6 来自六次独立开局，不是新协议矩阵。根因与后续架构方向见 [失败分析](2026-09-13-narrative-p1-failure-analysis.md)。
 
 | 工作 | 结果 | 未关闭边界 |
@@ -75,6 +77,18 @@
 `dc27bb4d` 新建普通短篇，开局通过，1 次行动后失败，5 HTTP、138053 ms，进程正常退出 1。全程严格重放为 HTTP 0、5 响应和相同失败状态；产物分别在 `artifacts/narrative-p1/p1-core-04/` 与 `p1-core-04-replay/replay/`。
 
 本次不是三个候选耗尽：最终 epoch 0、candidateVersion 1、当前 job HTTP 3。审阅请求以 `{...,proposal}` 包装候选，模型返回两条 `proposal.currentScene.npcLine.text` 修订路径；解析器却只相对内部 candidate 解路径，转成 UNCERTAIN，调度据此非重试失败，第二、第三版未执行。修订本身仍须保留：木匠工序是否属于无害表达与“柳伯没答应抵押”是否改变人物承诺，不能为了通关一律删除。修复只统一明确请求外壳与内部路径，不改变审阅 verdict 或事实边界。
+
+### p1-core-05：捕获原生持久化崩溃
+
+代码 `5a0b4154`、Node 24.15.0。真实创建后完成两次行动，保存 8 个完整响应（opening 2、route 6），另有一个未完成 reservation，随后原生退出 `0xC0000005`。第一轮实际完成 NPC 判断、作者首稿、审阅 revise、作者修订及审阅 pass，第二轮 NPC 判断后中断。初始 summary 的 0 HTTP/0 ms 不是最终计数；route 未正常封存，不能声称整条严格重放。
+
+`artifacts/resume-core-05.mjs` 绑定原库、步骤、协议、原始响应、代码及 Node 可执行文件哈希；保持原 90 分钟、24 行动与累计 HTTP 预算。原库只读，独立 `core05-native-resume/` 经正式租约恢复追加两次行动，同一游戏累计四行动，另保存 8 个完整响应；在同一 Node 版本下再次崩溃，无正常恢复 summary 或完整恢复段重放。没有以重置预算或修改存档伪造通过。
+
+从微软官网下载并验证签名的便携式 ProcDump 仅监视此次恢复进程，捕获 `artifacts/native-tools/core05-dumps/node.exe_260913_211501.dmp`。未安装全局调试器、未上传转储。独立元数据与首层栈核对确认：异常为无效地址读取，模块是 `@libsql/win32-x64-msvc/index.node` 0.5.29，偏移 `0x55661e`，可信直接调用点 `0x604ab6`。没有 PDB，不能把局部栈包装成完整符号调用栈。
+
+准确 `libsql-js v0.5.29` 的 Cargo.lock 锁定 libsql 0.9.30；从官方 crate 下载的 SHA256 与锁文件一致。其外层 LibsqlConnection 和内层 Connection 的 Drop 均调用 disconnect，disconnect 在 sqlite3_close_v2 后没有清空句柄，确含[上游 2251](https://github.com/tursodatabase/libsql/issues/2251)所述重复关闭缺陷；异常类型、版本与局部调用特征均吻合，构成当前最强根因证据，仍待修复前后对照。核验时[修复 PR 2261](https://github.com/tursodatabase/libsql/pull/2261)尚未合并，client 0.18.0 仍依赖同一原生版本范围，不能宣称升级即解决。详细证据为 `artifacts/native-tools/upstream-assessment.md`、`core05-first-frame.json`。
+
+游戏仓储与共享日志均依赖该原生库；只更换其中一个入口不能证明排除故障。本轮未修改依赖或 foundation。后续先隔离验证关闭幂等修复及供应链方案，再恢复普通故事验收，不以保留连接不释放、删除 close、换 Node 或反复抽样掩盖缺陷。
 
 ## 固定初态核心诊断
 
