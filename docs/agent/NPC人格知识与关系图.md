@@ -11,6 +11,7 @@ NPC 的人格锚点、动态目标、知识、关系、承诺与结构化交互�
 - knowledge 按 FactId 去重，记录 certainty、disclosure 与 initial_world 或真实 Event 来源；关系边有方向，记录 affinity/trust/fear/hostility、stage/trend、evidence 和 commitments。封闭 signal 表与限速规则决定关系变化和相邻 stage 迁移；事实仅向显式 audience 传播，关系不自动反向成立。AI 不提交数值 delta 或任意 patch。NPC 故事互动由四种封闭 operation 与四类条件组成，缺少来源、依据、实际听众或条件不满足时不结算；目标状态只能由窄 mutation 改写。
 - `NpcSpeechAuthority` 从 speaker components、当前 scene-visible facts、目标和该 NPC history 计算 allowed/withheld facts、allowed Event 引用、anchors 和 evidence。secret fact 不因 NPC 已知就自动可说；conditional fact 需要关系条件。
 - `NpcDeliberationSource` 的 proposal 只允许返回 response、目标引用、依据事件、事实披露引用和结构化互动提议；live source 复用 `narrative_bundle` AI role，但审计 purpose 单独记为 `npc_deliberation`。服务端再按实际 audience 运行 authority，拒绝秘密、失效依据、非当前目标和越权互动。
+- 生产 `prepareNpcNarrativeContext` 只在当前同场焦点需要条件/承诺/互动判断时调用该 source；开局和普通问候跳过。私密输入不进入作者上下文，获准 outward 投影进入同版作者与审阅，HTTP 使用同一 job 的预算与取消信号。
 - 每条 NPC line/dialogue 必须提供 `usedFactIds` 与 `usedEventIds`；缺失、重复、非 speaker 所有或不在 allowlist 的引用会拒绝整包。
 - prompt 不带其他 NPC 私密正文、其他 NPC history、玩家自由文本历史或裸关系数字。focus context 只投影最近五条结构化交互、active goals、关系 stage/trend/open commitments 和有限 evidence。
 - 新 NPC 的正式 focus scene 未准备好时，read model 只开放单一 `ask`；不合成问候、不开放自由输入、不投影默认 support/challenge。
@@ -35,7 +36,7 @@ NPC 的秘密可以影响拒绝、追问或条件，但不会因模型“打算�
 
 - 组件与校验：`src/game/domain/entity/npcComponents.ts`、`src/game/domain/entity/entityStore.ts`、`src/game/domain/entity/npcProjection.ts`
 - 权限与审批：`src/game/application/npcSpeechAuthority.ts`、`src/game/domain/npcSpeechReferences.ts`、`src/game/application/approveNarrativeBundle.ts`
-- 私下判断：`src/game/application/projectNpcDeliberation.ts`、`src/game/application/npcDeliberationSource.ts`、`src/game/application/server/ai/liveNpcDeliberationSource.ts`
+- 私下判断：`src/game/application/prepareNpcNarrativeContext.ts`、`src/game/application/projectNpcDeliberation.ts`、`src/game/application/npcDeliberationSource.ts`、`src/game/application/server/ai/liveNpcDeliberationSource.ts`
 - 规则：`src/game/gameplay/rpg/npcMemory/`、`src/game/gameplay/rpg/dialogue/`
 - 测试：`src/game/application/npcSpeechAuthority.test.ts`、`src/game/domain/entity/*test.ts`、`src/game/domain/npcSpeech.test.ts`、`src/game/application/approveNarrativeBundle.test.ts`
 

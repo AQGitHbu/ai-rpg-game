@@ -416,6 +416,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
       expect.any(Array),
       {
         timeoutMs: LIVE_SCENE_TIMEOUT_MS,
+        signal: expect.any(AbortSignal),
         temperature: 0.2,
         extraBody: {
           thinking: { type: "disabled" },

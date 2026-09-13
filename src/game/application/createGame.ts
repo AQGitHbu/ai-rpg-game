@@ -4,7 +4,7 @@ import type { GameId } from "./server/persistence/gameRepository";
 import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
 import type { NarrativeRuntimeState, NarrativeSceneState } from "@/game/domain/narrative";
 import type { WorldState } from "@/game/domain/worldState";
-import type { NarrativeBundleSource, NarrativeBundleRepair, OpeningNarrativeBundleProposal, NarrativeBundleSourceContext } from "./narrativeBundleSource";
+import type { NarrativeBundleSource, NarrativeBundleRepair, OpeningNarrativeBundleProposal, NarrativeBundleSourceContext, NarrativeCandidateRevision } from "./narrativeBundleSource";
 import type { GameTypeId, GameLength, GameSetup, NewGameInput } from "@/game/domain/newGame";
 import { validateNewGameInput } from "@/game/domain/newGame";
 import type { OpeningGenerationCandidate } from "@/game/domain/openingGenerationCandidate";
@@ -155,6 +155,7 @@ export function parseGameSetup(raw: ParseGameSetupInput): ParseGameSetupResult |
 }
 
 export type CreateGameDeps = {
+  readonly signal?: AbortSignal;
   readonly repository: GameRepository;
   /** 开局只能通过一次 NarrativeBundleSource opening 调用生成。 */
   readonly source: NarrativeBundleSource;
@@ -343,7 +344,10 @@ export async function createGame(
   const rejectedCandidates: OpeningNoveltyRecord[] = [];
   let lastFailureKind: AiFailureKind | undefined;
   let openingHttpAttempts = 0;
+  let candidateRevision: NarrativeCandidateRevision | undefined;
+  const revisionFindings: NarrativeBundleRepair[] = [];
   const openingRequestController = new AbortController();
+  const openingSignal = deps.signal === undefined ? openingRequestController.signal : AbortSignal.any([openingRequestController.signal, deps.signal]);
   // The logical initialization job exists before the first provider attempt so
   // novelty/content/transport retries share the same audit identity.
   const jobId = asNarrativeJobId(`job_${input.seed}_0`);
@@ -360,14 +364,16 @@ export async function createGame(
   >({
     maxAttempts: MAX_OPENING_GENERATION_ATTEMPTS,
     runAttempt: async (attempt, priorRepair) => {
+      if (priorRepair !== undefined) revisionFindings.push(priorRepair);
       const openingAttempt = attempt - 1;
       const contentRepair = priorRepair === undefined ? undefined : { ...priorRepair, attempt: openingAttempt };
       const candidateVersion = attempt;
       const openingContext: Extract<NarrativeBundleSourceContext, { readonly kind: "opening" }> = {
         kind: "opening" as const,
         jobId,
-        signal: openingRequestController.signal,
+        signal: openingSignal,
         candidateVersion,
+        ...(candidateRevision === undefined ? {} : { candidateRevision: { ...candidateRevision, findings: [...revisionFindings] } }),
         ...(contentRepair === undefined ? {} : { contentRepair }),
         input: {
           gameType: input.gameType,
@@ -416,6 +422,7 @@ export async function createGame(
         }
         generated = result.proposal.opening;
         generatedProposal = result.proposal;
+        candidateRevision = { candidateVersion, candidateHash: hashNarrativeCandidate(result.proposal), proposal: result.proposal, findings: [...revisionFindings] };
       } catch (error) {
         lastFailureKind = error instanceof AiGenerationError ? error.kind : "AI_CALL_FAILED";
         return { ok: false, retryable: true, reason: repairFromSourceFailure({
@@ -571,6 +578,7 @@ export async function createGame(
     createdAt: deps.now(),
     openingHistory: accepted.novelty,
   };
+  if (openingSignal.aborted) return { ok: false, code: "AI_GENERATION_FAILED", failureKind: "AI_CALL_FAILED" };
   const createResult = input.replaceCurrent === undefined
     ? await deps.repository.createInitialGame(persistedInput)
     : await deps.repository.replaceCurrentGame({

@@ -6,6 +6,8 @@ import type { NarrativeCandidateReviewInput } from "../../narrativeCandidateRevi
 import type { RpgAiClient } from "./rpgAiClient";
 import type { NarrativeRequestClient } from "./narrativeRequestClient";
 import { compileDecisionNarrativeContext } from "./narrativeContext";
+import { OPENING_SEMANTIC_CONTRACT } from "./openingSemanticContract";
+import { buildOpeningNarrativePrompt } from "./openingNarrativePrompt";
 
 export type LiveNarrativeCandidateReviewDeps = Readonly<{
   readonly aiClient?: RpgAiClient;
@@ -151,11 +153,19 @@ function resultFailure(input: NarrativeCandidateReviewInput, failure: "PROVIDER_
 function publicReviewContext(input: NarrativeCandidateReviewInput): unknown {
   if (input.context.kind === "opening") {
     const { signal: _signal, reserveHttpAttempt: _reserveHttpAttempt, ...openingInput } = input.context.input;
+    const openingProposal = "opening" in input.proposal ? input.proposal.opening : undefined;
     return {
       kind: "opening",
       jobId: input.context.jobId,
       candidateVersion: input.context.candidateVersion,
       input: openingInput,
+      contract: OPENING_SEMANTIC_CONTRACT,
+      authorPrompt: buildOpeningNarrativePrompt(input.context),
+      factBindings: openingProposal !== undefined ? openingProposal.world.publicFacts.map((fact, index) => ({
+        key: fact.key,
+        factId: `fact_${index}`,
+        disclosure: openingProposal.opening.npc.privateFactKeys.includes(fact.key) ? "secret" : "public",
+      })) : [],
     };
   }
   const compilation = compileDecisionNarrativeContext({
@@ -163,6 +173,8 @@ function publicReviewContext(input: NarrativeCandidateReviewInput): unknown {
     storyState: input.context.storyState,
     job: input.context.job,
     ...(input.context.contentRepair === undefined ? {} : { contentRepair: input.context.contentRepair }),
+    ...(input.context.candidateRevision === undefined ? {} : { candidateRevision: input.context.candidateRevision }),
+    ...(input.context.npcOutward === undefined ? {} : { npcOutward: input.context.npcOutward }),
   });
   return {
     kind: "decision",

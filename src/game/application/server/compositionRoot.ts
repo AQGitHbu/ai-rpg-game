@@ -14,6 +14,7 @@ import { createNarrativeBundleSourceFactory } from "../server/ai/sourceFactory";
 import { createServerRpgAiClient } from "../server/ai/rpgAiClient";
 import { createNarrativeRequestClient } from "../server/ai/narrativeRequestClient";
 import { createLiveNarrativeCandidateReview } from "../server/ai/liveNarrativeCandidateReview";
+import { createLiveNpcDeliberationSource } from "../server/ai/liveNpcDeliberationSource";
 import { parseAiRuntimeConfig } from "../server/ai/aiRuntimeConfig";
 import { createTextAuditRecorder } from "../server/ai/textAuditRecorder";
 import type {
@@ -222,6 +223,7 @@ export function createServerGameEntryPoints(
   options: Readonly<{
     /** Optional batch guard used by bounded acceptance runners. */
     readonly beforeNarrativeHttpAttempt?: () => Promise<boolean> | boolean;
+    readonly narrativeAbortSignal?: AbortSignal;
   }> = {},
 ): ServerGameEntryPoints {
   const logRuntime = createServerLogRuntime(env);
@@ -248,6 +250,7 @@ export function createServerGameEntryPoints(
     beforeTransportAttempt: options.beforeNarrativeHttpAttempt,
   });
   const narrativeCandidateReviewer = createLiveNarrativeCandidateReview({ aiClient, requestClient: narrativeRequestClient, logger });
+  const npcDeliberationSource = createLiveNpcDeliberationSource({ aiClient, requestClient: narrativeRequestClient, logger });
   // Unified source is the only runtime AI entry point for opening and decisions.
   const narrativeBundleSource = createNarrativeBundleSourceFactory(env, logger, aiClient, narrativeRequestClient);
   const narrativeCoordinator = new BackgroundEnsureCoordinator({
@@ -269,6 +272,8 @@ export function createServerGameEntryPoints(
       now,
       logger,
       reviewer: narrativeCandidateReviewer,
+      npcDeliberationSource,
+      ...(options.narrativeAbortSignal === undefined ? {} : { signal: options.narrativeAbortSignal }),
       auditLink: {
         ...(traceId !== undefined ? { traceId } : {}),
         retry: { origin, mechanism: "initial", attempt: 0 },
@@ -465,6 +470,7 @@ export function createServerGameEntryPoints(
           now,
           aiEnabled,
           reviewer: narrativeCandidateReviewer,
+          ...(options.narrativeAbortSignal === undefined ? {} : { signal: options.narrativeAbortSignal }),
           ...(traceId === undefined ? {} : { auditLink: { traceId } }),
         },
       );

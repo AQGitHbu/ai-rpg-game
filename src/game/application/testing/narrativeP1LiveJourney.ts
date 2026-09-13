@@ -4,11 +4,12 @@ import { join } from "node:path";
 import type { NewGameInput, ValidatedNewGameInput } from "@/game/domain/newGame";
 import { validateNewGameInput } from "@/game/domain/newGame";
 
-export const NARRATIVE_P1_PROTOCOL_VERSION = "narrative-p1/v1" as const;
+export const NARRATIVE_P1_PROTOCOL_VERSION = "narrative-p1/v2" as const;
 export const NARRATIVE_P1_PLANNED_ROUTES = 6 as const;
 export const NARRATIVE_P1_HTTP_BATCH_BUDGET = 1000 as const;
 export const NARRATIVE_P1_MAX_ROUTE_ACTIONS = 24 as const;
 export const NARRATIVE_P1_MAX_CANDIDATE_VERSIONS = 3 as const;
+export const NARRATIVE_P1_BATCH_WALL_CLOCK_MS = 10_800_000 as const;
 
 export type NarrativeP1JourneyMode = "register" | "live" | "replay";
 export type NarrativeP1ScenarioId = "S1" | "S2";
@@ -48,13 +49,13 @@ export type NarrativeP1HttpBudget = Readonly<{
   reserve(): boolean;
 }>;
 
-export function createNarrativeP1HttpBudget(max = NARRATIVE_P1_HTTP_BATCH_BUDGET): NarrativeP1HttpBudget {
+export function createNarrativeP1HttpBudget(max = NARRATIVE_P1_HTTP_BATCH_BUDGET, allowed = () => true): NarrativeP1HttpBudget {
   let used = 0;
   return {
     max,
     get used() { return used; },
     reserve() {
-      if (used >= max) return false;
+      if (used >= max || !allowed()) return false;
       used += 1;
       return true;
     },
@@ -67,6 +68,7 @@ export type NarrativeP1RouteRunnerInput = Readonly<{
   readonly setup: ValidatedNewGameInput;
   readonly budget: NarrativeP1HttpBudget;
   readonly artifactDirectory: string;
+  readonly signal?: AbortSignal;
 }>;
 
 export type NarrativeP1RouteRunnerResult = Readonly<{
@@ -88,6 +90,7 @@ export type NarrativeP1JourneyDeps = Readonly<{
   readonly codeFingerprint?: string;
   /** Non-secret provider configuration captured in the protocol. */
   readonly environment?: Partial<NarrativeP1JourneyEnvironment>;
+  readonly signal?: AbortSignal;
 }>;
 
 export type NarrativeP1Protocol = Readonly<{
@@ -112,6 +115,7 @@ export type NarrativeP1Protocol = Readonly<{
     readonly httpBatch: typeof NARRATIVE_P1_HTTP_BATCH_BUDGET;
     readonly maxRouteActions: typeof NARRATIVE_P1_MAX_ROUTE_ACTIONS;
     readonly maxCandidateVersions: typeof NARRATIVE_P1_MAX_CANDIDATE_VERSIONS;
+    readonly wallClockMs: typeof NARRATIVE_P1_BATCH_WALL_CLOCK_MS;
   }>;
   readonly environment: NarrativeP1JourneyEnvironment;
   readonly code: Readonly<{
@@ -162,6 +166,7 @@ const FIXED_BUDGET = Object.freeze({
   httpBatch: NARRATIVE_P1_HTTP_BATCH_BUDGET,
   maxRouteActions: NARRATIVE_P1_MAX_ROUTE_ACTIONS,
   maxCandidateVersions: NARRATIVE_P1_MAX_CANDIDATE_VERSIONS,
+  wallClockMs: NARRATIVE_P1_BATCH_WALL_CLOCK_MS,
 });
 
 function canonicalJson(value: unknown): string {
@@ -266,19 +271,7 @@ function result(completedRoutes: number, passed: boolean): NarrativeP1JourneyRes
 
 async function defaultRouteRunner(input: NarrativeP1RouteRunnerInput): Promise<NarrativeP1RouteRunnerResult> {
   if (input.mode === "replay") {
-    const replay = readJson(join(input.artifactDirectory, "replay-routes.json"));
-    if (replay !== null && typeof replay === "object") {
-      const record = (replay as Record<string, unknown>)[input.route.routeId];
-      if (record !== null && typeof record === "object") {
-        const candidate = record as Record<string, unknown>;
-        return {
-          completed: candidate.completed === true,
-          httpAttempts: typeof candidate.httpAttempts === "number" ? candidate.httpAttempts : 0,
-          ...(typeof candidate.failureCode === "string" ? { failureCode: candidate.failureCode } : {}),
-        };
-      }
-    }
-    return { completed: false, httpAttempts: 0, failureCode: "REPLAY_RESPONSES_MISSING" };
+    return { completed: false, httpAttempts: 0, failureCode: "REPLAY_RESPONSES_NOT_REPLAYED" };
   }
 
   return { completed: false, httpAttempts: 0, failureCode: "LIVE_ROUTE_RUNNER_NOT_INJECTED" };
@@ -289,6 +282,12 @@ export async function runNarrativeP1Journey(
   deps: NarrativeP1JourneyDeps = {},
 ): Promise<NarrativeP1JourneyResult> {
   if (input.runId.trim() === "") return result(0, false);
+  // A prior summary is evidence, not a replay of approved provider responses.
+  // Refuse without modifying the original live artifacts.
+  if (input.mode === "replay") {
+    writeJson(join(input.artifactDirectory, "replay-status.json"), { runId: input.runId, passed: false, failureCode: "REPLAY_RESPONSES_NOT_REPLAYED" });
+    return result(0, false);
+  }
   if (input.mode === "register") {
     const protocol = createProtocol(deps);
     if (protocol === null) return result(0, false);
@@ -308,18 +307,47 @@ export async function runNarrativeP1Journey(
   const protocol = protocolValue as NarrativeP1Protocol;
   const validatedInput = validateNewGameInput(protocol.input);
   if (!validatedInput.ok) return result(0, false);
-  const budget = createNarrativeP1HttpBudget();
+  const startedAt = Date.now();
+  const controller = new AbortController();
+  let stopCode = "BATCH_INTERRUPTED";
+  const abort = () => controller.abort();
+  deps.signal?.addEventListener("abort", abort, { once: true });
+  if (deps.signal?.aborted) abort();
+  const timeout = setTimeout(() => { stopCode = "BATCH_WALL_CLOCK_EXHAUSTED"; abort(); }, NARRATIVE_P1_BATCH_WALL_CLOCK_MS);
+  const budget = createNarrativeP1HttpBudget(NARRATIVE_P1_HTTP_BATCH_BUDGET, () => !controller.signal.aborted && Date.now() - startedAt < NARRATIVE_P1_BATCH_WALL_CLOCK_MS);
   const routeRunner = deps.routeRunner ?? defaultRouteRunner;
   const routeArtifacts: RouteArtifact[] = [];
   let completedRoutes = 0;
   let reportedHttpAttempts = 0;
+  const checkpoint = () => writeJson(join(input.artifactDirectory, "summary.json"), {
+    protocolHash: protocol.protocolHash, runId: input.runId, mode: input.mode,
+    input: protocol.input, environment: protocol.environment, code: protocol.code,
+    plannedRoutes: NARRATIVE_P1_PLANNED_ROUTES, completedRoutes, passed: false,
+    httpAttempts: budget.used, elapsedMs: Date.now() - startedAt,
+    routes: NARRATIVE_P1_ROUTES.map((route) => routeArtifacts.find((artifact) => artifact.routeId === route.routeId)
+      ?? { ...route, completed: false, httpAttempts: 0, failureCode: controller.signal.aborted ? stopCode : "ROUTE_NOT_FINISHED" }),
+  });
+  checkpoint();
   for (const route of NARRATIVE_P1_ROUTES) {
     let routeResult: NarrativeP1RouteRunnerResult;
+    const httpBefore = budget.used;
+    let listener: (() => void) | undefined;
     try {
-      routeResult = await routeRunner({ mode: input.mode, route, setup: validatedInput.value, budget, artifactDirectory: input.artifactDirectory });
+      if (controller.signal.aborted || budget.used >= budget.max) {
+        routeResult = { completed: false, httpAttempts: 0, failureCode: controller.signal.aborted ? stopCode : "BATCH_HTTP_BUDGET_EXHAUSTED" };
+      } else {
+        const stopped = new Promise<NarrativeP1RouteRunnerResult>((resolve) => {
+          listener = () => resolve({ completed: false, httpAttempts: budget.used - httpBefore, failureCode: stopCode });
+          controller.signal.addEventListener("abort", listener, { once: true });
+        });
+        routeResult = await Promise.race([stopped, routeRunner({ mode: input.mode, route, setup: validatedInput.value, budget, artifactDirectory: input.artifactDirectory, signal: controller.signal })]);
+      }
     } catch {
-      routeResult = { completed: false, httpAttempts: 0, failureCode: "ROUTE_RUNNER_CRASHED" };
+      routeResult = { completed: false, httpAttempts: budget.used - httpBefore, failureCode: "ROUTE_RUNNER_CRASHED" };
+    } finally {
+      if (listener !== undefined) controller.signal.removeEventListener("abort", listener);
     }
+    if (input.mode === "live") routeResult = { ...routeResult, httpAttempts: budget.used - httpBefore };
     if (routeResult.completed) completedRoutes += 1;
     reportedHttpAttempts += Math.max(0, routeResult.httpAttempts);
     routeArtifacts.push({
@@ -331,7 +359,10 @@ export async function runNarrativeP1Journey(
       ...(routeResult.actionCount === undefined ? {} : { actionCount: routeResult.actionCount }),
       ...(routeResult.failureCode === undefined ? {} : { failureCode: routeResult.failureCode }),
     });
+    checkpoint();
   }
+  clearTimeout(timeout);
+  deps.signal?.removeEventListener("abort", abort);
   const passed = completedRoutes === NARRATIVE_P1_PLANNED_ROUTES
     && budget.used <= NARRATIVE_P1_HTTP_BATCH_BUDGET
     && reportedHttpAttempts <= NARRATIVE_P1_HTTP_BATCH_BUDGET;
@@ -352,6 +383,7 @@ export async function runNarrativeP1Journey(
     completedRoutes,
     passed,
     httpAttempts: budget.used,
+    elapsedMs: Date.now() - startedAt,
     routes: routeArtifacts,
   });
   return result(completedRoutes, passed);

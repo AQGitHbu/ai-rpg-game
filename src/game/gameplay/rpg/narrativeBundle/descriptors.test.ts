@@ -3,6 +3,9 @@ import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestF
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { ObjectiveTransition } from "@/game/domain/narrativeBeat";
 import type { CommittedNarrativeEvent } from "@/game/domain/events";
+import { asTurnId } from "@/game/domain/events";
+import { commitEventDrafts } from "@/game/domain/eventLedger";
+import type { StoryInteraction } from "@/game/domain/storyInteraction";
 import type { WorldState } from "@/game/domain/worldState";
 import type { GenerationMetadata } from "@/game/domain/worldEntity";
 import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
@@ -18,6 +21,7 @@ import {
   asLocationId,
   asNpcId,
   asQuestId,
+  PLAYER_ENTITY_ID,
 } from "@/game/domain/worldEntity";
 import {
   buildNarrativeBundleDescriptors,
@@ -150,6 +154,31 @@ function quest(objectives: WorldState["quests"][number]["objectives"]): WorldSta
 }
 
 describe("buildNarrativeBundleDescriptors", () => {
+  it("releases consumed interaction slots for a later verification without treating failures as consumed", () => {
+    const ws = worldState({
+      quests: [quest([{ kind: "talk_to_npc", npcId: npcDyn1 }])],
+      npcs: BASE_PROJECTION.npcs.map((npc) => ({ ...npc, memory: { ...npc.memory, knownFactIds: [factTracks] } })),
+    });
+    const definitions: StoryInteraction[] = ["first", "second", "blocked", "verification"].map((id) => ({
+      id, npcId: npcDyn1, operation: id === "verification" ? "request_verification" : "promise_confidentiality",
+      condition: id === "blocked" ? [{ kind: "knows_fact", actorId: PLAYER_ENTITY_ID, factId: factTracks }] : [],
+      factIds: id === "verification" ? [factTracks] : [], goalIds: [], promiseId: null, audienceIds: [PLAYER_ENTITY_ID], evidenceEventIds: [],
+    }));
+    const records = ws.entityStore.records.map((record) => record.core.id === npcDyn1 ? { ...record, interactions: definitions } : record);
+    const committed = commitEventDrafts({ ledger: [], drafts: ["first", "second"].map((id) => ({
+      eventKey: id, episodeKey: "turn", actorIds: [PLAYER_ENTITY_ID], targetIds: [npcDyn1], locationId: locDyn1,
+      causeKeys: [], factIds: [], questIds: [], outcome: "success" as const, salience: 50,
+      payload: { type: "story_interaction_resolved" as const, interactionId: id, npcId: npcDyn1, operation: "promise_confidentiality" as const, factIds: [], audienceIds: [PLAYER_ENTITY_ID], evidenceEventIds: [] },
+    })), source: { turnId: asTurnId("turn:consumed"), actionId: "consumed", turnNumber: 1, committedAt: "2026-09-13T00:00:00.000Z" }, entityStore: ws.entityStore });
+    if (!committed.ok) throw new Error(committed.code);
+    const consumed = committed.ledger;
+    const current = { ...ws, entityStore: { ...ws.entityStore, records }, eventLedger: consumed };
+    const graph = buildNarrativeBundleDescriptors({ worldState: current, storyState: storyState(), transition: transition(0) });
+    expect(graph.currentChoiceCandidates[0]?.action).toMatchObject({ type: "talk", interactionId: "verification" });
+    const failed = { ...current, eventLedger: consumed.map((event) => ({ ...event, outcome: "failure" as const })) };
+    const failedGraph = buildNarrativeBundleDescriptors({ worldState: failed, storyState: storyState(), transition: transition(0) });
+    expect(failedGraph.currentChoiceCandidates[0]?.action).toMatchObject({ type: "talk", interactionId: "first" });
+  });
   it("folds visit→discover→talk into one step with absorbed objectives", () => {
     const ws = worldState({
       quests: [quest([

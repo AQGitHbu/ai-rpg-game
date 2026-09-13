@@ -11,6 +11,8 @@
 
 ## 验收结果
 
+证据范围：现有 `private` fixture 的“私下请求引荐”实际执行 `promise_confidentiality`，并未再执行独立的 `request_introduction`。任务完成的通用 `kept_promise` 信号可关闭承诺，但未校验具体保密条件。因此以下通过仅证明相应规则和仓储路径，不能证明完整保密—引荐闭环；P1-A 此项验收重新打开，见 [失败分析](2026-09-13-narrative-p1-failure-analysis.md)。
+
 - `private`、`public`、`verify_first`：各完成正式交付；三种互动分别留下保密、公开披露、核验事件。
 - `exit_return`：先经 `give_item` 再 `abandon_quest`，物品 owner 为接应人。
 - `exit_keep`：不发生 `give_item`，保留玩家 owner 后经 `abandon_quest` 进入失败结局。

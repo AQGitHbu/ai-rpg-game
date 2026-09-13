@@ -50,6 +50,14 @@ export type NarrativeBundleRejection =
 
 export type NarrativeBundleRepair = AiContentRepair<NarrativeBundleRepairReason, NarrativeBundleRejection>;
 
+/** Ephemeral rejected draft: never treated as committed History or authority. */
+export type NarrativeCandidateRevision = Readonly<{
+  candidateVersion: number;
+  candidateHash: string;
+  proposal: OpeningNarrativeBundleProposal | NarrativeBundleProposal;
+  findings: readonly NarrativeBundleRepair[];
+}>;
+
 export type OpeningNarrativeBundleProposal = {
   readonly opening: OpeningGenerationCandidate;
   readonly interactionProposals?: readonly import("@/game/domain/storyInteraction").StoryInteractionProposal[];
@@ -67,11 +75,13 @@ export type NarrativeBundleSourceContext =
     readonly input: OpeningGenerationInput;
     readonly auditLink?: AiTextAuditLink;
     readonly contentRepair?: NarrativeBundleRepair;
+    readonly candidateRevision?: NarrativeCandidateRevision;
     readonly signal?: AbortSignal;
     readonly reserveHttpAttempt?: () => Promise<boolean> | boolean;
   }
   | {
     readonly kind: "decision";
+    readonly npcOutward?: readonly import("./npcSpeechAuthority").NpcDeliberationOutwardProjection[];
     /** 1-based server-owned content version for this complete candidate. */
     readonly candidateVersion?: number;
     readonly worldState: WorldState;
@@ -79,6 +89,7 @@ export type NarrativeBundleSourceContext =
     readonly job: PendingNarrativeJob;
     readonly auditLink?: AiTextAuditLink;
     readonly contentRepair?: NarrativeBundleRepair;
+    readonly candidateRevision?: NarrativeCandidateRevision;
     readonly signal?: AbortSignal;
     readonly reserveHttpAttempt?: () => Promise<boolean> | boolean;
   };

@@ -834,8 +834,8 @@ describe("createNarrativeBundleSource", () => {
         segments: [{ text: "你抵达枯柳驿。" }],
         objectiveLink: null,
         choices: [
-          { candidateId: `${stepKey}_choice_1`, label: "表明身份" },
-          { candidateId: `${stepKey}_choice_2`, label: "先行试探" },
+          { candidateId: "wrong_1", label: "表明身份" },
+          { candidateId: "wrong_2", label: "先行试探" },
         ],
       },
     });
@@ -1018,8 +1018,8 @@ describe("createNarrativeBundleSource", () => {
       scene: {
         segments: [{ text: "抵达新地点。" }],
         choices: [
-          { candidateId: `${stepKey}_choice_1`, label: "上前施礼" },
-          { candidateId: `${stepKey}_choice_2`, label: "按住刀柄" },
+          { candidateId: "wrong_1", label: "上前施礼" },
+          { candidateId: "wrong_2", label: "按住刀柄" },
         ],
       },
     });
@@ -1047,7 +1047,7 @@ describe("createNarrativeBundleSource", () => {
       stepKey,
       scene: {
         segments: [{ text: "第 4 段。" }],
-        choices: [{ candidateId: `${stepKey}_choice_1` }, { candidateId: `${stepKey}_choice_2` }],
+        choices: [{ candidateId: "wrong_1" }, { candidateId: "wrong_2" }],
       },
     });
   });
@@ -1129,7 +1129,7 @@ describe("createNarrativeBundleSource", () => {
     expect(prompt).toContain("backgroundSummary");
     expect(prompt).toContain('"targetActs": 3');
     expect(prompt).toContain('"scale": "town"');
-    expect(prompt).toContain("opening.opening.situation.responses");
+    expect(prompt).toContain("situation.responses 或同包 interactionProposals");
   });
 
   it("preserves structurally valid opening interaction proposals and candidate bindings", async () => {

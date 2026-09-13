@@ -197,12 +197,11 @@ function normalizeDecisionBundleShape(
 
   const normalizeChoices = (
     sourceChoices: unknown,
-    candidates: readonly { readonly candidateId: string }[],
-  ): unknown => (Array.isArray(sourceChoices) ? sourceChoices : []).map((choice, index) => {
+    _candidates: readonly { readonly candidateId: string }[],
+  ): unknown => (Array.isArray(sourceChoices) ? sourceChoices : []).map((choice) => {
     const entry = asRecord(choice);
-    const candidate = candidates[index];
     return entry === null ? choice : {
-      candidateId: candidate?.candidateId ?? entry.candidateId,
+      candidateId: entry.candidateId,
       label: firstString(entry.label, entry.text),
     };
   });
@@ -396,6 +395,8 @@ export function createNarrativeBundleSource(
               storyState: context.storyState,
               job: context.job,
               ...(context.contentRepair === undefined ? {} : { contentRepair: context.contentRepair }),
+    ...(context.candidateRevision === undefined ? {} : { candidateRevision: context.candidateRevision }),
+    ...(context.npcOutward === undefined ? {} : { npcOutward: context.npcOutward }),
             })
           : undefined;
         const prompt = decisionCompilation?.prompt ?? buildOpeningNarrativePrompt(

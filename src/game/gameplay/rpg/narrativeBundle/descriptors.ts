@@ -99,9 +99,12 @@ function preparedNpcContext(
     .map((fact) => fact.factId);
 
   const record = npcRecord(getEntity(worldState.entityStore, npc.id));
+  const consumedInteractionIds = new Set(worldState.eventLedger.flatMap((event) =>
+    event.outcome === "success" && event.payload?.type === "story_interaction_resolved" && event.payload.npcId === npc.id
+      ? [event.payload.interactionId] : []));
   const interactionIds = record
     ? record.interactions
-      ?.filter((entry) => entry.condition.every((condition) => evaluateStoryCondition(worldState, condition)))
+      ?.filter((entry) => !consumedInteractionIds.has(entry.id) && entry.condition.every((condition) => evaluateStoryCondition(worldState, condition)))
       .map((entry) => entry.id)
     : undefined;
 

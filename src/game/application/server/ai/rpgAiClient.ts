@@ -158,6 +158,55 @@ function mergePolicies(overrides: RpgAiRolePolicyOverrides | undefined): Record<
 }
 
 /**
+ * Bound the RPG HTTP attempt independently of the transport's cooperative
+ * abort. This includes its queue and response body, not just response headers.
+ * A late result is observed only to settle its promise; it cannot reach audit,
+ * source parsing or the game write-back path after this boundary has closed.
+ */
+function completeWithinRpgDeadline(
+  timeoutMs: number,
+  externalSignal: AbortSignal | undefined,
+  send: (signal: AbortSignal) => Promise<AiCompletionResult>,
+): Promise<AiCompletionResult> {
+  const startedAt = Date.now();
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return Promise.resolve({ ok: false, code: "invalid_config", retryable: false, latencyMs: 0 });
+  }
+  return new Promise(resolve => {
+    const controller = new AbortController();
+    let settled = false;
+    const finish = (result: AiCompletionResult): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      externalSignal?.removeEventListener("abort", onAbort);
+      resolve(result);
+    };
+    const stop = (code: "timeout" | "aborted"): void => {
+      finish({ ok: false, code, retryable: code === "timeout", latencyMs: Date.now() - startedAt });
+      // Cancellation is best effort. Settling does not wait for the provider to
+      // acknowledge it and does not imply that provider billing has stopped.
+      controller.abort();
+    };
+    const onAbort = (): void => stop("aborted");
+    const timer = setTimeout(() => stop(externalSignal?.aborted ? "aborted" : "timeout"), timeoutMs);
+    externalSignal?.addEventListener("abort", onAbort, { once: true });
+    if (externalSignal?.aborted) {
+      stop("aborted");
+      return;
+    }
+    try {
+      send(controller.signal).then(
+        result => externalSignal?.aborted ? stop("aborted") : finish(result),
+        () => finish({ ok: false, code: "network_error", retryable: true, latencyMs: Date.now() - startedAt }),
+      );
+    } catch {
+      finish({ ok: false, code: "network_error", retryable: true, latencyMs: Date.now() - startedAt });
+    }
+  });
+}
+
+/**
  * One RPG-local client is the only owner of provider request options and
  * retry policy. Sources keep prompt/schema/fallback responsibilities only.
  * When an auditRecorder is provided, every transport.complete call is recorded
@@ -222,12 +271,11 @@ export function createRpgAiClient(options: CreateRpgAiClientOptions): RpgAiClien
           policy.thinking,
           policy.reasoningEffort,
           ),
-          ...(completeOptions?.signal === undefined ? {} : { signal: completeOptions.signal }),
         };
-        const result = await options.transport.complete(
-          options.config,
-          messages,
-          providerOptions,
+        const result = await completeWithinRpgDeadline(
+          policy.timeoutMs,
+          completeOptions?.signal,
+          signal => options.transport.complete(options.config, messages, { ...providerOptions, signal }),
         );
 
         // Record the audit entry for this attempt. Best-effort: never throws.

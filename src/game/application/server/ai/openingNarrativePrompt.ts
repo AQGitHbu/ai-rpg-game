@@ -1,6 +1,9 @@
+import { storyInteractionPrompt } from "./storyInteractionPrompt";
 import type { NarrativeBundleSourceContext } from "../../narrativeBundleSource";
 import { renderAiRepairFeedback } from "../../aiGenerationRetry";
 import { buildStylePolicy } from "../../stylePolicy";
+import { OPENING_SEMANTIC_CONTRACT } from "./openingSemanticContract";
+import { renderNarrativeCandidateRevision } from "./narrativeCandidateRevisionPrompt";
 
 type OpeningContext = Extract<NarrativeBundleSourceContext, { readonly kind: "opening" }>;
 
@@ -31,6 +34,9 @@ export function buildOpeningNarrativePrompt(context: OpeningContext): string {
     : novelty.map((summary, index) => `- 最近 ${index + 1}：${summary}`).join("\n");
 
   return `你是 RPG 的叙事 AI。一次调用生成贴合玩家设定的初始历史、当前局面和第一处正式对话决策；不得要求第二次初始化调用。
+${OPENING_SEMANTIC_CONTRACT}
+${storyInteractionPrompt(true)}
+${renderNarrativeCandidateRevision(context.candidateRevision)}
 ${context.contentRepair === undefined ? "" : `
 # 上次生成的拒绝原因
 ${renderAiRepairFeedback(context.contentRepair)}
@@ -64,7 +70,7 @@ ${noveltyLines}
 两项回应分别绑定已有 dialogueAct 和公开 fact/thread；不得在序幕或 NPC 台词中宣称玩家已接受其中一项。选项只表达对焦点 NPC 的对话意图，不提交或暗示规则结果：offer 不代表物品已经转移，deceive 不代表欺骗成功，refuse 不代表玩家自动离开，也不得替玩家承诺任务、立场或行动。不能借选项补写新的既成事实、先前承诺、已完成动作或玩家已经掌握的信息。每个 label 只能是对焦点 NPC 说出的回应，必须忠于对应 dialogueAct/topic；不得用“转身、推门、调出、接通、拿出、前往”等物理行动冒充 talk 选择。结局 theme 仅表达开放价值方向；trust 与 doubt 都是抽象主题，不是已决定的终局、路线或关系数值。
 
 # 顶层输出
-只返回一个 JSON 对象，顶层必须且只能有 opening、currentScene、continuationScenes、terminal。所有玩家可见文本使用中文。
+只返回一个 JSON 对象，顶层必须有 opening、currentScene、continuationScenes、terminal，可额外有 interactionProposals。所有玩家可见文本使用中文。
 - opening 是下述精确 OpeningGenerationCandidate；不得使用 world.name、fact.id、player.background、storyContract.goal、opening.task 等替代字段。
 - continuationScenes 必须为 []。
 - terminal 必须为 {"kind":"next_decision","target":{"kind":"current_scene"}}。
@@ -81,7 +87,7 @@ ${noveltyLines}
 - anchors 精确包含 selfConcept、values、speechStyle、capabilityBoundaries、taboos；values 1–4，capabilityBoundaries 1–4，taboos 0–4，单条正文不超过 200 字。
 - goals 为 1–4 条，每项精确包含 horizon、description、priority、reason；horizon 枚举为 short、long，priority 为 1、2、3、4、5。不得输出 goalId 或 status。
 - opening.quest 精确包含 name、description、objective，objective 固定为 {"kind":"talk_to_opening_npc"}；名称和描述只概括眼前问题，不表示玩家已经接取或完成。
-- opening.situation 必须存在且精确包含 history、threads、npcConnection、responses；currentScene.choices 必须映射 opening.opening.situation.responses。
+- opening.situation 必须存在且精确包含 history、threads、npcConnection、responses；currentScene.choices 必须映射 situation.responses 或同包 interactionProposals。
 
 # situation 引用与数量
 - 所有局部 key 长度 1–40，匹配 [a-z][a-z0-9_]*；history、threads、responses 各自 key 唯一。
@@ -93,7 +99,7 @@ ${noveltyLines}
 # currentScene 精确契约
 - currentScene 只能含 segments、npcLine、objectiveLink、choices。segments 写紧凑连贯的现场，不替玩家说话或行动。
 - npcLine.npcId 固定 "npc_0"；emotion 完整枚举 neutral、warm、guarded、afraid、angry、sad；answeredBeatIds 与 usedEventIds 为空数组；usedFactIds 只能引用 publicFacts 编译后的顺序 ID fact_0、fact_1……，且不得引用 privateFactKeys 对应事实。
-- choices 恰好 2；每项只含 candidateId、label。两个 candidateId 必须与 situation.responses 的两个 key 一一对应；label 要具体呈现各自 act/topic 的对话意图，不加入尚未发生的结果。
+- choices 恰好 2；每项只含 candidateId、label。candidateId 必须与 situation.responses 的 key 或 interaction:proposalKey 对应；label 要具体呈现各自 act/topic 的对话意图，不加入尚未发生的结果。
 - objectiveLink 必须为 null。
 
 # 仅示范字段形状的 JSON 轮廓

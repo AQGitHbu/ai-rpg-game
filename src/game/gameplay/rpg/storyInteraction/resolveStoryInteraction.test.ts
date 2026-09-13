@@ -190,7 +190,7 @@ describe("resolveStoryInteraction", () => {
     const current = world(interaction({
       id: "interaction:promise",
       operation: "promise_confidentiality",
-      factIds: [],
+      factIds: [FACT],
       audienceIds: [PLAYER_ENTITY_ID],
     }));
     const result = resolveStoryInteraction(current, {
@@ -205,6 +205,14 @@ describe("resolveStoryInteraction", () => {
     const messenger = getEntity(result.nextWorldState.entityStore, MESSENGER);
     const messengerNpc = npcRecord(messenger);
     expect(messengerNpc.relationships.outgoing.some((edge) => edge.commitments.some((commitment) => commitment.status === "open"))).toBe(true);
+    expect(messengerNpc.relationships.outgoing.flatMap((edge) => edge.commitments)).toEqual([
+      expect.objectContaining({ kind: "promise", promisor: "target", status: "open" }),
+    ]);
+    expect(result.nextWorldState.worldFacts.find((fact) => fact.factId === FACT)?.discovered).toBe(false);
+    expect(result.facts).toEqual([]);
+    expect(result.stateChanges).toEqual([]);
+    expect(result.drafts[0]?.actorIds).toEqual([PLAYER_ENTITY_ID]);
+    expect(result.drafts[0]?.targetIds).toContain(MESSENGER);
     expect(result.drafts[0]?.causeKeys).toEqual([]);
   });
 

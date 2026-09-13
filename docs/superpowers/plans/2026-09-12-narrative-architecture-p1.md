@@ -616,9 +616,9 @@ register 生成的模型值/设置由可用环境读取并冻结；此命令块�
 
 执行者完成每个 gate 后将以下“未执行”替换为结论及报告相对链接，不追加按日期排列的进度流水：
 
-- **P1-A：** 已完成。Task 1–4 已实现并提交；Task 4 五路线、SQLite 重载、普通离场/自由输入负向探针及相关规则回归证据见 [P1-A 验收报告](../reports/2026-09-13-narrative-architecture-p1-a.md)。
-- **P1-B：** 实现与离线门禁已完成；Task 5–9 的实现提交和测试证据见 [P1 旅程协议](../reports/2026-09-12-narrative-p1-protocol.md) 及 [P1 验收记录](../reports/2026-09-12-narrative-p1-acceptance.md)。尚无 live 质量结论。
-- **P1-C：** 已执行但未通过；最新完整固定 live 矩阵 `p1-07` 为 0/6。之后的 `p1-08` 以 `reasoning_effort=low`、240 秒审阅超时进行观察，但因 provider 长时间无返回而中止，无正式 summary；失败边界和完整产物见 [P1 验收记录](../reports/2026-09-12-narrative-p1-acceptance.md)。未完成路线未填写质量分，不能以离线证据替代 live 成绩。
-- **P1 总结论：** 未通过；P1-B 离线实现门禁通过，但 P1-C 的六条 live 路线与质量门槛均未通过。按本计划暂停扩展 P2，后续 live 批次须另行明确范围。
+- **P1-A：** 部分规则旅程通过，保密—真实引荐闭环验收重新打开。Task 3/4 尚须区分保密与引荐动作，按具体保密条件结算承诺并增加正式仓储旅程；不能以通用任务完成关闭承诺代替。已有证据见 [P1-A 验收报告](../reports/2026-09-13-narrative-architecture-p1-a.md)。
+- **P1-B：** 原生产接线与审阅契约缺口已修复，离线证据和恢复限制见 [失败分析](../reports/2026-09-13-narrative-p1-failure-analysis.md)。Task 9 响应 replay 尚未实现，当前明确拒绝，不能标为全部完成。
+- **P1-C：** 未通过。历史 `p1-07` 六次尝试为 0/6，但不符合共享开局矩阵；`p1-08` 中止，无正式 summary。须在规则闭环补齐后按 [协议 v2](../reports/2026-09-12-narrative-p1-protocol.md) 重新登记、运行和人工评分，历史失败记录见 [P1 验收记录](../reports/2026-09-12-narrative-p1-acceptance.md)。
+- **P1 总结论：** 未通过；先关闭上述规则与验收缺口，再完成六条 live 路线和质量评估。暂停扩展 P2。
 
 P2 的检索摘要与中篇验证、P3 的丰富 Entity/世界行为、P4 的扩容与性能仍只维护在总 Spec，当前不生成它们的实施 Task。

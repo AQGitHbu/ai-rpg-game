@@ -1,6 +1,9 @@
+import { prepareNpcNarrativeContext } from "./prepareNpcNarrativeContext";
+import type { NpcDeliberationSource } from "./npcDeliberationSource";
+import type { NarrativeBundleSourceContext } from "./narrativeBundleSource";
 import { repairFromCandidateReview, repairFromSourceFailure, aiRepairAuditContext, persistedAiRepairReason } from "./aiGenerationRetry";
 import type { GameRepository } from "./server/persistence/gameRepository";
-import type { NarrativeBundleSource, NarrativeBundleRepair } from "./narrativeBundleSource";
+import type { NarrativeBundleSource, NarrativeBundleRepair, NarrativeCandidateRevision } from "./narrativeBundleSource";
 import { approveNarrativeBundle, type ApprovedNarrativeBundle } from "./approveNarrativeBundle";
 import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
 import type { GameLogger } from "@/game/logging";
@@ -45,6 +48,8 @@ export type GeneratePendingNarrativeBundleResult =
     };
 
 export type GeneratePendingNarrativeBundleDeps = {
+  readonly signal?: AbortSignal;
+  readonly npcDeliberationSource?: NpcDeliberationSource;
   readonly repository: GameRepository;
   readonly source: NarrativeBundleSource;
   readonly now: () => string;
@@ -119,6 +124,7 @@ export async function generatePendingNarrativeBundle(
   let durableMutationFailure: string | undefined;
   let leaseLost = false;
   const requestController = new AbortController();
+  const requestSignal = deps.signal === undefined ? requestController.signal : AbortSignal.any([requestController.signal, deps.signal]);
   let leaseTimer: ReturnType<typeof setInterval> | undefined;
   const stopLeaseHeartbeat = () => {
     if (leaseTimer !== undefined) clearInterval(leaseTimer);
@@ -193,6 +199,33 @@ export async function generatePendingNarrativeBundle(
     return true;
   };
 
+  let effectiveContext: NarrativeBundleSourceContext | undefined;
+  const generateCandidate: NarrativeBundleSource["generate"] = async (context) => {
+    const prepared = deps.npcDeliberationSource === undefined ? { ok: true as const, context }
+      : await prepareNpcNarrativeContext(context, deps.npcDeliberationSource);
+    if (!prepared.ok) return prepared;
+    effectiveContext = prepared.context;
+    const generated = await deps.source.generate(prepared.context);
+    if (!generated.ok || generated.kind !== "decision" || prepared.context.kind !== "decision"
+      || prepared.context.npcOutward === undefined) return generated;
+    const byKey = new Map((generated.proposal.interactionProposals ?? []).map((proposal) => [proposal.proposalKey, proposal]));
+    const selectedAliases = new Set([
+      ...generated.proposal.currentScene.choices,
+      ...generated.proposal.continuationScenes.flatMap((step) => step.scene.choices),
+    ].map((choice) => choice.candidateId));
+    for (const proposal of prepared.context.npcOutward.flatMap((outward) => outward.interactionProposals)) {
+      if (!selectedAliases.has(`interaction:${proposal.proposalKey}`) && !byKey.has(proposal.proposalKey)) continue;
+      const previous = byKey.get(proposal.proposalKey);
+      if (previous !== undefined && hashNarrativeCandidate({ ...generated.proposal, interactionProposals: [previous] })
+        !== hashNarrativeCandidate({ ...generated.proposal, interactionProposals: [proposal] })) {
+        return { ok: false, failure: { kind: "AI_RESPONSE_INVALID", phase: "scene" }, repairReason: "invalid_schema", repairDetail: "npc_interaction_proposal_conflict" };
+      }
+      byKey.set(proposal.proposalKey, proposal);
+    }
+    return { ...generated, proposal: { ...generated.proposal,
+      interactionProposals: [...byKey.values()], npcOutwardProposals: prepared.context.npcOutward,
+    } };
+  };
   const source: NarrativeBundleSource = durableRecovery
     ? {
         generate: async (context) => {
@@ -223,7 +256,7 @@ export async function generatePendingNarrativeBundle(
             return { ok: false, failure: { kind: "AI_CALL_FAILED", phase: "scene" }, repairReason: "provider_failure", repairDetail: "lease_lost" };
           }
           job = reservedNarrative.job;
-          const generated = await deps.source.generate({
+          const generated = await generateCandidate({
             ...context,
             candidateVersion: job.attempt.candidateVersion,
             worldState: durableRecord.worldState,
@@ -252,7 +285,7 @@ export async function generatePendingNarrativeBundle(
           return generated;
         },
       }
-    : deps.source;
+    : { generate: generateCandidate };
 
   const transition: ObjectiveTransition = job.objectiveTransition;
   const evolutionNeed = deriveEvolutionNeed(storyState, worldState);
@@ -262,11 +295,14 @@ export async function generatePendingNarrativeBundle(
     : { origin: "manual_failed_job" as const, mechanism: "initial" as const, attempt: 0 });
   let lastFailureKind: AiFailureKind = "AI_RESPONSE_INVALID";
   let lastRepair: NarrativeBundleRepair | undefined;
+  let candidateRevision: NarrativeCandidateRevision | undefined;
+  const revisionFindings: NarrativeBundleRepair[] = [];
   const bounded = await runBoundedAttempts<ApprovedNarrativeBundle, NarrativeBundleRepair>({
     maxAttempts: durableRecovery
       ? Math.max(1, MAX_NARRATIVE_BUNDLE_ATTEMPTS - job.attempt.candidateVersion)
       : MAX_NARRATIVE_BUNDLE_ATTEMPTS,
     runAttempt: async (attempt, priorRepair) => {
+      if (priorRepair !== undefined) revisionFindings.push(priorRepair);
       // 自动修复从 1 开始；本次循环若由手动重试启动，则以 retryContext
       // 的首次修复序号为偏移。该偏移不代表之前多次手动重试的累计次数。
       const repairHint: NarrativeBundleRepair | undefined = attempt > 1 && priorRepair !== undefined
@@ -277,8 +313,9 @@ export async function generatePendingNarrativeBundle(
       try {
         sourceResult = await source.generate({
           kind: "decision",
+          ...(candidateRevision === undefined ? {} : { candidateRevision: { ...candidateRevision, findings: [...revisionFindings] } }),
           candidateVersion: durableRecovery ? job.attempt.candidateVersion : attempt,
-          signal: requestController.signal,
+          signal: requestSignal,
           worldState,
           storyState,
           job,
@@ -316,6 +353,7 @@ export async function generatePendingNarrativeBundle(
       }
       const candidateVersion = durableRecovery ? job.attempt.candidateVersion : attempt;
       const candidateHash = hashNarrativeCandidate(sourceResult.proposal);
+      candidateRevision = { candidateVersion, candidateHash, proposal: sourceResult.proposal, findings: [...revisionFindings] };
       const approvalInput = {
         proposal: sourceResult.proposal,
         worldState,
@@ -365,9 +403,10 @@ export async function generatePendingNarrativeBundle(
         try {
           review = await deps.reviewer.reviewNarrativeCandidate({
             context: {
+              ...(effectiveContext?.kind === "decision" ? effectiveContext : {}),
               kind: "decision",
               candidateVersion,
-              signal: requestController.signal,
+              signal: requestSignal,
               worldState,
               storyState,
               job,
@@ -496,6 +535,11 @@ export async function generatePendingNarrativeBundle(
   }
 
   if (!bounded.ok) return failPendingJob();
+  if (requestSignal.aborted) {
+    lastFailureKind = "AI_CALL_FAILED";
+    lastRepair = { attempt: 1, reason: "provider_failure", detail: "aborted" };
+    return failPendingJob();
+  }
 
   const approved = bounded.value;
   const exitQuestId = job.actionSummary.kind === "abandon_quest" ? job.actionSummary.questId : undefined;
@@ -597,6 +641,11 @@ export async function generatePendingNarrativeBundle(
     }),
   };
 
+  if (requestSignal.aborted) {
+    lastFailureKind = "AI_CALL_FAILED";
+    lastRepair = { attempt: 1, reason: "provider_failure", detail: "aborted" };
+    return failPendingJob();
+  }
   const commitResult = await deps.repository.applyState({
     gameId: record.gameId,
     expectedRevision: durableRecord.revision,

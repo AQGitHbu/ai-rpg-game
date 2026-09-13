@@ -23,6 +23,7 @@ import type { EntityId, ItemEntityRecord, NpcEntityRecord } from "@/game/domain/
 import type { EventId } from "@/game/domain/events";
 import type { WorldDeltaProposal } from "@/game/domain/worldDelta";
 import type { WorldState } from "@/game/domain/worldState";
+import { buildNarrativeBundleDescriptors } from "@/game/gameplay/rpg/narrativeBundle";
 
 export type TempleRoute = "private" | "public" | "verify_first" | "exit_return" | "exit_keep";
 
@@ -423,12 +424,9 @@ function proposalForDecision(
   const interactions = currentNpcId === undefined
     ? []
     : context.worldState.npcs.find((entry) => String(entry.id) === currentNpcId)?.memory.interactionHistory;
-  const hasInstalledInteraction = context.worldState.entityStore.records
-    .filter((record) => record.core.kind === "npc" && String(record.core.id) === currentNpcId)
-    .some((record) => record.core.kind === "npc" && (record as NpcEntityRecord).interactions?.length === 1);
-  const interactionChoiceIds = hasInstalledInteraction
-    ? ["current_scene_interaction_1", "current_scene_choice_2"]
-    : ["current_scene_choice_1", "current_scene_choice_2"];
+  const candidates = buildNarrativeBundleDescriptors({ worldState: context.worldState, storyState, transition: job.objectiveTransition }).currentChoiceCandidates;
+  const hasInstalledInteraction = candidates[0]?.action.type === "talk" && candidates[0].action.interactionId !== undefined;
+  const interactionChoiceIds = candidates.map((candidate) => candidate.candidateId);
   const currentInteraction = routeInteraction(route);
   const proposal: NarrativeBundleProposal = {
     worldDelta: null,

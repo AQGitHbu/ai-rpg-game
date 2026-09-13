@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, copyFileSync, constants } from "node:fs";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { registerHooks } from "node:module";
@@ -32,6 +32,7 @@ export async function waitForNarrativeP1Generation(entry, traceId, options = {})
   const pollIntervalMs = options.pollIntervalMs ?? 250;
   const maxPolls = options.maxPolls ?? 3_600;
   for (let poll = 0; poll <= maxPolls; poll += 1) {
+    if (options.signal?.aborted) return { ok: false, status: "error", code: "BATCH_INTERRUPTED" };
     const current = await entry.getCurrentGame(traceId);
     if (!current.ok || current.status !== "active" || current.view === undefined) return current;
     if (current.view.narrativeGeneration.status !== "pending") return current;
@@ -139,16 +140,45 @@ function freezeCurrentCodeIdentity() {
   process.env.NARRATIVE_P1_CODE_FINGERPRINT = `${commitValue}:${dirtyDiffHash}`;
 }
 
-function selectProductionChoice(view, routeKind) {
-  const choices = view.narrative.choices.length > 0 ? view.narrative.choices : view.currentLocation.actions;
-  const keywords = routeKind === "private"
-    ? ["保密", "私下", "引荐", "担保", "不公开"]
-    : routeKind === "public"
-      ? ["公开", "渠道", "核验", "调查"]
-      : ["核验", "验证", "身份"];
-  return choices.find((choice) => keywords.some((keyword) => choice.label.includes(keyword)))
-    ?? choices.find((choice) => choice.choiceToken === view.story.currentObjectiveChoiceToken)
-    ?? choices[0];
+export function createScenarioSnapshotCache(initialize) {
+  const snapshots = new Map();
+  return (scenarioId, input) => {
+    if (!snapshots.has(scenarioId)) snapshots.set(scenarioId, Promise.resolve().then(() => initialize(scenarioId, input)));
+    return snapshots.get(scenarioId);
+  };
+}
+
+export function currentStoryInteractions(worldState) {
+  return worldState.entityStore.records.flatMap((entity) => entity.core.kind === "npc" ? entity.interactions ?? [] : []);
+}
+
+export function offeredProductionChoices(view) {
+  return [...new Map([...view.narrative.choices, ...view.currentLocation.actions].map((choice) => [choice.choiceToken, choice])).values()];
+}
+
+export function selectProductionChoice(view, routeKind, actionMap, interactions, performed, performedActions = new Set()) {
+  const choices = offeredProductionChoices(view);
+  const operation = (choice) => {
+    const action = actionMap.get(choice.choiceToken);
+    return action?.type === "talk" ? interactions.find((entry) => entry.id === action.interactionId)?.operation : undefined;
+  };
+  const wanted = routeKind === "private"
+    ? (!performed.has("promise_confidentiality") ? "promise_confidentiality" : !performed.has("request_introduction") ? "request_introduction" : null)
+    : routeKind === "verify_first" && !performed.has("verify_freeform_submitted")
+      ? "await_delivery_opportunity"
+      : (!performed.has("request_verification") ? "request_verification" : null);
+  const specific = choices.find((choice) => wanted !== null && operation(choice) === wanted && !performedActions.has(JSON.stringify(actionMap.get(choice.choiceToken))));
+  if (specific !== undefined) return specific;
+  // Only the current objective may bridge locations. Never pick arbitrary prose.
+  return choices.find((choice) => {
+    if (choice.choiceToken !== view.story.currentObjectiveChoiceToken) return false;
+    const action = actionMap.get(choice.choiceToken);
+    if (action === undefined || action.type === "abandon_quest") return false;
+    if (performedActions.has(JSON.stringify(action))) return false;
+    if (action.type === "give_item" && wanted !== null) return false;
+    const op = operation(choice);
+    return op === undefined || (wanted === null && !performed.has(op) && (routeKind === "private" || !["promise_confidentiality", "request_introduction"].includes(op)));
+  });
 }
 
 function readConfiguredAiEnvironment() {
@@ -163,11 +193,43 @@ function readConfiguredAiEnvironment() {
   return configured;
 }
 
-async function createProductionRouteRunner(runtimeEnv) {
-  const { createServerGameEntryPoints } = await import("../src/game/application/server/compositionRoot.ts");
-  return async ({ mode, route, setup, budget, artifactDirectory }) => {
+export async function createProductionRouteRunner(runtimeEnv, adapters) {
+  const { createServerGameEntryPoints } = adapters ?? await import("../src/game/application/server/compositionRoot.ts");
+  const { createSqliteGameRepository } = adapters ?? await import("../src/game/application/server/persistence/sqliteGameRepository.ts");
+  const { createServerSqliteClientFactory, createSqliteClient } = adapters ?? await import("../src/game/application/server/persistence/sqliteClient.ts");
+  const { buildChoiceMap } = adapters ?? await import("../src/game/application/buildChoiceMap.ts");
+  const initialize = createScenarioSnapshotCache(async (scenarioId, { setup, budget, artifactDirectory, signal }) => {
+    const databasePath = resolve(artifactDirectory, `${scenarioId}-opening.sqlite`);
+    if (existsSync(databasePath)) return { ok: false, code: "OPENING_ARTIFACT_ALREADY_EXISTS" };
+    const env = { ...runtimeEnv, NODE_ENV: "test", GAME_DB_PATH: databasePath, AI_TEXT_AUDIT: "full", AI_TEXT_AUDIT_DIR: resolve(artifactDirectory, "audit"), AI_TEXT_AUDIT_RUN_ID: `${scenarioId}-opening` };
+    let entry;
+    const before = budget.used;
+    let result;
+    try {
+      entry = createServerGameEntryPoints(env, undefined, undefined, { beforeNarrativeHttpAttempt: budget.reserve, narrativeAbortSignal: signal });
+      const created = await entry.createGame({ gameType: setup.gameType, gameLength: setup.gameLength, setup: projectNarrativeP1GameSetup(setup) }, `${scenarioId}-create`);
+      result = created.ok ? { ok: true, databasePath } : { ok: false, code: created.code ?? "CREATE_FAILED" };
+    } catch { result = { ok: false, code: "OPENING_RUNNER_CRASHED" }; }
+    finally { await closeNarrativeP1Entry(entry); }
+    if (result.ok) {
+      const client = createSqliteClient(databasePath);
+      try {
+        const checkpoint = await client.execute("PRAGMA wal_checkpoint(TRUNCATE)");
+        if (Number(checkpoint.rows[0]?.busy ?? checkpoint.rows[0]?.[0] ?? 0) !== 0) result = { ok: false, code: "OPENING_CHECKPOINT_BUSY" };
+      } finally { client.close(); }
+    }
+    writeFileSync(resolve(artifactDirectory, `${scenarioId}-opening.json`), JSON.stringify({ ...result, httpAttempts: budget.used - before }, null, 2));
+    return result;
+  });
+  return async ({ mode, route, setup, budget, artifactDirectory, signal }) => {
     if (mode !== "live") return { completed: false, httpAttempts: 0, failureCode: "UNEXPECTED_ROUTE_MODE" };
+    const httpBefore = budget.used;
+    const routeResult = (value) => ({ ...value, httpAttempts: budget.used - httpBefore });
+    const opening = await initialize(route.scenarioId, { setup, budget, artifactDirectory, signal });
+    if (!opening.ok) return routeResult({ completed: false, failureCode: opening.code });
+    if (signal?.aborted) return routeResult({ completed: false, failureCode: "BATCH_INTERRUPTED" });
     const databasePath = resolve(artifactDirectory, `${route.routeId}.sqlite`);
+    copyFileSync(opening.databasePath, databasePath, constants.COPYFILE_EXCL);
     const entryEnv = {
       ...runtimeEnv,
       NODE_ENV: "test",
@@ -176,40 +238,52 @@ async function createProductionRouteRunner(runtimeEnv) {
       AI_TEXT_AUDIT_DIR: resolve(artifactDirectory, "audit"),
       AI_TEXT_AUDIT_RUN_ID: route.routeId,
     };
-    const createEntry = () => createServerGameEntryPoints(entryEnv, undefined, undefined, { beforeNarrativeHttpAttempt: budget.reserve });
+    let repository;
+    const createEntry = () => {
+      repository = createSqliteGameRepository({ clientFactory: createServerSqliteClientFactory(entryEnv) });
+      return createServerGameEntryPoints(entryEnv, undefined, repository, { beforeNarrativeHttpAttempt: budget.reserve, narrativeAbortSignal: signal });
+    };
     let entry = null;
     const steps = [];
     let actionCount = 0;
     let verifySubmitted = false;
+    const performed = new Set();
+    const performedActions = new Set();
     try {
       entry = createEntry();
-      const created = await entry.createGame({
-        gameType: setup.gameType,
-        gameLength: setup.gameLength,
-        setup: projectNarrativeP1GameSetup(setup),
-      }, `${route.routeId}-create`);
-      if (!created.ok) return { completed: false, httpAttempts: budget.used, failureCode: created.code ?? "CREATE_FAILED" };
 
-      while (actionCount < 24) {
-        const current = await waitForNarrativeP1Generation(entry, `${route.routeId}-${actionCount}`);
+      while (actionCount <= 24) {
+        if (signal?.aborted) return routeResult({ completed: false, actionCount, failureCode: "BATCH_INTERRUPTED" });
+        const current = await waitForNarrativeP1Generation(entry, `${route.routeId}-${actionCount}`, { signal });
         if (!current.ok || current.status !== "active" || current.view === undefined) {
           return {
             completed: false,
-            httpAttempts: budget.used,
+            httpAttempts: budget.used - httpBefore,
             actionCount,
             failureCode: current.code ?? "CURRENT_GAME_UNAVAILABLE",
           };
         }
-        if (current.view.ending !== null) return { completed: true, httpAttempts: budget.used, actionCount };
+        if (current.view.ending !== null) {
+          const routeSatisfied = route.kind === "private" ? performed.has("promise_confidentiality") && performed.has("request_introduction") : performed.has("request_verification") && (route.kind !== "verify_first" || verifySubmitted);
+          return routeResult({ completed: routeSatisfied, actionCount, ...(!routeSatisfied ? { failureCode: "ROUTE_POLICY_NOT_EXERCISED" } : {}) });
+        }
+        if (actionCount === 24) return routeResult({ completed: false, actionCount, failureCode: "ROUTE_ACTION_BUDGET_EXHAUSTED" });
         const view = current.view;
         if (view.narrativeGeneration.status === "failed") {
-          return { completed: false, httpAttempts: budget.used, actionCount, failureCode: "AI_GENERATION_FAILED" };
+          return { completed: false, httpAttempts: budget.used - httpBefore, actionCount, failureCode: "AI_GENERATION_FAILED" };
         }
 
+        const state = await repository.getCurrentGame();
+        if (!state.ok || state.status !== "active" || state.record.revision !== current.revision) return routeResult({ completed: false, actionCount, failureCode: "ROUTE_STATE_MISMATCH" });
+        const actionMap = buildChoiceMap(state.record.worldState, state.record.storyState, state.record.revision);
+        const interactions = currentStoryInteractions(state.record.worldState);
         let interaction;
+        let selectedAction;
+        const offeredChoices = offeredProductionChoices(view);
+        const delivery = offeredChoices.map((choice) => actionMap.get(choice.choiceToken)).find((action) => action?.type === "give_item");
         if (route.kind === "verify_first" && !verifySubmitted
-          && view.narrative.npcDialogues.some((dialogue) => dialogue.freeInputEnabled)) {
-          const targetNpcId = view.narrative.npcDialogues[0]?.npcId ?? view.currentLocation.npcs[0]?.npcId;
+          && delivery !== undefined) {
+          const targetNpcId = view.narrative.npcDialogues.find((dialogue) => dialogue.freeInputEnabled && dialogue.npcId === delivery.npcId)?.npcId;
           if (targetNpcId !== undefined) {
             interaction = {
               kind: "free_text",
@@ -217,11 +291,12 @@ async function createProductionRouteRunner(runtimeEnv) {
               text: "我想先核实接应人的身份，再决定是否把信筒交给他。",
             };
             verifySubmitted = true;
-          }
+          } else return routeResult({ completed: false, actionCount, failureCode: "ROUTE_POLICY_UNSUPPORTED" });
         }
         if (interaction === undefined) {
-          const selected = selectProductionChoice(view, route.kind);
-          if (selected === undefined) return { completed: false, httpAttempts: budget.used, actionCount, failureCode: "LEGAL_CHOICE_MISSING" };
+          const selected = selectProductionChoice(view, route.kind, actionMap, interactions, performed, performedActions);
+          if (selected === undefined) return { completed: false, httpAttempts: budget.used - httpBefore, actionCount, failureCode: "ROUTE_POLICY_UNSUPPORTED" };
+          selectedAction = actionMap.get(selected.choiceToken);
           interaction = { kind: "fixed_choice", choiceToken: selected.choiceToken };
         }
         const command = {
@@ -242,19 +317,35 @@ async function createProductionRouteRunner(runtimeEnv) {
             : { revision: null },
           actionId: command.actionId,
           interaction: command.interaction,
+          action: selectedAction ?? null,
           ok: after.ok,
         });
-        if (!after.ok) return { completed: false, httpAttempts: budget.used, actionCount, failureCode: after.code };
+        if (!after.ok) return { completed: false, httpAttempts: budget.used - httpBefore, actionCount, failureCode: after.code };
+        const settled = await repository.getCurrentGame();
+        if (!settled.ok || settled.status !== "active" || settled.record.storyState.turnNumber <= state.record.storyState.turnNumber) {
+          return routeResult({ completed: false, actionCount, failureCode: "ROUTE_ACTION_NOT_SETTLED" });
+        }
         actionCount += 1;
+        if (interaction.kind === "free_text" && route.kind === "verify_first") performed.add("verify_freeform_submitted");
+        if (selectedAction !== undefined) performedActions.add(JSON.stringify(selectedAction));
+        if (selectedAction?.type === "talk") {
+          const event = settled.record.worldState.eventLedger.find((event) => event.actionId === command.actionId
+            && event.outcome === "success" && event.payload.type === "story_interaction_resolved"
+            && event.payload.interactionId === selectedAction.interactionId && event.payload.npcId === selectedAction.npcId);
+          const operation = event?.payload.operation;
+          if (operation !== undefined) performed.add(operation);
+          else if (selectedAction.interactionId !== undefined) return routeResult({ completed: false, actionCount, failureCode: "ROUTE_INTERACTION_NOT_SETTLED" });
+        }
+        writeFileSync(resolve(artifactDirectory, `${route.routeId}.steps.json`), `${JSON.stringify(steps, null, 2)}\n`, "utf8");
         if (actionCount === 4) {
           await closeNarrativeP1Entry(entry);
           entry = createEntry();
           steps.push({ kind: "reload", revision: after.revision });
         }
       }
-      return { completed: false, httpAttempts: budget.used, actionCount, failureCode: "ROUTE_ACTION_BUDGET_EXHAUSTED" };
+      return { completed: false, httpAttempts: budget.used - httpBefore, actionCount, failureCode: "ROUTE_ACTION_BUDGET_EXHAUSTED" };
     } catch {
-      return { completed: false, httpAttempts: budget.used, actionCount, failureCode: "PRODUCTION_ROUTE_CRASHED" };
+      return { completed: false, httpAttempts: budget.used - httpBefore, actionCount, failureCode: "PRODUCTION_ROUTE_CRASHED" };
     } finally {
       try {
         mkdirSync(artifactDirectory, { recursive: true });
@@ -293,6 +384,10 @@ async function main() {
     ? resolve(REPOSITORY_ROOT, args.output, args.runId, "protocol.json")
     : resolve(REPOSITORY_ROOT, args.protocolPath);
   const routeRunner = args.mode === "live" ? await createProductionRouteRunner(runtimeEnv) : undefined;
+  const controller = new AbortController();
+  const interrupt = () => controller.abort();
+  process.once("SIGINT", interrupt);
+  process.once("SIGTERM", interrupt);
   const result = await runNarrativeP1Journey({
     mode: args.mode,
     runId: args.runId,
@@ -302,6 +397,7 @@ async function main() {
       process.argv.slice(2).some((argument) => /^--output(?:=|$)/.test(argument)),
     ),
   }, {
+    signal: controller.signal,
     codeFingerprint: process.env.NARRATIVE_P1_CODE_FINGERPRINT,
     environment: {
       model: runtimeEnv.AI_MODEL,
@@ -309,6 +405,8 @@ async function main() {
     },
     ...(routeRunner === undefined ? {} : { routeRunner }),
   });
+  process.removeListener("SIGINT", interrupt);
+  process.removeListener("SIGTERM", interrupt);
   console.log(`[narrative-p1] ${JSON.stringify(result)}`);
   process.exitCode = result.passed ? 0 : 1;
 }

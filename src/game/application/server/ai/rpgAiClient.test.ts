@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createOpenAiCompatibleTransport } from "@ai-game/ai-transport";
 import type { AiCompletionResult, AiTransport, AiTransportConfig } from "@ai-game/ai-transport";
 import {
   createRpgAiClient,
@@ -11,6 +12,8 @@ import type { AiTextAuditRecorder, AiTextAuditPayload } from "./textAuditTypes";
 
 const config: AiTransportConfig = { baseUrl: "http://provider.test/v1", apiKey: "secret", model: "model" };
 const messages = [{ role: "user" as const, content: "返回 JSON" }];
+
+afterEach(() => { vi.useRealTimers(); });
 
 type TestCompletion = (...args: Parameters<AiTransport["complete"]>) => Promise<unknown>;
 
@@ -33,6 +36,101 @@ function fakeRecorder(): AiTextAuditRecorder & { records: AiTextAuditPayload[] }
 }
 
 describe("createRpgAiClient", () => {
+  it("bounds a headers-complete body that ignores abort and records exactly one timeout", async () => {
+    vi.useFakeTimers();
+    let finishBody!: () => void;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        finishBody = () => {
+          controller.enqueue(new TextEncoder().encode(JSON.stringify({ choices: [{ message: { content: "late" } }] })));
+          controller.close();
+        };
+      },
+    });
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response(body));
+    const audit = fakeRecorder();
+    const client = createRpgAiClient({
+      transport: createOpenAiCompatibleTransport({ fetchImpl }), config, auditRecorder: audit,
+      policies: { narrative_bundle: { timeoutMs: 240_000, maxAttempts: 1 } },
+    });
+    const settled = vi.fn();
+    const pending = client.complete("narrative_bundle", messages).then(result => { settled(result); return result; });
+    await vi.advanceTimersByTimeAsync(240_000);
+    expect(settled).toHaveBeenCalledWith(expect.objectContaining({ ok: false, code: "timeout", latencyMs: 240_000 }));
+    await pending;
+    expect(audit.records).toHaveLength(1);
+    expect(audit.records[0]).toMatchObject({ output: { ok: false, code: "timeout" } });
+    finishBody();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toHaveBeenCalledTimes(1);
+    expect(audit.records).toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("settles external cancellation even when transport ignores it, without retry or late success", async () => {
+    vi.useFakeTimers();
+    let finish!: (result: AiCompletionResult) => void;
+    const complete = vi.fn(() => new Promise<AiCompletionResult>(resolve => { finish = resolve; }));
+    const audit = fakeRecorder();
+    const client = createRpgAiClient({ transport: transportFor(complete), config, auditRecorder: audit });
+    const controller = new AbortController();
+    const settled = vi.fn();
+    const pending = client.complete("scene", messages, undefined, { signal: controller.signal })
+      .then(result => { settled(result); return result; });
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toHaveBeenCalledWith(expect.objectContaining({ ok: false, code: "aborted", retryable: false }));
+    await pending;
+    finish({ ok: true, content: "late", latencyMs: 1 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(settled).toHaveBeenCalledTimes(1);
+    expect(audit.records).toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("does not send HTTP after cancellation during budget reservation", async () => {
+    const controller = new AbortController();
+    const complete = vi.fn(async () => ({ ok: true, content: "late", latencyMs: 0 }));
+    const client = createRpgAiClient({ transport: transportFor(complete), config });
+    const result = await client.complete("scene", messages, undefined, {
+      signal: controller.signal,
+      beforeTransportAttempt: async () => { controller.abort(); return true; },
+    });
+    expect(result).toMatchObject({ ok: false, code: "aborted" });
+    expect(complete).not.toHaveBeenCalled();
+  });
+
+  it("caps non-cooperative transport at two deadlines and audits both reserved attempts", async () => {
+    vi.useFakeTimers();
+    const signals: AbortSignal[] = [];
+    const complete = vi.fn(async (_config, _messages, options) => {
+      signals.push(options.signal);
+      return new Promise<AiCompletionResult>(() => {});
+    });
+    const reserve = vi.fn(async () => true);
+    const audit = fakeRecorder();
+    const client = createRpgAiClient({ transport: transportFor(complete), config, auditRecorder: audit });
+    const settled = vi.fn();
+    const pending = client.complete("narrative_bundle", messages, undefined, {
+      beforeTransportAttempt: reserve,
+      policyOverride: { timeoutMs: 240_000, maxAttempts: 2 },
+    }).then(result => { settled(result); return result; });
+    await vi.advanceTimersByTimeAsync(240_000);
+    expect(settled).not.toHaveBeenCalled();
+    expect(complete).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(240_000);
+    expect(settled).toHaveBeenCalledWith(expect.objectContaining({ ok: false, code: "timeout" }));
+    await pending;
+    expect(reserve).toHaveBeenCalledTimes(2);
+    expect(audit.records).toHaveLength(2);
+    expect(audit.records[1]).toMatchObject({
+      attempt: 2, output: { ok: false, code: "timeout", latencyMs: 240_000 },
+      context: { retry: { mechanism: "transport", reason: "timeout" } },
+    });
+    expect(signals.every(signal => signal.aborted)).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
   it.each(RPG_AI_ROLES)("records the previous transport cause for %s without altering messages", async (role) => {
     const audit = fakeRecorder();
     const complete = vi.fn().mockResolvedValueOnce({ ok: false, code: "rate_limited", retryable: true, latencyMs: 1 }).mockResolvedValueOnce({ ok: true, content: "{}", latencyMs: 1 });
@@ -60,6 +158,7 @@ describe("createRpgAiClient", () => {
   it("builds DeepSeek thinking and JSON options from the selected role policy", async () => {
     const complete = vi.fn(async (_config, _messages, options) => {
       expect(options).toEqual({
+        signal: expect.any(AbortSignal),
         timeoutMs: 45_000,
         temperature: 0.2,
         extraBody: {
@@ -83,6 +182,7 @@ describe("createRpgAiClient", () => {
   it("passes the selected DeepSeek reasoning effort through the transport body", async () => {
     const complete = vi.fn(async (_config, _messages, options) => {
       expect(options).toEqual({
+        signal: expect.any(AbortSignal),
         timeoutMs: 45_000,
         temperature: 0.2,
         extraBody: {

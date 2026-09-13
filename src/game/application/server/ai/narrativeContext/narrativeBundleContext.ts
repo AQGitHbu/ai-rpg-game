@@ -1,3 +1,5 @@
+import { storyInteractionPrompt } from "../storyInteractionPrompt";
+import { renderNarrativeCandidateRevision } from "../narrativeCandidateRevisionPrompt";
 import { dialogueTopicKey, type Action } from "@/game/domain/action";
 import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
 import type { NarrativeSceneState } from "@/game/domain/narrative";
@@ -14,6 +16,7 @@ import {
 } from "@/game/gameplay/rpg/narrativeBundle";
 import type {
   NarrativeBundleRepair,
+  NarrativeCandidateRevision,
 } from "@/game/application/narrativeBundleSource";
 import { compileNarrativeContext } from "./compileNarrativeContext";
 import {
@@ -40,6 +43,8 @@ type DecisionNarrativeContextInput = Readonly<{
   storyState: StoryState;
   job: PendingNarrativeJob;
   contentRepair?: NarrativeBundleRepair;
+  candidateRevision?: NarrativeCandidateRevision;
+  npcOutward?: readonly import("../../../npcSpeechAuthority").NpcDeliberationOutwardProjection[];
 }>;
 
 function block(input: NarrativeContextBlock): NarrativeContextBlock {
@@ -52,7 +57,7 @@ function list(values: readonly string[]): string {
 
 function candidateActionProjection(action: Action): string {
   switch (action.type) {
-    case "talk": return JSON.stringify({ type: action.type, npcId: String(action.npcId), dialogueAct: action.dialogueAct, topic: dialogueTopicKey(action.topic) });
+    case "talk": return JSON.stringify({ type: action.type, npcId: String(action.npcId), dialogueAct: action.dialogueAct, topic: dialogueTopicKey(action.topic), interactionId: action.interactionId ?? null });
     case "move": return JSON.stringify({ type: action.type, locationId: String(action.locationId) });
     case "investigate": return JSON.stringify({ type: action.type, factId: String(action.factId), approachId: action.approachId ?? null });
     case "give_item": return JSON.stringify({ type: action.type, itemId: String(action.itemId), npcId: String(action.npcId) });
@@ -412,7 +417,7 @@ export function buildDecisionNarrativeContextBlocks(
       id: "bundle:legal-graph", slot: "legal_actions", title: "唯一合法续接图",
       authority: "rule", retention: "mandatory", priority: 925,
       source: { kind: "narrative_bundle_descriptors", refs: [String(job.jobId)] },
-      content: `符号引用白名单：@current.location、@current.focus_npc、@new.location、@new.npc、@new.item、@new.enemy、@new.fact、@new.quest、@ending.trust、@ending.doubt。\ncontinuationScenes 必须与第 8 条投影的步骤完全一致，数量、stepKey、顺序都不得改动，不得投影之外自行规划未来步骤。选项 label 必须忠于其服务端 Action：talk 只能写玩家对 NPC 说出的对话意图，不得写成转身、推门、调出设备、接通通信、拿取物品、移动或其他物理动作；也不得在 label 中假定尚未发生的事实、承诺或结果。\n这是服务端重建的唯一合法图，必须逐字使用 stepKey 与 candidateId，不得自创、遗漏、重复或继续规划未来：\n- terminal: ${JSON.stringify(projection.expectedTerminal)}\n- currentScene choices: ${projection.expectedChoices}\n- continuationScenes:\n${projection.expectedSteps}`,
+      content: `符号引用白名单：@current.location、@current.focus_npc、@new.location、@new.npc、@new.item、@new.enemy、@new.fact、@new.quest、@ending.trust、@ending.doubt。\ncontinuationScenes 必须与第 8 条投影的步骤完全一致，数量、stepKey、顺序都不得改动，不得投影之外自行规划未来步骤。选项 label 必须忠于其服务端 Action：talk 只能写玩家对 NPC 说出的对话意图，不得写成转身、推门、调出设备、接通通信、拿取物品、移动或其他物理动作；也不得在 label 中假定尚未发生的事实、承诺或结果。\n这是服务端重建的唯一合法图，必须逐字使用 stepKey；candidateId 使用已列图 ID 或同包 interaction:proposalKey，禁止其他自造 ID、遗漏、重复或继续规划未来：\n- terminal: ${JSON.stringify(projection.expectedTerminal)}\n- currentScene choices: ${projection.expectedChoices}\n- continuationScenes:\n${projection.expectedSteps}`,
     }),
     block({
       id: "bundle:world-evolution", slot: "director_guidance", title: "世界演化要求",
@@ -424,7 +429,7 @@ export function buildDecisionNarrativeContextBlocks(
       id: "bundle:output-contract", slot: "output_contract", title: "输出契约",
       authority: "rule", retention: "mandatory", priority: 1000,
       source: { kind: "narrative_bundle_schema", refs: [] },
-      content: `返回一个 JSON 对象，顶层只有 worldDelta、currentScene、continuationScenes、terminal。\n- currentScene={segments:[{beatId,text}],npcLine:null或{npcId,text,emotion,answeredBeatIds,usedFactIds,usedEventIds},objectiveLink:null或{questId,objectiveIndex,mode},choices:[{candidateId,label}]}。\n- continuationScenes=[{stepKey,scene:与 currentScene 同形}]，必须与“唯一合法续接图”的步骤数量、stepKey 和顺序完全一致。\n- terminal 只能是 {\"kind\":\"next_decision\",\"target\":{\"kind\":\"current_scene\"}}、{\"kind\":\"next_decision\",\"target\":{\"kind\":\"continuation_step\",\"stepKey\":\"服务端步骤\"}} 或 {\"kind\":\"ending\"}。\n- 终点决策点恰好两个 choices，candidateId 逐字复制合法图；其余步骤 choices=[]。\n- npcLine 不能是字符串；emotion 只能是 neutral|warm|guarded|afraid|angry|sad；引用数组没有合法引用时输出 []。\n- 若要求 worldDelta，严格使用 {\"beatSummary\":\"...\",\"newLocation\":{\"name\":\"...\",\"description\":\"...\",\"scale\":\"scene\",\"placement\":\"world\",\"connectFromLocationId\":\"现有地点 ID\"},\"newNpc\":{\"name\":\"...\",\"role\":\"...\",\"description\":\"...\",\"locationRef\":{\"kind\":\"new_location\"},\"anchors\":{\"selfConcept\":\"...\",\"values\":[\"...\"],\"speechStyle\":\"...\",\"capabilityBoundaries\":[\"...\"],\"taboos\":[]},\"goals\":[{\"horizon\":\"short\",\"description\":\"...\",\"priority\":3,\"reason\":\"...\"}],\"relationshipSeeds\":[{\"targetNpcId\":\"既有 active NPC ID\",\"stance\":\"ally|protective_of|indebted_to|rival|wary\",\"reason\":\"...\"}]},\"newItem\":{\"name\":\"...\",\"description\":\"...\",\"locationRef\":\"new_location\"},\"newEnemy\":{\"name\":\"...\",\"tier\":\"normal\",\"locationRef\":\"new_location\"},\"newFact\":null或{\"text\":\"...\",\"visibility\":\"public或private\",\"investigationLabel\":\"可选\",\"investigationApproaches\":[{\"approachId\":\"...\",\"label\":\"...\",\"hint\":\"可选\",\"evidenceQuality\":\"clean或noisy\",\"tensionDelta\":-5到20}]},\"nextMainQuest\":{\"name\":\"...\",\"description\":\"...\",\"objectiveText\":\"...\"},\"endingPair\":null或[{\"themeKey\":\"trust\",\"name\":\"...\",\"description\":\"...\"},{\"themeKey\":\"doubt\",\"name\":\"...\",\"description\":\"...\"}]}；anchors 五个字段都必需，goals 至少 1 条且最多 4 条；relationshipSeeds 最多 4 条，每项只能包含 targetNpcId、stance、reason，targetNpcId 只能引用实体规则闭包中的既有 active NPC，stance 只能使用上述定性枚举，reason 必须非空且≤200字；不得提交 affinity、stage、evidence 或 actionId；goalId/status 由服务端生成，禁止输出。未要求字段必须为 null。\n- nextMainQuest 回合 currentScene.choices=[]，唯一 continuationScenes[0] 必须使用抵达骨架。所有玩家可见文本必须为中文。`,
+      content: `返回一个 JSON 对象，顶层必须有 worldDelta、currentScene、continuationScenes、terminal，可额外有 interactionProposals。${storyInteractionPrompt(false)}\n- currentScene={segments:[{beatId,text}],npcLine:null或{npcId,text,emotion,answeredBeatIds,usedFactIds,usedEventIds},objectiveLink:null或{questId,objectiveIndex,mode},choices:[{candidateId,label}]}。\n- continuationScenes=[{stepKey,scene:与 currentScene 同形}]，必须与“唯一合法续接图”的步骤数量、stepKey 和顺序完全一致。\n- terminal 只能是 {\"kind\":\"next_decision\",\"target\":{\"kind\":\"current_scene\"}}、{\"kind\":\"next_decision\",\"target\":{\"kind\":\"continuation_step\",\"stepKey\":\"服务端步骤\"}} 或 {\"kind\":\"ending\"}。\n- 终点决策点恰好两个 choices，candidateId 复制合法图或同包 interaction:proposalKey；其余步骤 choices=[]。\n- npcLine 不能是字符串；emotion 只能是 neutral|warm|guarded|afraid|angry|sad；引用数组没有合法引用时输出 []。\n- 若要求 worldDelta，严格使用 {\"beatSummary\":\"...\",\"newLocation\":{\"name\":\"...\",\"description\":\"...\",\"scale\":\"scene\",\"placement\":\"world\",\"connectFromLocationId\":\"现有地点 ID\"},\"newNpc\":{\"name\":\"...\",\"role\":\"...\",\"description\":\"...\",\"locationRef\":{\"kind\":\"new_location\"},\"anchors\":{\"selfConcept\":\"...\",\"values\":[\"...\"],\"speechStyle\":\"...\",\"capabilityBoundaries\":[\"...\"],\"taboos\":[]},\"goals\":[{\"horizon\":\"short\",\"description\":\"...\",\"priority\":3,\"reason\":\"...\"}],\"relationshipSeeds\":[{\"targetNpcId\":\"既有 active NPC ID\",\"stance\":\"ally|protective_of|indebted_to|rival|wary\",\"reason\":\"...\"}]},\"newItem\":{\"name\":\"...\",\"description\":\"...\",\"locationRef\":\"new_location\"},\"newEnemy\":{\"name\":\"...\",\"tier\":\"normal\",\"locationRef\":\"new_location\"},\"newFact\":null或{\"text\":\"...\",\"visibility\":\"public或private\",\"investigationLabel\":\"可选\",\"investigationApproaches\":[{\"approachId\":\"...\",\"label\":\"...\",\"hint\":\"可选\",\"evidenceQuality\":\"clean或noisy\",\"tensionDelta\":-5到20}]},\"nextMainQuest\":{\"name\":\"...\",\"description\":\"...\",\"objectiveText\":\"...\"},\"endingPair\":null或[{\"themeKey\":\"trust\",\"name\":\"...\",\"description\":\"...\"},{\"themeKey\":\"doubt\",\"name\":\"...\",\"description\":\"...\"}]}；anchors 五个字段都必需，goals 至少 1 条且最多 4 条；relationshipSeeds 最多 4 条，每项只能包含 targetNpcId、stance、reason，targetNpcId 只能引用实体规则闭包中的既有 active NPC，stance 只能使用上述定性枚举，reason 必须非空且≤200字；不得提交 affinity、stage、evidence 或 actionId；goalId/status 由服务端生成，禁止输出。未要求字段必须为 null。\n- nextMainQuest 回合 currentScene.choices=[]，唯一 continuationScenes[0] 必须使用抵达骨架。所有玩家可见文本必须为中文。`,
     }),
     block({
       id: "bundle:item-acquisition", slot: "output_contract", title: "物品获取方式",
@@ -514,6 +519,16 @@ export function compileDecisionNarrativeContext(
 ): NarrativePromptCompilation {
   return createNarrativePromptCompilation(compileNarrativeContext({
     maxEstimatedTokens: NARRATIVE_BUNDLE_CONTEXT_MAX_ESTIMATED_TOKENS,
-    blocks: buildDecisionNarrativeContextBlocks(input),
+    blocks: [...buildDecisionNarrativeContextBlocks(input), ...(input.npcOutward === undefined ? [] : [block({
+      id: "bundle:npc_outward", slot: "current_resolution", title: "角色获准对外回应",
+      authority: "state", retention: "mandatory", priority: 950,
+      source: { kind: "npc_outward", refs: input.npcOutward.map((entry) => String(entry.npcId)) },
+      content: `以下仅是通过权限审查的 NPC 对外方案，不含私下推理。回应须符合 response；discloseFactIds 只引用已提供正文的事实，不得凭 ID 补写秘密。结构化 interactionProposals 可并入顶层候选共同修订，仍需规则批准。方案本身不是已经发生的行动或知识转移。\n${JSON.stringify(input.npcOutward)}`,
+    })]), ...(input.candidateRevision === undefined ? [] : [block({
+      id: "bundle:candidate_revision", slot: "current_resolution", title: "未提交候选修订",
+      authority: "state", retention: "mandatory", priority: 950,
+      source: { kind: "narrative_bundle_repair", refs: [String(input.job.jobId)] },
+      content: renderNarrativeCandidateRevision(input.candidateRevision),
+    })])],
   }));
 }

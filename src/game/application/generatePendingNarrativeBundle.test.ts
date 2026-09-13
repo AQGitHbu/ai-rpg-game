@@ -1,3 +1,4 @@
+import { hashNarrativeCandidate } from "./narrativeCandidateReview";
 import { describe, it, expect, vi } from "vitest";
 import { generatePendingNarrativeBundle } from "./generatePendingNarrativeBundle";
 import type { GameRepository, GameRecord } from "./server/persistence/gameRepository";
@@ -445,7 +446,8 @@ describe("generatePendingNarrativeBundle", () => {
     expect(saved.storyState.history?.entries.at(-1)?.kind).toBe("shown_choice");
   });
 
-  it("reviews each complete candidate before approval and lets the reviewer defect drive the next draft", async () => {
+  it.each([false, true])("retains cumulative revisions and rejects a late reviewed result when cancelled=%s", async (cancel) => {
+    const controller = new AbortController();
     const { repo, getRecord } = createInMemoryRepo(null);
     const opening = await createGame(
       { gameId: asGameId("candidate-review-loop"), gameType: "wuxia", gameLength: "short", seed: "candidate-review-loop" },
@@ -458,6 +460,8 @@ describe("generatePendingNarrativeBundle", () => {
     const quest = initialized.worldState.quests[0]!;
     const pendingJob: PendingNarrativeJob = {
       ...createPendingJob(),
+      generationKind: "npc_fixed_choice", sceneRequestKind: "npc_response",
+      utterance: "先核验身份",
       domainEventIds: [initialized.worldState.eventLedger[0]!.eventId],
       focusNpcId: npc.id,
       actionSummary: { kind: "talk", npcId: npc.id },
@@ -525,23 +529,45 @@ describe("generatePendingNarrativeBundle", () => {
           }],
         }))
         .mockImplementationOnce(async (input) => ({
+          ok: false, candidateVersion: input.candidateVersion, candidateHash: input.candidateHash,
+          defects: [{ candidateVersion: input.candidateVersion, candidateHash: input.candidateHash,
+            scope: "scene", code: "BROKEN_CAUSALITY", path: "currentScene.segments", reason: "不要重复开场。" }],
+        }))
+        .mockImplementationOnce(async (input) => {
+          if (cancel) controller.abort();
+          return ({
           ok: true,
           candidateVersion: input.candidateVersion,
           candidateHash: input.candidateHash,
-        })),
+        }); }),
     };
 
     const generated = await generatePendingNarrativeBundle({
       repository: repo,
+      signal: controller.signal,
+      npcDeliberationSource: { generate: async (input) => ({ ok: true, proposal: {
+        npcId: input.npcId, goalIds: [], response: "question", evidenceEventIds: [], discloseFactIds: [], interactionProposals: [],
+      } }) },
       source,
       reviewer,
       now: () => "2026-01-01",
     });
 
-    expect(generated.ok).toBe(true);
-    expect(reviewer.reviewNarrativeCandidate).toHaveBeenCalledTimes(2);
-    expect(generate).toHaveBeenCalledTimes(2);
-    expect(getRecord()?.storyState.narrative.status).toBe("ready");
+    expect(generated.ok).toBe(!cancel);
+    expect(reviewer.reviewNarrativeCandidate).toHaveBeenCalledTimes(3);
+    expect(generate).toHaveBeenCalledTimes(3);
+    expect(getRecord()?.storyState.narrative.status).toBe(cancel ? "provider_failed" : "ready");
+    const third = generate.mock.calls[2]![0];
+    if (third.kind !== "decision") throw new Error("wrong source kind");
+    expect(third.npcOutward).toEqual([expect.objectContaining({ npcId: npc.id, response: "question" })]);
+    const reviewCall = vi.mocked(reviewer.reviewNarrativeCandidate).mock.calls[2]![0];
+    expect(reviewCall.proposal).toMatchObject({ npcOutwardProposals: third.npcOutward });
+    expect(reviewCall.candidateHash).toBe(hashNarrativeCandidate(reviewCall.proposal));
+    expect(third.candidateRevision).toMatchObject({ candidateVersion: 2, candidateHash: expect.any(String) });
+    expect(third.candidateRevision?.findings.map((finding) => finding.detail).join(" ")).toContain("必须先核验再交付");
+    expect(third.candidateRevision?.findings.map((finding) => finding.detail).join(" ")).toContain("不要重复开场");
+    expect(third.candidateRevision?.proposal.currentScene.choices[0]?.label).toBe("现在交付信筒");
+    if (cancel) expect(getRecord()?.storyState.history).toEqual(initialized.storyState.history);
   });
 
   it("事件账本提交失败时持久化独立稳定码，不伪装成审批拒绝", async () => {

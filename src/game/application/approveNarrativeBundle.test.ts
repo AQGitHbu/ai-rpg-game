@@ -1,5 +1,8 @@
+import { createNarrativeBundleSource } from "./server/ai/liveNarrativeBundleSource";
+import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
+import { asTurnId } from "@/game/domain/events";
 import { describe, expect, it } from "vitest";
-import { approveNarrativeBundle } from "./approveNarrativeBundle";
+import { approveNarrativeBundle, installStoryInteractionProposals } from "./approveNarrativeBundle";
 import type { ApproveNarrativeBundleInput } from "./approveNarrativeBundle";
 import type { NarrativeBundleProposal } from "@/game/domain/narrativeBundle";
 import type { ObjectiveTransition } from "@/game/domain/narrativeBeat";
@@ -934,7 +937,7 @@ describe("approveNarrativeBundle", () => {
     expect(result).toEqual({ ok: false, code: "dialogue_focus_line_missing", detail: "npc_dyn_1" });
   });
 
-  it("mints and installs an interaction before binding its approved choice", () => {
+  it("keeps a live interaction alias through parsing and binds exactly its installed operation", async () => {
     const evidence = makeCommittedEvent({ type: "fact_discovered", factId: factTracks }, {
       actorIds: [npcDyn1],
       factIds: [factTracks],
@@ -957,12 +960,12 @@ describe("approveNarrativeBundle", () => {
       currentScene: {
         ...current.currentScene,
         choices: [
-          { candidateId: "current_scene_interaction_1", label: "先核验身份" },
+          { candidateId: "interaction:verify_identity", label: "先核验身份" },
           { candidateId: "current_scene_choice_2", label: "继续试探" },
         ],
       },
     };
-    const result = approveNarrativeBundle(baseInput({
+    const input = baseInput({
       proposal,
       worldState: buildWorld({
         eventLedger: [evidence],
@@ -975,7 +978,37 @@ describe("approveNarrativeBundle", () => {
         quests: [{ ...mainQuest, objectives: [{ kind: "talk_to_npc", npcId: npcDyn1 }] }],
       }),
       transition: { ...transition(0), mode: "progressed" },
-    }));
+    });
+    const oldInteractions = installStoryInteractionProposals({
+      worldState: input.worldState, jobId: asNarrativeJobId("older_job"), focusNpcId: String(npcDyn1),
+      proposals: ["old_one", "old_two"].map((proposalKey) => ({
+        proposalKey, npcId: npcDyn1, operation: "promise_confidentiality", condition: [], factIds: [],
+        goalIds: [], promiseId: null, audienceIds: [PLAYER_ENTITY_ID], evidenceEventIds: [],
+      })),
+    });
+    if (!oldInteractions.ok) throw new Error(oldInteractions.detail);
+    const populatedInput = { ...input, worldState: oldInteractions.worldState };
+    const pending = createPendingNarrativeJob({
+      jobId: input.jobId, turnId: asTurnId("turn_alias"), actionId: "action_alias", expectedRevision: 0,
+      turnNumber: 1, actionSummary: { kind: "talk", npcId: npcDyn1 },
+      resolvedEvent: { actionId: "action_alias", status: "success", eventKind: "dialogue", facts: [], stateChanges: [], costs: [], rewards: [], triggeredEvents: [], rejectedEffects: [] },
+      domainEventIds: [evidence.eventId], focusNpcId: npcDyn1, requestedAt: "2026-01-01",
+      objectiveTransition: input.transition, mandatoryBeats: [], generationKind: "npc_fixed_choice", sceneRequestKind: "npc_response",
+    });
+    if (!pending.ok) throw new Error(JSON.stringify(pending.errors));
+    const parsed = await createNarrativeBundleSource({ aiClient: {
+      complete: async () => ({ ok: true, content: JSON.stringify(proposal), latencyMs: 1 }),
+      policy: () => ({ thinking: "off", timeoutMs: 100, jsonMode: "prompt_only", maxAttempts: 1 }),
+    } }).generate({ kind: "decision", worldState: populatedInput.worldState, storyState: input.storyState, job: pending.job });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok || parsed.kind !== "decision") throw new Error("live parser rejected interaction");
+    expect(parsed.proposal.currentScene.choices[0]?.candidateId).toBe("interaction:verify_identity");
+    // New verification is the third installed definition. Explicit aliases must
+    // win a slot without rebinding its label to either older operation.
+    const selectedProposal = { ...parsed.proposal, currentScene: { ...parsed.proposal.currentScene,
+      choices: [parsed.proposal.currentScene.choices[0]!, { candidateId: "current_scene_interaction_2", label: "先谈保密" }],
+    } };
+    const result = approveNarrativeBundle({ ...populatedInput, proposal: selectedProposal });
 
     if (!result.ok) throw new Error(JSON.stringify(result));
     const choice = result.approved.choiceRegistry.find((entry) => entry.label === "先核验身份");

@@ -674,6 +674,21 @@ function terminalsMatch(
   return proposal.target.stepKey === graph.target.stepKey;
 }
 
+/** Provider aliases bind to an installed operation, never to an array position. */
+function resolveInteractionChoiceAliases(
+  scene: BundleSceneProposal,
+  candidates: readonly BundleStepDescriptor["choiceCandidates"][number][],
+  jobId: NarrativeJobId,
+): BundleSceneProposal {
+  return { ...scene, choices: scene.choices.map((choice) => {
+    if (!choice.candidateId.startsWith("interaction:")) return choice;
+    const interactionId = `interaction:${String(jobId)}:${choice.candidateId.slice("interaction:".length)}`;
+    const candidate = candidates.find((candidate) => candidate.action.type === "talk"
+      && candidate.action.interactionId === interactionId);
+    return candidate === undefined ? choice : { ...choice, candidateId: candidate.candidateId };
+  }) };
+}
+
 function hasExactChoiceCandidates(
   choices: BundleSceneProposal["choices"],
   candidates: readonly BundleStepDescriptor["choiceCandidates"][number][],
@@ -1080,8 +1095,25 @@ export function approveNarrativeBundle(
         mode: "advanced_act",
       }
     : transition;
+  // The candidate explicitly chooses which installed operations it presents.
+  // Prioritize only those aliases for descriptor projection; preserve stored
+  // interaction order/state and still evaluate every rule condition normally.
+  const selectedInteractionIds = new Set([
+    ...proposal.currentScene.choices,
+    ...proposal.continuationScenes.flatMap((step) => step.scene.choices),
+  ].filter((choice) => choice.candidateId.startsWith("interaction:"))
+    .map((choice) => `interaction:${String(jobId)}:${choice.candidateId.slice("interaction:".length)}`));
+  const descriptorWorld = selectedInteractionIds.size === 0 ? previewWorldState : {
+    ...previewWorldState,
+    entityStore: { ...previewWorldState.entityStore, records: previewWorldState.entityStore.records.map((record) => {
+      if (record.core.kind !== "npc") return record;
+      const npc = record as NpcEntityRecord;
+      return npc.interactions === undefined ? npc : { ...npc, interactions: [...npc.interactions].sort((a, b) =>
+        Number(selectedInteractionIds.has(b.id)) - Number(selectedInteractionIds.has(a.id))) };
+    }) },
+  };
   const graph = buildNarrativeBundleDescriptors({
-    worldState: previewWorldState,
+    worldState: descriptorWorld,
     storyState: previewStoryState,
     transition: descriptorTransition,
   });
@@ -1093,13 +1125,14 @@ export function approveNarrativeBundle(
     : graph.steps[0]?.arrivalNpc === undefined
       ? undefined
       : String(graph.steps[0].arrivalNpc.id);
-  const resolvedCurrentScene = resolveSceneExpressions(
+  let resolvedCurrentScene = resolveSceneExpressions(
     proposal.currentScene,
     previewWorldState,
     approvedDelta,
     symbolFocusNpcId,
   );
   if (resolvedCurrentScene === null) return { ok: false, code: "bundle_invalid_scene" };
+  resolvedCurrentScene = resolveInteractionChoiceAliases(resolvedCurrentScene, graph.currentChoiceCandidates, jobId);
   const resolvedContinuationScenes: BundleStepProposal[] = [];
   for (const proposalStep of proposal.continuationScenes) {
     const resolvedScene = resolveSceneExpressions(
@@ -1109,7 +1142,9 @@ export function approveNarrativeBundle(
       symbolFocusNpcId,
     );
     if (resolvedScene === null) return { ok: false, code: "bundle_invalid_scene" };
-    resolvedContinuationScenes.push({ ...proposalStep, scene: resolvedScene });
+    resolvedContinuationScenes.push({ ...proposalStep, scene: resolveInteractionChoiceAliases(
+      resolvedScene, graph.steps.find((step) => step.stepKey === proposalStep.stepKey)?.choiceCandidates ?? [], jobId,
+    ) });
   }
 
   // Step 4: Validate coverage

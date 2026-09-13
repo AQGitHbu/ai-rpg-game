@@ -135,7 +135,7 @@ function baseInteractionDraft(
   return {
     eventKey: `story_interaction_resolved:${interaction.id}`,
     episodeKey: "turn",
-    actorIds: [PLAYER_ENTITY_ID, action.npcId],
+    actorIds: interaction.operation === "promise_confidentiality" ? [PLAYER_ENTITY_ID] : [PLAYER_ENTITY_ID, action.npcId],
     targetIds: audienceIds.flatMap((id): readonly (PlayerEntityId | NpcId)[] => {
       const record = getEntity(worldState.entityStore, String(id));
       if (record?.core.kind === "npc") return [record.core.id];
@@ -236,7 +236,7 @@ export function resolveStoryInteraction(
   if (!knownFacts(worldState, action.npcId, interaction.factIds)) {
     return { ok: false, feedback: "角色没有足够的事实依据。" };
   }
-  if (!canDiscloseFactsToAudiences(worldState, interaction, action.npcId)) {
+  if (interaction.operation !== "promise_confidentiality" && !canDiscloseFactsToAudiences(worldState, interaction, action.npcId)) {
     return { ok: false, feedback: "角色没有足够的披露权限。" };
   }
   if (interaction.operation === "request_verification" && !evidenceExists(worldState, interaction.evidenceEventIds)) {
@@ -257,7 +257,7 @@ export function resolveStoryInteraction(
         kind: "apply_relationship_commitment",
         fromNpcId: action.npcId,
         targetId: PLAYER_ENTITY_ID,
-        operation: { kind: "open_promise", openKey: interaction.id, promisor: "source", description: "relationship.promise.confidentiality" },
+        operation: { kind: "open_promise", openKey: interaction.id, promisor: "target", description: "relationship.promise.confidentiality" },
         source: { kind: "action", actionId: deps.actionId, turnNumber: deps.turnNumber },
         supportingEventId: eventId,
       });
@@ -280,9 +280,11 @@ export function resolveStoryInteraction(
 
   const applied = applyEntityMutations(worldState, mutations);
   if (!applied.ok) return { ok: false, feedback: "互动后果无法写入世界。" };
-  const audience = interaction.audienceIds;
+  const audience = interaction.operation === "promise_confidentiality"
+    ? [...new Set([action.npcId, ...interaction.audienceIds.filter((id) => id !== PLAYER_ENTITY_ID)])]
+    : interaction.audienceIds;
   const playerWasInformed = audience.some((audienceId) => String(audienceId) === String(PLAYER_ENTITY_ID));
-  const disclosedFacts = playerWasInformed ? interaction.factIds : [];
+  const disclosedFacts = interaction.operation !== "promise_confidentiality" && playerWasInformed ? interaction.factIds : [];
   return {
     ok: true,
     nextWorldState: applied.worldState,

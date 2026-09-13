@@ -1,0 +1,273 @@
+{
+  "opening": {
+    "world": {
+      "summary": "江湖渡口，一座破庙，一间客栈。近来有人四处打听一份证词的来历，风声一天紧过一天；老信使把唯一一只信筒托给路过的沈行，要他送到渡口一个没有名字的接应人手里。",
+      "tone": "沉稳克制，留白多于摊牌，场面话底下压着没说出口的利害。",
+      "themes": [
+        "信义与审慎",
+        "流言与牵连",
+        "无名之约"
+      ],
+      "publicFacts": [
+        {
+          "key": "p_shrine_inn",
+          "text": "江湖渡口一带只有一座破庙和一间客栈，往来行脚多在此歇脚，人多口杂。"
+        },
+        {
+          "key": "p_testimony_hunt",
+          "text": "近来有人在渡口附近打听一份证词的来历，问得细，出手也不小气。"
+        },
+        {
+          "key": "p_envoy_commission",
+          "text": "沈行在破庙受老信使相助，受托把一只信筒送到渡口接应人手中；老信使只留下大致的接头去处，没留姓名。"
+        },
+        {
+          "key": "p_public_risk",
+          "text": "若在渡口公开打听老信使或信筒的来历，风声很容易循回老信使身上。"
+        },
+        {
+          "key": "p_waiting_contact",
+          "text": "渡口早有风声，说有人在此地等一只信筒，等了有些时日，却始终没等来对的人。"
+        },
+        {
+          "key": "p_innkeeper_knows_contact",
+          "text": "柳家客栈的掌柜柳三娘知道那位接应人通常在何处露面，也见过老信使一面，却不愿把自己牵扯进去。"
+        }
+      ]
+    },
+    "player": {
+      "name": "沈行",
+      "identity": "过路旅人",
+      "backgroundSummary": "曾受老信使相助的过路旅人。肯伸手帮人，但交付要紧东西之前一定要先核实对方身份；在破庙接下把唯一一只信筒送往渡口的委托。",
+      "baseStats": {
+        "hp": 100,
+        "attack": 10,
+        "defense": 5
+      }
+    },
+    "prologue": "沈行在破庙里受过一位老信使的接济。临别时，老人把身上唯一一只信筒塞进他手里，只说送到渡口、交给接应的人，去处讲了个大概，姓名一个字也没留。渡口这边正有人打听一份证词的来历，风声一旦传开，老信使便藏不住了。日头沉到水面时，沈行走进渡口唯一那间客栈——他得先弄明白，等信筒的究竟是什么人。",
+    "storyContract": {
+      "version": 1,
+      "targetActs": 3,
+      "centralConflict": "沈行要把唯一一只信筒交给渡口一个无名无貌的接应人；风声正紧，核实身份要担风险，不核实又怕错付。",
+      "endingDirections": [
+        {
+          "key": "trust",
+          "theme": "宁可按最慢的路走：把该问的问清，把信交给对的人，也让帮过自己的人平安。"
+        },
+        {
+          "key": "doubt",
+          "theme": "疑心一旦起了头就收不住：谁递话、谁引路、谁在等这只信筒，都可能是一张网。"
+        }
+      ],
+      "delivery": {
+        "itemKey": "letter_tube",
+        "recipientKey": "ferry_contact",
+        "verificationFactKeys": [
+          "p_envoy_commission",
+          "p_public_risk"
+        ]
+      }
+    },
+    "opening": {
+      "location": {
+        "name": "柳家渡口",
+        "description": "渡口不大，一条石阶从水面通到岸上，往来船只把人和话一并卸在这里。镇上只有一座破庙、一间客栈，风一停，彼此都听得见动静。",
+        "buildingName": "柳家客栈",
+        "scale": "town"
+      },
+      "npc": {
+        "name": "柳三娘",
+        "role": "客栈掌柜",
+        "description": "四十上下的妇人，袖口挽着，围裙上沾着灶灰。算账的手很稳，看人的眼也很稳。",
+        "knownFactKeys": [
+          "p_shrine_inn",
+          "p_testimony_hunt",
+          "p_waiting_contact"
+        ],
+        "privateFactKeys": [
+          "p_innkeeper_knows_contact"
+        ],
+        "anchors": {
+          "selfConcept": "在渡口开客栈二十年，靠的是一双眼睛和一张不快不慢的嘴。",
+          "values": [
+            "不惹江湖和官面上的债",
+            "收钱办事，答应过的话算数",
+            "客人有难处，能避就避，避不开才伸手"
+          ],
+          "speechStyle": "话短，先说事理再问来人；不肯落在明处的话，只说半句。",
+          "capabilityBoundaries": [
+            "熟知渡口的人事与船期，却不出镇子半步",
+            "认得字，会写简单的契据",
+            "做不了打斗，遇上事只求关门息事"
+          ],
+          "taboos": [
+            "不肯指认某人在何时到过客栈",
+            "不替外人带话传信"
+          ]
+        },
+        "goals": [
+          {
+            "horizon": "short",
+            "description": "弄清这个生面孔是不是替那位老信使来的，又不让堂里其他客人听出端倪。",
+            "priority": 5,
+            "reason": "渡口正有人打听一份证词的来历，她不想自己的店被牵连进去。"
+          },
+          {
+            "horizon": "long",
+            "description": "把客栈安安稳稳开下去，谁的脸面都不必给。",
+            "priority": 3,
+            "reason": "她半辈子守的就是这点安稳。"
+          }
+        ]
+      },
+      "quest": {
+        "name": "渡口未见其人",
+        "description": "信筒要交给渡口接应人，可此人无名无貌。眼前得先向客栈掌柜探明风声，弄清是私下寻引荐，还是另走门路核实。",
+        "objective": {
+          "kind": "talk_to_opening_npc"
+        }
+      },
+      "item": {
+        "key": "letter_tube",
+        "name": "旧信筒",
+        "description": "一支竹制信筒，两头封着蜡，筒身有一道旧漆痕，掂在手里很轻。",
+        "kind": "quest_item",
+        "tags": [
+          "sealed",
+          "unique"
+        ]
+      },
+      "situation": {
+        "history": [
+          {
+            "key": "h_shrine_meeting",
+            "factKeys": [
+              "p_envoy_commission"
+            ],
+            "participantRefs": [
+              "player"
+            ],
+            "causeHistoryKeys": []
+          },
+          {
+            "key": "h_harbor_rumor",
+            "factKeys": [
+              "p_testimony_hunt",
+              "p_shrine_inn"
+            ],
+            "participantRefs": [
+              "opening_npc"
+            ],
+            "causeHistoryKeys": []
+          },
+          {
+            "key": "h_inn_arrival",
+            "factKeys": [
+              "p_waiting_contact"
+            ],
+            "participantRefs": [
+              "player",
+              "opening_npc"
+            ],
+            "causeHistoryKeys": [
+              "h_shrine_meeting",
+              "h_harbor_rumor"
+            ]
+          }
+        ],
+        "threads": [
+          {
+            "key": "t_contact_identity",
+            "questionFactKey": "p_waiting_contact",
+            "supportingFactKeys": [
+              "p_shrine_inn"
+            ],
+            "participantRefs": [
+              "player",
+              "opening_npc"
+            ],
+            "causeHistoryKeys": [
+              "h_shrine_meeting",
+              "h_inn_arrival"
+            ]
+          },
+          {
+            "key": "t_rumor_source",
+            "questionFactKey": "p_testimony_hunt",
+            "supportingFactKeys": [],
+            "participantRefs": [
+              "opening_npc"
+            ],
+            "causeHistoryKeys": [
+              "h_harbor_rumor"
+            ]
+          }
+        ],
+        "npcConnection": {
+          "familiarity": "stranger",
+          "stance": "neutral",
+          "basisHistoryKeys": []
+        },
+        "responses": [
+          {
+            "key": "r_ask_contact",
+            "dialogueAct": "ask",
+            "topic": {
+              "kind": "fact",
+              "key": "p_waiting_contact"
+            }
+          },
+          {
+            "key": "r_challenge_identity",
+            "dialogueAct": "challenge",
+            "topic": {
+              "kind": "thread",
+              "key": "t_contact_identity"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "currentScene": {
+    "segments": [
+      {
+        "beatId": "ferry_dusk",
+        "text": "渡口的日头落得慢。石阶上还堆着几只没卸完的筐，船家蹲在船头收缆，喊一嗓子，声音就散在水面上。沈行身上还带着破庙那一程的尘土，风一过，凉。"
+      },
+      {
+        "beatId": "inn_interior",
+        "text": "柳家客栈就在石阶上头。堂面不大，四五张方桌，靠门两张空着，炭盆烧得半红，水汽混着酒气浮在梁下。跑堂的小厮在擦碗，角落坐着个背对门的客商。柜后的妇人抬起眼，目光在他身上过了一遍，才把账页合上。"
+      }
+    ],
+    "npcLine": {
+      "npcId": "npc_0",
+      "text": "客人面生。渡口这地方，一天过百十来号人，歇脚的、过路的，我都记不清。你是歇脚，还是打听事？",
+      "emotion": "guarded",
+      "answeredBeatIds": [],
+      "usedFactIds": [
+        "fact_0"
+      ],
+      "usedEventIds": []
+    },
+    "objectiveLink": null,
+    "choices": [
+      {
+        "candidateId": "r_ask_contact",
+        "label": "压低些声音：听说渡口有人等一只信筒等了些时日，掌柜的是从哪儿听来的？"
+      },
+      {
+        "candidateId": "r_challenge_identity",
+        "label": "不绕弯子：掌柜的在渡口二十年，等信筒的那位，你心里该有数——是不是？"
+      }
+    ]
+  },
+  "continuationScenes": [],
+  "terminal": {
+    "kind": "next_decision",
+    "target": {
+      "kind": "current_scene"
+    }
+  }
+}

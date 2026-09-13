@@ -1,12 +1,13 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   NARRATIVE_P1_PLANNED_ROUTES,
   createNarrativeP1HttpBudget,
   runNarrativeP1Journey,
   type NarrativeP1JourneyDeps,
+  NARRATIVE_P1_BATCH_WALL_CLOCK_MS,
 } from "./narrativeP1LiveJourney";
 
 function tempPaths() {
@@ -34,6 +35,69 @@ function fakeDeps(overrides: Partial<NarrativeP1JourneyDeps> = {}): NarrativeP1J
 }
 
 describe("narrative P1 live journey protocol", () => {
+  it("cannot promote a fabricated replay summary to acceptance or overwrite live evidence", async () => {
+    const paths = tempPaths();
+    try {
+      await runNarrativeP1Journey({ mode: "register", runId: "replay", ...paths }, fakeDeps());
+      const summaryPath = join(paths.artifactDirectory, "summary.json");
+      const replayPath = join(paths.artifactDirectory, "replay-routes.json");
+      writeFileSync(summaryPath, '{"original":true}');
+      writeFileSync(replayPath, '{"S1-private":{"completed":true}}');
+      expect(await runNarrativeP1Journey({ mode: "replay", runId: "replay", ...paths }, fakeDeps())).toEqual({ completedRoutes: 0, plannedRoutes: 6, passed: false });
+      expect(readFileSync(summaryPath, "utf8")).toBe('{"original":true}');
+      expect(readFileSync(replayPath, "utf8")).toBe('{"S1-private":{"completed":true}}');
+    } finally { rmSync(paths.root, { recursive: true, force: true }); }
+  });
+  it("stops an in-flight route at the batch deadline and rejects late HTTP reservations", async () => {
+    const paths = tempPaths();
+    vi.useFakeTimers();
+    try {
+      await runNarrativeP1Journey({ mode: "register", runId: "deadline", ...paths }, fakeDeps());
+      let lateReservation: (() => boolean) | undefined;
+      const running = runNarrativeP1Journey({ mode: "live", runId: "deadline", ...paths }, fakeDeps({
+        routeRunner: async ({ budget }) => { lateReservation = budget.reserve; return new Promise(() => {}); },
+      }));
+      await vi.advanceTimersByTimeAsync(NARRATIVE_P1_BATCH_WALL_CLOCK_MS);
+      expect((await running).passed).toBe(false);
+      expect(lateReservation?.()).toBe(false);
+      const summary = JSON.parse(readFileSync(join(paths.artifactDirectory, "summary.json"), "utf8"));
+      expect(summary.routes).toHaveLength(6);
+      expect(summary.routes.every((route: { failureCode: string }) => route.failureCode === "BATCH_WALL_CLOCK_EXHAUSTED")).toBe(true);
+    } finally { vi.useRealTimers(); rmSync(paths.root, { recursive: true, force: true }); }
+  });
+
+  it("reports per-route HTTP deltas instead of summing cumulative counters", async () => {
+    const paths = tempPaths();
+    try {
+      await runNarrativeP1Journey({ mode: "register", runId: "http", ...paths }, fakeDeps());
+      await runNarrativeP1Journey({ mode: "live", runId: "http", ...paths }, fakeDeps({
+        routeRunner: async ({ budget }) => { budget.reserve(); return { completed: true, httpAttempts: budget.used }; },
+      }));
+      const summary = JSON.parse(readFileSync(join(paths.artifactDirectory, "summary.json"), "utf8"));
+      expect(summary.httpAttempts).toBe(6);
+      expect(summary.routes.map((route: { httpAttempts: number }) => route.httpAttempts)).toEqual([1, 1, 1, 1, 1, 1]);
+    } finally { rmSync(paths.root, { recursive: true, force: true }); }
+  });
+  it("persists all six partial outcomes when a running route is interrupted", async () => {
+    const paths = tempPaths();
+    const controller = new AbortController();
+    try {
+      await runNarrativeP1Journey({ mode: "register", runId: "stop", ...paths }, fakeDeps());
+      const outcome = await runNarrativeP1Journey({ mode: "live", runId: "stop", ...paths }, fakeDeps({
+        signal: controller.signal,
+        routeRunner: async ({ budget }) => {
+          budget.reserve();
+          controller.abort();
+          return new Promise(() => {});
+        },
+      }));
+      expect(outcome).toEqual({ completedRoutes: 0, plannedRoutes: 6, passed: false });
+      const summary = JSON.parse(readFileSync(join(paths.artifactDirectory, "summary.json"), "utf8"));
+      expect(summary.routes).toHaveLength(6);
+      expect(summary.httpAttempts).toBe(1);
+      expect(summary.routes[0].failureCode).toBe("BATCH_INTERRUPTED");
+    } finally { rmSync(paths.root, { recursive: true, force: true }); }
+  });
   it("registers the fixed input without making a provider request", async () => {
     const paths = tempPaths();
     let requests = 0;
@@ -75,20 +139,18 @@ describe("narrative P1 live journey protocol", () => {
         protocolPath: paths.protocolPath,
         artifactDirectory: paths.artifactDirectory,
       }, fakeDeps());
-      let routeIndex = 0;
       const result = await runNarrativeP1Journey({
         mode: "live",
         runId: "denominator-test-live",
         protocolPath: paths.protocolPath,
         artifactDirectory: paths.artifactDirectory,
       }, fakeDeps({
-        routeRunner: async () => {
-          routeIndex += 1;
-          return { completed: routeIndex !== 1, httpAttempts: 1 };
+        routeRunner: async ({ route }) => {
+          return { completed: route.scenarioId !== "S1", httpAttempts: 1 };
         },
       }));
 
-      expect(result).toEqual({ completedRoutes: 5, plannedRoutes: 6, passed: false });
+      expect(result).toEqual({ completedRoutes: 3, plannedRoutes: 6, passed: false });
     } finally {
       rmSync(paths.root, { recursive: true, force: true });
     }
