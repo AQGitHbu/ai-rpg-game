@@ -18,6 +18,48 @@ const CODES: readonly CandidateDefectCode[] = [
   "MISSED_INPUT", "UNSUPPORTED_FACT", "DISCLOSURE", "ACTION_MISMATCH", "BROKEN_CAUSALITY",
 ];
 
+// The review contract is intentionally narrower than the language model's
+// natural vocabulary. Keep a small, observed compatibility map at this
+// boundary so a semantically useful revise verdict is repairable instead of
+// becoming an opaque UNCERTAIN failure. Unknown aliases still fail closed.
+const CODE_ALIASES: Readonly<Record<string, CandidateDefectCode>> = {
+  MISSED_INPUT: "MISSED_INPUT",
+  UNSUPPORTED_FACT: "UNSUPPORTED_FACT",
+  DISCLOSURE: "DISCLOSURE",
+  ACTION_MISMATCH: "ACTION_MISMATCH",
+  BROKEN_CAUSALITY: "BROKEN_CAUSALITY",
+  unaddressed_input: "MISSED_INPUT",
+  unsupported_knowledge: "UNSUPPORTED_FACT",
+  unwarranted_knowledge: "UNSUPPORTED_FACT",
+  undefined_fact_reference: "UNSUPPORTED_FACT",
+  invalid_fact_reference: "UNSUPPORTED_FACT",
+  private_fact_publicized: "DISCLOSURE",
+  private_fact_marked_public: "DISCLOSURE",
+  secret_as_public: "DISCLOSURE",
+  audience_disclosure: "DISCLOSURE",
+  choice_action_mismatch: "ACTION_MISMATCH",
+  verification_fact_mismatch: "BROKEN_CAUSALITY",
+  beat_contradiction: "BROKEN_CAUSALITY",
+};
+
+const SCOPE_ALIASES: Readonly<Record<string, CandidateReviewScope>> = {
+  scene: "scene",
+  proposal: "proposal",
+  npc_behavior: "npc_behavior",
+  currentScene: "scene",
+  currentScene_npcLine: "scene",
+  currentScene_choices: "scene",
+  opening_currentScene: "scene",
+  opening_currentScene_choices: "scene",
+  world: "proposal",
+  opening_world: "proposal",
+  opening_world_publicFacts: "proposal",
+  delivery_contract: "proposal",
+  opening_npc: "npc_behavior",
+  npc: "npc_behavior",
+  npc_knowledge: "npc_behavior",
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -38,10 +80,15 @@ function parseDefects(
   if (!Array.isArray(value) || value.length === 0) return null;
   const defects: CandidateDefect[] = [];
   for (const entry of value) {
-    if (!isRecord(entry)
-      || !hasOnlyKeys(entry, ["scope", "code", "path", "reason"])
-      || !SCOPES.includes(entry.scope as CandidateReviewScope)
-      || !CODES.includes(entry.code as CandidateDefectCode)
+    if (!isRecord(entry) || !hasOnlyKeys(entry, ["scope", "code", "path", "reason"])) {
+      return null;
+    }
+    const scope = typeof entry.scope === "string" ? SCOPE_ALIASES[entry.scope] : undefined;
+    const code = typeof entry.code === "string" ? CODE_ALIASES[entry.code] : undefined;
+    if (scope === undefined
+      || code === undefined
+      || !SCOPES.includes(scope)
+      || !CODES.includes(code)
       || !isNonEmptyString(entry.path)
       || !isNonEmptyString(entry.reason)) {
       return null;
@@ -49,8 +96,8 @@ function parseDefects(
     defects.push({
       candidateVersion: input.candidateVersion,
       candidateHash: input.candidateHash,
-      scope: entry.scope as CandidateReviewScope,
-      code: entry.code as CandidateDefectCode,
+      scope,
+      code,
       path: entry.path,
       reason: entry.reason,
     });
@@ -141,6 +188,8 @@ export function createLiveNarrativeCandidateReview(
               "只检查当前输入是否被回应、事实依据、实际受众披露、选项动作与正文因果。",
               "不得改写候选、补造事实、授予知识或输出思维链。",
               "只返回 JSON：通过为 {\"verdict\":\"pass\"}，需修订为 {\"verdict\":\"revise\",\"defects\":[{\"scope\",\"code\",\"path\",\"reason\"}]}。",
+              "scope 只能是 scene、proposal、npc_behavior；code 只能是 MISSED_INPUT、UNSUPPORTED_FACT、DISCLOSURE、ACTION_MISMATCH、BROKEN_CAUSALITY。",
+              "不要创造其他 scope 或 code；无法归类时仍使用上述最接近的稳定 code，并把具体说明写入 reason。",
             ].join("\n"),
           },
           {

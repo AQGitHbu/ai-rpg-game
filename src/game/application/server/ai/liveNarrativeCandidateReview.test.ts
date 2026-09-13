@@ -76,6 +76,8 @@ describe("live narrative candidate reviewer", () => {
     );
     const messages = complete.mock.calls[0]![1] as readonly AiMessage[];
     expect(JSON.stringify(messages)).not.toContain("privateContext");
+    expect(messages[0]?.content).toContain("scope 只能是 scene、proposal、npc_behavior");
+    expect(messages[0]?.content).toContain("code 只能是 MISSED_INPUT、UNSUPPORTED_FACT、DISCLOSURE、ACTION_MISMATCH、BROKEN_CAUSALITY");
   });
 
   it("does not turn provider failure or an empty verdict into pass", async () => {
@@ -102,5 +104,30 @@ describe("live narrative candidate reviewer", () => {
       candidateHash: hashNarrativeCandidate(candidate),
     });
     expect(uncertain).toMatchObject({ ok: false, failure: "UNCERTAIN" });
+  });
+
+  it("normalizes known reviewer aliases into the stable defect vocabulary", async () => {
+    const complete = vi.fn().mockResolvedValue({
+      ok: true,
+      content: JSON.stringify({
+        verdict: "revise",
+        defects: [{
+          scope: "world",
+          code: "private_fact_publicized",
+          path: "opening.world.publicFacts[0]",
+          reason: "受保护事实被列为公开事实。",
+        }],
+      }),
+    });
+    const reviewer = createLiveNarrativeCandidateReview({ aiClient: client(complete) });
+
+    const result = await reviewer.reviewNarrativeCandidate({
+      context: reviewContext,
+      proposal: candidate,
+      candidateVersion: 1,
+      candidateHash: hashNarrativeCandidate(candidate),
+    });
+
+    expect(result).toMatchObject({ ok: false, defects: [{ code: "DISCLOSURE" }] });
   });
 });

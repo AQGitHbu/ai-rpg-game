@@ -685,6 +685,43 @@ describe("createGame", () => {
     }
   });
 
+  it("retries an opening candidate after a semantic reviewer rejection", async () => {
+    const { repo, getRecord } = createInMemoryRepo();
+    const fixture = createFixtureOpeningSource();
+    const source = { generate: vi.fn(fixture.generate) };
+    const reviewer: NarrativeCandidateReviewer = {
+      reviewNarrativeCandidate: vi.fn()
+        .mockImplementationOnce(async (input) => ({
+          ok: false,
+          candidateVersion: input.candidateVersion,
+          candidateHash: input.candidateHash,
+          defects: [{
+            candidateVersion: input.candidateVersion,
+            candidateHash: input.candidateHash,
+            scope: "scene",
+            code: "MISSED_INPUT",
+            path: "currentScene",
+            reason: "首场景没有回应玩家开局输入。",
+          }],
+        }))
+        .mockImplementationOnce(async (input) => ({
+          ok: true,
+          candidateVersion: input.candidateVersion,
+          candidateHash: input.candidateHash,
+        })),
+    };
+
+    const result = await createGame(
+      { gameId: asGameId("opening-review-retry"), gameType: "wuxia", gameLength: "short", seed: "opening-review-retry" },
+      { repository: repo, source, reviewer, now: () => "2026-01-01", aiEnabled: true },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(source.generate).toHaveBeenCalledTimes(2);
+    expect(reviewer.reviewNarrativeCandidate).toHaveBeenCalledTimes(2);
+    expect(getRecord()).not.toBeNull();
+  });
+
   it("开局配置落地：玩家身份采用配置且 setup 持久化到 generation", async () => {
     const { repo, getRecord } = createInMemoryRepo();
     const setup = {
