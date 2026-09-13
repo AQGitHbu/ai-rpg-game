@@ -879,6 +879,30 @@ describe("createNarrativeBundleSource", () => {
     });
   });
 
+  it("does not misdiagnose a generic world delta rejection as an optional newFact failure", async () => {
+    const complete = vi.fn().mockResolvedValue({ ok: true, content: JSON.stringify(validBundleResponse) });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete), allowLegacyDecisionDto: true });
+    await source.generate({ kind: "decision", worldState: makeWorldState(), storyState: makeStoryState(), job: makeJob(),
+      contentRepair: { attempt: 1, reason: "invalid_schema", detail: "world_delta_invalid" } });
+    const prompt = (complete.mock.calls[0]![1] as readonly AiMessage[])[0]!.content as string;
+    expect(prompt).toContain("不能假定错误来自 newFact");
+    expect(prompt).toContain("worldDelta.beatSummary 必须是非空字符串");
+  });
+
+  it.each([undefined, null, "", "   "])("reports the exact missing/invalid ending beatSummary path (%s)", async beatSummary => {
+    const complete = vi.fn().mockResolvedValue({ ok: true, content: JSON.stringify({
+      worldDelta: { ...(beatSummary === undefined ? {} : { beatSummary }), endingPair: [
+        { themeKey: "trust", name: "共担真相", description: "公开证据。" }, { themeKey: "doubt", name: "独行", description: "追查到底。" },
+      ] }, sceneDrafts: [{ slotKey: "current", scene: { segments: [{ beatId: "closing", text: "终局。" }], npcLine: null, objectiveLink: null, choices: [] } }],
+    }) });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+    const result = await source.generate({ kind: "decision", worldState: makeWorldState(), storyState: { ...makeStoryState(), evolution: { ...makeStoryState().evolution, status: "needs_ending_pair" } }, job: makeJob() });
+    expect(result).toMatchObject({ ok: false, repairDetail: "world_delta_invalid at $.worldDelta.beatSummary: expected non-empty string" });
+    const prompt = (complete.mock.calls[0]![1] as readonly AiMessage[])[0]!.content as string;
+    expect(prompt).toContain("非空 beatSummary");
+    expect(prompt).toContain("这两个字段都不能置于顶层");
+  });
+
   it("canonicalizes an ending terminal that carries an unnecessary target object", async () => {
     const complete = vi.fn().mockResolvedValue({
       ok: true,

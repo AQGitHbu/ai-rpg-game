@@ -87,7 +87,10 @@ export function compileNarrativeDraft(value: unknown, context: NarrativeDraftCon
     if (byKey.has(entry.slotKey)) return fail("duplicate_slot", `$.sceneDrafts[${index}].slotKey`);
     const scene = record(entry.scene)!;
     if (!Array.isArray(scene.choices) || scene.choices.length !== slot.choiceCount) return fail("invalid_choice_count", `$.sceneDrafts[${index}].scene.choices`);
-    byKey.set(entry.slotKey, entry.scene);
+    const npcLine = record(scene.npcLine);
+    byKey.set(entry.slotKey, npcLine === null ? entry.scene : { ...scene, npcLine: {
+      emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedEventIds: [], ...npcLine,
+    } });
   }
   const missing = projection.slots.find(slot => !byKey.has(slot.slotKey));
   if (missing !== undefined) return fail("missing_slot", `$.sceneDrafts[slotKey=${missing.slotKey}]`);

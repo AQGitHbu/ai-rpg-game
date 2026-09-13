@@ -129,7 +129,15 @@ node scripts/narrativeP1Journey.mjs --mode=live --profile=focused --run-id=p1-fo
 
 - [x] 续接槽由真实 trigger 投影展示时已结算语义，作者与审阅共用；take/give 不再受生成时旧背包的限制，仍不允许 current 槽提前获取。增加正式 store/graph/prompt 与物品状态阻断回归。
 - [x] 终幕规则按钮改为中性支持/疑虑，不凭空引入证据、真相；Action 和结局条件不变。独立复审通过。
-- [ ] 后续冻结 live 验证新提示效果与无中断稳定性。现有通关证据属于 b6cc0e5b，不能将后续提示修改算作已真实验证。
+- [ ] 后续冻结 live 验证新提示效果与无中断稳定性。59fe62b0 的 core03 已验证取物后持有时序，16 行动后终局结构失败；36 响应严格重放一致，不算全程通关。
+
+### D4：终局作者结构契约收敛
+
+**Files:** `narrativeDraftProjection.ts`、`liveNarrativeBundleSource.ts`、`narrativeBundleContext.ts` 及测试、运行时 AI 系统文档。
+
+- [x] 编译作者省略的 NPC 表情与空引用元数据，保留显式值供严格解析与权限审批；不补正文、实体 ID 或节拍摘要。用 core03 实际终局候选验证，不放宽内部 DTO。
+- [x] 终局明确 worldDelta 内必须有非空 beatSummary 与 endingPair，缺失摘要返回具体路径；移除通用结构失败对 newFact 的错误归因。
+- [ ] 定向测试、完整门禁与独立复审后冻结。先在 core03 失败存档独立副本正式显式重试一次，绑定旧/新代码与原库哈希、独立预算并严格重放，不冒充原批连续成功；通过后再验证真实创建到终局的无中断短篇。
 
 ## 后续 P1 验收边界
 

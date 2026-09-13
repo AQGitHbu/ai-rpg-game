@@ -499,7 +499,12 @@ export function createNarrativeBundleSource(
               })();
           if (rawWorldDelta !== null && rawWorldDelta !== undefined && parsedWorldDelta === null) {
             logger?.warn("narrative_bundle_invalid_world_delta");
-            return failBundle("invalid_schema", "invalid_schema", "world_delta_invalid");
+            const deltaRecord = asRecord(rawWorldDelta);
+            const invalidSummary = deltaRecord !== null
+              && (typeof deltaRecord.beatSummary !== "string" || deltaRecord.beatSummary.trim().length === 0);
+            return failBundle("invalid_schema", "invalid_schema", invalidSummary
+              ? "world_delta_invalid at $.worldDelta.beatSummary: expected non-empty string"
+              : "world_delta_invalid");
           }
           const proposalResult = parseNarrativeBundleProposal(normalizedRecord === null
             ? normalizedBundle

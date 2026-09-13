@@ -1,3 +1,5 @@
+import { compileNarrativeDraft } from "./server/ai/narrativeDraftProjection";
+import { parseNarrativeBundleProposal } from "@/game/domain/narrativeBundle";
 import { createNarrativeBundleSource } from "./server/ai/liveNarrativeBundleSource";
 import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import { asItemId } from "@/game/domain/worldEntity";
@@ -852,6 +854,24 @@ describe("approveNarrativeBundle", () => {
     }));
 
     expect(result).toEqual({ ok: false, code: "player_utterance_unanswered", detail: String(npcDyn1) });
+  });
+
+  it("still rejects an unanswered mandatory beat after compiling absent NPC metadata", () => {
+    const input = baseInput({ worldState: directTalkWorld(), mandatoryBeats: [
+      { beatId: "player_utterance", kind: "player_utterance", subjectIds: [String(npcDyn1)], instruction: "直接回应玩家刚说的话" },
+    ] });
+    const scene = { ...currentSceneProposal().currentScene,
+      segments: [{ beatId: "player_utterance", text: "你开口追问。" }], npcLine: { npcId: String(npcDyn1), text: "这事说来话长。" } };
+    const compiled = compileNarrativeDraft({ worldDelta: null, sceneDrafts: [{ slotKey: "current", scene }] }, {
+      worldState: input.worldState, storyState: input.storyState,
+      job: { actionSummary: { kind: "talk", npcId: npcDyn1 }, objectiveTransition: input.transition },
+    });
+    expect(compiled.ok).toBe(true);
+    if (!compiled.ok) throw new Error(compiled.code);
+    const parsed = parseNarrativeBundleProposal(compiled.value);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) throw new Error(parsed.code);
+    expect(approveNarrativeBundle({ ...input, proposal: parsed.proposal })).toEqual({ ok: false, code: "player_utterance_unanswered", detail: String(npcDyn1) });
   });
 
   it("approves when the focus NPC answers the player_utterance beat", () => {

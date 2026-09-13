@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { parseNarrativeBundleProposal } from "@/game/domain/narrativeBundle";
 import { createInitialWorldState } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
@@ -81,5 +82,32 @@ describe("narrative draft projection and compilation", () => {
 
   it.each(["return_delivery", "invented"])("rejects unavailable or unknown graph %s", graph => {
     expect(compileNarrativeDraft({ graph, worldDelta: null, sceneDrafts: [{ slotKey: "current", scene: scene("正文", 2) }] }, context())).toEqual({ ok: false, code: graph === "return_delivery" ? "unavailable_graph" : "unknown_graph", path: "$.graph" });
+  });
+});
+
+
+describe("draft NPC line metadata defaults", () => {
+  function compile(npcLine: unknown) {
+    return compileNarrativeDraft({ worldDelta: null, sceneDrafts: [{ slotKey: "current", scene: { ...scene("原文", 2), npcLine } }] }, context());
+  }
+  it("fills only absent neutral metadata without mutating input or inventing text/IDs", () => {
+    const line = { npcId: "npc_1", text: "原话" };
+    const result = compile(line);
+    expect(result).toMatchObject({ ok: true, value: { currentScene: { npcLine: { ...line, emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedEventIds: [] } } } });
+    expect(line).toEqual({ npcId: "npc_1", text: "原话" });
+    if (!result.ok) throw new Error("compile failed");
+    expect(parseNarrativeBundleProposal(result.value).ok).toBe(true);
+    for (const incomplete of [{ text: "原话" }, { npcId: "npc_1" }]) {
+      const missing = compile(incomplete);
+      expect(missing.ok && parseNarrativeBundleProposal(missing.value).ok).toBe(false);
+    }
+  });
+  it.each(["emotion", "answeredBeatIds", "usedFactIds", "usedEventIds"])("retains explicit null/invalid %s for strict parser rejection", field => {
+    for (const value of [null, 123]) {
+      const line = { npcId: "npc_1", text: "原话", [field]: value };
+      const result = compile(line);
+      expect(result).toMatchObject({ ok: true, value: { currentScene: { npcLine: { [field]: value } } } });
+      expect(result.ok && parseNarrativeBundleProposal(result.value).ok).toBe(false);
+    }
   });
 });

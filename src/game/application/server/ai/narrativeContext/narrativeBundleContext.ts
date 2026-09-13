@@ -104,8 +104,8 @@ function repairInstruction(repair: NarrativeBundleRepair): string {
   ).join("\n");
   const rejectionSpecificInstruction = repair.rejectionCode === "invented_beat_id"
     ? "- currentScene.segments 的 beatId 只能逐字复制 current_resolution 列出的节拍 ID；本轮不要使用 dialogue、narration、response 等自造 beatId。若列表只有 atmosphere，就省略 segments 或只使用 beatId=atmosphere。"
-    : repair.reason === "invalid_schema" && repair.detail === "world_delta_invalid"
-      ? "- worldDelta.newFact 若出现 investigationApproaches，必须恰好提供 2–3 条合法条目；无法提供完整列表时将 newFact 设为 null，绝不能保留单条列表。"
+    : repair.reason === "invalid_schema" && repair.detail?.startsWith("world_delta_invalid")
+      ? "- worldDelta 结构校验失败；按错误路径检查该对象，不能假定错误来自 newFact。worldDelta.beatSummary 必须是非空字符串；结局 endingPair 必须与 beatSummary 同置于 worldDelta 内，不能放到顶层。"
       : "";
   return `${renderAiRepairFeedback(repair)}
 本轮只需修正被拒绝的那一项，其余中文叙事文本可以沿用你自己的写法。硬性要求：
@@ -322,7 +322,7 @@ export function buildDecisionNarrativeContextBlocks(
   const evolutionRequirement = storyState.evolution.status === "needs_next_act"
     ? `本回合已进入第 ${storyState.currentAct} 幕：worldDelta 绝不能为 null，必须提供 newLocation、newNpc、newItem、newEnemy、nextMainQuest；其余字段可为 null。`
     : storyState.evolution.status === "needs_ending_pair"
-      ? `本回合需要结局：worldDelta 绝不能为 null，且必须只提供 trust/doubt endingPair；不能创建地点、NPC、物品、敌人、任务；${reviewing ? "currentScene 是唯一场景，terminal.kind=ending。" : "仅输出 current 槽，终点由服务端编译为 ending。"}`
+      ? `本回合需要结局：worldDelta 绝不能为 null，且必须在 worldDelta 内同时提供非空 beatSummary 和 trust/doubt endingPair（例如 {"beatSummary":"本轮终局节拍摘要","endingPair":[...]}）；这两个字段都不能置于顶层；不能创建地点、NPC、物品、敌人、任务；${reviewing ? "currentScene 是唯一场景，terminal.kind=ending。" : "仅输出 current 槽，终点由服务端编译为 ending。"}`
       : job.actionSummary.kind === "abandon_quest"
         ? `本回合是正式退出：worldDelta 必须为 null；不能创建实体、修改任务或承诺；${reviewing ? "currentScene 是唯一场景，terminal.kind=ending，currentScene.choices" : "仅输出 current 槽，终点由服务端编译为 ending，current 槽 choices"} 必须为 [] 且 npcLine 必须为 null。`
       : "本回合不需要世界演化：worldDelta 必须为 null。";
@@ -437,7 +437,7 @@ export function buildDecisionNarrativeContextBlocks(
       source: { kind: "narrative_bundle_schema", refs: [] },
       content: reviewing
         ? `proposal 是服务端已编译的 NarrativeBundleProposal：{worldDelta,currentScene,continuationScenes:[{stepKey,scene}],terminal,interactionProposals?,npcOutwardProposals?}。npcOutwardProposals 是服务端随候选携带的获准 NPC 对外方案，结构为 {npcId,response,evidenceEventIds,discloseFactIds,interactionProposals}；它不是已执行行动或披露。terminal 为 {kind:"ending"} 或 {kind:"next_decision",target:{kind:"current_scene"}} 或 {kind:"next_decision",target:{kind:"continuation_step",stepKey}}。candidateHash 绑定此完整 compiled proposal，审阅路径直接定位该对象。结构预检已完成；检查各场景正文、引用、选择与权限和合法图的语义一致性。\n场景保留 segments、npcLine、objectiveLink、choices，也可包含 expressions、npcDialogues、handoffAcknowledgement；这些是场景表达，不能增加规则结果。终点决策场景恰好两个 choices，其他场景 choices=[]；ending 没有续接场景。下一幕抵达场景必须有抵达 NPC 的直接对白。\n${storyInteractionPrompt(false)}\n${worldDeltaContract}\n所有玩家可见文本必须为中文。`
-        : `返回一个 JSON 对象，顶层必须有 worldDelta、sceneDrafts，可额外有 interactionProposals 和 graph。graph 省略或 default 使用默认图；只有明确选择合法归还图才填 return_delivery。不得输出 currentScene、continuationScenes 或 terminal，服务器按槽投影组装它们。${storyInteractionPrompt(false)}\n- 每个 scene={segments:[{beatId,text}],npcLine:null或{npcId,text,emotion,answeredBeatIds,usedFactIds,usedEventIds},objectiveLink:null或{questId,objectiveIndex,mode},choices:[{candidateId,label}]}。\n- sceneDrafts=[{slotKey:"current",scene:{...}},{slotKey:"精确服务端步骤key",scene:{...}}]；必须提供下列全部槽位，slotKey 不重复；对象的数组顺序不用于猜测归属。\n- 终点决策点恰好两个 choices，candidateId 复制合法图或同包 interaction:proposalKey；其余步骤 choices=[]。\n- npcLine 不能是字符串；emotion 只能是 neutral|warm|guarded|afraid|angry|sad；引用数组没有合法引用时输出 []。\n${worldDeltaContract}\n- nextMainQuest 回合 current 槽 choices=[]，唯一抵达槽必须使用抵达骨架。所有玩家可见文本必须为中文。`,
+        : `返回一个 JSON 对象，顶层必须有 worldDelta、sceneDrafts，可额外有 interactionProposals 和 graph。graph 省略或 default 使用默认图；只有明确选择合法归还图才填 return_delivery。不得输出 currentScene、continuationScenes 或 terminal，服务器按槽投影组装它们。${storyInteractionPrompt(false)}\n- 每个 scene={segments:[{beatId,text}],npcLine:null或{npcId,text,emotion,answeredBeatIds,usedFactIds,usedEventIds},objectiveLink:null或{questId,objectiveIndex,mode},choices:[{candidateId,label}]}。\n- sceneDrafts=[{slotKey:"current",scene:{...}},{slotKey:"精确服务端步骤key",scene:{...}}]；必须提供下列全部槽位，slotKey 不重复；对象的数组顺序不用于猜测归属。\n- 终点决策点恰好两个 choices，candidateId 复制合法图或同包 interaction:proposalKey；其余步骤 choices=[]。\n- npcLine 不能是字符串，npcId 与 text 必须由作者提供；仅 emotion、answeredBeatIds、usedFactIds、usedEventIds 可省略，编译器分别补 neutral 与 []。显式 null 或非法值不会替换；emotion 若提供只能是 neutral|warm|guarded|afraid|angry|sad。需要回答节拍或引用依据时必须提供真实数组，省略不免除审批；该默认仅适用于 npcLine，不适用于 npcDialogues。\n${worldDeltaContract}\n- nextMainQuest 回合 current 槽 choices=[]，唯一抵达槽必须使用抵达骨架。所有玩家可见文本必须为中文。`,
     }),
     block({
       id: "bundle:item-acquisition", slot: "output_contract", title: "物品获取方式",
