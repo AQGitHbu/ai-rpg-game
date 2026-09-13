@@ -116,6 +116,24 @@ describe("parseWorldDeltaProposal", () => {
     expect(parsed?.proposal.newNpc?.relationshipSeeds).toEqual([]);
   });
 
+  it("preserves an optional explicit existing-fact declaration and rejects malformed lists", () => {
+    const proposal = {
+      beatSummary: "带着公开背景到来的信使",
+      newNpc: {
+        ...NPC_CREATION,
+        name: "新来客", role: "过客", description: "路过的旅人。",
+        locationRef: { kind: "existing", id: "loc_a" },
+        existingFactIds: ["fact_1"],
+      },
+    };
+    expect(parseWorldDeltaProposal(proposal)?.proposal.newNpc?.existingFactIds).toEqual(["fact_1"]);
+    for (const existingFactIds of [["fact_1", "fact_1"], [1], "fact_1", null]) {
+      expect(parseWorldDeltaProposal({ ...proposal, newNpc: { ...proposal.newNpc, existingFactIds } })).toBeNull();
+    }
+    const { existingFactIds: _omitted, ...withoutDeclaration } = proposal.newNpc;
+    expect(parseWorldDeltaProposal({ ...proposal, newNpc: withoutDeclaration })?.proposal.newNpc?.existingFactIds).toBeUndefined();
+  });
+
   it("rejects a world-delta NPC that omits relationshipSeeds", () => {
     const { relationshipSeeds: _omitted, ...legacyCreation } = NPC_CREATION;
     expect(parseWorldDeltaProposal({

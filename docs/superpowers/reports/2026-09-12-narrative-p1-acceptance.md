@@ -28,6 +28,13 @@
 - Task 9 的固定输入、S1/S2 × 三路线分母、协议哈希/代码指纹、1000 次批次预算和 register/live/replay CLI 门禁见 [P1 旅程协议](2026-09-12-narrative-p1-protocol.md) 与 `narrativeP1LiveJourney` / `narrativeP1Journey.node-test`。
 - live 结果保存在 `artifacts/narrative-p1/p1-01/p1-01/`（旧 runner 路径）和 `artifacts/narrative-p1/p1-02/`；这些产物被 `.gitignore` 忽略，不作为源码提交。
 
+## P1 最小 NPC 创建契约修复
+
+动态 `newNpc.existingFactIds` 只声明当前闭包内、具有 `known + public + initial_world` 权威来源的既有事实；省略仍为空，不新增 Entity 字段，不回填已有 NPC。审批创建组件与兼容投影同步；审阅依据使用同次预审批解析后的场景身份，按具体说话人和听众列出权限，保留原候选/hash。原审阅把 focus NPC 权限用于整包的歧义已移除，既有秘密、实际听众和 legacy 对话边界保持不变。
+
+独立复审 SpecPASS/QualityPASS。完整 accept 通过（2816 tests/1 skipped、131 boundaries、typecheck、lint、fast、Next build）；复审后的身份、投影修正及新增拒绝矩阵另经定向回归与 typecheck。`artifacts/p1-npc-minimal-accept.log` 保存完整门禁。`artifacts/verify-core06-npc.mjs` 用 core06 原始创建 delta 构造明确标记的离线测试：原包无声明仍为空，显式加入 fact_1 才获知识，经真实 SQLite 保存/关闭/重开后权限一致，原 NPC/玩家知识与原始审计/runtime 哈希未变；该测试不是原故事恢复或通关。
+
+原故事的后续验证使用 `artifacts/retry-core-06-npc.mjs`，独立审核通过。固定原 game/job/action/revision，复制原库到单独目录后仅正式 retry 一次，不重做第四行动。原始 4 行动、15 HTTP 保留；新增最多 20 行动、185 HTTP，独立登记 90 分钟窗口，后续磁带单独严格 replay。此处修复通过不代表原故事或整个 P1 已通过；live 结果待执行。
 ## 门禁结果
 
 - foundation 同名工作树 `npm run ready:family`：通过，日志公共测试、SLG 消费者快速门禁/共享 UI/Next 构建及 RPG 完整门禁均执行。RPG 为 lint 0 errors/49 warnings、218 个测试文件通过/1 skipped、2811 tests passed/1 skipped、typecheck、fast gates、131 项边界与 Next webpack build 通过；覆盖 `accept` 的各项命令。完整输出 `artifacts/node-sqlite-family-02.log`，退出码 0。第一轮只因目录测试仍断言旧 logging 版本而失败，修正版本断言后重新完整执行，保留第一轮日志。

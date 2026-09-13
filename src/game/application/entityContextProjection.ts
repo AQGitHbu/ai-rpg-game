@@ -291,9 +291,17 @@ export function buildWorldDeltaEntityContextClosure(input: {
   const currentLocationActiveNpcIds = entitiesOfKind(input.worldState.entityStore, "npc")
     .filter((record) => record.core.lifecycle === "active" && String(record.position.locationId) === currentLocationId)
     .map((record) => String(record.core.id));
+  const projectedFactIds = new Set([...projection.mandatory, ...projection.optional]
+    .filter((entity) => entity.kind === "fact").map((entity) => entity.id));
+  const declarableExistingFactIds = [...new Set(entitiesOfKind(input.worldState.entityStore, "npc")
+    .flatMap((record) => record.knowledge.entries)
+    .filter((entry) => entry.certainty === "known" && entry.disclosure === "public" && entry.source.kind === "initial_world")
+    .map((entry) => String(entry.factId))
+    .filter((factId) => projectedFactIds.has(factId)))].sort();
   return {
     mandatoryEntityIds: projection.mandatory.map((entity) => entity.id),
     directReferenceEntityIds: projection.mandatory.map((entity) => entity.id),
     currentLocationActiveNpcIds,
+    declarableExistingFactIds,
   };
 }

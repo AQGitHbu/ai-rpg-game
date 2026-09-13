@@ -566,6 +566,9 @@ describe("generatePendingNarrativeBundle", () => {
     expect(third.npcOutward).toEqual([expect.objectContaining({ npcId: npc.id, response: "question" })]);
     const reviewCall = vi.mocked(reviewer.reviewNarrativeCandidate).mock.calls[2]![0];
     expect(reviewCall.proposal).toMatchObject({ npcOutwardProposals: third.npcOutward });
+    if (reviewCall.context.kind !== "decision") throw new Error("wrong review context kind");
+    expect(reviewCall.context.reviewWorldState).toBeDefined();
+    expect(reviewCall.context.reviewScenes?.[0]?.npcLine?.npcId).toBe(npc.id);
     expect(reviewCall.candidateHash).toBe(hashNarrativeCandidate(reviewCall.proposal));
     expect(third.candidateRevision).toMatchObject({ candidateVersion: 2, candidateHash: expect.any(String) });
     expect(third.candidateRevision?.findings.map((finding) => finding.detail).join(" ")).toContain("必须先核验再交付");

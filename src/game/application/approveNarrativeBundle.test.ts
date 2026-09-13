@@ -2,6 +2,7 @@ import { compileNarrativeDraft } from "./server/ai/narrativeDraftProjection";
 import { parseNarrativeBundleProposal } from "@/game/domain/narrativeBundle";
 import { createNarrativeBundleSource } from "./server/ai/liveNarrativeBundleSource";
 import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
+import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import { asItemId } from "@/game/domain/worldEntity";
 import { asTurnId } from "@/game/domain/events";
 import { describe, expect, it } from "vitest";
@@ -32,6 +33,8 @@ import {
 } from "@/game/domain/worldEntity";
 import { asNarrativeJobId, CommittedNarrativeEvent } from "@/game/domain/events";
 import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
+import { buildNarrativeReviewRules } from "./server/ai/narrativeReviewRules";
+import { hashNarrativeCandidate } from "./narrativeCandidateReview";
 
 const locTown = asLocationId("loc_0");
 const locDyn1 = asLocationId("loc_dyn_1");
@@ -485,6 +488,68 @@ describe("approveNarrativeBundle", () => {
       [npcDyn1, [npcDyn2]],
       [npcDyn2, [PLAYER_ENTITY_ID]],
     ]);
+
+    const reviewJob = { actionId: "action_review_order", actionSummary: { kind: "talk", npcId: npcDyn1 }, focusNpcId: npcDyn1,
+      domainEventIds: [], objectiveTransition: transition(0), mandatoryBeats: [] } as unknown as PendingNarrativeJob;
+    const rules = buildNarrativeReviewRules({
+      context: { kind: "decision", worldState: { ...multiNpcWorld, eventLedger: [] }, reviewWorldState: { ...result.approved.nextWorldState, eventLedger: [] },
+        reviewScenes: [result.approved.currentScene, ...result.approved.bundle.steps.map(step => step.scene)], storyState: storyState(), job: reviewJob },
+      proposal, candidateVersion: 1, candidateHash: hashNarrativeCandidate(proposal),
+    });
+    expect(rules.find(entry => entry.key === `permission:scene:1:line:1:${npcDyn2}`)).toMatchObject({
+      value: { allowedByAudience: [{ targetId: PLAYER_ENTITY_ID, allowedFactIds: expect.arrayContaining([factTracks]) }] },
+    });
+
+    const legacyProposal: NarrativeBundleProposal = { ...proposal, continuationScenes: [{ ...proposal.continuationScenes[0]!, scene: {
+      ...proposal.continuationScenes[0]!.scene,
+      npcDialogues: [{ npcId: String(npcDyn2), text: "我也听见了脚印。", usedFactIds: [String(factTracks)], usedEventIds: [] }],
+    } }] };
+    expect(approveNarrativeBundle(baseInput({ proposal: legacyProposal, worldState: multiNpcWorld }))).toMatchObject({ ok: false, code: "bundle_invalid_scene" });
+    const acceptedLegacyProposal: NarrativeBundleProposal = { ...legacyProposal, continuationScenes: [{ ...legacyProposal.continuationScenes[0]!, scene: {
+      ...legacyProposal.continuationScenes[0]!.scene,
+      npcDialogues: [{ npcId: String(npcDyn2), text: "我没有引用那串脚印。", usedFactIds: [], usedEventIds: [] }],
+    } }] };
+    const acceptedLegacy = approveNarrativeBundle(baseInput({ proposal: acceptedLegacyProposal, worldState: multiNpcWorld }));
+    expect(acceptedLegacy.ok).toBe(true);
+    if (!acceptedLegacy.ok) return;
+    const legacyRules = buildNarrativeReviewRules({
+      context: { kind: "decision", worldState: { ...multiNpcWorld, eventLedger: [] }, reviewWorldState: { ...acceptedLegacy.approved.nextWorldState, eventLedger: [] },
+        reviewScenes: [acceptedLegacy.approved.currentScene, ...acceptedLegacy.approved.bundle.steps.map(step => step.scene)], storyState: storyState(), job: reviewJob },
+      proposal: acceptedLegacyProposal, candidateVersion: 1, candidateHash: hashNarrativeCandidate(acceptedLegacyProposal),
+    });
+    const legacyPermission = legacyRules.find(entry => entry.key === `permission:scene:1:line:2:${npcDyn2}`);
+    expect(legacyPermission).toBeDefined();
+    expect(JSON.stringify(legacyPermission)).not.toContain(String(factTracks));
+  });
+
+  it("uses alias-resolved preflight scenes for new-NPC review authority", () => {
+    const fixture = actBoundaryFixture();
+    const rawProposal: NarrativeBundleProposal = {
+      ...fixture.proposal,
+      worldDelta: fixture.proposal.worldDelta,
+      continuationScenes: [{ ...fixture.proposal.continuationScenes[0]!, scene: {
+        ...fixture.proposal.continuationScenes[0]!.scene,
+        expressions: [
+          { kind: "narration", beatId: "atmosphere", text: "你来到枯柳驿。", referencedEntityIds: [] },
+          { kind: "npc_line", npcId: "@new.npc", audienceIds: [String(PLAYER_ENTITY_ID)], text: "来者何人？", emotion: "guarded", answeredBeatIds: [], usedFactIds: [], usedEventIds: [] },
+        ],
+      } }],
+    };
+    const parsed = parseNarrativeBundleProposal(rawProposal);
+    if (!parsed.ok) throw new Error(parsed.code);
+    const proposal = parsed.proposal;
+    const approvalInput = baseInput({ proposal, worldState: fixture.preExpansionWorld, storyState: fixture.ss, transition: { before: null, completed: [], after: null, mode: "unchanged" }, evolutionNeed: { kind: "next_act", act: 2 } });
+    const approved = approveNarrativeBundle(approvalInput);
+    if (!approved.ok) throw new Error(JSON.stringify({ approved, compiledLine: proposal.continuationScenes[0]?.scene.npcLine }));
+    expect(approved.approved.bundle.steps[0]?.scene.npcLine).toMatchObject({ npcId: npcDyn1, usedFactIds: [] });
+    const reviewJob = { actionId: "action_alias_review", actionSummary: { kind: "explore" }, domainEventIds: [],
+      objectiveTransition: approvalInput.transition, mandatoryBeats: [] } as unknown as PendingNarrativeJob;
+    const rules = buildNarrativeReviewRules({ context: { kind: "decision", worldState: fixture.preExpansionWorld,
+      reviewWorldState: approved.approved.nextWorldState, reviewScenes: [approved.approved.currentScene, ...approved.approved.bundle.steps.map(step => step.scene)],
+      storyState: fixture.ss, job: reviewJob }, proposal, candidateVersion: 1, candidateHash: hashNarrativeCandidate(proposal) });
+    expect(rules.find(entry => entry.key === `permission:scene:1:line:0:${npcDyn1}`)).toMatchObject({
+      value: { speakerNpcId: npcDyn1, allowedByAudience: [{ targetId: PLAYER_ENTITY_ID }] },
+    });
   });
 
   it("does not let a same-place NPC infer a private disclosure it did not hear", () => {

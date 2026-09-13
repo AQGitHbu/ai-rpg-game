@@ -16,6 +16,7 @@ import {
   createWorldStateFixtureWith,
   type WorldStateFixtureOverrides,
 } from "@/game/domain/testing/worldStateFixture.testutil";
+import { entitiesOfKind, projectEntityStore } from "@/game/domain/entity";
 import type { WorldDeltaProposal } from "@/game/domain/worldDelta";
 import { asLocationId, asNpcId, asEnemyId, asFactId, asGenerationId, asQuestId, type GenerationMetadata } from "@/game/domain/worldEntity";
 import { bindNpcToTownSlot, createTownRuntime } from "@/game/gameplay/rpg/town";
@@ -156,6 +157,73 @@ function makeWorldWithFinalMainQuestTalk(): WorldState {
 }
 
 describe("approveWorldDelta", () => {
+  it("grants only explicitly declared in-scope public initial-world facts", () => {
+    const factId = asFactId("fact_public");
+    const npc = { ...NPC_0, memory: { ...NPC_0.memory, knownFactIds: [factId] } };
+    const ws = makeWorld({
+      npcs: [npc],
+      worldFacts: [{ factId, text: "渡口的船昨夜被漂木撞漏。", source: "generated", discovered: true }],
+    });
+    const proposal = nextActProposal();
+    const result = approveWorldDelta({
+      proposal: { ...proposal, newNpc: { ...proposal.newNpc!, existingFactIds: [factId] } },
+      need: { kind: "next_act", act: 2 }, ws, ss: makeStory({ currentAct: 2 }),
+      entityContextClosure: { ...ENTITY_CONTEXT_CLOSURE, declarableExistingFactIds: [factId] },
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.approved.npcCreationComponentsById.get(asNpcId("npc_dyn_1"))?.knowledge.entries)
+      .toContainEqual(expect.objectContaining({ factId, certainty: "known", disclosure: "public", source: { kind: "initial_world", learnedAtTurn: 0 } }));
+    expect(result.approved.newNpcs[0]?.memory.knownFactIds).toContain(factId);
+
+    const empty = approveWorldDelta({
+      proposal: { ...proposal, newNpc: { ...proposal.newNpc!, existingFactIds: [] } },
+      need: { kind: "next_act", act: 2 }, ws, ss: makeStory({ currentAct: 2 }),
+      entityContextClosure: { ...ENTITY_CONTEXT_CLOSURE, declarableExistingFactIds: [factId] },
+    });
+    expect(empty.ok && empty.approved.npcCreationComponentsById.get(asNpcId("npc_dyn_1"))?.knowledge.entries
+      .some((entry) => entry.factId === factId)).toBe(false);
+  });
+
+  it.each([
+    [["fact_missing"], "unknown_reference:fact_missing"],
+    [["fact_public", "fact_public"], "duplicate_reference"],
+  ] as const)("rejects invalid existing fact declarations %j", (existingFactIds, reason) => {
+    const proposal = nextActProposal();
+    const result = approveWorldDelta({
+      proposal: { ...proposal, newNpc: { ...proposal.newNpc!, existingFactIds } },
+      need: { kind: "next_act", act: 2 }, ws: makeWorld(), ss: makeStory({ currentAct: 2 }),
+      entityContextClosure: { ...ENTITY_CONTEXT_CLOSURE, declarableExistingFactIds: ["fact_public"] },
+    });
+    expect(result).toMatchObject({ ok: false, code: "invalid_npc_existing_fact_refs", reason });
+  });
+
+  it.each([
+    { name: "secret even when player discovered it", disclosure: "secret", certainty: "known", inScope: true, hasSource: true },
+    { name: "conditional", disclosure: "conditional", certainty: "known", inScope: true, hasSource: true },
+    { name: "suspected", disclosure: "public", certainty: "suspected", inScope: true, hasSource: true },
+    { name: "outside the generation closure", disclosure: "public", certainty: "known", inScope: false, hasSource: true },
+    { name: "player-discovered without NPC provenance", disclosure: "public", certainty: "known", inScope: true, hasSource: false },
+  ] as const)("rejects existing knowledge declaration: $name", ({ disclosure, certainty, inScope, hasSource }) => {
+    const factId = asFactId("fact_public");
+    const base = makeWorld({
+      npcs: [{ ...NPC_0, memory: { ...NPC_0.memory, knownFactIds: [factId] } }],
+      worldFacts: [{ factId, text: "渡船受损。", source: "generated", discovered: true }],
+    });
+    const sourceNpc = entitiesOfKind(base.entityStore, "npc")[0]!;
+    const changedNpc = { ...sourceNpc, knowledge: { entries: hasSource
+      ? sourceNpc.knowledge.entries.map(entry => ({ ...entry, disclosure, certainty })) : [] } };
+    const entityStore = { ...base.entityStore, records: base.entityStore.records.map(record =>
+      record.core.id === sourceNpc.core.id ? changedNpc : record) };
+    const ws = { ...base, entityStore, ...projectEntityStore(entityStore) };
+    const proposal = nextActProposal();
+    expect(approveWorldDelta({
+      proposal: { ...proposal, newNpc: { ...proposal.newNpc!, existingFactIds: [factId] } },
+      need: { kind: "next_act", act: 2 }, ws, ss: makeStory({ currentAct: 2 }),
+      // Deliberately permissive supplied IDs cannot override source permissions.
+      entityContextClosure: { ...ENTITY_CONTEXT_CLOSURE, declarableExistingFactIds: inScope ? [factId] : [] },
+    })).toMatchObject({ ok: false, code: "invalid_npc_existing_fact_refs", reason: `out_of_scope_or_non_public:${factId}` });
+  });
   it("keeps an npc_private fact in the new NPC's initial knowledge only", () => {
     const result = approveWorldDelta({
       proposal: {

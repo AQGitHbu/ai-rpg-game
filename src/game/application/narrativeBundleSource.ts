@@ -14,6 +14,8 @@ import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
+import type { NarrativeSceneState } from "@/game/domain/narrative";
+import type { PreparedSceneSeedState } from "@/game/domain/preparedContinuation";
 
 // ---------------------------------------------------------------------------
 // Task 4：统一叙事生成包源端口。一次 generate 调用返回完整原子包提案。
@@ -85,6 +87,10 @@ export type NarrativeBundleSourceContext =
     /** 1-based server-owned content version for this complete candidate. */
     readonly candidateVersion?: number;
     readonly worldState: WorldState;
+    /** Preflight materialized state, supplied only to semantic review. */
+    readonly reviewWorldState?: WorldState;
+    /** Alias-resolved scenes from the same structural preflight. */
+    readonly reviewScenes?: readonly (NarrativeSceneState | PreparedSceneSeedState)[];
     readonly storyState: StoryState;
     readonly job: PendingNarrativeJob;
     readonly auditLink?: AiTextAuditLink;

@@ -416,6 +416,8 @@ export async function generatePendingNarrativeBundle(
               candidateVersion,
               signal: requestSignal,
               worldState,
+              reviewWorldState: preflight.approved.nextWorldState,
+              reviewScenes: [preflight.approved.currentScene, ...preflight.approved.bundle.steps.map(step => step.scene)],
               storyState,
               job,
               auditLink: {

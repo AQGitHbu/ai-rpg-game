@@ -278,19 +278,24 @@ describe("live narrative candidate reviewer", () => {
       if ("knowledge" in record && "knownFactIds" in record.knowledge) return { ...record, knowledge: { ...record.knowledge, knownFactIds: record.knowledge.knownFactIds.filter(id => id !== "fact_4") } };
       return record;
     }));
-    const context = { kind: "decision", worldState: { ...compiled.worldState, entityStore }, storyState: compiled.storyState,
-      job: { ...makeJob(), focusNpcId: npcId }, npcOutward: [{ npcId, response: "offer_condition", discloseFactIds: [], evidenceEventIds: [],
+    const reviewWorldState = { ...compiled.worldState, entityStore };
+    const context = { kind: "decision", worldState: reviewWorldState, reviewWorldState, storyState: compiled.storyState,
+      reviewScenes: [{ expressions: [{ kind: "npc_line", npcId, audienceIds: [PLAYER_ENTITY_ID], text: "渡口确已停航。", emotion: "neutral", answeredBeatIds: [], usedFactIds: [asFactId("fact_0")], usedEventIds: [] }], npcLine: null, npcDialogues: [] }] as never,
+      job: { ...makeJob(), focusNpcId: asNpcId("npc_missing") }, npcOutward: [{ npcId, response: "offer_condition", discloseFactIds: [], evidenceEventIds: [],
         interactionProposals: [{ proposalKey: "protect_fact4", npcId, operation: "promise_confidentiality", condition: [], factIds: [], goalIds: [], promiseId: null,
           audienceIds: [PLAYER_ENTITY_ID], evidenceEventIds: [], confidentiality: { protectedFactIds: [asFactId("fact_4")],
             allowedAudienceIds: [PLAYER_ENTITY_ID, npcId], fulfillment: { kind: "story_delivery" } } }],
       }] } as const;
     const rules = buildNarrativeReviewRules({ context, proposal: candidate, candidateVersion: 1, candidateHash: hashNarrativeCandidate(candidate) });
     const fact = rules.find(entry => entry.key === "fact:fact_4");
-    expect(fact).toMatchObject({ value: { exists: true, playerVisible: false, speakerMayDisclose: false, authorizedProposalKeys: ["protect_fact4"] } });
+    expect(fact).toMatchObject({ value: { exists: true, playerVisible: false, focusSpeakerMayDisclose: false, authorizedProposalKeys: ["protect_fact4"] } });
     expect(fact?.value).not.toHaveProperty("discloseableText");
     const secret = compiled.worldState.worldFacts.find(fact => fact.factId === "fact_4");
     expect(secret).toBeDefined();
     expect(JSON.stringify(rules)).not.toContain(secret!.text);
+    expect(rules.find(entry => entry.key === `permission:scene:0:line:0:${npcId}`)).toMatchObject({
+      value: { speakerNpcId: npcId, allowedByAudience: [{ targetId: PLAYER_ENTITY_ID, allowedFactIds: expect.arrayContaining(["fact_0"]) }] },
+    });
   });
 
   it.each(["proposal.", "$.proposal.", "", "$."])("canonicalizes the explicit %s review root and retains both revise defects", async prefix => {

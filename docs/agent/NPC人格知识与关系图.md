@@ -18,6 +18,7 @@ NPC 的人格锚点、动态目标、知识、关系、承诺与结构化交互�
 - 每条 NPC line/dialogue 必须提供 `usedFactIds` 与 `usedEventIds`；缺失、重复、非 speaker 所有或不在 allowlist 的引用会拒绝整包。
 - 私下判断 prompt 不带其他 NPC 私密正文、其他 NPC history、无关玩家自由文本历史或裸关系数字；本轮选择/发言只从当前 actionId、player speaker 与焦点匹配的正式 History 读取，并保留 label 与 spoken 的表达类型。focus context 投影最近五条结构化交互、active goals、关系 stage/trend/open commitments 和有限 evidence。当前 job 的已提交事件须经过 ledger 存在性与 NPC 参与校验；私下判断、outward、作者和当前/预备场景审批使用一致的明确允许 Event ID 集合，不以缺少兼容 history 行拒绝真实核验事件。
 - 新 NPC 的正式 focus scene 未准备好时，read model 只开放单一 `ask`；不合成问候、不开放自由输入、不投影默认 support/challenge。
+- 动态新 NPC 只从获批的显式既有事实声明和同批新事实建立创建期知识；既有事实声明仅允许当前上下文闭包内、另一 NPC 以 `known + public + initial_world` 权威条目公开初始化的事实。语义审阅按候选每个场景、说话人和实际受众使用预检物化状态投影权限；当前 focus NPC 的权限不能套给续接新 NPC，同场较早的合法披露仍只对实际听众形成该场景后续权限。
 - 开场 NPC 的 `npcConnection` 可审批为 stranger/neutral，或依据至少一条公开初始化历史建立 known 关系。known 会同步初始化 `met`；known/neutral 使用 acquainted stage，非 neutral 姿态使用 `INITIAL_RELATIONSHIP_SEED_POLICY` 对应的 stage 与受限维度。公开历史只作为关系的 initial-world origin/basis，所有初始 evidence 数组保持为空，不伪造行动证据；关系方向仍指向玩家，AI 不提交任意数值，也不能用秘密历史作为玩家可见的关系依据。
 
 ## 关键流程

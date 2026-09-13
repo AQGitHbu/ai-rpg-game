@@ -174,6 +174,7 @@ export type WorldDeltaRejection =
   | "main_quest_conflict"
   | "ending_pair_invalid"
   | "invalid_npc_creation_components"
+  | "invalid_npc_existing_fact_refs"
   | "invalid_npc_relationship_seeds";
 
 /**
@@ -696,6 +697,22 @@ export function approveWorldDelta(input: {
   if (p.newNpc) {
     npcLocationId = resolveNpcLocationId(ws, p, ids.locationId);
     if (npcLocationId === null) return reject("invalid_location_ref", "npc_location");
+    const declared = p.newNpc.existingFactIds ?? [];
+    if (new Set(declared).size !== declared.length) {
+      return reject("invalid_npc_existing_fact_refs", "duplicate_reference");
+    }
+    const eligible = new Set(input.entityContextClosure?.declarableExistingFactIds ?? []);
+    const worldFactIds = new Set(entitiesOfKind(ws.entityStore, "fact").map((fact) => String(fact.core.id)));
+    const publicInitialFactIds = new Set(entitiesOfKind(ws.entityStore, "npc")
+      .flatMap((npc) => npc.knowledge.entries)
+      .filter((entry) => entry.certainty === "known" && entry.disclosure === "public" && entry.source.kind === "initial_world")
+      .map((entry) => String(entry.factId)));
+    for (const factId of declared) {
+      if (!worldFactIds.has(factId)) return reject("invalid_npc_existing_fact_refs", `unknown_reference:${factId}`);
+      if (!eligible.has(factId) || !publicInitialFactIds.has(factId)) {
+        return reject("invalid_npc_existing_fact_refs", `out_of_scope_or_non_public:${factId}`);
+      }
+    }
     // town 的建筑入口有有限槽位，但剧情人物不一定是驻店 NPC。
     // 满槽时保留 locationId 作为“临时在场人物”，由场景层展示和交谈；
     // materializeWorldDelta 会在有空槽时绑定建筑，没有空槽时安全地跳过绑定。
@@ -933,7 +950,10 @@ export function approveWorldDelta(input: {
       met: false,
       memory: {
         npcId: ids.npcId,
-        knownFactIds: p.newFact && p.newFact.visibility === "public" && ids.factId ? [ids.factId] : [],
+        knownFactIds: [
+          ...(p.newNpc.existingFactIds ?? []).map(asFactId),
+          ...(p.newFact && p.newFact.visibility === "public" && ids.factId ? [ids.factId] : []),
+        ],
         hiddenFactIds: p.newFact && p.newFact.visibility === "npc_private" && ids.factId ? [ids.factId] : [],
         interactionHistory: [],
         relationship: { affinity: 0 },
@@ -1026,7 +1046,10 @@ export function approveWorldDelta(input: {
 
   const npcCreationComponentsById = new Map<NpcId, NpcImportedLayers>();
   if (p.newNpc && ids.npcId) {
-    const knownFactIds = p.newFact?.visibility === "public" && ids.factId ? [ids.factId] : [];
+    const knownFactIds = [
+      ...(p.newNpc.existingFactIds ?? []).map(asFactId),
+      ...(p.newFact?.visibility === "public" && ids.factId ? [ids.factId] : []),
+    ];
     const privateFactIds = p.newFact?.visibility === "npc_private" && ids.factId ? [ids.factId] : [];
     const components = buildNpcCreationComponents({
       npc: p.newNpc,

@@ -83,6 +83,8 @@ export type WorldDeltaProposal = {
     readonly anchors: NpcIdentityAnchors;
     readonly goals: readonly NpcGoalProposal[];
     readonly relationshipSeeds: readonly NpcRelationshipSeedProposal[];
+    /** Explicit public initial knowledge from existing facts; omission means none. */
+    readonly existingFactIds?: readonly string[];
   };
   readonly newItem: null | { readonly name: string; readonly description: string; readonly locationRef: "current" | "new_location"; readonly acquisition?: "scene" | "npc_gift" };
   readonly newEnemy: null | { readonly name: string; readonly tier: "normal" | "boss"; readonly locationRef: "current" | "new_location" };
@@ -103,6 +105,7 @@ export type WorldDeltaEntityContextClosure = Readonly<{
   readonly mandatoryEntityIds: readonly string[];
   readonly directReferenceEntityIds: readonly string[];
   readonly currentLocationActiveNpcIds: readonly string[];
+  readonly declarableExistingFactIds?: readonly string[];
 }>;
 
 /** 世界演化草稿使用的规则回合上下文；不包含时钟或随机值。 */

@@ -185,7 +185,8 @@ export function parseWorldDeltaProposal(
   if (rec.newNpc !== null && rec.newNpc !== undefined) {
     if (typeof rec.newNpc !== "object" || Array.isArray(rec.newNpc)) return null;
     const n = rec.newNpc as Record<string, unknown>;
-    if (!hasExactKeys(n, ["name", "role", "description", "locationRef", "anchors", "goals", "relationshipSeeds"])) return null;
+    if (!hasNoUnknownKeys(n, ["name", "role", "description", "locationRef", "anchors", "goals", "relationshipSeeds", "existingFactIds"])
+      || !["name", "role", "description", "locationRef", "anchors", "goals", "relationshipSeeds"].every((key) => key in n)) return null;
     if (!validName(n.name) || !validText(n.role) || !validText(n.description)) return null;
     const locationRef = parseLocationRef(n.locationRef);
     if (locationRef === null) return null;
@@ -193,6 +194,14 @@ export function parseWorldDeltaProposal(
     const goals = parseNpcGoalProposals(n.goals);
     const relationshipSeeds = parseNpcRelationshipSeedProposals(n.relationshipSeeds);
     if (anchors === null || goals === null || relationshipSeeds === null) return null;
+    const existingFactIds = n.existingFactIds === undefined
+      ? undefined
+      : Array.isArray(n.existingFactIds)
+        && n.existingFactIds.every((id): id is string => typeof id === "string" && id.trim() !== "")
+        && new Set(n.existingFactIds).size === n.existingFactIds.length
+        ? n.existingFactIds
+        : null;
+    if (existingFactIds === null) return null;
     newNpc = {
       name: n.name.trim(),
       role: n.role.trim(),
@@ -201,6 +210,7 @@ export function parseWorldDeltaProposal(
       anchors,
       goals,
       relationshipSeeds,
+      ...(existingFactIds === undefined ? {} : { existingFactIds }),
     };
   }
 

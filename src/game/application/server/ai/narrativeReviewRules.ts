@@ -81,14 +81,68 @@ export function buildNarrativeReviewRules(input: NarrativeCandidateReviewInput):
       for (const id of [...proposal.factIds, ...(proposal.confidentiality?.protectedFactIds ?? [])]) references.add(id);
     }
   }
+  if ("currentScene" in input.proposal) {
+    const reviewState = context.reviewWorldState ?? worldState;
+    const reviewVisibleIds = entitiesOfKind(reviewState.entityStore, "fact")
+      .filter(fact => fact.fact.discovered).map(fact => fact.core.id);
+    const scenes = context.reviewScenes ?? [input.proposal.currentScene, ...input.proposal.continuationScenes.map(step => step.scene)];
+    scenes.forEach((scene, sceneIndex) => {
+      const incoming = new Map<string, Set<string>>();
+      type ReviewLine = Readonly<{ npcId: string; audienceIds?: readonly string[]; usedFactIds: readonly string[] }>;
+      const expressionLines: readonly ReviewLine[] = scene.expressions?.flatMap((expression) => {
+        if (expression.kind !== "npc_line") return [];
+        const line = expression as { npcId: unknown; audienceIds: readonly unknown[]; usedFactIds: readonly unknown[] };
+        return [{ npcId: String(line.npcId), audienceIds: line.audienceIds.map(String), usedFactIds: line.usedFactIds.map(String) }];
+      }) ?? [];
+      const legacyLines = scene.expressions === undefined
+        ? [...(scene.npcLine == null ? [] : [scene.npcLine]), ...(scene.npcDialogues ?? [])]
+          .map((line): ReviewLine => ({ npcId: String(line.npcId), usedFactIds: line.usedFactIds.map(String) }))
+        : [...(scene.npcDialogues ?? [])]
+          .map((line): ReviewLine => ({ npcId: String(line.npcId), usedFactIds: line.usedFactIds.map(String) }));
+      for (const [lineIndex, line] of [...expressionLines, ...legacyLines].entries()) {
+        if (line === undefined) continue;
+        const audienceIds: readonly string[] = "audienceIds" in line && Array.isArray(line.audienceIds)
+          ? line.audienceIds as readonly string[] : [String(PLAYER_ENTITY_ID)];
+        const receivesEarlierExpressionFacts = scene.expressions !== undefined && lineIndex < expressionLines.length;
+        const allowedByAudience = audienceIds.map(targetId => {
+          const lineAuthority = buildNpcSpeechAuthority({
+            store: reviewState.entityStore, speakerNpcId: line.npcId as never,
+            sceneVisibleFactIds: reviewVisibleIds, eventLedger: reviewState.eventLedger,
+            targetContext: { targetId: targetId as never, currentEventIds: job.domainEventIds },
+          });
+          return {
+            targetId,
+            allowedFactIds: [...new Set([
+              ...(lineAuthority?.allowedFactIds ?? []).map(String),
+              ...(receivesEarlierExpressionFacts ? incoming.get(String(line.npcId)) ?? [] : []),
+            ])],
+          };
+        });
+        add(`permission:scene:${sceneIndex}:line:${lineIndex}:${line.npcId}`, "permission", ["disclosure"], {
+          speakerNpcId: line.npcId, audienceIds, allowedByAudience,
+        });
+        line.usedFactIds.forEach(factId => references.add(factId));
+        if (scene.expressions !== undefined) {
+          for (const targetId of audienceIds) {
+            if (targetId === String(PLAYER_ENTITY_ID)) continue;
+            const facts = incoming.get(targetId) ?? new Set<string>();
+            line.usedFactIds.forEach(factId => facts.add(factId));
+            incoming.set(targetId, facts);
+          }
+        }
+      }
+    });
+  }
   for (const id of references) {
-    const fact = entitiesOfKind(worldState.entityStore, "fact").find(entry => entry.core.id === id);
+    const factState = context.reviewWorldState ?? worldState;
+    const fact = entitiesOfKind(factState.entityStore, "fact").find(entry => entry.core.id === id);
     if (fact === undefined) continue;
     const card = authority?.allowedFactCards.find(entry => entry.factId === id);
     add(`fact:${id}`, "fact", ["fact_claim", "disclosure"], {
       id, exists: true,
       playerVisible: visibleIds.includes(fact.core.id),
-      speakerMayDisclose: authority?.allowedFactIds.includes(fact.core.id) ?? false,
+      focusSpeakerNpcId: job.focusNpcId,
+      focusSpeakerMayDisclose: authority?.allowedFactIds.includes(fact.core.id) ?? false,
       // Merely naming an ID in an authorized proposal does not reveal its text.
       ...(card === undefined ? {} : { discloseableText: card.text }),
       authorizedProposalKeys: (context.npcOutward ?? []).flatMap(outward => outward.interactionProposals)

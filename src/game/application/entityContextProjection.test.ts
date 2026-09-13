@@ -10,7 +10,7 @@ import type { EntityCompatibilityProjection } from "@/game/domain/entity";
 import type { NpcEntry } from "@/game/domain/worldEntries";
 import { createNarrativeGenerationAttempt } from "@/game/domain/narrativeGenerationAttempt";
 import { describe, expect, it } from "vitest";
-import { buildEntityContextProjection } from "./entityContextProjection";
+import { buildEntityContextProjection, buildWorldDeltaEntityContextClosure } from "./entityContextProjection";
 
 const loc0 = asLocationId("loc_0");
 const loc1 = asLocationId("loc_1");
@@ -150,5 +150,11 @@ describe("buildEntityContextProjection", () => {
     expect(result.occupiedNames.location).toEqual(["古道", "青石镇", "远山"]);
     expect(Object.keys(result.occupiedNames)).toEqual(["location", "npc", "item", "enemy", "quest"]);
     expect(JSON.stringify(result.occupiedNames)).not.toContain("古道留有车辙");
+  });
+
+  it("declares only public initial-world facts inside the exact entity closure", () => {
+    const result = buildWorldDeltaEntityContextClosure({ worldState, storyState: baseStory, job: job() });
+    expect(result.declarableExistingFactIds).toEqual(["fact_public"]);
+    expect(result.declarableExistingFactIds).not.toContain("fact_private");
   });
 });

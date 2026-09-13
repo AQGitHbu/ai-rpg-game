@@ -8,7 +8,7 @@ import type { StoryState } from "@/game/domain/storyState";
 import type { WorldState } from "@/game/domain/worldState";
 import { entitiesOfKind, projectEntityStore, type EntityId } from "@/game/domain/entity";
 import { buildStylePolicy } from "@/game/application/stylePolicy";
-import { buildEntityContextProjection, type EntityContextProjection } from "@/game/application/entityContextProjection";
+import { buildEntityContextProjection, buildWorldDeltaEntityContextClosure, type EntityContextProjection } from "@/game/application/entityContextProjection";
 import { buildNpcSpeechAuthority } from "@/game/application/npcSpeechAuthority";
 import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 
@@ -175,7 +175,7 @@ function focusNpcContent(worldState: WorldState, job: PendingNarrativeJob): stri
     `当前情绪=${focusNpc.dynamicState.emotion}；目标=${list(authority.activeGoals)}`,
     `本轮关系信号=${thisTurn === undefined ? "neutral" : thisTurn.outcome}`,
     `允许披露事实=${list(speakableFacts)}`,
-    "npcLine.usedFactIds 只能引用上述事实 ID；npcLine.usedEventIds 只能引用下列已授权证据 Event ID；没有引用时必须输出显式空数组。",
+    "当前场景中该 focus NPC 的 npcLine.usedFactIds 只能引用上述事实 ID；其他场景和说话人必须使用其自身获批知识与逐受众权限。npcLine.usedEventIds 只能引用下列已授权证据 Event ID；没有引用时必须输出显式空数组。",
     `已授权证据 Event ID=${list(authority.allowedEventIds.map(String))}`,
     `最近五条结构化交互：\n${interactions.length === 0 ? "（无）" : interactions.map((entry) => `- ${entry}`).join("\n")}`,
     "私密事实正文与未授权知识不在本上下文中；不得自行补全。",
@@ -334,6 +334,7 @@ export function buildDecisionNarrativeContextBlocks(
     : "叙述必须严格贴合当前题材，不混入其他题材的设定。";
 
   const choiceActionContract = "选项 label 必须忠于其服务端 Action：talk 只能写玩家对 NPC 说出的对话意图，不得写成转身、推门、调出设备、接通通信、拿取物品、移动或其他物理动作；也不得在 label 中假定尚未发生的事实、承诺或结果。";
+  const declarableExistingFactIds = buildWorldDeltaEntityContextClosure({ worldState, storyState, job }).declarableExistingFactIds ?? [];
   const worldDeltaContract = `- 若要求 worldDelta，严格使用 {\"beatSummary\":\"...\",\"newLocation\":{\"name\":\"...\",\"description\":\"...\",\"scale\":\"scene\",\"placement\":\"world\",\"connectFromLocationId\":\"现有地点 ID\"},\"newNpc\":{\"name\":\"...\",\"role\":\"...\",\"description\":\"...\",\"locationRef\":{\"kind\":\"new_location\"},\"anchors\":{\"selfConcept\":\"...\",\"values\":[\"...\"],\"speechStyle\":\"...\",\"capabilityBoundaries\":[\"...\"],\"taboos\":[]},\"goals\":[{\"horizon\":\"short\",\"description\":\"...\",\"priority\":3,\"reason\":\"...\"}],\"relationshipSeeds\":[{\"targetNpcId\":\"既有 active NPC ID\",\"stance\":\"ally|protective_of|indebted_to|rival|wary\",\"reason\":\"...\"}]},\"newItem\":{\"name\":\"...\",\"description\":\"...\",\"locationRef\":\"new_location\"},\"newEnemy\":{\"name\":\"...\",\"tier\":\"normal\",\"locationRef\":\"new_location\"},\"newFact\":null或{\"text\":\"...\",\"visibility\":\"public或private\",\"investigationLabel\":\"可选\",\"investigationApproaches\":[{\"approachId\":\"...\",\"label\":\"...\",\"hint\":\"可选\",\"evidenceQuality\":\"clean或noisy\",\"tensionDelta\":-5到20}]},\"nextMainQuest\":{\"name\":\"...\",\"description\":\"...\",\"objectiveText\":\"...\"},\"endingPair\":null或[{\"themeKey\":\"trust\",\"name\":\"...\",\"description\":\"...\"},{\"themeKey\":\"doubt\",\"name\":\"...\",\"description\":\"...\"}]}；anchors 五个字段都必需，goals 至少 1 条且最多 4 条；relationshipSeeds 最多 4 条，每项只能包含 targetNpcId、stance、reason，targetNpcId 只能引用实体规则闭包中的既有 active NPC，stance 只能使用上述定性枚举，reason 必须非空且≤200字；不得提交 affinity、stage、evidence 或 actionId；goalId/status 由服务端生成，禁止输出。未要求字段必须为 null。`;
   const blocks: NarrativeContextBlock[] = [
     block({
@@ -430,6 +431,12 @@ export function buildDecisionNarrativeContextBlocks(
       authority: "state", retention: "mandatory", priority: 900,
       source: { kind: "story_evolution_state", refs: [] },
       content: `${evolutionRequirement}${arrivalSkeleton === "" ? "" : `\n${arrivalSkeleton}`}`,
+    }),
+    block({
+      id: "bundle:new-npc-existing-facts", slot: "output_contract", title: "新 NPC 既有事实声明",
+      authority: "rule", retention: "mandatory", priority: 1000,
+      source: { kind: "narrative_bundle_schema", refs: declarableExistingFactIds },
+      content: `newNpc 可省略 existingFactIds（等于 []），或提供无重复的既有事实 ID 数组。只能引用此列表：${JSON.stringify(declarableExistingFactIds)}。声明只建立该新 NPC 的 public initial_world 知识；未声明事实不因玩家已发现、角色描述、目标或台词而获授权。`,
     }),
     block({
       id: "bundle:output-contract", slot: "output_contract", title: "输出契约",

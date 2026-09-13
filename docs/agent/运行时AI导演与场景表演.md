@@ -27,6 +27,7 @@
 - 审阅缺陷路径相对内部候选；允许明确请求外壳的单层 `proposal.` 或 `$.proposal.` 前缀，校验实际字段后保存候选相对路径。未知字段、错误数组索引、重复包装仍拒绝，不过滤缺陷或转为通过。
 - 生产语义审阅的 `ruleBasis` 由服务端投影当前输入、真实 Action 与候选绑定、续接 step、正式物品及事实/权限。阻断缺陷必须带可存在性校验的候选 `path` 和 `evidence={basisKey,impact,detail}`；依据必须存在、影响种类须属于该依据，detail 说明具体规则后果。物品状态影响只能引用具体正式物品或绑定该物品的 take/give 步骤，普通无效果服饰、环境或风格写入 `qualityObservations`，不改变规则 verdict。无依据、空缺陷或混入非法缺陷的 revise 整体成为显式 uncertain，不过滤后冒充 pass。服务端校验依据与路径，不以此替代模型对语义冲突的判断。
 - 事实引用许可与披露正文分别投影：获准 NPC 互动提案里的事实 ID 存在且可用于对应提案，不要求出现在公开正文目录；该许可不授权当前台词说出秘密，也不代表行动已执行。秘密正文继续按 speaker authority 裁剪。
+- 动态 `newNpc` 可用 `existingFactIds` 显式声明当前上下文中具有公开初始化来源的既有事实，省略即为空；作者获得相同资格列表和准确 schema。预检物化后，审阅依据按每个候选场景的实际说话人和受众投影，不把当前 focus NPC 权限复用于续接 NPC；同场先前合法披露仍按实际听众顺序生效。
 - 每个完整 opening/decision 候选由服务端计算 `candidateVersion` 与 `candidateHash`，最多保留初稿加两次修订；结构/规则预检通过后只做一次语义审阅。审阅只能返回非空缺陷或明确 provider/uncertain 失败，不能修改候选、规则或知识；正文、受众、NPC outward 依据或 proposal 任一变化都会使旧 pass 失效。
 
 ## 关键流程
