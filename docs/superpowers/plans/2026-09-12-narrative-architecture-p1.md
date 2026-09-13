@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans. Steps use checkbox (`- [x]`) syntax for tracking.
 
-**Goal:** 先让真实 AI 在固定、获批的初始世界中完成一个交付故事，再用同一初态验证主动退出的不同后果。
+**Goal:** 先让真实 AI 从正式新游戏创建走到普通短篇的成功结局，确认规则与持久化闭环，再验证交付、主动退出和选择后果。
 
 **Architecture:** 保留 main 继承的完整场景作者、Entity/History/Thread、正式规则、权限与 A/B 提交。服务端投影并编译续接结构；AI 一次生成完整场景内容和具体选择。固定初态仅用于诊断，后续均走生产 provider 和仓储。
 
@@ -15,13 +15,13 @@
 - “质量与游戏性优先于 token、调用数和耗时。”不增加 Entity 字段、reviewer、互动操作或记忆类别。
 - “规则已结算结果不可被后续循环改写”；“AI 失败显式重试，确定性内容只用于规则反馈和显式 fixture”。
 - 固定初态诊断必须标 `claimScope=fixed_opening_story`；不叫自由开局，不修改原数据库或旧响应，不重用旧代码的 pass 作为新生成 pass。
-- 先 deliver，再 withdraw；各最多 24 动作、每 epoch 3 候选/24 HTTP；批次 200 HTTP、90 分钟。首路失败不启动短退出路线来增加完成数。
+- 先 core 生产主线，再交付/退出专项；每路线最多 24 动作、每 epoch 3 候选/24 HTTP；core 与 focused 各批 200 HTTP、90 分钟。focused 内先 deliver 成功再 withdraw，不用短退出增加完成数。
 - 必须使用实际 read model 选项/token，经正式 performTurn、ensure、SQLite；无开发状态补丁，无替代剧情。
 - 所有已有规则/权限回归保留。六路线综合覆盖移到核心诊断后，不删除失败分母、不改旧报告为通过。
 
 ## 已有基础与当前边界
 
-已实现 History、Thread、双向召回、角色判断、条件披露、交付/退出规则、有限修订和严格响应重放；不重新建设。2749 tests 的工程门禁不代表 live 成功。旧诊断最新停在开局，尚未产生完整故事；详细数字只在验收报告维护。
+已实现 History、Thread、双向召回、角色判断、条件披露、交付/退出规则、有限修订和严格响应重放；不重新建设。工程门禁不代表 live 成功。固定初态诊断停在换幕生成，尚未产生完整故事；详细数字只在验收报告维护。
 
 ## Task C1：固定初态与两路最小正式旅程
 
@@ -97,18 +97,35 @@ node scripts/narrativeP1Journey.mjs --mode=live --profile=focused --run-id=p1-fo
 - [ ] 分开写核心诊断结果、生产自由开局结果、UI结果、main 对照；后四者未执行就明确未执行，不借缩小范围宣布整个 P1 通过。
 - [ ] check:docs、相对链接与事实归属复核、git diff --check，提交证据。
 
-## 唯一剩余收敛任务：审阅判定契约
+## 当前执行：规则正确与完整主线
 
-两批固定初态诊断结束，停止继续重采。本项对应 Spec §9.3 的待实现边界，先完成离线设计与真实候选回归，再另行冻结执行验收；不能把写入 Plan 视为已实现。
+用户重新明确先保证规则正确、完整跑通游戏，main 仅作成功路径参考。此前两批停止重采属于已结束诊断；本轮先作架构收敛后重新冻结生产主线验收，不重跑旧失败批次，也不要求先覆盖保密矩阵。
 
-- [ ] 定义规则事实/可创作细节、行动意图/已结算效果的边界；用 focused02 换幕三版原文验证提前移动与新威胁仍被拒，普通无效果服饰不要求补 Entity，冲突服饰/假造持有关键道具仍拒绝。不是给斗笠或某个句子开白名单。
-- [ ] 同一权限投影区分 reference-only 与正文可披露事实，包含授权来源、操作范围和候选绑定；作者与 reviewer 消费同一边界。复用现有领域状态，不增加记忆类别或秘密正文可见范围。
-- [ ] 将获准 NPC 方案作为候选修订依赖；正文修订复用，方案重判须显式换版本并清理过时反馈。保留 candidateHash、失败恢复与有界预算。
-- [ ] 用 focused02 原始审阅请求和候选做回归及独立复审，记录稳定旁白缺陷的覆盖情况；这些是离线验证，不伪称新 live 已成功。通过后再冻结完整交付→同初态退出的验收入口。
+### D1：规则依据明确的审阅与稳定角色方案
+
+**Files:** `src/game/application/server/ai/liveNarrativeCandidateReview.ts`、同目录规则审阅契约 helper/test、`narrativeContext/narrativeBundleContext.ts`、`src/game/application/generatePendingNarrativeBundle.ts` 及测试；运行时 AI 系统文档。
+
+**Interfaces:** 规则审阅上下文明确列出当前合法 Action/续接步骤、正式物品、允许引用的事实及引用/披露边界；阻断缺陷必须提供能校验的正式依据和具体规则影响。无玩法效果的环境/服饰及风格意见属于质量观察，不指挥状态，不吞掉真实披露或行动绑定错误。`prepareNpcNarrativeContext` 的已批准 outward 在同一 worker/规则快照的候选修订中复用，刷新候选版本与预算回调，不缓存失败、不跨玩家行动复用。
+
+- [x] 先写规则依据与质量观察的回归；以已保存的换幕稿验证无规则物品 ID 的斗笠不成为 inventory 违规依据，提前移动对应明确续接 step、泄露已保护事实和错误 Action 绑定仍拒绝。
+- [x] 实现明确的审阅规则契约与结果解析，保持候选 hash 和确定性审批。不得按句子加白名单，不恢复 main 的位置猜测，不把质量建议变成规则状态。
+- [x] 写并实现同次生成正文重试只调用一次成功 NPC 判断；不同 job 重新判断、失败/取消仍按显式失败恢复。此轮不新增持久化 schema；进程恢复重建依赖时不携带旧进程内候选修订。
+- [x] 定向测试、typecheck、boundaries 与独立复审通过。
+
+### D2：真实创建到终局的普通短篇
+
+**Files:** `src/game/application/testing/narrativeP1LiveJourney.ts` 及测试、`scripts/narrativeP1Journey.mjs`、`scripts/narrativeP1Choices.mjs` 及测试、AI环境/协议/验收报告。
+
+**Interfaces:** CLI `--profile=core` 登记 `claimScope=production_core_story`、单路线 `S1-complete`，必须真实 createGame，无 opening seed。固定新游戏输入是普通武侠短篇，明确玩家与当地 NPC 共同处理渡口纠纷，不强制秘密、保密、身份谜题或递送；剧情仍全部由生产 AI 创作。仅从 read model 的真实 opaque choices 推进当前主线，普通支持/质疑优先于非必要互动，必要时消费合法移动/物品/战斗动作。完成必须真实 ending 且非主动放弃；若生成递送契约仍验证实际交付。
+
+- [x] 协议测试验证 core 输入/路线/来源冻结，不能注入 seed；政策测试验证实际 Action 选路，不用 label 关键词或状态补丁。
+- [x] 实现 core 完成条件与正式选路；24 有效动作、200 HTTP、90 分钟、每 epoch 现有 3 版本/24 HTTP，上限不增加。
+- [ ] 通过完整门禁与独立复审后冻结，register/live 使用新目录 p1-core-01。失败先封存和根因定位；不以重试同样样本代替修复。
+- [ ] 完成生产短篇后严格零网络 replay，检查任务/位置/物品/结局事件及中途重载；阅读完整正文但规则通关闭环与叙事质量分开报告。再回到交付/退出专项。
 
 ## 后续 P1 验收边界
 
-核心诊断通过后才执行真实自由开局、同条件 main 共同玩法对照及实际 UI 创建→中途重载→终局；这部分仍属于 P1，未完成前不合并 main、不进入 P2。六路线保密/公开/核验综合矩阵保留为扩展验收，非首个故事前置。
+普通生产短篇通过后执行交付/退出专项、同条件 main 共同玩法对照及实际 UI 创建→中途重载→终局；这部分仍属于 P1，未完成前不合并 main、不进入 P2。六路线保密/公开/核验综合矩阵保留为扩展验收，非首个故事前置。
 
 ## Gates
 

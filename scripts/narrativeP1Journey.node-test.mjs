@@ -332,3 +332,32 @@ test("withdraw runner accepts the formal quest-failure consequence after four ac
     assert.equal(result.actionCount,5);
   } finally { rmSync(root,{recursive:true,force:true}); }
 });
+
+test("core route follows formal progression without forcing side interactions and consumes battle controls", () => {
+  const view={narrative:{choices:[{choiceToken:"promise",label:"推进主线"},{choiceToken:"support",label:"普通回应"}],npcDialogues:[]},currentLocation:{actions:[{choiceToken:"move",label:"下一处"}]},story:{currentObjectiveChoiceToken:"move"}};
+  const actions=new Map([["promise",{type:"talk",npcId:"n",interactionId:"p"}],["support",{type:"talk",npcId:"n",dialogueAct:"support"}],["move",{type:"move",locationId:"l"}]]);
+  const interactions=[{id:"p",operation:"promise_confidentiality"}];
+  assert.equal(selectProductionChoice(view,"complete",actions,interactions,new Set()).choiceToken,"move");
+  view.story.currentObjectiveChoiceToken="support";
+  assert.equal(selectProductionChoice(view,"complete",actions,interactions,new Set()).choiceToken,"support");
+  const previousActions = new Set([JSON.stringify(actions.get("support")), JSON.stringify(actions.get("move"))]);
+  assert.equal(selectProductionChoice(view,"complete",actions,interactions,new Set(),previousActions).choiceToken,"support");
+  view.story.currentObjectiveChoiceToken="move";
+  assert.equal(selectProductionChoice(view,"complete",actions,interactions,new Set(),previousActions).choiceToken,"move");
+  view.battle={controls:[{choiceToken:"disabled",enabled:false},{choiceToken:"attack",enabled:true},{choiceToken:"skill",enabled:true}]};
+  actions.set("attack",{type:"battle_action",action:"attack"}); actions.set("skill",{type:"battle_action",action:"skill"});
+  assert.equal(selectProductionChoice(view,"complete",actions,interactions,new Set()).choiceToken,"skill");
+  assert.equal(offeredProductionChoices(view).some(choice=>choice.choiceToken==="disabled"),false);
+});
+
+test("core completion requires an actual successful ending event and any bound delivery", async () => {
+  const {hasCompletedCoreStory}=await import('./narrativeP1Journey.mjs');
+  const state={ok:true,status:"active",record:{worldState:{ending:{endingId:"e",outcome:"success"},eventLedger:[]},storyState:{}}};
+  assert.equal(hasCompletedCoreStory(state,()=>true),false);
+  state.record.worldState.eventLedger.push({payload:{type:"ending_reached",endingId:"e",outcome:"success"}});
+  assert.equal(hasCompletedCoreStory(state,()=>true),true);
+  state.record.storyState.delivery={itemId:"letter"};
+  assert.equal(hasCompletedCoreStory(state,()=>false),false);
+  state.record.worldState.ending.outcome="failure";
+  assert.equal(hasCompletedCoreStory(state,()=>true),false);
+});

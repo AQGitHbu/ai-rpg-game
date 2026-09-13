@@ -21,6 +21,15 @@ export const DEFAULT_NARRATIVE_P1_OUTPUT_ROOT = NARRATIVE_P1_ARTIFACT_ROOT;
 
 const VALID_MODES = new Set(["register", "live", "replay"]);
 
+export function hasCompletedCoreStory(state, isDeliveryComplete) {
+  if (!state.ok || state.status !== "active") return false;
+  const { worldState, storyState } = state.record;
+  return worldState.ending?.outcome === "success"
+    && worldState.eventLedger.some(event => event.payload.type === "ending_reached"
+      && event.payload.endingId === worldState.ending.endingId && event.payload.outcome === "success")
+    && (storyState.delivery === undefined || isDeliveryComplete(worldState, storyState));
+}
+
 export function resolveNarrativeP1ArtifactDirectory(args, outputWasProvided) {
   return resolve(REPOSITORY_ROOT, args.output, outputWasProvided ? "" : args.runId);
 }
@@ -93,7 +102,7 @@ export function parseNarrativeP1Args(argv) {
 }
 
 export function validateNarrativeP1Args(args) {
-  if (args.profile !== undefined && !["matrix", "diagnostic", "focused"].includes(args.profile)) return "INVALID_PROFILE";
+  if (args.profile !== undefined && !["matrix", "diagnostic", "focused", "core"].includes(args.profile)) return "INVALID_PROFILE";
   if (!VALID_MODES.has(args?.mode)) return "INVALID_MODE";
   if (typeof args?.runId !== "string" || args.runId.trim() === "") return "MISSING_RUN_ID";
   if (typeof args?.protocolPath !== "string" || args.protocolPath.trim() === "") return "MISSING_PROTOCOL";
@@ -179,6 +188,7 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
   const { createSqliteGameRepository } = adapters ?? await import("../src/game/application/server/persistence/sqliteGameRepository.ts");
   const { createServerSqliteClientFactory, createSqliteClient } = adapters ?? await import("../src/game/application/server/persistence/sqliteClient.ts");
   const { buildChoiceMap } = adapters ?? await import("../src/game/application/buildChoiceMap.ts");
+  const { isStoryDeliveryComplete } = adapters ?? await import("../src/game/gameplay/rpg/storyDelivery/index.ts");
   let replayedAttempts = 0;
   const makeRuntime = (input) => {
     const runtime = createNarrativeP1ReplayRuntime(input);
@@ -289,12 +299,14 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
           });
         }
         if (current.view.ending !== null) {
-          runtime.state("ending", await repository.getCurrentGame());
+          const endingState = await repository.getCurrentGame();
+          runtime.state("ending", endingState);
+          const coreCompleted = route.kind === "complete" && hasCompletedCoreStory(endingState, isStoryDeliveryComplete);
           await closeNarrativeP1Entry(entry);
           entry = null;
           runtime.finish();
           finalized = true;
-          const routeSatisfied = route.kind === "deliver" ? performed.has("give_item") : route.kind === "withdraw" ? performed.has("abandon_quest") : route.kind === "diagnostic" ? performed.has("promise_confidentiality") && performed.has("request_introduction") && performed.has("request_verification") && verifySubmitted : route.kind === "private" ? performed.has("promise_confidentiality") && performed.has("request_introduction") : performed.has("request_verification") && (route.kind !== "verify_first" || verifySubmitted);
+          const routeSatisfied = route.kind === "complete" ? coreCompleted : route.kind === "deliver" ? performed.has("give_item") : route.kind === "withdraw" ? performed.has("abandon_quest") : route.kind === "diagnostic" ? performed.has("promise_confidentiality") && performed.has("request_introduction") && performed.has("request_verification") && verifySubmitted : route.kind === "private" ? performed.has("promise_confidentiality") && performed.has("request_introduction") : performed.has("request_verification") && (route.kind !== "verify_first" || verifySubmitted);
           return routeResult({ completed: routeSatisfied, actionCount, ...(!routeSatisfied ? { failureCode: "ROUTE_POLICY_NOT_EXERCISED" } : {}) });
         }
         if (actionCount === 24) return routeResult({ completed: false, actionCount, failureCode: "ROUTE_ACTION_BUDGET_EXHAUSTED" });
@@ -356,7 +368,7 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
         });
         if (!after.ok) return routeResult({ completed: false, httpAttempts: budget.used - httpBefore, actionCount, failureCode: after.code });
         const settled = await repository.getCurrentGame();
-        if (!settled.ok || settled.status !== "active" || settled.record.storyState.turnNumber <= state.record.storyState.turnNumber) {
+        if (!settled.ok || settled.status !== "active" || (selectedAction?.type === "battle_action" ? settled.record.revision <= state.record.revision || JSON.stringify(settled.record.worldState.battle) === JSON.stringify(state.record.worldState.battle) : settled.record.storyState.turnNumber <= state.record.storyState.turnNumber)) {
           return routeResult({ completed: false, actionCount, failureCode: "ROUTE_ACTION_NOT_SETTLED" });
         }
         actionCount += 1;

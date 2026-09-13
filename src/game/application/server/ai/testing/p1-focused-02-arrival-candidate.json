@@ -1,0 +1,177 @@
+{
+  "worldDelta": {
+    "beatSummary": "周老信答尽最后一问：三更前后后厨那道门若始终不开，宁可退了另择一夜再来，不可死守招眼。庙檐下的交谈交割至此收梢，任务『信筒与接应人』完成，主线推进至第二幕——沈行须带着信筒往渡口一带落脚，摸清客栈后厨进出的路子与盯梢者的来路。",
+    "newLocation": {
+      "name": "渡口茶棚",
+      "description": "渡口堤下近水的茶棚，四根竹竿撑着一领旧油布，炉上水壶常滚。棚里摆着几张矮桌，多是船工、脚夫与躲雨的过客；坐得靠外些，能望见客栈前堂与后厨侧门的灯影。",
+      "scale": "scene",
+      "placement": "world",
+      "connectFromLocationId": "loc_0"
+    },
+    "newNpc": {
+      "name": "谭老四",
+      "role": "茶棚老板",
+      "description": "渡口茶棚的当家，炭黑脸膛，袖口常年沾着茶渍。嘴上热络，眼睛却记人：谁几时来、坐哪张桌、同谁搭过话，他都记得七八分。",
+      "locationRef": {
+        "kind": "new_location"
+      },
+      "anchors": {
+        "selfConcept": "守着茶棚过安生日子的生意人，不惹是非，只把来往客人记在心里。",
+        "values": [
+          "和气生财",
+          "不掺和江湖是非",
+          "记性换茶钱"
+        ],
+        "speechStyle": "热络揽客的市井口吻，爱拿茶与天气打比方，关键处又含糊过去。",
+        "capabilityBoundaries": [
+          "只知茶棚前堂与堤下码头的见闻",
+          "不认得渡口上下的暗语与信物",
+          "不会武功，遇事只求自保"
+        ],
+        "taboos": [
+          "不替生客递秘密话",
+          "不让人在茶棚里动手"
+        ]
+      },
+      "goals": [
+        {
+          "horizon": "short",
+          "description": "把雨夜进来的生客安顿成一碗热茶钱，别让茶棚惹上是非。",
+          "priority": 3,
+          "reason": "茶棚靠迎来送往吃饭，最怕沾上不明不白的人。"
+        }
+      ],
+      "relationshipSeeds": []
+    },
+    "newItem": {
+      "name": "半旧的船帮号牌",
+      "description": "渡口船帮记班次的竹牌，被摩得油光发亮，背面用指甲划了两道浅浅的痕，像是有人随手在数日子。",
+      "locationRef": "new_location"
+    },
+    "newEnemy": {
+      "name": "短哨客",
+      "tier": "normal",
+      "locationRef": "new_location"
+    },
+    "newFact": {
+      "text": "茶棚里有人闲谈：近几日夜雨里，客栈前堂常坐着生面孔的客人，不饮酒，只守一壶茶，腰间都别着一支短哨；坐到二更前后便走，临走总往客栈后厨那方向望一眼。",
+      "visibility": "public",
+      "investigationLabel": "探那两个短哨客的来路",
+      "investigationApproaches": [
+        {
+          "approachId": "tea_shed_listen",
+          "label": "在茶棚里坐着听各桌闲话",
+          "hint": "人多口杂，最能听出谁在盯着谁",
+          "evidenceQuality": "noisy",
+          "tensionDelta": 5
+        },
+        {
+          "approachId": "follow_whistlers",
+          "label": "等他们离店时远远缀上一段",
+          "hint": "看清他们往哪去、与谁接头",
+          "evidenceQuality": "clean",
+          "tensionDelta": 15
+        },
+        {
+          "approachId": "ask_zhou_later",
+          "label": "寻个机会回破庙，把这两人的样貌说给周老信听",
+          "hint": "他见的人多，或许认得出",
+          "evidenceQuality": "noisy",
+          "tensionDelta": 0
+        }
+      ]
+    },
+    "nextMainQuest": {
+      "name": "后厨门前的三更",
+      "description": "周老信把线头交到了沈行手上，可递话的时辰还没到。沈行须在渡口一带藏住行迹，摸清客栈后厨的进出与盯梢者的路子，别在递话之前先被人盯上。",
+      "objectiveText": "在渡口一带落脚，摸清客栈后厨与盯梢者的来路。"
+    },
+    "endingPair": null
+  },
+  "currentScene": {
+    "segments": [
+      {
+        "beatId": "quest_progress_0",
+        "text": "檐水一滴一滴砸在青砖上，庙里那点火光早熄了，只剩湿冷贴着供桌腿。周老信把沈行这一问听进去，没有立刻开口，先侧耳朝庙门外的雨里扫了一圈，才慢慢直起腰——暗语、铜钱短痕、进出的时辰，该交割的他都交割清了。如今庙檐底下，只剩这最后一问：等，还是退。"
+      },
+      {
+        "beatId": "quest_advanced_1",
+        "text": "这一问答完，破庙里便再没有可交割的东西了。信筒的线头握在沈行手上，那点旧人情到此收梢。客栈后厨那道门、铜钱缘上的短痕、三更前后的时辰，从此都只落在他自己肩上。渡口那一带灯影还在雨雾里亮着，下一步往哪儿落脚、同谁搭话、信谁几分，都得他自己掂量。"
+      },
+      {
+        "beatId": "atmosphere",
+        "text": "庙门半开，风裹着江上的湿气灌进来。渡口方向的灯火隔着一层水雾，亮一阵，暗一阵；江面船影模糊，摇橹声偶尔穿雨而来，又很快湮没在雨里。"
+      }
+    ],
+    "npcLine": {
+      "npcId": "npc_0",
+      "text": "等的功夫总有尽头。三更前后后厨那道门要是始终不见开，你就别再死守——守到四更、招了人眼，反倒把两边都卖出去。空手退开不算输，只当磨一次鞋底，换个夜里再来；退的时候别回头，也别在客栈前堂多坐。暗语『断桅三更，雁回南浦』记牢，铜钱缘上那道短痕对清，这两样只对那一道门的人亮。去吧。",
+      "emotion": "guarded",
+      "answeredBeatIds": [
+        "quest_progress_0",
+        "quest_advanced_1"
+      ],
+      "usedFactIds": [
+        "fact_3"
+      ],
+      "usedEventIds": [
+        "S1-deliver-action-4:npc_interaction_recorded:npc_0:S1-deliver-action-4",
+        "S1-deliver-action-4:npc_relationship_changed:npc_0:player_0:kept_promise"
+      ]
+    },
+    "objectiveLink": null,
+    "choices": []
+  },
+  "continuationScenes": [
+    {
+      "stepKey": "move:loc_dyn_1",
+      "scene": {
+        "segments": [
+          {
+            "beatId": "atmosphere",
+            "text": "绕过庙后那片竹丛，江堤上一路泥泞。渡口茶棚就在堤下近水处，四根竹竿撑着一领旧油布，炉上的水壶嘶嘶作响。棚里还坐着三两桌躲雨的客人，说话声压得极低。沈行掀帘进去，把斗笠上的水抖在门槛外——靠里那张桌后的老板抬起眼，先看了看他湿透的鞋，才看他的脸。"
+          }
+        ],
+        "npcLine": {
+          "npcId": "npc_dyn_1",
+          "text": "客官，这雨夜里还往堤上走？先坐，先坐——灶上热水正滚，一碗姜茶下去，把寒气逼出来再说话。茶棚里就这一条规矩：不问来路，只管茶钱。",
+          "emotion": "neutral",
+          "answeredBeatIds": [],
+          "usedFactIds": [],
+          "usedEventIds": []
+        },
+        "objectiveLink": null,
+        "choices": [
+          {
+            "candidateId": "move:loc_dyn_1_choice_1",
+            "label": "老板，这话熨帖——雨夜里还肯守着炉子的，都是实心厚道人。我一个过路的，听你几句渡口闲话，心里也落个暖。"
+          },
+          {
+            "candidateId": "move:loc_dyn_1_choice_2",
+            "label": "老板，明人不说暗话。你眼利、记人，我这身湿鞋你多半也记下了。今夜茶棚里这几桌人，是来喝茶的，还是来瞧人的？你心里有数，可敢与我明说？"
+          }
+        ]
+      }
+    }
+  ],
+  "terminal": {
+    "kind": "next_decision",
+    "target": {
+      "kind": "continuation_step",
+      "stepKey": "move:loc_dyn_1"
+    }
+  },
+  "interactionProposals": [],
+  "npcOutwardProposals": [
+    {
+      "npcId": "npc_0",
+      "response": "offer_condition",
+      "evidenceEventIds": [
+        "S1-deliver-action-3:npc_relationship_changed:npc_0:player_0:supported",
+        "S1-deliver-action-4:npc_relationship_changed:npc_0:player_0:kept_promise"
+      ],
+      "discloseFactIds": [],
+      "interactionProposals": []
+    }
+  ]
+}

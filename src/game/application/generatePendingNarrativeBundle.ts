@@ -201,10 +201,17 @@ export async function generatePendingNarrativeBundle(
   };
 
   let effectiveContext: NarrativeBundleSourceContext | undefined;
+  // This closure belongs to one worker and its immutable gameplay snapshot.
+  // Cache only authorized outward data, never request controls or failures.
+  let authorizedOutward: Extract<NarrativeBundleSourceContext, { kind: "decision" }>["npcOutward"];
   const generateCandidate: NarrativeBundleSource["generate"] = async (context) => {
-    const prepared = deps.npcDeliberationSource === undefined ? { ok: true as const, context }
-      : await prepareNpcNarrativeContext(context, deps.npcDeliberationSource);
+    if (context.signal?.aborted) return { ok: false, failure: { kind: "AI_CALL_FAILED", phase: "scene" }, repairReason: "provider_failure", repairDetail: "aborted" };
+    const prepared = context.kind === "decision" && authorizedOutward !== undefined
+      ? { ok: true as const, context: { ...context, npcOutward: authorizedOutward } }
+      : deps.npcDeliberationSource === undefined ? { ok: true as const, context }
+        : await prepareNpcNarrativeContext(context, deps.npcDeliberationSource);
     if (!prepared.ok) return prepared;
+    if (prepared.context.kind === "decision") authorizedOutward = prepared.context.npcOutward;
     effectiveContext = prepared.context;
     const generated = await deps.source.generate(prepared.context);
     if (!generated.ok || generated.kind !== "decision" || prepared.context.kind !== "decision"

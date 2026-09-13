@@ -1,3 +1,4 @@
+import { createEntityStore } from "@/game/domain/entity";
 import { describe, expect, it, vi } from "vitest";
 import type { AiMessage } from "@ai-game/ai-transport";
 import type { NarrativeBundleSourceContext } from "../../narrativeBundleSource";
@@ -5,6 +6,9 @@ import { hashNarrativeCandidate } from "../../narrativeCandidateReview";
 import { createLiveNarrativeCandidateReview } from "./liveNarrativeCandidateReview";
 import type { RpgAiClient } from "./rpgAiClient";
 import { createNarrativeBundleSource } from "./liveNarrativeBundleSource";
+import observedArrival from "./testing/p1-focused-02-arrival-candidate.json";
+import { buildNarrativeReviewRules } from "./narrativeReviewRules";
+import type { NarrativeBundleProposal } from "@/game/domain/narrativeBundle";
 import observedOpening from "./testing/p1-07-opening-candidate.json";
 import { compileOpeningGenerationCandidate } from "@/game/gameplay/rpg/openingGeneration";
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
@@ -14,7 +18,7 @@ import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import { asNarrativeJobId, asEventId } from "@/game/domain/events";
 import { buildDecisionNarrativeContextBlocks } from "./narrativeContext/narrativeBundleContext";
 import { compileDecisionNarrativeContext } from "./narrativeContext";
-import { asLocationId, asNpcId, asGenerationId } from "@/game/domain/worldEntity";
+import { asLocationId, asNpcId, asGenerationId, asFactId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 
 const candidate = {
   worldDelta: null,
@@ -198,6 +202,61 @@ describe("live narrative candidate reviewer", () => {
     expect(body.context.contract).toContain("不能要求首屏两个选项同时枚举四条路线");
     expect(body.context.contract).toContain("允许在事实目录/history 中建立");
   });
+  it("keeps the observed arrival's cosmetic hat as a quality observation without inventing inventory", async () => {
+    const qualityObservations = [{ path: "continuationScenes[0].scene.segments[0].text", reason: "斗笠是无规则效果的服饰细节。" }];
+    const complete = vi.fn().mockResolvedValue({ ok: true, content: JSON.stringify({ verdict: "pass", qualityObservations }) });
+    const proposal = observedArrival as NarrativeBundleProposal;
+    expect(proposal.continuationScenes[0]?.scene.segments?.[0]?.text).toContain("把斗笠上的水抖在门槛外");
+    const input = { context: { kind: "decision", worldState: makeWorldState(), storyState: makeStoryState(), job: makeJob() } as const,
+      proposal, candidateVersion: 3, candidateHash: hashNarrativeCandidate(proposal) };
+    const review = createLiveNarrativeCandidateReview({ aiClient: client(complete) });
+    expect(await review.reviewNarrativeCandidate(input)).toMatchObject({ ok: true, qualityObservations });
+    complete.mockResolvedValue({ ok: true, content: JSON.stringify({ verdict: "revise", defects: [{
+      scope: "scene", code: "UNSUPPORTED_FACT", path: qualityObservations[0]!.path,
+      reason: "斗笠未在背包中", evidence: { basisKey: "item:hat", impact: "item_state", detail: "新增持有物" },
+    }], qualityObservations }) });
+    expect(await review.reviewNarrativeCandidate(input)).toMatchObject({ ok: false, failure: "UNCERTAIN" });
+  });
+
+  it.each(["missing_evidence", "wrong_impact", "missing_path", "pass_with_defects"])("does not launder %s into a pass or a grounded defect", async fault => {
+    const defect = { scope: "scene", code: "UNSUPPORTED_FACT", path: fault === "missing_path" ? "currentScene.missing" : "currentScene.segments[0].text",
+      reason: "规则冲突", ...(fault === "missing_evidence" ? {} : { evidence: {
+        basisKey: "opening:contract", impact: fault === "wrong_impact" ? "item_state" : "fact_claim", detail: "具体后果",
+      } }) };
+    const complete = vi.fn().mockResolvedValue({ ok: true, content: JSON.stringify({ verdict: fault === "pass_with_defects" ? "pass" : "revise", defects: [defect] }) });
+    expect(await createLiveNarrativeCandidateReview({ aiClient: client(complete) }).reviewNarrativeCandidate({
+      context: reviewContext, proposal: candidate, candidateVersion: 1, candidateHash: hashNarrativeCandidate(candidate),
+    })).toMatchObject({ ok: false, failure: "UNCERTAIN" });
+  });
+
+  it("projects an authorized secret proposal ID separately from disclosable text", async () => {
+    const generated = await createNarrativeBundleSource({ aiClient: client(vi.fn().mockResolvedValue({ ok: true, content: JSON.stringify(observedOpening) })) }).generate(reviewContext);
+    if (!generated.ok || generated.kind !== "opening") throw new Error("opening fixture failed");
+    const compiled = compileOpeningGenerationCandidate({ candidate: generated.proposal.opening, gameLength: "short",
+      generation: { generationId: asGenerationId("fact-permission"), seed: "fact-permission", templateVersion: "v1", inputDigest: "", gameType: "wuxia" },
+      initialNarrative: createFixtureNarrativeRuntimeState() });
+    const npcId = asNpcId("npc_0");
+    const entityStore = createEntityStore(compiled.worldState.entityStore.records.map(record => {
+      if (record.core.kind === "fact" && "fact" in record && record.core.id === "fact_4") return { ...record, fact: { ...record.fact, discovered: false } };
+      if ("identity" in record && "relationships" in record) return { ...record, knowledge: { entries: record.knowledge.entries.map(entry => entry.factId === "fact_4" ? { ...entry, disclosure: "secret" as const } : entry) } };
+      if ("knowledge" in record && "knownFactIds" in record.knowledge) return { ...record, knowledge: { ...record.knowledge, knownFactIds: record.knowledge.knownFactIds.filter(id => id !== "fact_4") } };
+      return record;
+    }));
+    const context = { kind: "decision", worldState: { ...compiled.worldState, entityStore }, storyState: compiled.storyState,
+      job: { ...makeJob(), focusNpcId: npcId }, npcOutward: [{ npcId, response: "offer_condition", discloseFactIds: [], evidenceEventIds: [],
+        interactionProposals: [{ proposalKey: "protect_fact4", npcId, operation: "promise_confidentiality", condition: [], factIds: [], goalIds: [], promiseId: null,
+          audienceIds: [PLAYER_ENTITY_ID], evidenceEventIds: [], confidentiality: { protectedFactIds: [asFactId("fact_4")],
+            allowedAudienceIds: [PLAYER_ENTITY_ID, npcId], fulfillment: { kind: "story_delivery" } } }],
+      }] } as const;
+    const rules = buildNarrativeReviewRules({ context, proposal: candidate, candidateVersion: 1, candidateHash: hashNarrativeCandidate(candidate) });
+    const fact = rules.find(entry => entry.key === "fact:fact_4");
+    expect(fact).toMatchObject({ value: { exists: true, playerVisible: false, speakerMayDisclose: false, authorizedProposalKeys: ["protect_fact4"] } });
+    expect(fact?.value).not.toHaveProperty("discloseableText");
+    const secret = compiled.worldState.worldFacts.find(fact => fact.factId === "fact_4");
+    expect(secret).toBeDefined();
+    expect(JSON.stringify(rules)).not.toContain(secret!.text);
+  });
+
   it("uses the existing narrative_bundle role and returns server-bound defects", async () => {
     const complete = vi.fn().mockResolvedValue({
       ok: true,
@@ -205,8 +264,9 @@ describe("live narrative candidate reviewer", () => {
         defects: [{
           scope: "proposal",
           code: "UNSUPPORTED_FACT",
-          path: "currentScene.npcLine.usedFactIds",
+          path: "currentScene.segments[0].text",
           reason: "引用未建立的验真器。",
+          evidence: { basisKey: "opening:contract", impact: "fact_claim", detail: "核验依据与已建立的事实冲突" },
         }],
       }),
     });
@@ -275,8 +335,9 @@ describe("live narrative candidate reviewer", () => {
         defects: [{
           scope: "world",
           code: "private_fact_publicized",
-          path: "opening.world.publicFacts[0]",
-          reason: "受保护事实被列为公开事实。",
+          path: "currentScene.segments[0].text",
+          reason: "受保护事实被向玩家直接披露。",
+          evidence: { basisKey: "opening:contract", impact: "disclosure", detail: "玩家尚未知情，当前旁白却直接揭露秘密" },
         }],
       }),
     });

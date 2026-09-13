@@ -25,7 +25,7 @@ export type AiContentRepair<Reason extends string = string, Rejection extends st
 
 /** Convert semantic review findings into bounded content-repair feedback. */
 export function repairFromCandidateReview(
-  defects: readonly Readonly<{ readonly code: string; readonly path: string; readonly reason: string }>[],
+  defects: readonly Readonly<{ readonly code: string; readonly path: string; readonly reason: string; readonly evidence?: { readonly basisKey: string; readonly impact: string; readonly detail: string } }>[],
   attempt: number,
 ): AiContentRepair<"approval_rejected", never> {
   if (!Number.isInteger(attempt) || attempt < 1 || defects.length === 0) {
@@ -34,7 +34,11 @@ export function repairFromCandidateReview(
   return {
     attempt,
     reason: "approval_rejected",
-    detail: defects.map((defect) => `${defect.code}:${defect.path}:${defect.reason}`).join(" | "),
+    detail: defects.map((defect) => {
+      const evidence = defect.evidence === undefined ? ""
+        : ` [${defect.evidence.basisKey}/${defect.evidence.impact}: ${defect.evidence.detail}]`;
+      return `${defect.code}:${defect.path}:${defect.reason}${evidence}`;
+    }).join(" | "),
   };
 }
 

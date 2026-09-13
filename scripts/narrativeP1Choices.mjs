@@ -6,7 +6,8 @@ export function offeredProductionChoices(view) {
   const npcChoices = (view.narrative.npcDialogues ?? []).flatMap(dialogue => [
     ...(dialogue.choices ?? []), ...(dialogue.giveChoices ?? []).map(entry => entry.choice),
   ]);
-  return [...new Map([...view.narrative.choices, ...npcChoices, ...view.currentLocation.actions].map((choice) => [choice.choiceToken, choice])).values()];
+  const battleChoices = (view.battle?.controls ?? []).filter(choice => choice.enabled !== false && choice.choiceToken);
+  return [...new Map([...view.narrative.choices, ...npcChoices, ...view.currentLocation.actions, ...battleChoices].map((choice) => [choice.choiceToken, choice])).values()];
 }
 
 export function findOfferedStoryDelivery(view, actionMap, delivery) {
@@ -23,6 +24,23 @@ export function selectProductionChoice(view, routeKind, actionMap, interactions,
     const action = actionMap.get(choice.choiceToken);
     return action?.type === "talk" ? interactions.find((entry) => entry.id === action.interactionId)?.operation : undefined;
   };
+  if (routeKind === "complete") {
+    if (view.battle) return choices.find(choice => actionMap.get(choice.choiceToken)?.type === "battle_action" && actionMap.get(choice.choiceToken).action === "skill")
+      ?? choices.find(choice => actionMap.get(choice.choiceToken)?.type === "battle_action" && actionMap.get(choice.choiceToken).action === "attack");
+    const deliveryChoice = findOfferedStoryDelivery(view, actionMap, delivery);
+    if (deliveryChoice) return deliveryChoice;
+    const allowed = choice => {
+      const action = actionMap.get(choice.choiceToken);
+      // A new formal decision may offer the same Action with a fresh token,
+      // including a later dialogue round or the ending decision.
+      return action && !["give_item", "abandon_quest"].includes(action.type);
+    };
+    const objective = choices.find(choice => choice.choiceToken === view.story.currentObjectiveChoiceToken && allowed(choice));
+    if (objective && actionMap.get(objective.choiceToken).type !== "talk") return objective;
+    const dialogueChoices = [...view.narrative.choices, ...(view.narrative.npcDialogues ?? []).flatMap(dialogue => dialogue.choices ?? [])];
+    return dialogueChoices.find(choice => allowed(choice) && operation(choice) === undefined)
+      ?? dialogueChoices.find(allowed) ?? objective;
+  }
   if (routeKind === "deliver" || routeKind === "withdraw") {
     if (routeKind === "withdraw" && actionCount >= 4) return choices.find(choice => actionMap.get(choice.choiceToken)?.type === "abandon_quest");
     const deliveryChoice = findOfferedStoryDelivery(view, actionMap, delivery);

@@ -13,6 +13,10 @@ export type CandidateDefectCode =
   | "ACTION_MISMATCH"
   | "BROKEN_CAUSALITY";
 
+export type CandidateRuleImpact = "input_response" | "action_binding" | "step_order" | "item_state" | "fact_claim" | "disclosure" | "interaction_effect";
+export type CandidateRuleEvidence = Readonly<{ basisKey: string; impact: CandidateRuleImpact; detail: string }>;
+export type CandidateQualityObservation = Readonly<{ path: string; reason: string }>;
+
 export type CandidateDefect = Readonly<{
   readonly candidateVersion: number;
   readonly candidateHash: string;
@@ -20,12 +24,15 @@ export type CandidateDefect = Readonly<{
   readonly code: CandidateDefectCode;
   readonly path: string;
   readonly reason: string;
+  /** Required at the live model boundary; offline reviewers can supply deterministic defects. */
+  readonly evidence?: CandidateRuleEvidence;
 }>;
 
-export type CandidateReviewResult =
+export type CandidateReviewResult = (
   | { readonly ok: true; readonly candidateVersion: number; readonly candidateHash: string }
   | { readonly ok: false; readonly candidateVersion: number; readonly candidateHash: string; readonly defects: readonly CandidateDefect[] }
-  | { readonly ok: false; readonly candidateVersion: number; readonly candidateHash: string; readonly failure: "PROVIDER_FAILURE" | "UNCERTAIN" };
+  | { readonly ok: false; readonly candidateVersion: number; readonly candidateHash: string; readonly failure: "PROVIDER_FAILURE" | "UNCERTAIN" }
+) & { readonly qualityObservations?: readonly CandidateQualityObservation[] };
 
 export type NarrativeCandidateReviewInput = Readonly<{
   readonly context: NarrativeBundleSourceContext;

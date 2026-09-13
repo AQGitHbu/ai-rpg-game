@@ -13,13 +13,15 @@ export const NARRATIVE_P1_BATCH_WALL_CLOCK_MS = 10_800_000 as const;
 
 export type NarrativeP1JourneyMode = "register" | "live" | "replay";
 export type NarrativeP1ScenarioId = "S1" | "S2";
-export type NarrativeP1RouteKind = "private" | "public" | "verify_first" | "diagnostic" | "deliver" | "withdraw";
+export type NarrativeP1RouteKind = "private" | "public" | "verify_first" | "diagnostic" | "deliver" | "withdraw" | "complete";
 
 export type NarrativeP1Route = Readonly<{
   readonly routeId: `${NarrativeP1ScenarioId}-${NarrativeP1RouteKind}`;
   readonly scenarioId: NarrativeP1ScenarioId;
   readonly kind: NarrativeP1RouteKind;
 }>;
+
+const CORE_ROUTES = [{ routeId: "S1-complete", scenarioId: "S1", kind: "complete" }] as const;
 
 const FOCUSED_ROUTES = [{ routeId: "S1-deliver", scenarioId: "S1", kind: "deliver" }, { routeId: "S1-withdraw", scenarioId: "S1", kind: "withdraw" }] as const;
 
@@ -45,6 +47,15 @@ export const NARRATIVE_P1_NEW_GAME_INPUT: NewGameInput = Object.freeze({
   gameLength: "short",
 });
 
+export const NARRATIVE_P1_CORE_INPUT: NewGameInput = Object.freeze({
+  gameType: "wuxia", gameLength: "short", characterName: "沈行",
+  characterIdentity: "路过江湖渡口的年轻游侠",
+  characterProfile: "愿意倾听当地人的处境，并用行动帮助解决眼前的困难。",
+  personalityTags: ["坦率", "热心"],
+  worldPremise: "江湖渡口的人们因渡船停航和生计问题发生纠纷。故事围绕当地人物的诉求与玩家的实际选择展开。",
+  storyOpening: "我走进渡口茶棚，向老板询问渡船为何停航，希望与当地人一道把事情解决。",
+  narrativeStyle: "novel", contentIntensity: "normal",
+});
 export type NarrativeP1HttpBudget = Readonly<{
   readonly max: number;
   readonly used: number;
@@ -100,7 +111,7 @@ export type NarrativeP1JourneyDeps = Readonly<{
 
 export type NarrativeP1Protocol = Readonly<{
   readonly protocolVersion: typeof NARRATIVE_P1_PROTOCOL_VERSION;
-  readonly claimScope: "matrix" | "diagnostic" | "fixed_opening_story";
+  readonly claimScope: "matrix" | "diagnostic" | "fixed_opening_story" | "production_core_story";
   readonly openingSource?: Readonly<Record<string, unknown>>;
   readonly plannedRoutes: 1 | 2 | typeof NARRATIVE_P1_PLANNED_ROUTES;
   readonly routes: readonly NarrativeP1Route[];
@@ -135,7 +146,7 @@ export type NarrativeP1Protocol = Readonly<{
 
 export type NarrativeP1JourneyInput = Readonly<{
   readonly mode: NarrativeP1JourneyMode;
-  readonly profile?: "matrix" | "diagnostic" | "focused";
+  readonly profile?: "matrix" | "diagnostic" | "focused" | "core";
   readonly runId: string;
   readonly protocolPath: string;
   readonly artifactDirectory: string;
@@ -200,8 +211,8 @@ function currentEnvironment(deps: NarrativeP1JourneyDeps): NarrativeP1JourneyEnv
   };
 }
 
-function validatedFixedInput(): ValidatedNewGameInput | null {
-  const result = validateNewGameInput(NARRATIVE_P1_NEW_GAME_INPUT);
+function validatedFixedInput(core = false): ValidatedNewGameInput | null {
+  const result = validateNewGameInput(core ? NARRATIVE_P1_CORE_INPUT : NARRATIVE_P1_NEW_GAME_INPUT);
   return result.ok ? result.value : null;
 }
 
@@ -210,21 +221,22 @@ function protocolWithoutHash(protocol: NarrativeP1Protocol | Omit<NarrativeP1Pro
   return withoutHash as Omit<NarrativeP1Protocol, "protocolHash">;
 }
 
-function createProtocol(deps: NarrativeP1JourneyDeps, profile: "matrix" | "diagnostic" | "focused" = "matrix"): NarrativeP1Protocol | null {
+function createProtocol(deps: NarrativeP1JourneyDeps, profile: "matrix" | "diagnostic" | "focused" | "core" = "matrix"): NarrativeP1Protocol | null {
   if (profile === "focused" && !deps.openingSource) return null;
-  const input = validatedFixedInput();
+  if (profile === "core" && deps.openingSource) return null;
+  const input = validatedFixedInput(profile === "core");
   if (input === null) return null;
   const codeFingerprint = currentCodeFingerprint(deps);
   const protocol = {
     protocolVersion: NARRATIVE_P1_PROTOCOL_VERSION,
-    claimScope: profile === "focused" ? "fixed_opening_story" : profile,
+    claimScope: profile === "core" ? "production_core_story" : profile === "focused" ? "fixed_opening_story" : profile,
     ...(profile === "focused" ? { openingSource: deps.openingSource } : {}),
-    plannedRoutes: profile === "focused" ? 2 : profile === "diagnostic" ? 1 : NARRATIVE_P1_PLANNED_ROUTES,
-    routes: profile === "focused" ? FOCUSED_ROUTES : profile === "diagnostic" ? [{ routeId: "S1-diagnostic", scenarioId: "S1", kind: "diagnostic" }] as const : NARRATIVE_P1_ROUTES,
+    plannedRoutes: profile === "focused" ? 2 : profile === "diagnostic" || profile === "core" ? 1 : NARRATIVE_P1_PLANNED_ROUTES,
+    routes: profile === "core" ? CORE_ROUTES : profile === "focused" ? FOCUSED_ROUTES : profile === "diagnostic" ? [{ routeId: "S1-diagnostic", scenarioId: "S1", kind: "diagnostic" }] as const : NARRATIVE_P1_ROUTES,
     input,
     inputHash: sha256(input),
     policy: FIXED_POLICY,
-    budget: profile === "focused" ? { ...FIXED_BUDGET, httpBatch: 200 as const, wallClockMs: 5_400_000 as const } : profile === "diagnostic" ? { ...FIXED_BUDGET, httpBatch: 200 as const, wallClockMs: 1_800_000 as const } : FIXED_BUDGET,
+    budget: profile === "focused" || profile === "core" ? { ...FIXED_BUDGET, httpBatch: 200 as const, wallClockMs: 5_400_000 as const } : profile === "diagnostic" ? { ...FIXED_BUDGET, httpBatch: 200 as const, wallClockMs: 1_800_000 as const } : FIXED_BUDGET,
     environment: currentEnvironment(deps),
     code: {
       fingerprint: codeFingerprint,
@@ -251,16 +263,18 @@ export function validateNarrativeP1Protocol(
   const issues: string[] = [];
   if (protocol.protocolVersion !== NARRATIVE_P1_PROTOCOL_VERSION) issues.push("PROTOCOL_VERSION_MISMATCH");
   const focused = protocol.claimScope === "fixed_opening_story";
+  const core = protocol.claimScope === "production_core_story";
+  if (core && protocol.openingSource !== undefined) issues.push("CORE_SEED_FORBIDDEN");
   if (focused && !protocol.openingSource) issues.push("OPENING_SOURCE_MISSING");
   const diagnostic = protocol.claimScope === "diagnostic";
-  if (!["matrix", "diagnostic", "fixed_opening_story"].includes(protocol.claimScope ?? "")) issues.push("CLAIM_SCOPE_MISMATCH");
-  if (protocol.plannedRoutes !== (focused ? 2 : diagnostic ? 1 : NARRATIVE_P1_PLANNED_ROUTES)) issues.push("PLANNED_ROUTES_MISMATCH");
-  if (!Array.isArray(protocol.routes) || canonicalJson(protocol.routes) !== canonicalJson(focused ? FOCUSED_ROUTES : diagnostic ? [{ routeId: "S1-diagnostic", scenarioId: "S1", kind: "diagnostic" }] : NARRATIVE_P1_ROUTES)) issues.push("ROUTES_MISMATCH");
+  if (!["matrix", "diagnostic", "fixed_opening_story", "production_core_story"].includes(protocol.claimScope ?? "")) issues.push("CLAIM_SCOPE_MISMATCH");
+  if (protocol.plannedRoutes !== (focused ? 2 : diagnostic || core ? 1 : NARRATIVE_P1_PLANNED_ROUTES)) issues.push("PLANNED_ROUTES_MISMATCH");
+  if (!Array.isArray(protocol.routes) || canonicalJson(protocol.routes) !== canonicalJson(core ? CORE_ROUTES : focused ? FOCUSED_ROUTES : diagnostic ? [{ routeId: "S1-diagnostic", scenarioId: "S1", kind: "diagnostic" }] : NARRATIVE_P1_ROUTES)) issues.push("ROUTES_MISMATCH");
   if (protocol.inputHash !== sha256(protocol.input)) issues.push("INPUT_HASH_MISMATCH");
   if (protocol.code?.fingerprint !== expectedCodeFingerprint) issues.push("CODE_FINGERPRINT_MISMATCH");
   if (canonicalJson(protocol.policy) !== canonicalJson(FIXED_POLICY)) issues.push("POLICY_MISMATCH");
-  if (canonicalJson(protocol.budget) !== canonicalJson(focused ? { ...FIXED_BUDGET, httpBatch: 200, wallClockMs: 5_400_000 } : diagnostic ? { ...FIXED_BUDGET, httpBatch: 200, wallClockMs: 1_800_000 } : FIXED_BUDGET)) issues.push("BUDGET_MISMATCH");
-  const fixedInput = validatedFixedInput();
+  if (canonicalJson(protocol.budget) !== canonicalJson(focused || core ? { ...FIXED_BUDGET, httpBatch: 200, wallClockMs: 5_400_000 } : diagnostic ? { ...FIXED_BUDGET, httpBatch: 200, wallClockMs: 1_800_000 } : FIXED_BUDGET)) issues.push("BUDGET_MISMATCH");
+  const fixedInput = validatedFixedInput(core);
   if (fixedInput === null || canonicalJson(protocol.input) !== canonicalJson(fixedInput)) issues.push("FIXED_INPUT_MISMATCH");
   if (protocol.environment?.model === undefined || protocol.environment.model.trim() === "" || protocol.environment.model === "unconfigured-model") issues.push("MODEL_MISSING");
   if (protocol.environment?.apiBaseUrl === undefined || protocol.environment.apiBaseUrl.trim() === "" || protocol.environment.apiBaseUrl === "https://unconfigured-provider.invalid") issues.push("API_BASE_MISSING");

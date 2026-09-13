@@ -35,6 +35,18 @@ function fakeDeps(overrides: Partial<NarrativeP1JourneyDeps> = {}): NarrativeP1J
 }
 
 describe("narrative P1 live journey protocol", () => {
+  it("freezes a fresh production core story without a historical seed", async () => {
+    const paths = tempPaths();
+    try {
+      const input = { profile: "core" as const, runId: "core", ...paths };
+      expect(await runNarrativeP1Journey({ ...input, mode: "register" }, fakeDeps())).toEqual({ completedRoutes: 0, plannedRoutes: 1, passed: true });
+      const protocol = JSON.parse(readFileSync(paths.protocolPath, "utf8"));
+      expect(protocol).toMatchObject({ claimScope: "production_core_story", routes: [{ routeId: "S1-complete", kind: "complete" }], budget: { httpBatch: 200, wallClockMs: 5_400_000 } });
+      expect(protocol.openingSource).toBeUndefined();
+      expect(protocol.input.storyOpening).not.toContain("信筒");
+      expect((await runNarrativeP1Journey({ ...input, mode: "register" }, fakeDeps({ openingSource: { fake: true } }))).passed).toBe(false);
+    } finally { rmSync(paths.root, { recursive: true, force: true }); }
+  });
   it("registers diagnostic as an isolated one-route claim with 200 HTTP and 30 minutes", async () => {
     const paths = tempPaths();
     try {

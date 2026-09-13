@@ -1,3 +1,4 @@
+import type { NpcDeliberationSource } from "./npcDeliberationSource";
 import { hashNarrativeCandidate } from "./narrativeCandidateReview";
 import { describe, it, expect, vi } from "vitest";
 import { generatePendingNarrativeBundle } from "./generatePendingNarrativeBundle";
@@ -542,12 +543,13 @@ describe("generatePendingNarrativeBundle", () => {
         }); }),
     };
 
+    const npcGenerate = vi.fn(async (input: { npcId: typeof npc.id }) => ({ ok: true as const, proposal: {
+      npcId: input.npcId, goalIds: [], response: "question" as const, evidenceEventIds: [], discloseFactIds: [], interactionProposals: [],
+    } }));
     const generated = await generatePendingNarrativeBundle({
       repository: repo,
       signal: controller.signal,
-      npcDeliberationSource: { generate: async (input) => ({ ok: true, proposal: {
-        npcId: input.npcId, goalIds: [], response: "question", evidenceEventIds: [], discloseFactIds: [], interactionProposals: [],
-      } }) },
+      npcDeliberationSource: { generate: npcGenerate },
       source,
       reviewer,
       now: () => "2026-01-01",
@@ -559,6 +561,8 @@ describe("generatePendingNarrativeBundle", () => {
     expect(getRecord()?.storyState.narrative.status).toBe(cancel ? "provider_failed" : "ready");
     const third = generate.mock.calls[2]![0];
     if (third.kind !== "decision") throw new Error("wrong source kind");
+    expect(npcGenerate).toHaveBeenCalledTimes(1);
+    expect(third.candidateVersion).toBe(3);
     expect(third.npcOutward).toEqual([expect.objectContaining({ npcId: npc.id, response: "question" })]);
     const reviewCall = vi.mocked(reviewer.reviewNarrativeCandidate).mock.calls[2]![0];
     expect(reviewCall.proposal).toMatchObject({ npcOutwardProposals: third.npcOutward });
@@ -568,6 +572,34 @@ describe("generatePendingNarrativeBundle", () => {
     expect(third.candidateRevision?.findings.map((finding) => finding.detail).join(" ")).toContain("不要重复开场");
     expect(third.candidateRevision?.proposal.currentScene.choices[0]?.label).toBe("现在交付信筒");
     if (cancel) expect(getRecord()?.storyState.history).toEqual(initialized.storyState.history);
+  });
+
+  it.each([false, true])("reuses only successful outward within one worker and rebuilds it for another job (initial NPC failure=%s)", async initiallyFails => {
+    const { repo, getRecord } = createInMemoryRepo(null);
+    await createGame({ gameId: asGameId("outward-cache"), gameType: "wuxia", gameLength: "short", seed: "outward-cache" },
+      { repository: repo, source: createFixtureOpeningSource(), now: () => "2026-01-01", aiEnabled: true });
+    const initialized = getRecord();
+    if (initialized === null || initialized.storyState.narrative.status !== "ready") throw new Error("opening fixture missing");
+    const npc = initialized.worldState.npcs[0]!;
+    const lastPresentedScene = initialized.storyState.narrative.currentScene;
+    const npcGenerate = vi.fn<NpcDeliberationSource["generate"]>().mockImplementation(async input => ({ ok: true,
+      proposal: { npcId: input.npcId, response: "question", goalIds: [], evidenceEventIds: [], discloseFactIds: [], interactionProposals: [] } }));
+    if (initiallyFails) npcGenerate.mockResolvedValueOnce({ ok: false, code: "PROVIDER_FAILURE" });
+    const generate = vi.fn<NarrativeBundleSource["generate"]>().mockResolvedValue({ ok: false,
+      failure: { kind: "AI_RESPONSE_INVALID", phase: "scene" }, repairReason: "invalid_schema", repairDetail: "author_invalid" });
+    for (const ordinal of [1, 2]) {
+      const current = getRecord()!;
+      const job = { ...createPendingJob(), jobId: asNarrativeJobId(`outward-job-${ordinal}`), focusNpcId: npc.id,
+        utterance: "请求核验", actionSummary: { kind: "talk" as const, npcId: npc.id } };
+      await repo.applyState({ gameId: current.gameId, expectedRevision: current.revision, nextWorldState: current.worldState,
+        nextStoryState: { ...initialized.storyState, narrative: { status: "provider_pending", mode: "ai", job, lastPresentedScene } } });
+      await generatePendingNarrativeBundle({ repository: repo, source: { generate }, npcDeliberationSource: { generate: npcGenerate }, now: () => "2026-01-01" });
+      expect(getRecord()?.storyState.narrative.status).toBe("provider_failed");
+      expect(npcGenerate).toHaveBeenCalledTimes(ordinal + (initiallyFails ? 1 : 0));
+    }
+    expect(generate).toHaveBeenCalledTimes(initiallyFails ? 5 : 6);
+    const contexts = generate.mock.calls.map(([context]) => context);
+    expect(contexts.at(-1)).toMatchObject({ candidateVersion: 3, job: { jobId: "outward-job-2" }, npcOutward: [{ npcId: npc.id }] });
   });
 
   it("事件账本提交失败时持久化独立稳定码，不伪装成审批拒绝", async () => {

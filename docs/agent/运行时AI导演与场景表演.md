@@ -22,6 +22,8 @@
 - `mode="ai"` 只投影已审批的 `generated` 场景。缺少正式 NPC focus 台词时投影单一权威 `ask`；失败仍进入同 job 的 failed 状态，不合成 deterministic/default 文案。
 - 内容审批同时检查强制节拍、当前地点和焦点 NPC、`objectiveLink`、下一步抵达 NPC、实体引用、题材限制和 NPC speech authority。审批失败不部分写入。
 - 决策上下文以 `consumer=author|reviewer` 共用事实、权限、行动及演化依据；作者获得 sceneDrafts 传输契约，审阅器获得实际编译后 NarrativeBundleProposal 契约（含服务端附加的 npcOutwardProposals）。作者修复指令和抵达输出骨架不进入审阅上下文，candidateHash 仍绑定原内部候选；审阅不改写候选、不按作者传输字段误判内部表示。
+- 生产语义审阅的 `ruleBasis` 由服务端投影当前输入、真实 Action 与候选绑定、续接 step、正式物品及事实/权限。阻断缺陷必须带可存在性校验的候选 `path` 和 `evidence={basisKey,impact,detail}`；依据必须存在、影响种类须属于该依据，detail 说明具体规则后果。物品状态影响只能引用具体正式物品，普通无效果服饰、环境或风格写入 `qualityObservations`，不改变规则 verdict。无依据、空缺陷或混入非法缺陷的 revise 整体成为显式 uncertain，不过滤后冒充 pass。服务端校验依据与路径，不以此替代模型对语义冲突的判断。
+- 事实引用许可与披露正文分别投影：获准 NPC 互动提案里的事实 ID 存在且可用于对应提案，不要求出现在公开正文目录；该许可不授权当前台词说出秘密，也不代表行动已执行。秘密正文继续按 speaker authority 裁剪。
 - 每个完整 opening/decision 候选由服务端计算 `candidateVersion` 与 `candidateHash`，最多保留初稿加两次修订；结构/规则预检通过后只做一次语义审阅。审阅只能返回非空缺陷或明确 provider/uncertain 失败，不能修改候选、规则或知识；正文、受众、NPC outward 依据或 proposal 任一变化都会使旧 pass 失效。
 
 ## 关键流程
@@ -40,7 +42,7 @@ Prompt 只接收编译后的公开事实、当前位置、焦点 NPC 的有限�
 
 第一次固定选择生成续接时，`selectedDialogue` 保留 act、topic 和 label。决策上下文通过所选公开 fact 或初始化 thread 找回因果事件，并加入一次性的“开局背景与本次回应”必选块；正文只含公开历史、公开问题和焦点 NPC 当前允许的目标与关系。叙事包生产路径不再以本地 8,000 estimated tokens 闸门拒绝请求；保留编译来源与权限裁剪，由 provider 报告实际上下文限制，失败走统一协议。首次调用以后不再强制注入该块，后续走记忆召回。
 
-需要条件披露、承诺或具体互动判断时，`prepareNpcNarrativeContext` 只为当前同场焦点 NPC 编译私密输入，调用独立判断 source 后再做 outward 授权；作者与审阅器只接收获准的对外投影。开局与普通问候不因此增加角色调用。角色判断与作者、审阅共享同一候选版本、取消信号和 HTTP 预算，不提前写入知识或互动效果。
+需要条件披露、承诺或具体互动判断时，`prepareNpcNarrativeContext` 只为当前同场焦点 NPC 编译私密输入，调用独立判断 source 后再做 outward 授权；作者与审阅器只接收获准的对外投影。开局与普通问候不因此增加角色调用。角色判断使用该次生成的候选版本、取消信号和 HTTP 预算，不提前写入知识或互动效果。同一 worker 的固定规则快照内，成功且已授权的 outward 在作者候选修订中复用；仅复用 outward，作者与审阅仍使用当前 job、候选版本、修复反馈和预算回调。失败与取消不缓存，不跨 job、worker 或进程恢复复用，不新增持久化字段。
 
 每个逻辑 pending job 的一个 epoch 最多执行三次完整的 source 生成加审批尝试；后续完整尝试携带稳定拒绝原因。每个 epoch 最多 24 次 HTTP（候选版本、作者/NPC 判断、审阅与各自最多两次 transport retry 的总预算），请求前预留且崩溃后不退回。每次完整尝试内部仍可由 `RpgAiClient` 执行 transport retry；顶层 `ai_call.attempt` 是 transport 序号，`context.retry.attempt` 是重试机制内序号，两者不能混用。空响应不重复发送同一请求。
 
@@ -59,6 +61,7 @@ Prompt 只接收编译后的公开事实、当前位置、焦点 NPC 的有限�
 - 编排：`src/game/application/generatePendingNarrativeBundle.ts`、`src/game/application/narrativeBundleSource.ts`、`src/game/application/approveNarrativeBundle.ts`
 - 统一反馈：`src/game/application/aiGenerationRetry.ts`、`src/game/application/aiGenerationRetry.test.ts`
 - 领域契约：`src/game/domain/narrativeBundle.ts`、`src/game/domain/narrative.ts`、`src/game/domain/pendingNarrativeJob.ts`
+- 规则审阅：`src/game/application/server/ai/liveNarrativeCandidateReview.ts`、`src/game/application/server/ai/narrativeReviewRules.ts`；测试包含已保存换幕候选的服饰观察、事实引用权限与阻断依据。
 - 生产 source 与 prompt：`src/game/application/server/ai/liveNarrativeBundleSource.ts`、`src/game/application/server/ai/openingNarrativePrompt.ts`、`src/game/application/server/ai/narrativeContext/narrativeBundleContext.ts`
 - 消费与规则：`src/game/application/consumeNarrativeBundle.ts`、`src/game/gameplay/rpg/narrativeBundle/`
 - 测试：`src/game/application/generatePendingNarrativeBundle.test.ts`、`src/game/application/approveNarrativeBundle.test.ts`、`src/game/application/server/ai/liveNarrativeBundleSource.test.ts`

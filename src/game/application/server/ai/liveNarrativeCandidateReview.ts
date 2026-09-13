@@ -2,6 +2,8 @@ import type { AiMessage } from "@ai-game/ai-transport";
 import { parseStructuredJsonObject } from "@/game/core/json";
 import type { GameLogger } from "@/game/logging";
 import { candidateReviewMatches, type CandidateDefect, type CandidateDefectCode, type CandidateReviewResult, type CandidateReviewScope, type NarrativeCandidateReviewer } from "../../narrativeCandidateReview";
+import { buildNarrativeReviewRules, parseRuleEvidence, resolveCandidatePath } from "./narrativeReviewRules";
+import type { CandidateQualityObservation } from "../../narrativeCandidateReview";
 import type { NarrativeCandidateReviewInput } from "../../narrativeCandidateReview";
 import type { RpgAiClient } from "./rpgAiClient";
 import type { NarrativeRequestClient } from "./narrativeRequestClient";
@@ -82,7 +84,7 @@ function parseDefects(
   if (!Array.isArray(value) || value.length === 0) return null;
   const defects: CandidateDefect[] = [];
   for (const entry of value) {
-    if (!isRecord(entry) || !hasOnlyKeys(entry, ["scope", "code", "path", "reason"])) {
+    if (!isRecord(entry) || !hasOnlyKeys(entry, ["scope", "code", "path", "reason", "evidence"])) {
       return null;
     }
     const scope = typeof entry.scope === "string" ? SCOPE_ALIASES[entry.scope] : undefined;
@@ -95,7 +97,10 @@ function parseDefects(
       || !isNonEmptyString(entry.reason)) {
       return null;
     }
+    const evidence = parseRuleEvidence(entry.evidence, buildNarrativeReviewRules(input));
+    if (evidence === null || !resolveCandidatePath(input.proposal, entry.path)) return null;
     defects.push({
+      evidence,
       candidateVersion: input.candidateVersion,
       candidateHash: input.candidateHash,
       scope,
@@ -107,21 +112,33 @@ function parseDefects(
   return defects;
 }
 
+function parseQualityObservations(value: unknown): readonly CandidateQualityObservation[] | null {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 20) return null;
+  const observations: CandidateQualityObservation[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry) || !hasOnlyKeys(entry, ["path", "reason"])
+      || !isNonEmptyString(entry.path) || !isNonEmptyString(entry.reason)) return null;
+    observations.push({ path: entry.path, reason: entry.reason });
+  }
+  return observations;
+}
+
 function parseReviewVerdict(
   value: unknown,
   input: NarrativeCandidateReviewInput,
-): { readonly pass: true } | { readonly pass: false; readonly defects: readonly CandidateDefect[] } | null {
+): ({ readonly pass: true } | { readonly pass: false; readonly defects: readonly CandidateDefect[] })
+  & { readonly qualityObservations: readonly CandidateQualityObservation[] } | null {
   if (!isRecord(value)) return null;
   const review = isRecord(value.review) && hasOnlyKeys(value, ["review"]) ? value.review : value;
-  if (!isRecord(review)) return null;
-  if (review.verdict === "pass" && hasOnlyKeys(review, ["verdict"])) return { pass: true };
-  if (review.verdict === "revise" && hasOnlyKeys(review, ["verdict", "defects"])) {
+  const qualityObservations = parseQualityObservations(review.qualityObservations);
+  if (qualityObservations === null) return null;
+  if (review.verdict === "pass" && hasOnlyKeys(review, ["verdict", "qualityObservations"])) return { pass: true, qualityObservations };
+  if ((review.verdict === "revise" && hasOnlyKeys(review, ["verdict", "defects", "qualityObservations"]))
+    || hasOnlyKeys(review, ["defects", "qualityObservations"])) {
     const defects = parseDefects(review.defects, input);
-    return defects === null ? null : { pass: false, defects };
-  }
-  if (hasOnlyKeys(review, ["defects"])) {
-    const defects = parseDefects(review.defects, input);
-    return defects === null ? null : { pass: false, defects };
+    // Never filter unsupported defects and turn the remaining response into pass.
+    return defects === null ? null : { pass: false, defects, qualityObservations };
   }
   return null;
 }
@@ -156,6 +173,7 @@ function publicReviewContext(input: NarrativeCandidateReviewInput): unknown {
     const openingProposal = "opening" in input.proposal ? input.proposal.opening : undefined;
     return {
       kind: "opening",
+      ruleBasis: buildNarrativeReviewRules(input),
       jobId: input.context.jobId,
       candidateVersion: input.context.candidateVersion,
       input: openingInput,
@@ -177,6 +195,7 @@ function publicReviewContext(input: NarrativeCandidateReviewInput): unknown {
   });
   return {
     kind: "decision",
+    ruleBasis: buildNarrativeReviewRules(input),
     candidateVersion: input.context.candidateVersion,
     prompt: compilation.prompt,
     manifest: compilation.manifest,
@@ -197,8 +216,11 @@ export function createLiveNarrativeCandidateReview(
             content: [
               "你是 RPG 整场候选的逻辑语义审阅器。",
               "只检查当前输入是否被回应、事实依据、实际受众披露、选项动作与正文因果。",
+              "阻断缺陷必须引用 context.ruleBasis 中真实存在的 key，并选择该依据列出的 impact，再具体解释哪项规则后果被改写。evidence={basisKey,impact,detail}，path 必须定位候选中真实存在的字段。",
+              "无玩法效果的服饰、环境、动作姿态和风格属于 qualityObservations=[{path,reason}]，不影响 verdict；物品持有/交付违规必须引用具体正式 item 的依据，不能因为普通装饰没有 Entity ID 就判背包违规。真实交付、知识披露、Action 绑定与续接顺序仍须严格检查。",
+              "fact 目录区分 ID 存在、获准提案引用与当前允许披露正文；authorizedProposalKeys 许可结构化提案引用，不表示玩家已知或现在可说出正文。未在公开事实正文中列出不能推断 ID 不存在。不要根据秘密 ID 猜测内容。",
               "不得改写候选、补造事实、授予知识或输出思维链。",
-              "只返回 JSON：通过为 {\"verdict\":\"pass\"}，需修订为 {\"verdict\":\"revise\",\"defects\":[{\"scope\",\"code\",\"path\",\"reason\"}]}。",
+              "只返回 JSON：通过为 {\"verdict\":\"pass\"}，需修订为 {\"verdict\":\"revise\",\"defects\":[{\"scope\",\"code\",\"path\",\"reason\",\"evidence\":{\"basisKey\",\"impact\",\"detail\"}}]}。",
               "scope 只能是 scene、proposal、npc_behavior；code 只能是 MISSED_INPUT、UNSUPPORTED_FACT、DISCLOSURE、ACTION_MISMATCH、BROKEN_CAUSALITY。",
               "不要创造其他 scope 或 code；无法归类时仍使用上述最接近的稳定 code，并把具体说明写入 reason。",
             ].join("\n"),
@@ -234,13 +256,15 @@ export function createLiveNarrativeCandidateReview(
         const verdict = parseReviewVerdict(parsed.value, input);
         if (verdict === null) return resultFailure(input, "UNCERTAIN");
         if (verdict.pass) {
-          return { ok: true, candidateVersion: input.candidateVersion, candidateHash: input.candidateHash };
+          return { ok: true, candidateVersion: input.candidateVersion, candidateHash: input.candidateHash,
+            ...(verdict.qualityObservations.length === 0 ? {} : { qualityObservations: verdict.qualityObservations }) };
         }
         return {
           ok: false,
           candidateVersion: input.candidateVersion,
           candidateHash: input.candidateHash,
           defects: verdict.defects,
+          ...(verdict.qualityObservations.length === 0 ? {} : { qualityObservations: verdict.qualityObservations }),
         };
       } catch (error) {
         deps.logger?.warn("narrative_candidate_review_failed", {
