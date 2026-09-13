@@ -8,7 +8,13 @@ import { createNarrativeBundleSource } from "./liveNarrativeBundleSource";
 import observedOpening from "./testing/p1-07-opening-candidate.json";
 import { compileOpeningGenerationCandidate } from "@/game/gameplay/rpg/openingGeneration";
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
-import { asGenerationId } from "@/game/domain/worldEntity";
+import { createInitialWorldState } from "@/game/domain/worldState";
+import { createInitialStoryState } from "@/game/domain/storyState";
+import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
+import { asNarrativeJobId, asEventId } from "@/game/domain/events";
+import { buildDecisionNarrativeContextBlocks } from "./narrativeContext/narrativeBundleContext";
+import { compileDecisionNarrativeContext } from "./narrativeContext";
+import { asLocationId, asNpcId, asGenerationId } from "@/game/domain/worldEntity";
 
 const candidate = {
   worldDelta: null,
@@ -41,7 +47,115 @@ function client(complete: ReturnType<typeof vi.fn>): RpgAiClient {
   };
 }
 
+function makeWorldState() {
+  return createInitialWorldState({
+    generation: {
+      generationId: asGenerationId("g1"),
+      seed: "seed",
+      templateVersion: "v1",
+      inputDigest: "",
+      gameType: "wuxia",
+    },
+    player: { name: "侠客", identity: "旅人", stats: { hp: 100, attack: 10, defense: 5 } },
+    startingLocation: {
+      id: asLocationId("loc_0"),
+      name: "小镇",
+      description: "山脚下的小镇。",
+      kind: "main",
+      connectedLocationIds: [],
+      npcIds: [],
+      availableItemIds: [],
+      tags: [],
+    },
+    startingItemIds: [],
+  });
+}
+
+
+function makeStoryState() {
+  return createInitialStoryState({
+    initialNarrative: createFixtureNarrativeRuntimeState(),
+    gameLength: "short",
+    initialEntityCounts: { locations: 1, npcs: 0, quests: 1, events: 0 },
+  });
+}
+
+
+function makeJob(): PendingNarrativeJob {
+  return {
+    jobId: asNarrativeJobId("job_1"),
+    turnId: "turn_1" as never,
+    actionId: "act_1",
+    expectedRevision: 0,
+    turnNumber: 1,
+    actionSummary: { kind: "talk", npcId: asNpcId("npc_1") },
+    utterance: undefined,
+    resolvedEvent: {
+      actionId: "act_1",
+      status: "success",
+      eventKind: "dialogue",
+      facts: [],
+      stateChanges: [],
+      costs: [],
+      rewards: [],
+      triggeredEvents: [],
+      rejectedEffects: [],
+    },
+    domainEventIds: [asEventId("turn-1:event-1")],
+    focusNpcId: asNpcId("npc_1"),
+    requestedAt: "2026-01-02",
+    objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
+    mandatoryBeats: [],
+    generationKind: "npc_fixed_choice",
+    sceneRequestKind: "npc_response",
+  } as unknown as PendingNarrativeJob;
+}
+
+
 describe("live narrative candidate reviewer", () => {
+  it.each(["stable", "needs_next_act"] as const)("reviews the compiled %s DTO without the author's draft transport contract", async (evolution) => {
+    const storyState = makeStoryState();
+    const context = {
+      kind: "decision", worldState: makeWorldState(),
+      storyState: evolution === "stable" ? storyState : { ...storyState, evolution: { ...storyState.evolution, status: evolution } },
+      job: makeJob(),
+      contentRepair: { attempt: 2, reason: "invalid_schema", detail: "author-only-repair" },
+      candidateRevision: { candidateVersion: 1, candidateHash: "prior", proposal: candidate, findings: [] },
+      npcOutward: [{ npcId: asNpcId("npc_1"), response: "offer_condition", evidenceEventIds: [], discloseFactIds: [], interactionProposals: [] }],
+    } as const;
+    const sharedFactIds = ["bundle:player", "bundle:visible-facts", "bundle:focus-npc", "bundle:player-action", "bundle:story-contract", "bundle:resolution"];
+    const facts = (consumer: "author" | "reviewer") => buildDecisionNarrativeContextBlocks({ ...context, consumer })
+      .filter(block => sharedFactIds.includes(block.id));
+    expect(facts("reviewer")).toEqual(facts("author"));
+    const author = compileDecisionNarrativeContext(context).prompt;
+    expect(author).toContain("不得输出 currentScene、continuationScenes 或 terminal");
+    const complete = vi.fn().mockResolvedValue({ ok: true, content: '{"verdict":"pass"}' });
+    const candidateHash = hashNarrativeCandidate(candidate);
+    await createLiveNarrativeCandidateReview({ aiClient: client(complete) }).reviewNarrativeCandidate({
+      context, proposal: candidate, candidateVersion: 1, candidateHash,
+    });
+    const body = JSON.parse((complete.mock.calls[0]![1] as readonly AiMessage[])[1]!.content);
+    expect(body.proposal).toEqual(candidate);
+    expect(body.candidateHash).toBe(candidateHash);
+    expect(body.context.prompt).toContain("服务端已编译的 NarrativeBundleProposal");
+    expect(body.context.prompt).not.toContain("sceneDrafts");
+    expect(body.context.prompt).not.toContain("只读，不输出");
+    expect(body.context.prompt).not.toContain("一次响应生成完整叙事包");
+    expect(body.context.prompt).not.toContain("抵达场景骨架");
+    expect(body.context.prompt).not.toContain("author-only-repair");
+    expect(body.context.prompt).not.toContain("同一候选的联合修订");
+    expect(body.context.prompt).toContain("npcOutwardProposals");
+    expect(body.context.prompt).toContain("未获选择的条件不算成立");
+    if (evolution === "needs_next_act") {
+      expect(body.context.prompt).toContain("move:loc_dyn_");
+      expect(body.context.prompt).toContain("到达 NPC");
+    }
+    expect(body.context.prompt).toContain("选项 label 必须忠于其服务端 Action");
+    expect(body.context.prompt).toContain("未经状态批准的身份");
+    expect(body.context.prompt).toContain("其他 NPC 的私密事实正文未提供");
+    expect(body.context.prompt).toContain("仅写 talk 文案不产生这些规则后果");
+    expect(body.context.prompt).toContain("许诺本身不会引荐");
+  });
   it("projects actual compiler IDs and secret-directory visibility for an opening candidate", async () => {
     // Provider output only, copied from p1-07/S2-public version 1. The observed
     // reviewer incorrectly rejected private facts merely for being in this

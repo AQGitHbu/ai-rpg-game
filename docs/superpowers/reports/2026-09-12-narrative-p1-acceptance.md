@@ -2,7 +2,7 @@
 
 ## 结论
 
-P1 仍未通过。规则闭环、条件披露与真实响应重放机制已实现并经过独立复审，但尚无一条完整 live 小故事。最新冻结版本 `ebf4a85b` 的 `p1-diag-04` 在开局失败：0/1、4 HTTP、289699 ms、零行动；其全部 4 次响应及开局最终状态已零网络严格重放，仍得到相同失败码。成功复现失败不等于故事通过。
+P1 仍未通过。已将首要验收收敛为固定获批开局的完整交付故事，再验证同初态退出。冻结 `b08047f4` 的 `p1-focused-01` 完成五个有效行动和中途重载，但在第二幕生成处失败：0/2、28 HTTP、532940 ms；退出路线未执行。28 次真实响应与全部状态已零网络严格重放，仍得到同一失败码。固定初态诊断不代表自由开局通过。
 
 本轮四项工作的状态如下。首要目标“完整小故事”未达成，正式六矩阵和创建到终局的实机 UI 验收没有执行，不记为通过，也不进入 P2。历史 `p1-07` 的 0/6 来自六次独立开局，不是新协议矩阵。根因与后续架构方向见 [失败分析](2026-09-13-narrative-p1-failure-analysis.md)。
 
@@ -10,7 +10,7 @@ P1 仍未通过。规则闭环、条件披露与真实响应重放机制已实�
 | --- | --- | --- |
 | 保密、引荐、交付与退出规则 | 已完成；正式 SQLite 旅程及独立复审通过 | 不代表 live 作者可稳定使用这些能力 |
 | 原始响应生产链重放 | 已完成机制与集成验证；diag02 开局成功路径、diag04 整次失败初始化实际重放一致 | 尚无完整 live 故事可用于端到端重放；diag03 旧磁带缺失败收尾清单，未补造 |
-| 单故事、六矩阵、实机 UI | 已执行四次独立诊断，均未得到完整故事 | 六矩阵及实际 UI 创建→中途重载→终局仍待验收；UI harness 代码不算实机证据 |
+| 单故事、六矩阵、实机 UI | 四次独立开局诊断和一次固定初态诊断均未得到完整故事 | 六矩阵及实际 UI 创建→中途重载→终局仍待验收；UI harness 代码不算实机证据 |
 | 原文审核与验收结论 | 已读诊断原文、复现拒绝并记录 P1 不通过 | 未完成路线不评分，不能评定完整叙事质量或优于 main |
 
 历史 `p1-07` 的 `S1-private` 已持久化到第 5 个有效行动，随后因 `approval_rejected` 结束；其他路线在开局或审阅阶段结束。审阅耗尽背后存在作者/reviewer 契约冲突、缺少上一稿的修订，以及互动未接入作者等本地根因，不能仅归因于模型质量。`p1-08` 使用 DeepSeek `reasoning_effort=low` 与 240 秒审阅超时，长时间等待后中止且没有 summary；现存完成请求审计不足以判断中断时卡在哪一层。没有完整 live 轨迹，不填写人工质量分，也不能开始 P2。
@@ -26,10 +26,20 @@ P1 仍未通过。规则闭环、条件披露与真实响应重放机制已实�
 
 ## 门禁结果
 
-- `npm run accept`：通过；lint 0 errors，216 个测试文件通过，2749 tests passed、1 skipped，typecheck、fast gates、build 均通过。
-- `npm run test:narrative-p1-script`：通过；14 passed。
+- `npm run accept`：通过；lint 0 errors，217 个测试文件通过，2767 tests passed、1 skipped，typecheck、fast gates、build 均通过。
+- `npm run test:narrative-p1-script`：通过；17 passed。
 - `npm run check:docs`、`npm run test:docs`、`git diff --check`：通过。
 - `npm run env:check`：通过；`.env.local` 仅注入当前进程，密钥未写入协议、审计摘要或报告。
+
+## 固定初态核心诊断
+
+`p1-focused-01` 的 `claimScope=fixed_opening_story`，源为 `p1-diag-03/S1-opening.sqlite` 的零回合获批初态，原库只读。协议冻结源协议、runtime、audit、数据库和语义哈希，两路线独立复制；原始文件在 `artifacts/narrative-p1/p1-focused-01/`。
+
+- deliver：五次正式对话行动，包含真实承诺与核验，并在第四次行动后重载。作者的新场景槽格式可解析，前四轮正文获批；当前幕仍未正式进入新地点。
+- 第五次行动的三个版本都通过本地解析并进入 reviewer；版本 1 同时被指出正文问题和内部 DTO 格式问题，版本 2/3 修正文后仍因内部 DTO 格式被拒绝。实际作者响应均提交 sceneDrafts，reviewer 所见是程序编译后的 currentScene/continuationScenes/terminal，并另含获准 npcOutwardProposals。作者输出契约被错误套用到内部审核对象，成为最终阻断点。
+- withdraw：`DELIVER_FAILED_WITHDRAW_NOT_RUN`；保留两条分母，不以短退出增加完成数。
+- `replay/summary.json`：HTTP 0，replayedTransportAttempts 28，deliver 五动作及 `AI_GENERATION_FAILED` 一致；`S1-deliver.comparison.json` 保存逐状态比较。失败复现不算完成故事。
+- 作者与审核对象的表示契约边界已修复并经独立复审，完整 accept 通过；下一步冻结唯一修复验证批次；不修改候选拒绝结果、不追加本批重试、不扩展 Entity 或规则。
 
 ## A1–A10 范围
 

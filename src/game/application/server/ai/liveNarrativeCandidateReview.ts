@@ -169,11 +169,10 @@ function publicReviewContext(input: NarrativeCandidateReviewInput): unknown {
     };
   }
   const compilation = compileDecisionNarrativeContext({
+    consumer: "reviewer",
     worldState: input.context.worldState,
     storyState: input.context.storyState,
     job: input.context.job,
-    ...(input.context.contentRepair === undefined ? {} : { contentRepair: input.context.contentRepair }),
-    ...(input.context.candidateRevision === undefined ? {} : { candidateRevision: input.context.candidateRevision }),
     ...(input.context.npcOutward === undefined ? {} : { npcOutward: input.context.npcOutward }),
   });
   return {

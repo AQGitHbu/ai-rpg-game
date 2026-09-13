@@ -83,7 +83,7 @@ expect(compileNarrativeDraft({worldDelta:null,sceneDrafts:[]}, context))
 - Reports: 原位更新 `docs/superpowers/reports/2026-09-12-narrative-p1-acceptance.md`，保留旧批次。
 - Plan: 本文件 gates。
 
-- [ ] 完成一次 `npm run accept` 后冻结代码，登记 diag03 获批开局来源与固定政策。
+- [x] 完成一次 `npm run accept` 后冻结代码，登记 diag03 获批开局来源与固定政策。
 
 ```powershell
 node scripts/narrativeP1Journey.mjs --mode=register --profile=focused --run-id=p1-focused-01 --opening-source=artifacts/narrative-p1/p1-diag-03 --protocol=artifacts/narrative-p1/p1-focused-01/protocol.json --output=artifacts/narrative-p1/p1-focused-01
@@ -105,5 +105,5 @@ node scripts/narrativeP1Journey.mjs --mode=live --profile=focused --run-id=p1-fo
 
 - C1：实现与独立复审通过；17 个脚本测试通过，退出任务失败事件与交付前分叉均已验证。
 - C2：实现与独立复审通过；相关 87 tests、typecheck、130 项边界通过。
-- C3：待执行。目标是完整故事，不能由脚本存在或单元测试通过替代。
+- C3：首批 fixed_opening_story 失败，五行动后被审阅对象表示契约阻断，完整失败轨迹已严格重放。只修这一明确接口根因后执行 p1-focused-02；该批仍失败则停止连续重采。完整故事仍待验证，详见验收报告。
 - P1 总结论：未通过；核心诊断、生产创建、UI 与 main 对照分别记证据。
