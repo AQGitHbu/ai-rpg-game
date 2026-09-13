@@ -951,6 +951,33 @@ describe("createNarrativeBundleSource", () => {
     expect(result.proposal.worldDelta).toMatchObject({ endingPair: [{ themeKey: "trust" }, { themeKey: "doubt" }] });
   });
 
+  it("authors a choice-free ending handoff without regenerating an existing ending pair", async () => {
+    const complete = vi.fn().mockResolvedValue({ ok: true, content: JSON.stringify({
+      worldDelta: null,
+      currentScene: { segments: [{ beatId: "closing", text: "众人等你表明最后立场。" }], npcLine: null, objectiveLink: null, choices: [] },
+      continuationScenes: [],
+      terminal: { kind: "ending" },
+    }) });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete), allowLegacyDecisionDto: true });
+    const worldState: WorldState = { ...makeWorldState(), endings: [
+      { id: "ending_trust", name: "信任", description: "", theme: "trust", requirements: [] },
+      { id: "ending_doubt", name: "存疑", description: "", theme: "doubt", requirements: [] },
+    ] as never };
+    const storyState: StoryState = {
+      ...makeStoryState(),
+      endingAllowed: true,
+      evolution: { ...makeStoryState().evolution, status: "needs_ending_pair" },
+    };
+
+    const result = await source.generate({ kind: "decision", worldState, storyState, job: makeJob() });
+
+    expect(result).toMatchObject({ ok: true, kind: "decision", proposal: {
+      worldDelta: null, terminal: { kind: "ending" }, currentScene: { choices: [] }, continuationScenes: [],
+    } });
+    const prompt = (complete.mock.calls[0]![1] as readonly AiMessage[])[0]!.content as string;
+    expect(prompt).toContain("本回合不需要世界演化：worldDelta 必须为 null");
+  });
+
   it("为 story_exit 归一化无 NPC 的退出终局，不把 provider 选项变成第二次行动", async () => {
     const complete = vi.fn().mockResolvedValue({
       ok: true,

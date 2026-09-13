@@ -19,6 +19,7 @@ import { resolveEnding } from "./resolveEnding";
 import { updateStoryMetrics } from "./updateStoryMetrics";
 import { propagateKnownFactsWithDrafts } from "./propagateKnownFacts";
 import { advanceStoryProgression } from "./advanceStoryProgression";
+export { advanceStoryProgression } from "./advanceStoryProgression";
 import { approveCandidateEvents, compileCandidateEvent } from "@/game/gameplay/rpg/candidateEvents";
 import { advanceStoryReveal } from "@/game/gameplay/rpg/worldEvolution";
 import { validateEntityStoreProvenance } from "@/game/domain/entity";

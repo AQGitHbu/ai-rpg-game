@@ -10,13 +10,8 @@ import type { EvolutionNeed } from "@/game/domain/worldDelta";
 // ---------------------------------------------------------------------------
 
 export function deriveEvolutionNeed(ws: WorldState, ss: StoryState): EvolutionNeed {
-  const evolutionStatus = ss.evolution.status;
-  if (evolutionStatus === "needs_next_act") {
-    return { kind: "next_act", act: ss.currentAct };
-  }
-  if (evolutionStatus === "needs_ending_pair") {
-    return { kind: "ending_pair", finalAct: ss.currentAct };
-  }
+  const structural = deriveStructuralEvolutionNeed(ws, ss);
+  if (structural.kind !== "none") return structural;
 
   const pacing = ss.nextPacingNeed;
   if (pacing === "climax" || pacing === "resolve" || pacing === "reveal" || pacing === "develop") {
@@ -24,7 +19,7 @@ export function deriveEvolutionNeed(ws: WorldState, ss: StoryState): EvolutionNe
   }
 
   if (
-    evolutionStatus === "stable" &&
+    ss.evolution.status === "stable" &&
     ss.currentAct >= 2 &&
     budgetAllowsExpansion(ss.budget, "events")
   ) {
@@ -32,5 +27,17 @@ export function deriveEvolutionNeed(ws: WorldState, ss: StoryState): EvolutionNe
     if (pacing === "escalate") return { kind: "pacing", pacingNeed: "escalate" };
   }
 
+  return { kind: "none" };
+}
+
+/** Structural author/approval need; deliberately excludes optional pacing expansion. */
+export function deriveStructuralEvolutionNeed(ws: WorldState, ss: StoryState): EvolutionNeed {
+  const evolutionStatus = ss.evolution.status;
+  if (evolutionStatus === "needs_next_act") {
+    return { kind: "next_act", act: ss.currentAct };
+  }
+  if (evolutionStatus === "needs_ending_pair" && ws.endings.length < 2) {
+    return { kind: "ending_pair", finalAct: ss.currentAct };
+  }
   return { kind: "none" };
 }

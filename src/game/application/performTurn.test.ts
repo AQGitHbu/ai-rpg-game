@@ -288,9 +288,12 @@ describe("performTurn 单次 CAS 提交", () => {
   });
 
   it("最终正式选择结算结局后保留已批准终局，不再创建 pending", async () => {
+    const questId = asQuestId("quest_final");
+    const questOutcome = makeCommittedEvent({ type: "quest_completed", questId }, { eventId: asEventId("turn_final:quest_completed"), sequence: 1, questIds: [questId] });
     const finalWorld = buildWorldState({
+      eventLedger: [...INITIALIZED_LEDGER, questOutcome],
       quests: [{
-        id: asQuestId("quest_final"),
+        id: questId,
         name: "终幕主线",
         description: "查明真相",
         objectives: [{ kind: "visit_location", locationId: asLocationId("loc_1") }],
@@ -316,12 +319,16 @@ describe("performTurn 单次 CAS 提交", () => {
         },
       ],
     });
+    const baseFinalStory = buildFocusedDialogueStoryState();
+    const boundThread = { ...baseFinalStory.threads[0]!, questIds: [questId], status: "advanced" as const };
     const finalStory = {
-      ...buildFocusedDialogueStoryState(),
+      ...baseFinalStory,
       currentAct: 3,
       targetActs: 3,
       storyProgress: 100,
       endingAllowed: true,
+      threads: [boundThread],
+      unresolvedThreads: [boundThread.id],
     };
     const supportToken = finalStory.narrative.status === "ready"
       ? finalStory.narrative.currentScene.choices[0]?.choiceToken
@@ -346,9 +353,12 @@ describe("performTurn 单次 CAS 提交", () => {
 
   it("结局包内没有可消费步骤时，服务端铸造的结局立场仍可结算结局", async () => {
     const base = buildStoryState();
+    const questId = asQuestId("quest_final");
+    const questOutcome = makeCommittedEvent({ type: "quest_completed", questId }, { eventId: asEventId("turn_final:quest_completed"), sequence: 1, questIds: [questId] });
     const finalWorld = buildWorldState({
+      eventLedger: [...INITIALIZED_LEDGER, questOutcome],
       quests: [{
-        id: asQuestId("quest_final"),
+        id: questId,
         name: "终幕主线",
         description: "查明真相",
         objectives: [{ kind: "visit_location", locationId: asLocationId("loc_1") }],
@@ -374,12 +384,15 @@ describe("performTurn 单次 CAS 提交", () => {
         },
       ],
     });
+    const boundThread = { ...base.threads[0]!, questIds: [questId], status: "advanced" as const };
     const endingStory: StoryState = {
       ...base,
       currentAct: 3,
       targetActs: 3,
       storyProgress: 100,
       endingAllowed: true,
+      threads: [boundThread],
+      unresolvedThreads: [boundThread.id],
       narrative: {
         status: "ready",
         mode: "ai",

@@ -43,6 +43,19 @@ describe("deriveEvolutionNeed", () => {
     expect(deriveEvolutionNeed(makeWorld(), ss)).toEqual({ kind: "ending_pair", finalAct: 3 });
   });
 
+  it("does not request a duplicate ending pair when two endings already exist", () => {
+    const ws: WorldState = { ...makeWorld(), endings: [
+      { id: "ending_trust", name: "信任", description: "", theme: "trust", requirements: [] },
+      { id: "ending_doubt", name: "存疑", description: "", theme: "doubt", requirements: [] },
+    ] as never };
+    const ss = {
+      ...makeStory(),
+      currentAct: 3,
+      evolution: { ...makeStory().evolution, status: "needs_ending_pair" as const },
+    };
+    expect(deriveEvolutionNeed(ws, ss)).toEqual({ kind: "none" });
+  });
+
   it("returns none for a normal stable conversation in act 1", () => {
     const ss = makeStory({ currentAct: 1, targetActs: 3, tension: 30 });
     expect(deriveEvolutionNeed(makeWorld(), ss)).toEqual({ kind: "none" });

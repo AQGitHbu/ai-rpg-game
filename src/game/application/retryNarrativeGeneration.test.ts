@@ -5,10 +5,11 @@ import type { GameRecord, GameRepository } from "./server/persistence/gameReposi
 import { asGameId } from "./server/persistence/gameRepository";
 import { createInitialWorldState } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
-import { asGenerationId, asLocationId } from "@/game/domain/worldEntity";
+import { asGenerationId, asLocationId, asQuestId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import { asEventId, asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import { createNarrativeGenerationAttempt } from "@/game/domain/narrativeGenerationAttempt";
+import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
 
 const gameId = asGameId("retry-game");
 
@@ -147,6 +148,52 @@ describe("retryNarrativeGeneration", () => {
       incrementRevision: false,
       expectedNarrativeJob: { status: "provider_failed", jobId: "job_retry" },
     });
+  });
+
+  it("reconciles committed quest-bound threads on the same failed job before requeueing", async () => {
+    const base = makeRecord("failed", "segment_unknown_beat", "AI_RESPONSE_INVALID");
+    if (base.storyState.narrative.status !== "provider_failed") throw new Error("failed fixture missing");
+    const beforeJob = base.storyState.narrative.job;
+    const questId = asQuestId("quest_final");
+    const outcome = makeCommittedEvent({ type: "quest_completed", questId }, {
+      eventId: asEventId("turn_final:quest_completed"), questIds: [questId], actorIds: [PLAYER_ENTITY_ID],
+    });
+    const thread = { ...base.storyState.threads[0]!, id: "thread:final", questIds: [questId], status: "advanced" as const };
+    const record: GameRecord = {
+      ...base,
+      worldState: {
+        ...base.worldState,
+        quests: [{ id: questId, name: "终幕", description: "", objectives: [], onSuccess: { kind: "closed" }, onFailure: { kind: "closed" }, tags: [], kind: "main", stage: 3, status: "completed" }],
+        endings: [
+          { id: "ending_trust", name: "信任", description: "", theme: "trust", requirements: [] },
+          { id: "ending_doubt", name: "存疑", description: "", theme: "doubt", requirements: [] },
+        ] as never,
+        eventLedger: [...base.worldState.eventLedger, outcome],
+      },
+      storyState: {
+        ...base.storyState,
+        currentAct: 3,
+        targetActs: 3,
+        storyProgress: 100,
+        threads: [thread],
+        unresolvedThreads: [thread.id],
+        evolution: { ...base.storyState.evolution, status: "needs_ending_pair" },
+      },
+    };
+    const fixture = makeRepository(record);
+
+    expect(await retryNarrativeGeneration(fixture.repository, gameId, () => "now"))
+      .toMatchObject({ ok: true, result: "requeued", jobId: String(beforeJob.jobId) });
+    const saved = fixture.record();
+    expect(saved.worldState).toEqual(record.worldState);
+    expect(saved.revision).toBe(record.revision);
+    expect(saved.storyState).toMatchObject({
+      endingAllowed: true,
+      unresolvedThreads: [],
+      evolution: { status: "stable" },
+      narrative: { status: "provider_pending", job: { jobId: beforeJob.jobId, actionId: beforeJob.actionId } },
+    });
+    expect(saved.storyState.threads[0]).toMatchObject({ status: "resolved", evidenceEventIds: [outcome.eventId] });
   });
 
   it("two concurrent retries only requeue once", async () => {

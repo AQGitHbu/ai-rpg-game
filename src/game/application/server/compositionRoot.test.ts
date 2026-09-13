@@ -17,6 +17,8 @@ import { asGameId, type ApplyStateInput, type GameRecord, type GameRepository } 
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import { createEmptyEpisodicMemory } from "@/game/domain/episodicMemory";
+import { createInitialStoryState } from "@/game/domain/storyState";
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 
 describe("getServerGameEntryPoints", () => {
   it("returns one process-wide entry point so route bundles share the narrative ensure lock", () => {
@@ -46,6 +48,10 @@ function createFailedStateFakeRepository(): {
   const appliedStateCalls: ApplyStateInput[] = [];
 
   const buildRecord = (): GameRecord => {
+    const baseStory = createInitialStoryState({
+      initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short",
+      initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 },
+    });
     const generation =
       generationStatus === "failed"
         ? {
@@ -58,13 +64,15 @@ function createFailedStateFakeRepository(): {
       gameId: asGameId("game-retry-combined"),
       worldState: {
         eventLedger: [],
+        quests: [],
+        endings: [],
         currentLocationId: "loc_retry",
         battle: { status: "idle" },
       } as unknown as WorldState,
       storyState: {
+        ...baseStory,
         memory: createEmptyEpisodicMemory(),
         narrative: generation,
-        evolution: { status: "idle" },
       } as unknown as StoryState,
       revision: 5,
       createdAt: "2026-01-01T00:00:00.000Z",

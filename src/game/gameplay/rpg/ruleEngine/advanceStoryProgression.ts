@@ -3,6 +3,7 @@ import type { StoryState } from "@/game/domain/storyState";
 import type { NarrativeEventDraft } from "@/game/domain/events";
 import { derivePacingNeed } from "@/game/domain/storyState";
 import { unresolvedStoryThreadIds } from "@/game/domain/storyThreads";
+import { reconcileRuleDerivedStoryThreads } from "@/game/gameplay/rpg/storyThreads";
 
 export type StoryProgressionResult = {
   readonly nextStoryState: StoryState;
@@ -93,9 +94,11 @@ export function advanceStoryProgression(
   const currentActMainQuestExists = hasCurrentActMainQuest(ws, currentAct);
   const mainQuestsResolved = allMainQuestsResolved(ws);
 
-  // 最终幕主线全部解决 → 回收主线 thread。
+  // 最终幕主线全部解决时，只回收具备可验证规则绑定的 thread。多个 thread
+  // 可以绑定同一 Quest；无绑定或另有 closure/goal/promise 的 concern 不会被
+  // “第一个 question”替代或顺带关闭。
   if (currentAct >= ss.targetActs && currentActMainQuestExists && mainQuestsResolved) {
-    threads = threads.map((entry) => entry.id === thread ? { ...entry, status: "resolved" as const } : entry);
+    threads = reconcileRuleDerivedStoryThreads({ worldState: ws, threads, eventDrafts: newDrafts });
     unresolvedThreads = unresolvedStoryThreadIds(threads);
   }
 
@@ -136,9 +139,11 @@ export function advanceStoryProgression(
     ? "needs_next_act"
     : currentAct >= ss.targetActs && !currentActMainQuestExists
       ? "needs_next_act"
-      : currentAct >= ss.targetActs && mainQuestsResolved
+      : currentAct >= ss.targetActs && mainQuestsResolved && ws.endings.length < 2
       ? "needs_ending_pair"
-      : ss.evolution.status;
+      : ss.evolution.status === "needs_ending_pair" && ws.endings.length >= 2
+        ? "stable"
+        : ss.evolution.status;
 
   return {
     nextStoryState: {

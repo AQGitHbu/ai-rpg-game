@@ -1,7 +1,7 @@
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, it, expect } from "vitest";
 import { advanceStoryProgression } from "./advanceStoryProgression";
-import { createInitialStoryState } from "@/game/domain/storyState";
+import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
 import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
 import { createWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 import type { WorldState } from "@/game/domain/worldState";
@@ -117,7 +117,11 @@ describe("advanceStoryProgression", () => {
       currentAct: 3,
       targetActs: 3,
       storyProgress: 85,
-      unresolvedThreads: [],
+      threads: [{
+        ...ss.threads[0]!,
+        questIds: [asQuestId("q_final")],
+      }],
+      unresolvedThreads: [ss.threads[0]!.id],
     };
     const ws = makeWorld({
       quests: [{
@@ -126,7 +130,11 @@ describe("advanceStoryProgression", () => {
         kind: "main", stage: 3, status: "completed",
       }],
     });
-    const result = advanceStoryProgression(ws, nearEnd, []);
+    const result = advanceStoryProgression(ws, nearEnd, [{
+      eventKey: "quest_completed:q_final", episodeKey: "turn", actorIds: [PLAYER_ENTITY_ID], targetIds: [PLAYER_ENTITY_ID], locationId: null,
+      causeKeys: [], factIds: [], questIds: [asQuestId("q_final")], outcome: "success", salience: 80,
+      payload: { type: "quest_completed", questId: asQuestId("q_final") },
+    } as unknown as NarrativeEventDraft]);
     expect(result.nextStoryState.endingAllowed).toBe(true);
   });
 
@@ -196,5 +204,56 @@ describe("advanceStoryProgression", () => {
     const finalAct = { ...ss, currentAct: 3, targetActs: 3, unresolvedThreads: ["thread_main"] };
     const result = advanceStoryProgression(ws, finalAct, events);
     expect(result.nextStoryState.unresolvedThreads).not.toContain("thread_main");
+  });
+
+  it("closes every justified quest-bound thread but leaves explicit and unrelated concerns unresolved", () => {
+    const questId = asQuestId("q_final");
+    const ws = makeWorld({
+      quests: [{ id: questId, name: "终局", description: "", objectives: [], onSuccess: { kind: "closed" }, onFailure: { kind: "closed" }, tags: [], kind: "main", stage: 3, status: "completed" }],
+    });
+    const baseThread = ss.threads[0]!;
+    const threads: StoryState["threads"] = [
+      { ...baseThread, id: "thread:ferry", questIds: [questId] },
+      { ...baseThread, id: "thread:first_run", questIds: [questId] },
+      { ...baseThread, id: "thread:unrelated", questIds: [] },
+      { ...baseThread, id: "thread:explicit", questIds: [questId], closure: [{ kind: "knows_fact" as const, actorId: PLAYER_ENTITY_ID, factId: "fact_unmet" as never }] },
+    ];
+    const result = advanceStoryProgression(ws, {
+      ...ss, currentAct: 3, targetActs: 3, storyProgress: 100, threads,
+      unresolvedThreads: threads.map((entry) => entry.id),
+    }, [{
+      eventKey: "quest_completed:q_final", episodeKey: "turn", actorIds: [PLAYER_ENTITY_ID], targetIds: [PLAYER_ENTITY_ID], locationId: null,
+      causeKeys: [], factIds: [], questIds: [questId], outcome: "success", salience: 80,
+      payload: { type: "quest_completed", questId },
+    } as unknown as NarrativeEventDraft]);
+
+    expect(result.nextStoryState.threads.map((entry) => [entry.id, entry.status])).toEqual([
+      ["thread:ferry", "resolved"],
+      ["thread:first_run", "resolved"],
+      ["thread:unrelated", "open"],
+      ["thread:explicit", "open"],
+    ]);
+    expect(result.nextStoryState.endingAllowed).toBe(false);
+  });
+
+  it("keeps evolution stable after a prepared ending pair and opens the ending when all bound concerns conclude", () => {
+    const questId = asQuestId("q_final");
+    const ws = { ...makeWorld({
+      quests: [{ id: questId, name: "终局", description: "", objectives: [], onSuccess: { kind: "closed" }, onFailure: { kind: "closed" }, tags: [], kind: "main", stage: 3, status: "completed" }],
+    }), endings: [
+      { id: "ending_trust", name: "信任", description: "", theme: "trust", requirements: [] },
+      { id: "ending_doubt", name: "存疑", description: "", theme: "doubt", requirements: [] },
+    ] as never };
+    const thread = { ...ss.threads[0]!, questIds: [questId], status: "advanced" as const };
+    const result = advanceStoryProgression(ws, {
+      ...ss, currentAct: 3, targetActs: 3, storyProgress: 100,
+      threads: [thread], unresolvedThreads: [thread.id],
+      evolution: { ...ss.evolution, status: "needs_ending_pair" },
+    }, [{
+      eventKey: "quest_completed:q_final", episodeKey: "turn", actorIds: [PLAYER_ENTITY_ID], targetIds: [PLAYER_ENTITY_ID], locationId: null,
+      causeKeys: [], factIds: [], questIds: [questId], outcome: "success", salience: 80,
+      payload: { type: "quest_completed", questId },
+    } as unknown as NarrativeEventDraft]);
+    expect(result.nextStoryState).toMatchObject({ endingAllowed: true, evolution: { status: "stable" }, unresolvedThreads: [] });
   });
 });

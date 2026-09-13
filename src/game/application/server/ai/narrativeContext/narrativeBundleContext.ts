@@ -30,6 +30,7 @@ import {
 import { renderAiRepairFeedback } from "../../../aiGenerationRetry";
 import { buildOpeningHandoffContext } from "./openingHandoffContext";
 import { projectNarrativeDraft } from "../narrativeDraftProjection";
+import { deriveStructuralEvolutionNeed } from "@/game/gameplay/rpg/worldEvolution";
 
 // P1 live journeys may run in provider thinking mode, whose effective input
 // budget is provider-specific. Keep the compiler's bounded mode available for
@@ -299,6 +300,7 @@ export function buildDecisionNarrativeContextBlocks(
         mode: "progress",
       });
   const narrativeBeats = job.mandatoryBeats.filter((beat) => beat.beatId !== ATMOSPHERE_BEAT_ID);
+  const structuralEvolutionNeed = deriveStructuralEvolutionNeed(worldState, storyState);
   const beatLines = job.mandatoryBeats.map((beat) => {
     const requirement = beat.beatId === ATMOSPHERE_BEAT_ID
       ? "可选，可省略；若写，必须放在所有 segments 最后"
@@ -319,9 +321,9 @@ export function buildDecisionNarrativeContextBlocks(
       : job.actionSummary.kind === "abandon_quest"
         ? `玩家明确放弃主线任务：${String(job.actionSummary.questId)}。这是一次正式退出，不是普通移动或对话；请生成无 NPC、无 choices 的退出收束。`
       : `玩家行动：${job.actionSummary.kind}`;
-  const evolutionRequirement = storyState.evolution.status === "needs_next_act"
+  const evolutionRequirement = structuralEvolutionNeed.kind === "next_act"
     ? `本回合已进入第 ${storyState.currentAct} 幕：worldDelta 绝不能为 null，必须提供 newLocation、newNpc、newItem、newEnemy、nextMainQuest；其余字段可为 null。`
-    : storyState.evolution.status === "needs_ending_pair"
+    : structuralEvolutionNeed.kind === "ending_pair"
       ? `本回合需要结局：worldDelta 绝不能为 null，且必须在 worldDelta 内同时提供非空 beatSummary 和 trust/doubt endingPair（例如 {"beatSummary":"本轮终局节拍摘要","endingPair":[...]}）；这两个字段都不能置于顶层；不能创建地点、NPC、物品、敌人、任务；${reviewing ? "currentScene 是唯一场景，terminal.kind=ending。" : "仅输出 current 槽，终点由服务端编译为 ending。"}`
       : job.actionSummary.kind === "abandon_quest"
         ? `本回合是正式退出：worldDelta 必须为 null；不能创建实体、修改任务或承诺；${reviewing ? "currentScene 是唯一场景，terminal.kind=ending，currentScene.choices" : "仅输出 current 槽，终点由服务端编译为 ending，current 槽 choices"} 必须为 [] 且 npcLine 必须为 null。`

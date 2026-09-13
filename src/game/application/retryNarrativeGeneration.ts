@@ -4,6 +4,7 @@ import type { GameRepository } from "./server/persistence/gameRepository";
 import { commitState } from "./stateCommit";
 import { providerAllowedFor } from "@/game/gameplay/rpg/narrativeExecution";
 import { advanceNarrativeGenerationEpoch, createNarrativeGenerationAttempt } from "@/game/domain/narrativeGenerationAttempt";
+import { advanceStoryProgression } from "@/game/gameplay/rpg/ruleEngine";
 
 export type RetryNarrativeGenerationResult =
   | { readonly ok: true; readonly result: "requeued" | "already_pending" | "not_failed"; readonly jobId?: string }
@@ -35,13 +36,21 @@ export async function retryNarrativeGeneration(
   const repairReason = repairFromSourceFailure({ ok: false, failure: generation.failure, repairReason: generation.failure.reason }, 1).reason;
   const nextAttempt = advanceNarrativeGenerationEpoch(generation.job.attempt ?? createNarrativeGenerationAttempt());
   const failedAttempt = generation.job.attempt;
+  // Retry is the recovery boundary for derived rule state. Reconcile from the
+  // already committed World/Event ledger without replaying the Action or
+  // inventing an ending, then restore this exact failed job on that state.
+  const reconciledStoryState = advanceStoryProgression(
+    current.record.worldState,
+    current.record.storyState,
+    [],
+  ).nextStoryState;
 
   const committed = await commitState(repository, {
     gameId,
     expectedRevision: current.record.revision,
     nextWorldState: current.record.worldState,
     nextStoryState: {
-      ...current.record.storyState,
+      ...reconciledStoryState,
       narrative: {
         status: "provider_pending",
         mode: generation.mode,

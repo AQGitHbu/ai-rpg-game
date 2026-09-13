@@ -401,7 +401,9 @@ describe("resolveTurn facade", () => {
       locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: true,
       memory: { npcId: asNpcId("npc_final"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
     };
+    const questOutcome = makeCommittedEvent({ type: "quest_completed", questId }, { sequence: 1, questIds: [questId] });
     const finalWs = makeWorld({
+      eventLedger: [...INITIALIZED_LEDGER, questOutcome],
       npcs: [finalNpc],
       quests: [{
         id: questId, name: "终幕主线", description: "d",
@@ -414,12 +416,14 @@ describe("resolveTurn facade", () => {
         { id: "ending_doubt" as EndingId, name: "独自揭露", description: "d", requirements: [{ kind: "npc_affinity_at_most", npcId: finalNpc.id, value: 0 }] },
       ],
     });
+    const boundThread = { ...ss.threads[0]!, questIds: [questId], status: "advanced" as const };
     const ssFinalAct = {
       ...ss,
       currentAct: 3,
       targetActs: 3,
       storyProgress: 85,
-      unresolvedThreads: [],
+      threads: [boundThread],
+      unresolvedThreads: [boundThread.id],
       endingAllowed: true,
     };
 

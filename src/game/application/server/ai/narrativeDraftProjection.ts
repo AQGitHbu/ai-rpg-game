@@ -37,6 +37,7 @@ export function projectNarrativeDraft(input: NarrativeDraftContext) {
     includeDeliveryReturn: input.includeDeliveryReturn,
   });
   const ending = (input.storyState.evolution.status === "needs_ending_pair" && worldState.endings.length < 2)
+    || (input.storyState.endingAllowed && worldState.endings.length >= 2)
     || input.job.actionSummary.kind === "abandon_quest";
   const nextActProjection = !ending && input.storyState.evolution.status === "needs_next_act"
     ? { locationId: `loc_dyn_${input.storyState.evolution.nextLocationOrdinal}`, npcId: `npc_dyn_${input.storyState.evolution.nextNpcOrdinal}` }

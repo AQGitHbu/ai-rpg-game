@@ -62,6 +62,24 @@ describe("narrative draft projection and compilation", () => {
     expect(compileNarrativeDraft({ worldDelta: null, sceneDrafts: [{ slotKey: "current", scene: currentScene }] }, input)).toEqual({ ok: true, value: { worldDelta: null, currentScene, continuationScenes: [], terminal: { kind: "ending" } } });
   });
 
+  it("projects the ending handoff without another world delta when an approved pair already exists", () => {
+    const base = context();
+    const input: NarrativeDraftContext = {
+      ...base,
+      worldState: { ...base.worldState, endings: [
+        { id: "ending_trust", name: "信任", description: "", theme: "trust", requirements: [] },
+        { id: "ending_doubt", name: "存疑", description: "", theme: "doubt", requirements: [] },
+      ] as never },
+      storyState: { ...base.storyState, endingAllowed: true },
+    };
+    expect(projectNarrativeDraft(input)).toMatchObject({
+      slots: [{ slotKey: "current", choiceCount: 0 }],
+      terminal: { kind: "ending" },
+    });
+    expect(compileNarrativeDraft({ worldDelta: null, sceneDrafts: [{ slotKey: "current", scene: scene("终幕回应。", 0) }] }, input))
+      .toMatchObject({ ok: true, value: { worldDelta: null, terminal: { kind: "ending" } } });
+  });
+
   it("rejects missing, unknown and duplicate slots with their precise paths", () => {
     const input = context();
     const current = { slotKey: "current", scene: scene("正文", 2) };
