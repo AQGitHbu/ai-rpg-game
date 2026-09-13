@@ -30,7 +30,7 @@ function interaction(overrides: Partial<StoryInteraction> = {}): StoryInteractio
   return {
     id: "interaction:share",
     npcId: MESSENGER,
-    operation: "share_known_fact",
+    operation: "request_introduction",
     condition: [],
     factIds: [FACT],
     goalIds: [],
@@ -190,6 +190,7 @@ describe("resolveStoryInteraction", () => {
     const current = world(interaction({
       id: "interaction:promise",
       operation: "promise_confidentiality",
+      confidentiality: { protectedFactIds: [FACT], allowedAudienceIds: [PLAYER_ENTITY_ID, MESSENGER], fulfillment: { kind: "story_delivery" } },
       factIds: [FACT],
       audienceIds: [PLAYER_ENTITY_ID],
     }));
@@ -259,5 +260,24 @@ describe("resolveStoryInteraction", () => {
     }, deps);
 
     expect(result).toEqual({ ok: false, feedback: "互动听众无效。" });
+  });
+});
+
+describe("player sharing authority", () => {
+  it("requires player knowledge and a present target, and records player_told only after selection", () => {
+    const definition = interaction({ operation: "share_known_fact", audienceIds: [MESSENGER, WITNESS] });
+    const unknown = world(definition);
+    const action = { type: "talk" as const, npcId: MESSENGER, interactionId: definition.id, dialogueAct: "ask" as const };
+    expect(resolveStoryInteraction(unknown, action, deps).ok).toBe(false);
+    const records = unknown.entityStore.records.map((record): EntityRecord => record.core.kind === "player_character" ? { ...(record as PlayerEntityRecord), knowledge: { ...(record as PlayerEntityRecord).knowledge, knownFactIds: [FACT] } } : record);
+    const known = { ...unknown, entityStore: createEntityStore(records) };
+    expect(npcRecord(getEntity(known.entityStore, WITNESS)).knowledge.entries).toHaveLength(0);
+    const result = resolveStoryInteraction(known, action, deps);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.drafts[0]?.actorIds).toEqual([PLAYER_ENTITY_ID]);
+    expect(npcRecord(getEntity(result.nextWorldState.entityStore, WITNESS)).knowledge.entries[0]?.source).toMatchObject({ kind: "action", mode: "player_told" });
+    const remoteRecords = known.entityStore.records.map((record) => record.core.id === WITNESS ? { ...record, position: { ...(record as NpcEntityRecord).position, locationId: asLocationId("loc_remote") } } : record);
+    expect(resolveStoryInteraction({ ...known, entityStore: createEntityStore(remoteRecords) }, action, deps).ok).toBe(false);
   });
 });

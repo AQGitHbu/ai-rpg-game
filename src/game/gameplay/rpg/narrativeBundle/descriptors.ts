@@ -14,7 +14,6 @@ import {
 } from "@/game/domain/worldState";
 import { locationScaleOf } from "@/game/domain/worldEntity";
 import {
-  RETURN_REQUIRED_ITEM_TAG,
   asItemId,
   type FactId,
   type ItemId,
@@ -60,6 +59,8 @@ export type BuildNarrativeBundleDescriptorsInput = {
   readonly worldState: WorldState;
   readonly storyState: StoryState;
   readonly transition: ObjectiveTransition;
+  /** Explicitly requested, structurally approved return to the original giver. */
+  readonly includeDeliveryReturn?: boolean;
 };
 
 function objectiveKey(questId: QuestId, objectiveIndex: number): string {
@@ -157,10 +158,12 @@ function authorizedFactIdsForArrivalNpc(
 function deliveryItemForFinalAct(
   worldState: WorldState,
   storyState: StoryState,
+  npcId: NpcId,
 ): ItemId | undefined {
+  if (storyState.delivery?.recipientNpcId !== npcId) return undefined;
   if (storyState.currentAct < storyState.targetActs || storyState.contract.delivery === undefined) return undefined;
   const item = worldState.items.find((candidate) =>
-    worldState.inventory.includes(candidate.id) && candidate.tags.includes(RETURN_REQUIRED_ITEM_TAG));
+    worldState.inventory.includes(candidate.id) && candidate.id === storyState.delivery?.itemId);
   return item?.id ?? undefined;
 }
 
@@ -283,6 +286,24 @@ export function buildNarrativeBundleDescriptors(
     };
   }
 
+  if (input.includeDeliveryReturn === true && storyState.delivery !== undefined) {
+    const { itemId, giverNpcId } = storyState.delivery;
+    const item = getEntity(worldState.entityStore, itemId);
+    const giver = findNpc(worldState, giverNpcId);
+    const owner = item?.core.kind === "item" ? (item as import("@/game/domain/entity").ItemEntityRecord).possession.owner : undefined;
+    if (giver !== undefined && giver.locationId === worldState.currentLocationId && owner?.kind === "player") {
+      const arrivalNpc = preparedNpcContext(worldState, giver);
+      const trigger: NarrativeBundleTrigger = { kind: "give_item", itemId, npcId: giverNpcId };
+      const stepKey = narrativeBundleTriggerKey(trigger);
+      return { steps: [{ stepKey, objectiveKey: objectiveKey(quest.id, transition.after.objectiveIndex),
+        consumptionGroupKey: groupKeyFor(quest.id, transition.after.objectiveIndex, "give_item", "return"),
+        trigger, absorbedObjectiveIndexes: [], authority: { questId: quest.id, objectiveIndex: transition.after.objectiveIndex,
+          allowedEntityIds: [String(itemId), String(giverNpcId)], visibleFactIds: authorizedFactIdsForArrivalNpc(arrivalNpc) },
+        arrivalNpc, choiceCandidates: choicesForNpc(arrivalNpc, stepKey), nextStepKeys: [] }],
+        activeStepKeys: [stepKey], currentChoiceCandidates: [], terminal: { kind: "next_decision", target: { kind: "continuation_step", stepKey } } };
+    }
+  }
+
   const descriptors: BundleStepDescriptor[] = [];
 
   const setSuccessors = (stepKey: string, nextStepKeys: readonly string[]): void => {
@@ -317,6 +338,19 @@ export function buildNarrativeBundleDescriptors(
     // battle resolution to be consumed without another AI call and still
     // land on the server-owned dialogue boundary.
     if (objective.kind === "talk_to_npc") {
+      const targetNpc = findNpc(worldState, objective.npcId);
+      const targetContext = targetNpc === undefined ? undefined : preparedNpcContext(worldState, targetNpc);
+      const deliveryItemId = deliveryItemForFinalAct(worldState, storyState, objective.npcId);
+      if (descriptors.length === 0 && deliveryItemId !== undefined && targetContext !== undefined && (targetContext.interactionIds?.length ?? 0) === 0) {
+        const trigger: NarrativeBundleTrigger = { kind: "give_item", itemId: deliveryItemId, npcId: objective.npcId };
+        const stepKey = narrativeBundleTriggerKey(trigger);
+        descriptors.push({ stepKey, objectiveKey: objectiveKey(activeQuest.id, objectiveIndex),
+          consumptionGroupKey: groupKeyFor(activeQuest.id, objectiveIndex, "give_item", branchKey), trigger,
+          absorbedObjectiveIndexes: [objectiveIndex], authority: { questId: activeQuest.id, objectiveIndex,
+            allowedEntityIds: [String(deliveryItemId), String(objective.npcId)], visibleFactIds: authorizedFactIdsForArrivalNpc(targetContext) },
+          arrivalNpc: targetContext, choiceCandidates: choicesForNpc(targetContext, stepKey), nextStepKeys: [] });
+        return [stepKey];
+      }
       const lastDesc = descriptors[descriptors.length - 1];
       if (lastDesc !== undefined) {
         const idx = descriptors.length - 1;
@@ -398,7 +432,7 @@ export function buildNarrativeBundleDescriptors(
       const allAbsorbed = [...absorbedIndexes, objectiveIndex];
       const deliveryItemId = arrivalNpc === undefined
         ? undefined
-        : deliveryItemForFinalAct(worldState, storyState);
+        : deliveryItemForFinalAct(worldState, storyState, arrivalNpc.id);
       descriptors.push({
         stepKey,
         objectiveKey: objectiveKey(activeQuest.id, objectiveIndex),
@@ -415,7 +449,7 @@ export function buildNarrativeBundleDescriptors(
           visibleFactIds: arrivalNpc === undefined ? [] : authorizedFactIdsForArrivalNpc(arrivalNpc),
         },
         ...(arrivalNpc === undefined ? {} : { arrivalNpc }),
-        choiceCandidates: deliveryItemId === undefined ? choicesForNpc(arrivalNpc, stepKey) : [],
+        choiceCandidates: deliveryItemId === undefined || (arrivalNpc?.interactionIds?.length ?? 0) > 0 ? choicesForNpc(arrivalNpc, stepKey) : [],
         nextStepKeys: [],
       });
       if (arrivalNpc === undefined) {
@@ -446,7 +480,7 @@ export function buildNarrativeBundleDescriptors(
         ...descriptors[moveDescriptorIndex]!,
         absorbedObjectiveIndexes: [...allAbsorbed],
       };
-      if (deliveryItemId !== undefined) {
+      if (deliveryItemId !== undefined && (arrivalNpc.interactionIds?.length ?? 0) === 0) {
         const giveTrigger: NarrativeBundleTrigger = {
           kind: "give_item",
           itemId: asItemId(deliveryItemId),

@@ -11,7 +11,7 @@ import type {
 } from "./worldEntries";
 import type { EntityStore } from "./entity/entityStore";
 import type { StoryThread } from "./storyThreads";
-import type { DialogueFocus } from "./storyState";
+import type { DialogueFocus, StoryDeliveryState } from "./storyState";
 import type { NpcImportedLayers } from "./entity/npcProjection";
 import {
   compileEntityStoreFromCompatibilityProjection,
@@ -44,6 +44,7 @@ export type BattleStartSnapshot = Readonly<{
   readonly threads?: readonly StoryThread[];
   /** Conversation references visible before the battle; rollback restores them exactly. */
   readonly dialogueFocus?: DialogueFocus | null;
+  readonly delivery?: StoryDeliveryState | null;
 }>
 
 export type EndingState = { readonly endingId: EndingId; readonly outcome: "success" | "failure" } | null;

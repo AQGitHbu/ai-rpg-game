@@ -44,6 +44,14 @@ describe("resolveEnding", () => {
     expect(result.drafts).toHaveLength(0);
   });
 
+  it("does not turn a final stance into delivery without an actual bound handover", () => {
+    const ws = { ...baseWs, endings: [{ id: asEndingId("e1"), name: "end", description: "t", requirements: [] }] };
+    const ss = { ...baseSs, endingAllowed: true, contract: { ...baseSs.contract, delivery: {
+      itemKey: "letter", recipientKey: "contact", verificationFactKeys: ["proof"],
+    } } };
+    expect(resolveEnding(ws, ss).nextWorldState.ending).toBeNull();
+  });
+
   it("selects mutually exclusive endings from the key NPC affinity", () => {
     const keyNpc = {
       id: asNpcId("npc_key"), name: "线人", role: "ally", description: "t",

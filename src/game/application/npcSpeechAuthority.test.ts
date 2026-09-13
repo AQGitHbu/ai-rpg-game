@@ -428,7 +428,7 @@ describe("NpcSpeechAuthority", () => {
         interactionProposals: [{
           proposalKey: "secret_share",
           npcId: NPC_A,
-          operation: "share_known_fact",
+          operation: "request_introduction",
           condition: [],
           factIds: [FACT_SECRET],
           goalIds: [],

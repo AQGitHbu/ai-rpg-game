@@ -11,7 +11,7 @@ import { createGame } from "../createGame";
 import { performTurn } from "../performTurn";
 import { projectGameSessionView } from "../gameSessionView";
 import { createNarrativeBundleSourceFactory } from "../server/ai/sourceFactory";
-import { createServerRpgAiClient } from "../server/ai/rpgAiClient";
+import { createServerRpgAiClient, type RpgAiRuntime } from "../server/ai/rpgAiClient";
 import { createNarrativeRequestClient } from "../server/ai/narrativeRequestClient";
 import { createLiveNarrativeCandidateReview } from "../server/ai/liveNarrativeCandidateReview";
 import { createLiveNpcDeliberationSource } from "../server/ai/liveNpcDeliberationSource";
@@ -224,6 +224,9 @@ export function createServerGameEntryPoints(
     /** Optional batch guard used by bounded acceptance runners. */
     readonly beforeNarrativeHttpAttempt?: () => Promise<boolean> | boolean;
     readonly narrativeAbortSignal?: AbortSignal;
+    readonly aiRuntime?: RpgAiRuntime;
+    readonly identity?: (kind: "gameId" | "generationSeed") => string;
+    readonly domainTime?: (key: string) => string;
   }> = {},
 ): ServerGameEntryPoints {
   const logRuntime = createServerLogRuntime(env);
@@ -244,7 +247,7 @@ export function createServerGameEntryPoints(
   const aiEnabled = aiConfig.status === "available";
   // One provider transport/client per server composition root. Role policy,
   // thinking mode, budgets, and transient retries are centralized there.
-  const aiClient = createServerRpgAiClient(env, logger, auditRecorder);
+  const aiClient = createServerRpgAiClient(env, logger, auditRecorder, options.aiRuntime);
   const narrativeRequestClient = createNarrativeRequestClient({
     aiClient,
     beforeTransportAttempt: options.beforeNarrativeHttpAttempt,
@@ -270,6 +273,7 @@ export function createServerGameEntryPoints(
       repository,
       source: narrativeBundleSource,
       now,
+      domainTime: options.domainTime,
       logger,
       reviewer: narrativeCandidateReviewer,
       npcDeliberationSource,
@@ -434,8 +438,8 @@ export function createServerGameEntryPoints(
 
   return {
     createGame: async (input, traceId) => {
-      const gameId = asGameId(randomUUID());
-      const generationSeed = randomUUID();
+      const gameId = asGameId(options.identity?.("gameId") ?? randomUUID());
+      const generationSeed = options.identity?.("generationSeed") ?? randomUUID();
       let replaceCurrent: { readonly expectedGameId: GameId; readonly expectedRevision: number } | undefined;
       if (input.restart !== undefined) {
         const current = await repository.getCurrentGame();
@@ -467,7 +471,7 @@ export function createServerGameEntryPoints(
         {
           repository,
           source: narrativeBundleSource,
-          now,
+          now: () => options.domainTime?.(`opening:${gameId}`) ?? now(),
           aiEnabled,
           reviewer: narrativeCandidateReviewer,
           ...(options.narrativeAbortSignal === undefined ? {} : { signal: options.narrativeAbortSignal }),
@@ -497,7 +501,7 @@ export function createServerGameEntryPoints(
         { gameId: current.record.gameId, actionId: command.actionId, interaction: command.interaction, expectedRevision: command.expectedRevision, choiceMap },
         {
           repository,
-          now,
+          now: () => options.domainTime?.(`action:${command.actionId}`) ?? now(),
           auditLink: { gameId: String(current.record.gameId), traceId },
         },
       );

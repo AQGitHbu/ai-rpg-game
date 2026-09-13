@@ -217,13 +217,26 @@ export function authorizeNpcDeliberationOutward(input: {
     if (parsed.value.goalIds.some((goalId) => !currentGoalIds.has(goalId))) {
       return { ok: false, code: "invalid_interaction_proposal" };
     }
-    if (parsed.value.factIds.some((factId) => !knownFactIds.has(String(factId)))) {
+    const playerSharing = parsed.value.operation === "share_known_fact";
+    const player = getEntity(input.store, "player_0");
+    const sharingFacts = player?.core.kind === "player_character" ? (player as import("@/game/domain/entity").PlayerEntityRecord).knowledge.knownFactIds : [];
+    if (parsed.value.factIds.some((factId) => playerSharing ? !sharingFacts.includes(factId) : !knownFactIds.has(String(factId)))) {
       return { ok: false, code: "invalid_interaction_proposal" };
+    }
+    if (parsed.value.confidentiality !== undefined) {
+      const speaker = getEntity(input.store, input.speakerNpcId);
+      if (speaker?.core.kind !== "npc" || parsed.value.confidentiality.protectedFactIds.some((factId) => !(speaker as NpcEntityRecord).knowledge.entries.some((entry) => entry.factId === factId))
+        || parsed.value.confidentiality.allowedAudienceIds.some((id) => !isValidNpcSpeechTarget(input.store, id as PlayerEntityId | NpcId))) return { ok: false, code: "invalid_interaction_proposal" };
     }
     if (parsed.value.audienceIds.length === 0) {
       return { ok: false, code: "invalid_interaction_proposal" };
     }
+    if (playerSharing && (!parsed.value.audienceIds.includes(input.speakerNpcId) || parsed.value.audienceIds.some((id) => {
+      const target = getEntity(input.store, id);
+      return target?.core.kind !== "npc" || (target as NpcEntityRecord).position.locationId !== speaker.position.locationId;
+    }))) return { ok: false, code: "invalid_interaction_proposal" };
     for (const targetId of parsed.value.audienceIds) {
+      if (playerSharing) continue;
       if (!isValidNpcSpeechTarget(input.store, targetId as PlayerEntityId | NpcId)
         || String(targetId) === String(input.speakerNpcId)) {
         return { ok: false, code: "invalid_interaction_proposal" };

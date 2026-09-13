@@ -21,9 +21,8 @@ import type {
 } from "./gameRepository";
 import {
   classifyStoryStateSchemaVersion,
-  type StoryState,
 } from "@/game/domain/storyState";
-import { classifyWorldStateSchemaVersion, WORLD_STATE_SCHEMA_VERSION } from "@/game/domain/worldState";
+import { classifyWorldStateSchemaVersion, WORLD_STATE_SCHEMA_VERSION, type WorldState } from "@/game/domain/worldState";
 import type { CommittedNarrativeEvent } from "@/game/domain/events";
 import { parseOpeningVariationProfile, type OpeningNoveltyRecord } from "@/game/domain/openingNovelty";
 import { validatePersistableWorldState } from "./worldStatePersistenceValidation";
@@ -172,8 +171,8 @@ function serializeValidatedWorldState(value: unknown): string | null {
   return validated.ok ? JSON.stringify(validated.value) : null;
 }
 
-function serializeValidatedStoryState(value: unknown, ledger: readonly CommittedNarrativeEvent[]): string | null {
-  const validated = parsePersistableStoryState(value, ledger);
+function serializeValidatedStoryState(value: unknown, world: WorldState): string | null {
+  const validated = parsePersistableStoryState(value, world.eventLedger, world.entityStore);
   return validated.ok ? JSON.stringify(validated.value) : null;
 }
 
@@ -218,7 +217,7 @@ function interpretGameRow(row: Record<string, unknown>): GetCurrentGameResult {
   }
   const parsedWorldState = validatePersistableWorldState(worldState);
   if (!parsedWorldState.ok) return corrupt("ENTITY_STATE_INVALID");
-  const parsedStoryState = parsePersistableStoryState(storyState, parsedWorldState.value.eventLedger);
+  const parsedStoryState = parsePersistableStoryState(storyState, parsedWorldState.value.eventLedger, parsedWorldState.value.entityStore);
   if (!parsedStoryState.ok) {
     return corrupt(parsedStoryState.code === "UNSUPPORTED_RECORD"
       ? "UNSUPPORTED_RECORD"
@@ -286,7 +285,7 @@ export function createSqliteGameRepository(
         }
         const worldStateJson = serializeValidatedWorldState(input.worldState);
         if (worldStateJson === null) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
-        const storyStateJson = serializeValidatedStoryState(input.storyState, input.worldState.eventLedger);
+        const storyStateJson = serializeValidatedStoryState(input.storyState, input.worldState);
         if (storyStateJson === null) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
         await tx.execute({
           sql: `INSERT INTO game_records (game_id, record_version, world_state_json, story_state_json, created_at, revision)
@@ -386,7 +385,7 @@ export function createSqliteGameRepository(
         }
         const worldStateJson = serializeValidatedWorldState(input.worldState);
         if (worldStateJson === null) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
-        const storyStateJson = serializeValidatedStoryState(input.storyState, input.worldState.eventLedger);
+        const storyStateJson = serializeValidatedStoryState(input.storyState, input.worldState);
         if (storyStateJson === null) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
 
         await tx.execute({
@@ -478,7 +477,7 @@ export function createSqliteGameRepository(
         }
         const worldStateJson = serializeValidatedWorldState(input.nextWorldState);
         if (worldStateJson === null) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
-        const validatedNextStoryState = parsePersistableStoryState(input.nextStoryState, input.nextWorldState.eventLedger);
+        const validatedNextStoryState = parsePersistableStoryState(input.nextStoryState, input.nextWorldState.eventLedger, input.nextWorldState.entityStore);
         if (!validatedNextStoryState.ok) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
         let storyStateJson: string | null = options.preserveAcknowledgedPrologue === true ? null : JSON.stringify(validatedNextStoryState.value);
 
@@ -568,7 +567,7 @@ export function createSqliteGameRepository(
         }
         const parsedWorldState = validatePersistableWorldState(worldState);
         if (!parsedWorldState.ok) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
-        const parsedStoryState = parsePersistableStoryState(storyState, parsedWorldState.value.eventLedger);
+        const parsedStoryState = parsePersistableStoryState(storyState, parsedWorldState.value.eventLedger, parsedWorldState.value.entityStore);
         if (!parsedStoryState.ok) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
 
         const record: GameRecord = {

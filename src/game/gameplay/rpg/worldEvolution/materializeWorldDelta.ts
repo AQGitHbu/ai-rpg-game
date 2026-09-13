@@ -211,6 +211,11 @@ export function materializeWorldDelta(input: MaterializeWorldDeltaInput): Approv
 
   const previewStoryState: StoryState = {
     ...ss,
+    // The final main-act interlocutor occupies the deferred recipient role.
+    // Bind once at materialization; never infer identity from names or final prose.
+    ...(ss.delivery !== undefined && ss.delivery.recipientNpcId === null && stagedQuest?.stage === ss.targetActs
+      ? { delivery: { ...ss.delivery, recipientNpcId: stagedQuest.objectives.find(objective => objective.kind === "talk_to_npc")?.npcId ?? null } }
+      : {}),
     evolution: { ...approved.nextEvolution, status: "stable" },
     budget: approved.nextBudget,
     // A provider NPC handoff may pre-materialize the following act while the

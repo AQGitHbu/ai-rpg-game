@@ -1,3 +1,4 @@
+import { parseConfidentialityTerms, type ConfidentialityTerms } from "@/game/domain/storyInteraction";
 import {
   RELATIONSHIP_COMMITMENT_KINDS,
   RELATIONSHIP_DEBT_DIRECTIONS,
@@ -159,7 +160,7 @@ export type RelationshipCommitmentOperation =
       direction: RelationshipDebtDirection;
       description: string;
     }>
-  | Readonly<{ kind: "open_promise"; openKey: string; promisor: RelationshipPromisor; description: string }>
+  | Readonly<{ kind: "open_promise"; openKey: string; promisor: RelationshipPromisor; description: string; confidentiality?: ConfidentialityTerms }>
   | Readonly<{ kind: RelationshipCommitmentStatusOp; commitmentId: string }>;
 
 /** 信号表里可选的承诺动作：与上面的公开 API 共用同一封闭操作名集合，不另立名字。 */
@@ -652,6 +653,7 @@ function openedDebt(input: Readonly<{
 }
 
 function openedPromise(input: Readonly<{
+  confidentiality?: ConfidentialityTerms;
   openKey: string;
   promisor: RelationshipPromisor;
   description: string;
@@ -659,6 +661,7 @@ function openedPromise(input: Readonly<{
 }>): RelationshipCommitment {
   return {
     kind: "promise",
+    ...(input.confidentiality === undefined ? {} : { confidentiality: input.confidentiality }),
     commitmentId: mintRelationshipCommitmentId({ source: input.source, op: "open_promise", openKey: input.openKey }),
     promisor: input.promisor,
     status: "open",
@@ -684,7 +687,7 @@ function applyCommitmentRule(
     if (commitments.some((commitment) => commitment.commitmentId === opened.commitmentId)) return commitments;
     return Object.freeze([...commitments, opened]);
   }
-  const index = commitments.findIndex((commitment) => matchesTarget(commitment, entry.target) && isOpen(commitment));
+  const index = commitments.findIndex((commitment) => matchesTarget(commitment, entry.target) && isOpen(commitment) && !(commitment.kind === "promise" && commitment.confidentiality !== undefined));
   if (index < 0) return commitments;
   const target = commitments[index];
   if (target === undefined) return commitments;
@@ -839,6 +842,7 @@ function isValidOperation(operation: unknown): operation is RelationshipCommitme
   if (kind === "open_promise") {
     return !isBlank(record.openKey)
       && !isBlank(record.description)
+      && (record.confidentiality === undefined || parseConfidentialityTerms(record.confidentiality) !== null)
       && (RELATIONSHIP_PROMISORS as readonly string[]).includes(String(record.promisor));
   }
   return !isBlank(record.commitmentId);
@@ -871,6 +875,7 @@ export function applyRelationshipCommitment(
       : openedPromise({
           openKey: operation.openKey,
           promisor: operation.promisor,
+          ...(operation.confidentiality === undefined ? {} : { confidentiality: operation.confidentiality }),
           description: operation.description,
           source,
         });

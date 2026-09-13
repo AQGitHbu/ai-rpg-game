@@ -95,3 +95,14 @@ describe("story interaction conditions", () => {
     expect(parsed.ok).toBe(false);
   });
 });
+
+it("requires concrete immutable confidentiality terms and rejects malformed terms", () => {
+  const proposal = { proposalKey: "pledge", npcId: NPC, operation: "promise_confidentiality", condition: [], factIds: [], goalIds: [], promiseId: null, audienceIds: [PLAYER_ENTITY_ID], evidenceEventIds: [] };
+  expect(parseStoryInteractionProposal(proposal).ok).toBe(false);
+  const terms = { protectedFactIds: [FACT], allowedAudienceIds: [PLAYER_ENTITY_ID, NPC], fulfillment: { kind: "story_delivery" } };
+  expect(parseStoryInteractionProposal({ ...proposal, confidentiality: terms }).ok).toBe(true);
+  for (const invalid of [{ ...terms, protectedFactIds: [] }, { ...terms, allowedAudienceIds: [] }, { ...terms, fulfillment: { kind: "always" } }, { ...terms, done: true }]) {
+    expect(parseStoryInteractionProposal({ ...proposal, confidentiality: invalid }).ok).toBe(false);
+  }
+  expect(parseStoryInteractionProposal({ ...proposal, operation: "request_introduction", confidentiality: terms }).ok).toBe(false);
+});

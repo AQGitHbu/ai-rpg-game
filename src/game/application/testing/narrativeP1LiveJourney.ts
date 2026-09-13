@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { NewGameInput, ValidatedNewGameInput } from "@/game/domain/newGame";
 import { validateNewGameInput } from "@/game/domain/newGame";
 
-export const NARRATIVE_P1_PROTOCOL_VERSION = "narrative-p1/v2" as const;
+export const NARRATIVE_P1_PROTOCOL_VERSION = "narrative-p1/v3" as const;
 export const NARRATIVE_P1_PLANNED_ROUTES = 6 as const;
 export const NARRATIVE_P1_HTTP_BATCH_BUDGET = 1000 as const;
 export const NARRATIVE_P1_MAX_ROUTE_ACTIONS = 24 as const;
@@ -13,7 +13,7 @@ export const NARRATIVE_P1_BATCH_WALL_CLOCK_MS = 10_800_000 as const;
 
 export type NarrativeP1JourneyMode = "register" | "live" | "replay";
 export type NarrativeP1ScenarioId = "S1" | "S2";
-export type NarrativeP1RouteKind = "private" | "public" | "verify_first";
+export type NarrativeP1RouteKind = "private" | "public" | "verify_first" | "diagnostic";
 
 export type NarrativeP1Route = Readonly<{
   readonly routeId: `${NarrativeP1ScenarioId}-${NarrativeP1RouteKind}`;
@@ -49,7 +49,7 @@ export type NarrativeP1HttpBudget = Readonly<{
   reserve(): boolean;
 }>;
 
-export function createNarrativeP1HttpBudget(max = NARRATIVE_P1_HTTP_BATCH_BUDGET, allowed = () => true): NarrativeP1HttpBudget {
+export function createNarrativeP1HttpBudget(max: number = NARRATIVE_P1_HTTP_BATCH_BUDGET, allowed = () => true): NarrativeP1HttpBudget {
   let used = 0;
   return {
     max,
@@ -74,6 +74,7 @@ export type NarrativeP1RouteRunnerInput = Readonly<{
 export type NarrativeP1RouteRunnerResult = Readonly<{
   readonly completed: boolean;
   readonly httpAttempts: number;
+  readonly replayedTransportAttempts?: number;
   readonly failureCode?: string;
   readonly actionCount?: number;
 }>;
@@ -84,6 +85,7 @@ export type NarrativeP1JourneyEnvironment = Readonly<{
 }>;
 
 export type NarrativeP1JourneyDeps = Readonly<{
+  readonly replaySourceDirectory?: string;
   /** Test seam; production defaults to the composition/SQLite route runner. */
   readonly routeRunner?: (input: NarrativeP1RouteRunnerInput) => Promise<NarrativeP1RouteRunnerResult>;
   /** Frozen code identity. A changed identity refuses live/replay before I/O. */
@@ -95,7 +97,8 @@ export type NarrativeP1JourneyDeps = Readonly<{
 
 export type NarrativeP1Protocol = Readonly<{
   readonly protocolVersion: typeof NARRATIVE_P1_PROTOCOL_VERSION;
-  readonly plannedRoutes: typeof NARRATIVE_P1_PLANNED_ROUTES;
+  readonly claimScope: "matrix" | "diagnostic";
+  readonly plannedRoutes: 1 | typeof NARRATIVE_P1_PLANNED_ROUTES;
   readonly routes: readonly NarrativeP1Route[];
   readonly input: ValidatedNewGameInput;
   readonly inputHash: string;
@@ -112,10 +115,10 @@ export type NarrativeP1Protocol = Readonly<{
   }>;
   readonly budget: Readonly<{
     readonly httpPerEpoch: 24;
-    readonly httpBatch: typeof NARRATIVE_P1_HTTP_BATCH_BUDGET;
+    readonly httpBatch: 200 | typeof NARRATIVE_P1_HTTP_BATCH_BUDGET;
     readonly maxRouteActions: typeof NARRATIVE_P1_MAX_ROUTE_ACTIONS;
     readonly maxCandidateVersions: typeof NARRATIVE_P1_MAX_CANDIDATE_VERSIONS;
-    readonly wallClockMs: typeof NARRATIVE_P1_BATCH_WALL_CLOCK_MS;
+    readonly wallClockMs: 1_800_000 | typeof NARRATIVE_P1_BATCH_WALL_CLOCK_MS;
   }>;
   readonly environment: NarrativeP1JourneyEnvironment;
   readonly code: Readonly<{
@@ -128,6 +131,7 @@ export type NarrativeP1Protocol = Readonly<{
 
 export type NarrativeP1JourneyInput = Readonly<{
   readonly mode: NarrativeP1JourneyMode;
+  readonly profile?: "matrix" | "diagnostic";
   readonly runId: string;
   readonly protocolPath: string;
   readonly artifactDirectory: string;
@@ -135,7 +139,7 @@ export type NarrativeP1JourneyInput = Readonly<{
 
 export type NarrativeP1JourneyResult = Readonly<{
   readonly completedRoutes: number;
-  readonly plannedRoutes: typeof NARRATIVE_P1_PLANNED_ROUTES;
+  readonly plannedRoutes: 1 | typeof NARRATIVE_P1_PLANNED_ROUTES;
   readonly passed: boolean;
 }>;
 
@@ -145,6 +149,7 @@ type RouteArtifact = Readonly<{
   readonly kind: string;
   readonly completed: boolean;
   readonly httpAttempts: number;
+  readonly replayedTransportAttempts?: number;
   readonly actionCount?: number;
   readonly failureCode?: string;
 }>;
@@ -201,18 +206,19 @@ function protocolWithoutHash(protocol: NarrativeP1Protocol | Omit<NarrativeP1Pro
   return withoutHash as Omit<NarrativeP1Protocol, "protocolHash">;
 }
 
-function createProtocol(deps: NarrativeP1JourneyDeps): NarrativeP1Protocol | null {
+function createProtocol(deps: NarrativeP1JourneyDeps, profile: "matrix" | "diagnostic" = "matrix"): NarrativeP1Protocol | null {
   const input = validatedFixedInput();
   if (input === null) return null;
   const codeFingerprint = currentCodeFingerprint(deps);
   const protocol = {
     protocolVersion: NARRATIVE_P1_PROTOCOL_VERSION,
-    plannedRoutes: NARRATIVE_P1_PLANNED_ROUTES,
-    routes: NARRATIVE_P1_ROUTES,
+    claimScope: profile,
+    plannedRoutes: profile === "diagnostic" ? 1 : NARRATIVE_P1_PLANNED_ROUTES,
+    routes: profile === "diagnostic" ? [{ routeId: "S1-diagnostic", scenarioId: "S1", kind: "diagnostic" }] as const : NARRATIVE_P1_ROUTES,
     input,
     inputHash: sha256(input),
     policy: FIXED_POLICY,
-    budget: FIXED_BUDGET,
+    budget: profile === "diagnostic" ? { ...FIXED_BUDGET, httpBatch: 200 as const, wallClockMs: 1_800_000 as const } : FIXED_BUDGET,
     environment: currentEnvironment(deps),
     code: {
       fingerprint: codeFingerprint,
@@ -238,12 +244,14 @@ export function validateNarrativeP1Protocol(
   const protocol = value as Partial<NarrativeP1Protocol>;
   const issues: string[] = [];
   if (protocol.protocolVersion !== NARRATIVE_P1_PROTOCOL_VERSION) issues.push("PROTOCOL_VERSION_MISMATCH");
-  if (protocol.plannedRoutes !== NARRATIVE_P1_PLANNED_ROUTES) issues.push("PLANNED_ROUTES_MISMATCH");
-  if (!Array.isArray(protocol.routes) || canonicalJson(protocol.routes) !== canonicalJson(NARRATIVE_P1_ROUTES)) issues.push("ROUTES_MISMATCH");
+  const diagnostic = protocol.claimScope === "diagnostic";
+  if (!["matrix", "diagnostic"].includes(protocol.claimScope ?? "")) issues.push("CLAIM_SCOPE_MISMATCH");
+  if (protocol.plannedRoutes !== (diagnostic ? 1 : NARRATIVE_P1_PLANNED_ROUTES)) issues.push("PLANNED_ROUTES_MISMATCH");
+  if (!Array.isArray(protocol.routes) || canonicalJson(protocol.routes) !== canonicalJson(diagnostic ? [{ routeId: "S1-diagnostic", scenarioId: "S1", kind: "diagnostic" }] : NARRATIVE_P1_ROUTES)) issues.push("ROUTES_MISMATCH");
   if (protocol.inputHash !== sha256(protocol.input)) issues.push("INPUT_HASH_MISMATCH");
   if (protocol.code?.fingerprint !== expectedCodeFingerprint) issues.push("CODE_FINGERPRINT_MISMATCH");
   if (canonicalJson(protocol.policy) !== canonicalJson(FIXED_POLICY)) issues.push("POLICY_MISMATCH");
-  if (canonicalJson(protocol.budget) !== canonicalJson(FIXED_BUDGET)) issues.push("BUDGET_MISMATCH");
+  if (canonicalJson(protocol.budget) !== canonicalJson(diagnostic ? { ...FIXED_BUDGET, httpBatch: 200, wallClockMs: 1_800_000 } : FIXED_BUDGET)) issues.push("BUDGET_MISMATCH");
   const fixedInput = validatedFixedInput();
   if (fixedInput === null || canonicalJson(protocol.input) !== canonicalJson(fixedInput)) issues.push("FIXED_INPUT_MISMATCH");
   if (protocol.environment?.model === undefined || protocol.environment.model.trim() === "" || protocol.environment.model === "unconfigured-model") issues.push("MODEL_MISSING");
@@ -261,10 +269,10 @@ function writeJson(path: string, value: unknown): void {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
-function result(completedRoutes: number, passed: boolean): NarrativeP1JourneyResult {
+function result(completedRoutes: number, passed: boolean, plannedRoutes: 1 | 6 = 6): NarrativeP1JourneyResult {
   return {
     completedRoutes,
-    plannedRoutes: NARRATIVE_P1_PLANNED_ROUTES,
+    plannedRoutes,
     passed,
   };
 }
@@ -282,14 +290,9 @@ export async function runNarrativeP1Journey(
   deps: NarrativeP1JourneyDeps = {},
 ): Promise<NarrativeP1JourneyResult> {
   if (input.runId.trim() === "") return result(0, false);
-  // A prior summary is evidence, not a replay of approved provider responses.
-  // Refuse without modifying the original live artifacts.
-  if (input.mode === "replay") {
-    writeJson(join(input.artifactDirectory, "replay-status.json"), { runId: input.runId, passed: false, failureCode: "REPLAY_RESPONSES_NOT_REPLAYED" });
-    return result(0, false);
-  }
+  if (input.mode === "replay") input = { ...input, artifactDirectory: join(input.artifactDirectory, "replay") };
   if (input.mode === "register") {
-    const protocol = createProtocol(deps);
+    const protocol = createProtocol(deps, input.profile);
     if (protocol === null) return result(0, false);
     writeJson(input.protocolPath, protocol);
     writeJson(join(input.artifactDirectory, "registration.json"), {
@@ -298,37 +301,47 @@ export async function runNarrativeP1Journey(
       plannedRoutes: protocol.plannedRoutes,
       runId: input.runId,
     });
-    return result(0, true);
+    return result(0, true, protocol.plannedRoutes);
   }
 
   const protocolValue = readJson(input.protocolPath);
   const issues = validateNarrativeP1Protocol(protocolValue, currentCodeFingerprint(deps));
   if (issues.length > 0 || protocolValue === null || typeof protocolValue !== "object") return result(0, false);
   const protocol = protocolValue as NarrativeP1Protocol;
+  if (canonicalJson(protocol.environment) !== canonicalJson(currentEnvironment(deps))) return result(0, false, protocol.plannedRoutes);
   const validatedInput = validateNewGameInput(protocol.input);
   if (!validatedInput.ok) return result(0, false);
+  const replaySource = input.mode === "replay" && deps.replaySourceDirectory ? {
+    directory: deps.replaySourceDirectory,
+    tapes: [...new Set(protocol.routes.flatMap(route => [`${route.scenarioId}-opening`, route.routeId]))].map(stream => {
+      const file = `${stream}.runtime.json`;
+      try { return { file, sha256: createHash("sha256").update(readFileSync(join(deps.replaySourceDirectory!, file))).digest("hex") }; }
+      catch { return { file, sha256: null }; }
+    }),
+  } : undefined;
   const startedAt = Date.now();
   const controller = new AbortController();
   let stopCode = "BATCH_INTERRUPTED";
   const abort = () => controller.abort();
   deps.signal?.addEventListener("abort", abort, { once: true });
   if (deps.signal?.aborted) abort();
-  const timeout = setTimeout(() => { stopCode = "BATCH_WALL_CLOCK_EXHAUSTED"; abort(); }, NARRATIVE_P1_BATCH_WALL_CLOCK_MS);
-  const budget = createNarrativeP1HttpBudget(NARRATIVE_P1_HTTP_BATCH_BUDGET, () => !controller.signal.aborted && Date.now() - startedAt < NARRATIVE_P1_BATCH_WALL_CLOCK_MS);
+  const timeout = setTimeout(() => { stopCode = "BATCH_WALL_CLOCK_EXHAUSTED"; abort(); }, protocol.budget.wallClockMs);
+  const budget = createNarrativeP1HttpBudget(protocol.budget.httpBatch, () => !controller.signal.aborted && Date.now() - startedAt < protocol.budget.wallClockMs);
   const routeRunner = deps.routeRunner ?? defaultRouteRunner;
   const routeArtifacts: RouteArtifact[] = [];
   let completedRoutes = 0;
   let reportedHttpAttempts = 0;
+  let replayedTransportAttempts = 0;
   const checkpoint = () => writeJson(join(input.artifactDirectory, "summary.json"), {
-    protocolHash: protocol.protocolHash, runId: input.runId, mode: input.mode,
+    protocolHash: protocol.protocolHash, runId: input.runId, mode: input.mode, replaySource,
     input: protocol.input, environment: protocol.environment, code: protocol.code,
-    plannedRoutes: NARRATIVE_P1_PLANNED_ROUTES, completedRoutes, passed: false,
-    httpAttempts: budget.used, elapsedMs: Date.now() - startedAt,
-    routes: NARRATIVE_P1_ROUTES.map((route) => routeArtifacts.find((artifact) => artifact.routeId === route.routeId)
+    claimScope: protocol.claimScope, plannedRoutes: protocol.plannedRoutes, completedRoutes, passed: false,
+    httpAttempts: budget.used, replayedTransportAttempts, elapsedMs: Date.now() - startedAt,
+    routes: protocol.routes.map((route) => routeArtifacts.find((artifact) => artifact.routeId === route.routeId)
       ?? { ...route, completed: false, httpAttempts: 0, failureCode: controller.signal.aborted ? stopCode : "ROUTE_NOT_FINISHED" }),
   });
   checkpoint();
-  for (const route of NARRATIVE_P1_ROUTES) {
+  for (const route of protocol.routes) {
     let routeResult: NarrativeP1RouteRunnerResult;
     const httpBefore = budget.used;
     let listener: (() => void) | undefined;
@@ -350,12 +363,14 @@ export async function runNarrativeP1Journey(
     if (input.mode === "live") routeResult = { ...routeResult, httpAttempts: budget.used - httpBefore };
     if (routeResult.completed) completedRoutes += 1;
     reportedHttpAttempts += Math.max(0, routeResult.httpAttempts);
+    replayedTransportAttempts += routeResult.replayedTransportAttempts ?? 0;
     routeArtifacts.push({
       routeId: route.routeId,
       scenarioId: route.scenarioId,
       kind: route.kind,
       completed: routeResult.completed,
       httpAttempts: routeResult.httpAttempts,
+      replayedTransportAttempts: routeResult.replayedTransportAttempts ?? 0,
       ...(routeResult.actionCount === undefined ? {} : { actionCount: routeResult.actionCount }),
       ...(routeResult.failureCode === undefined ? {} : { failureCode: routeResult.failureCode }),
     });
@@ -363,9 +378,9 @@ export async function runNarrativeP1Journey(
   }
   clearTimeout(timeout);
   deps.signal?.removeEventListener("abort", abort);
-  const passed = completedRoutes === NARRATIVE_P1_PLANNED_ROUTES
-    && budget.used <= NARRATIVE_P1_HTTP_BATCH_BUDGET
-    && reportedHttpAttempts <= NARRATIVE_P1_HTTP_BATCH_BUDGET;
+  const passed = completedRoutes === protocol.plannedRoutes
+    && budget.used <= protocol.budget.httpBatch
+    && reportedHttpAttempts <= protocol.budget.httpBatch;
   const replayRoutes = Object.fromEntries(routeArtifacts.map((route) => [route.routeId, {
     completed: route.completed,
     httpAttempts: route.httpAttempts,
@@ -376,15 +391,18 @@ export async function runNarrativeP1Journey(
     protocolHash: protocol.protocolHash,
     runId: input.runId,
     mode: input.mode,
+    replaySource,
     input: protocol.input,
     environment: protocol.environment,
     code: protocol.code,
-    plannedRoutes: NARRATIVE_P1_PLANNED_ROUTES,
+    claimScope: protocol.claimScope,
+    plannedRoutes: protocol.plannedRoutes,
     completedRoutes,
     passed,
     httpAttempts: budget.used,
+    replayedTransportAttempts,
     elapsedMs: Date.now() - startedAt,
     routes: routeArtifacts,
   });
-  return result(completedRoutes, passed);
+  return result(completedRoutes, passed, protocol.plannedRoutes);
 }

@@ -2,6 +2,8 @@ import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { NarrativeEventDraft } from "@/game/domain/events";
 import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
+import { entitiesOfKind } from "@/game/domain/entity";
+import { isStoryDeliveryComplete } from "@/game/gameplay/rpg/storyDelivery";
 
 export type EndingResolveResult = {
   readonly nextWorldState: WorldState;
@@ -31,12 +33,17 @@ export function resolveEnding(ws: WorldState, ss: StoryState): EndingResolveResu
   if (!ss.endingAllowed || ws.ending !== null) {
     return { nextWorldState: ws, nextStoryState: ss, drafts: [] };
   }
+  if (ss.contract.delivery !== undefined && !isStoryDeliveryComplete(ws, ss)) {
+    return { nextWorldState: ws, nextStoryState: ss, drafts: [] };
+  }
 
   // 终幕最后一次 support/challenge 是玩家刚做出的明确分歧，优先于旧的
   // 开场关系门槛；这样“支持最终知情人”不会被早先 NPC 的 affinity 覆盖。
   const finalNpc = ws.npcs.at(-1);
   const finalDialogueAct = finalNpc?.memory.interactionHistory.at(-1)?.dialogueAct;
-  const explicitTheme = finalDialogueAct === "support" ? "trust" : finalDialogueAct === "challenge" ? "doubt" : null;
+  const confidentialityBroken = entitiesOfKind(ws.entityStore, "npc").some(npc => npc.relationships.outgoing.some(edge =>
+    edge.commitments.some(commitment => commitment.kind === "promise" && commitment.status === "broken" && commitment.confidentiality !== undefined)));
+  const explicitTheme = confidentialityBroken ? "doubt" : finalDialogueAct === "support" ? "trust" : finalDialogueAct === "challenge" ? "doubt" : null;
   const explicitEnding = explicitTheme === null
     ? undefined
     : ws.endings.find((ending) => themeFromRequirements(ending) === explicitTheme);

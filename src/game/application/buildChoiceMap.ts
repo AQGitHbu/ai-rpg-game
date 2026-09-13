@@ -7,6 +7,7 @@ import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
 import { SKILL_ENERGY_COST } from "@/game/domain/combat";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 import { endingDecisionStances } from "@/game/gameplay/rpg/narrativeBundle";
+import { isStoryDeliveryComplete } from "@/game/gameplay/rpg/storyDelivery";
 import { isObjectiveEntityReleased, isTakeItemPrepared } from "@/game/gameplay/rpg/worldEvolution";
 
 // ---------------------------------------------------------------------------
@@ -142,6 +143,7 @@ export function buildChoiceMap(
       ? worldState.quests.find((entry) => entry.kind === "main" && entry.status === "active" && entry.stage === storyState.currentAct)
       : worldState.quests.find((entry) => String(entry.id) === String(objective.questId));
     if (currentMainQuest?.kind === "main"
+      && !isStoryDeliveryComplete(worldState, storyState)
       && currentMainQuest.status === "active"
       && (storyState.reveal === undefined || storyState.reveal === null
         || String(storyState.reveal.questId) === String(currentMainQuest.id))) {

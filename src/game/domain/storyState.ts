@@ -8,7 +8,7 @@ import { createStoryContract } from "./storyContract";
 import type { StoryEvolutionState } from "./worldDelta";
 import type { EntityId } from "./entity/entityCore";
 import type { EventId } from "./events";
-import type { NpcId, QuestId } from "./worldEntity";
+import type { ItemId, NpcId, QuestId } from "./worldEntity";
 import { createEmptyEpisodicMemory, type EpisodicMemoryState } from "./episodicMemory";
 import type { NarrativeHistory } from "./narrativeHistory";
 import { createMainStoryThread, unresolvedStoryThreadIds, type StoryThread } from "./storyThreads";
@@ -16,7 +16,7 @@ import { createMainStoryThread, unresolvedStoryThreadIds, type StoryThread } fro
 // 结构化候选事件契约由 candidateEvent.ts 定义并在此再导出，保持既有调用点兼容。
 export type { EventCandidate, EventCandidateKind, ProposedEffect } from "./candidateEvent";
 
-export const STORY_STATE_SCHEMA_VERSION = 11 as const;
+export const STORY_STATE_SCHEMA_VERSION = 12 as const;
 
 export type StoryStateSchemaVersionErrorCode =
   | "UNSUPPORTED_RECORD"
@@ -36,7 +36,7 @@ export function classifyStoryStateSchemaVersion(
   if (version === STORY_STATE_SCHEMA_VERSION) {
     return { ok: true, version: STORY_STATE_SCHEMA_VERSION };
   }
-  if (version === 1 || version === 2 || version === 3 || version === 4 || version === 5 || version === 6 || version === 7 || version === 8 || version === 9 || version === 10) {
+  if (version === 1 || version === 2 || version === 3 || version === 4 || version === 5 || version === 6 || version === 7 || version === 8 || version === 9 || version === 10 || version === 11) {
     return { ok: false, code: "UNSUPPORTED_RECORD" };
   }
   return { ok: false, code: "UNSUPPORTED_STORY_STATE_VERSION" };
@@ -62,6 +62,22 @@ export type DialogueFocus = Readonly<{
   readonly entityIds: readonly EntityId[];
   readonly eventIds: readonly EventId[];
 }>;
+
+/** Bound roles only; possession and completion remain Entity/ledger facts. */
+export type StoryDeliveryState = Readonly<{
+  itemId: ItemId;
+  giverNpcId: NpcId;
+  recipientNpcId: NpcId | null;
+}>;
+
+export function isStoryDeliveryState(value: unknown): value is StoryDeliveryState {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return Object.keys(record).length === 3
+    && typeof record.itemId === "string" && record.itemId.trim() !== ""
+    && typeof record.giverNpcId === "string" && record.giverNpcId.trim() !== ""
+    && (record.recipientNpcId === null || (typeof record.recipientNpcId === "string" && record.recipientNpcId.trim() !== ""));
+}
 
 export type StoryState = {
   readonly version: typeof STORY_STATE_SCHEMA_VERSION;
@@ -90,6 +106,7 @@ export type StoryState = {
   readonly dialogueFocus?: DialogueFocus | null;
   /** 开局生成的故事契约：只含抽象方向，不含未来实体 ID（Task 2 起由开局生成写入）。 */
   readonly contract: StoryContract;
+  readonly delivery?: StoryDeliveryState;
   /** 运行时具象化账本：实体序号与演化状态（Task 3 起由世界演化推进）。 */
   readonly evolution: StoryEvolutionState;
   /** 动态主线的分阶段释放游标；旧存档缺失时保持既有可见性。 */

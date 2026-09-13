@@ -273,7 +273,7 @@ const resolved = thread.closure.length > 0 && thread.closure.every(
 - [ ] 开局编译固定交付物 owner、递送目标、接应身份的核验证据来源以及交付/退出判定。稳定故事定义存 `StoryContract`，其中未来角色用本地角色 key，具象化时再绑定实体 ID；不提前创建离场 NPC，不容许悬空 ID。新增有限互动定义必须受 Task 2 操作和证据校验约束。
 - [ ] 明确主动退出：已交付接应人走完成，不再接受 abandon_quest；归还委托人后明确选择 abandon_quest，按约解除承诺并结束；仍持有信筒时明确选择 abandon_quest，保留持有和违约事实并结束。单纯移动离场仍可返回履约。结束画面可显示原 trust/doubt 立场，但结局事实由累计状态决定。
 - [ ] 写退出正式集成测试：选中 abandon_quest 后 A 已落盘且状态 pending；B 失败仍保留退出事实，手动重试只生成同 job 的退出终局；不会重复弃约/发物品，旧退出 token 零写入。无焦点 NPC 时同样可生成终局，普通导航不新增 provider 请求。
-- [ ] BattleStartSnapshot 补 threads 和本 Task 新增的可变 Story State；Entity3 已包含目标/承诺/知识，随 Entity 快照恢复。更新 Story10/World7 parser 的本分支最终形状；前置 Task 的开发存档不承诺迁移，每个验收 fixture 新建独立存档。
+- [ ] BattleStartSnapshot 补 threads 和本 Task 新增的可变 Story State；Entity3 已包含目标/承诺/知识，随 Entity 快照恢复。更新 Story12/World7 parser 的本分支最终形状；前置 Task 的开发存档不承诺迁移，每个验收 fixture 新建独立存档。
 - [ ] 跑线程、Quest、终局、回滚、持久化测试及 typecheck；更新文档并提交 `feat: advance story threads and endings from committed consequences`。
 
 **验收：** 三幕推进有规则证据，最后一句话不能清除前面的泄密、归还或违约。
@@ -323,7 +323,7 @@ for (const route of ["private", "public", "verify_first", "exit_return", "exit_k
 
 - [ ] 运行 `npx vitest run src/game/application/testing/templeLetterJourney.test.ts`，确认未具备完整路径时失败。
 - [ ] 实现 fixture source 的有限状态场景：破庙接信→客栈选择渠道→渡口验证/交付→结局。角色 key 解析为正式具象化后的 ID；同一信息只在来源成立后使用。稳定 fixture 的对白只存在测试文件。
-- [ ] 私下路线创建保密承诺换引荐；公开路线不要求先许保密承诺，通过既有证据核验；verify_first 在自由输入后停在持有信筒状态，生成真实 request_verification 选项，选中并核验成功后仍需显式 give_item；exit_return 经 give_item 归还后选择 abandon_quest，exit_keep 保持 owner 为玩家并选择 abandon_quest。另测普通离场及自由输入“我走了”均不结束游戏。
+- [ ] 私下路线先创建具有保护事实、允许听众和 story_delivery 履行条款的保密承诺，再选择引用真实 open promise 的 request_introduction；通用 kept_promise 不结案保密条款，另测玩家交付前向同场接应人 share_known_fact 泄密后 reload、交付和最终 support 仍保留 broken；公开路线不要求先许保密承诺，通过既有证据核验；verify_first 在自由输入后停在持有信筒状态，生成真实 request_verification 选项，选中并核验成功后仍需显式 give_item；exit_return 经 give_item 归还后选择 abandon_quest，exit_keep 保持 owner 为玩家并选择 abandon_quest。另测普通离场及自由输入“我走了”均不结束游戏。
 - [ ] 增加中途离场、关闭并重开 SQLite、返回履约用例；断言私下/公开结局在 exposure、知识分布和许可来源上不同，give_item 仅发生一次，选项未选中零状态变化。对话自由输入默认中性 talk，不能据字符串自动传信或完成核验。
 - [ ] 运行本旅程、performTurn、bundle 消费及 SQLite 测试，全部通过后执行 `npm run typecheck`；记录 P1-A 是否通过并提交 `test: complete the temple letter story through production rules`。
 
@@ -537,7 +537,7 @@ P1 不建设可恢复的逐阶段候选仓库：**每次开始新的候选工作
 - Modify: `package.json`，添加 `journey:narrative:p1` 与 `test:narrative-p1-script`。
 - Create: `docs/superpowers/reports/2026-09-12-narrative-p1-protocol.md`（在本 Task 实施时生成并冻结）；不在此计划编写轮填造模型名、输入哈希或成绩。
 
-**Interfaces:** runner 导出 `runNarrativeP1Journey(input: { mode: "register" | "live" | "replay"; runId: string; protocolPath: string; artifactDirectory: string }): Promise<{ completedRoutes: number; plannedRoutes: 6; passed: boolean }>`。脚本支持 `--mode`、`--run-id`、`--protocol`、`--output`；register 零网络，live 必须读取已冻结协议，replay 零网络重放审计响应。通过标准为退出码 0，未完成/硬错误/协议违规为 1，参数或未登记为 2。
+**Interfaces:** runner 导出 `runNarrativeP1Journey(input: { mode: "register" | "live" | "replay"; runId: string; protocolPath: string; artifactDirectory: string }): Promise<{ completedRoutes: number; plannedRoutes: 6; passed: boolean }>`。正式 matrix 保持 `plannedRoutes: 6`；独立 `profile: "diagnostic"` 为 1。脚本支持 `--mode`、`--run-id`、`--protocol`、`--output`、`--profile`、`--replay-source`；register 零网络，live 必须读取已冻结协议，replay 零网络重放审计响应。通过标准为退出码 0，未完成/硬错误/协议违规为 1，参数或未登记为 2。
 
 - [ ] 写 node 参数测试和 fake transport runner 测试：register 零请求；少一个开局不得把分母改成 3；第 1001 次 HTTP 被预算阻止；协议哈希/代码不符拒绝开始。运行 `node --test scripts/narrativeP1Journey.node-test.mjs` 与 runner 的 Vitest RED。
 - [ ] 注册以下完整 `NewGameInput`，通过现有 `validateNewGameInput` 后冻结规范化 JSON；不让 runner 临时挑选题材、姓名、文风或另补隐含背景。故事工程约束由开局编译契约保障，不能只靠用户输入里一句“须支持”。
@@ -571,6 +571,8 @@ P1 不建设可恢复的逐阶段候选仓库：**每次开始新的候选工作
 ```
 
 - [ ] 运行脚本/runner 测试、typecheck、`npm run check:docs`；提交 `test: register bounded full-story narrative experiments`。协议中的代码版本指向最终待测提交，登记文件的纯记录变更不冒充实现变化。
+
+**实施约束：** 正式矩阵前先单独登记 diagnostic（1 路线、24 动作、200 HTTP、30 分钟），按保密 → 引荐 → 固定核验输入 → 核验 → 交付 → 终局执行。同一生产 transport 边界记录原始响应与业务身份/时间；实际 replay 从新 SQLite 运行所有解析、判断和提交，逐步精确比对逻辑存档。旧产物缺身份磁带拒绝，原始文件只读；重放 HTTP 为 0，响应次数单列。
 
 **验收：** 实验前可检查要跑什么、怎样判失败、何时停止；失败开局和修订稿均无法从分母消失。
 
@@ -612,12 +614,12 @@ register 生成的模型值/设置由可用环境读取并冻结；此命令块�
 | G4/G6、A3 | 2、5、6 | player/NPC 认知、实际受众、私密判断与向外披露 |
 | G7、A8/A9 | 1、7、8 | A/B 原子性、候选版本、租约/幂等、取消与未来步骤隔离 |
 | Spec §9 小故事边界 | 3、4、9 | 三幕、延迟具象化、唯一 owner、核验证据与退出规则 |
-| Spec §12/§13 | 1–3、5–8、10 | Entity3/World7/Story10/Bundle2、旧档拒绝、现行系统原位维护 |
+| Spec §12/§13 | 1–3、5–8、10 | Entity3/World7/Story12/Bundle2、旧档拒绝、现行系统原位维护 |
 
 执行者完成每个 gate 后将以下“未执行”替换为结论及报告相对链接，不追加按日期排列的进度流水：
 
-- **P1-A：** 部分规则旅程通过，保密—真实引荐闭环验收重新打开。Task 3/4 尚须区分保密与引荐动作，按具体保密条件结算承诺并增加正式仓储旅程；不能以通用任务完成关闭承诺代替。已有证据见 [P1-A 验收报告](../reports/2026-09-13-narrative-architecture-p1-a.md)。
-- **P1-B：** 原生产接线与审阅契约缺口已修复，离线证据和恢复限制见 [失败分析](../reports/2026-09-13-narrative-p1-failure-analysis.md)。Task 9 响应 replay 尚未实现，当前明确拒绝，不能标为全部完成。
+- **P1-A：** 规则闭环通过：真实保密承诺、独立引荐、具体条款结算、送达/泄密/归还/持有弃约与 SQLite reload 均有正式旅程；独立复审通过。离线证据见 [P1-A 验收报告](../reports/2026-09-13-narrative-architecture-p1-a.md)。
+- **P1-B：** 原生产接线与审阅契约缺口已修复，离线证据和恢复限制见 [失败分析](../reports/2026-09-13-narrative-p1-failure-analysis.md)。Task 9 已实现原始响应重放与独立诊断范围；仍需真实诊断及其重放、六矩阵与实际 UI 证据，不能由离线测试直接标为 P1 完成。
 - **P1-C：** 未通过。历史 `p1-07` 六次尝试为 0/6，但不符合共享开局矩阵；`p1-08` 中止，无正式 summary。须在规则闭环补齐后按 [协议 v2](../reports/2026-09-12-narrative-p1-protocol.md) 重新登记、运行和人工评分，历史失败记录见 [P1 验收记录](../reports/2026-09-12-narrative-p1-acceptance.md)。
 - **P1 总结论：** 未通过；先关闭上述规则与验收缺口，再完成六条 live 路线和质量评估。暂停扩展 P2。
 

@@ -128,4 +128,16 @@ describe("appendHistory", () => {
     expect(parseNarrativeHistory({ entries: [{ ...entry(), id: "" }] }).ok).toBe(false);
     expect(parseNarrativeHistory({ entries: [{ ...entry(), eventIds: ["not-an-event"] }] }).ok).toBe(false);
   });
+
+  it("records an NPC-only continuation without manufacturing empty narration", () => {
+    const entries = narrativeSceneHistoryEntries({
+      history: { entries: [] },
+      scene: { sceneId: "npc-only", turn: 1, narration: "", usedFactIds: [],
+        npcLine: { npcId: npcA, text: "信筒已经收妥。", emotion: "neutral", usedFactIds: [], usedEventIds: [] },
+        choices: [], source: "generated" },
+      actionId: "delivery", jobId: null, revision: 1, turnNumber: 1, eventIds: [],
+    });
+    expect(entries.map(value => value.kind)).toEqual(["npc_line"]);
+    expect(parseNarrativeHistory({ entries }).ok).toBe(true);
+  });
 });

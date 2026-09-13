@@ -40,6 +40,7 @@ export type TempleJourneyResult = Readonly<{
 export type TempleJourneyOptions = Readonly<{
   /** 在客栈路线完成后关闭并重新打开同一个 SQLite 存档。 */
   readonly reloadBeforeFinalAct?: boolean;
+  readonly leakBeforeDelivery?: boolean;
 }>;
 
 export type TempleDepartureProbeResult = Readonly<{
@@ -184,7 +185,7 @@ function routeInteraction(route: TempleRoute): {
   readonly label: string;
 } | null {
   switch (route) {
-    case "private": return { operation: "promise_confidentiality", label: "私下请求引荐" };
+    case "private": return { operation: "promise_confidentiality", label: "承诺为引荐信息保密" };
     case "public": return { operation: "share_known_fact", label: "公开说明信筒来路" };
     case "verify_first": return { operation: "request_verification", label: "先核验信筒上的旧约" };
     case "exit_return": return null;
@@ -241,9 +242,14 @@ function eventIdForVerification(worldState: WorldState): EventId | undefined {
     ?? worldState.eventLedger[0]?.eventId;
 }
 
+function pledgedTerms(pledge: import("@/game/domain/entity/npcComponents").RelationshipCommitment | undefined) {
+  return pledge?.kind === "promise" ? pledge.confidentiality : undefined;
+}
+
 function proposalForDecision(
   context: Extract<NarrativeBundleSourceContext, { kind: "decision" }>,
   route: TempleRoute,
+  leakBeforeDelivery = false,
 ): NarrativeBundleSourceResult {
   const { storyState, job } = context;
   if (job.actionSummary.kind === "abandon_quest") {
@@ -259,6 +265,19 @@ function proposalForDecision(
       terminal: { kind: "ending" },
     };
     return { ok: true, kind: "decision", proposal };
+  }
+
+  if (route === "exit_return" && storyState.currentAct === 1 && context.worldState.inventory.includes(storyState.delivery!.itemId)) {
+    const descriptors = buildNarrativeBundleDescriptors({ worldState: context.worldState, storyState, transition: job.objectiveTransition, includeDeliveryReturn: true });
+    return { ok: true, kind: "decision", proposal: {
+      worldDelta: null,
+      currentScene: { segments: mandatorySegments(context), npcLine: npcLineForJob(context, "若不愿继续，先把信筒交还给我，再明确解除委托。"),
+        objectiveLink: job.objectiveTransition.after === null ? null : { questId: String(job.objectiveTransition.after.questId), objectiveIndex: job.objectiveTransition.after.objectiveIndex, mode: "progress" }, choices: [] },
+      continuationScenes: descriptors.steps.map((step) => ({ stepKey: step.stepKey, scene: {
+        segments: [], npcLine: { npcId: String(storyState.delivery!.giverNpcId), text: "信筒已经回到我手里。你仍需明确是否放弃委托。", emotion: "guarded" as const, answeredBeatIds: [], usedFactIds: [], usedEventIds: [] }, objectiveLink: null,
+        choices: step.choiceCandidates.map((candidate, index) => ({ candidateId: candidate.candidateId, label: index === 0 ? "继续听守庙人说明" : "质疑这份委托" })) } })),
+      terminal: descriptors.terminal,
+    } };
   }
 
   if (storyState.evolution.status === "needs_ending_pair" && context.worldState.endings.length >= 2) {
@@ -321,25 +340,30 @@ function proposalForDecision(
     const deliveryStepKey = `give_item:${LETTER_ITEM_ID}:${nextNpcId}`;
     const interaction = routeInteraction(route);
     const evidenceEventId = eventIdForVerification(context.worldState);
+    const leakAtArrival = route === "private" && leakBeforeDelivery && requiresDelivery;
     const interactionProposals = interaction === null || storyState.currentAct !== 2
       ? []
       : [{
           proposalKey: `route_${route}`,
           npcId: asNpcId("@new.npc"),
           operation: interaction.operation,
+          ...(interaction.operation === "promise_confidentiality" ? { confidentiality: {
+            protectedFactIds: [asFactId("@new.fact")], allowedAudienceIds: [PLAYER_ENTITY_ID, asNpcId("@new.npc")], fulfillment: { kind: "story_delivery" as const },
+          } } : {}),
           condition: [],
-          factIds: interaction.operation === "promise_confidentiality" ? [] : [asFactId("@new.fact")],
+          factIds: interaction.operation === "promise_confidentiality" ? [] : [asFactId(interaction.operation === "share_known_fact" ? FIRST_FACT_ID : "@new.fact")],
           goalIds: [],
           promiseId: null,
-          audienceIds: [PLAYER_ENTITY_ID],
+          audienceIds: interaction.operation === "share_known_fact" ? [asNpcId("@new.npc")] : [PLAYER_ENTITY_ID],
           evidenceEventIds: interaction.operation === "request_verification" && evidenceEventId !== undefined
             ? [evidenceEventId]
             : [],
         }];
+    if (leakAtArrival) interactionProposals.push({ proposalKey: "leak_introduction", npcId: asNpcId("@new.npc"), operation: "share_known_fact", condition: [], factIds: context.worldState.entityStore.records.flatMap((record) => record.core.kind === "npc" ? (record as NpcEntityRecord).relationships.outgoing.flatMap((edge) => edge.commitments.flatMap((entry) => pledgedTerms(entry)?.protectedFactIds ?? [])) : []), goalIds: [], promiseId: null, audienceIds: [asNpcId("@new.npc")], evidenceEventIds: [] });
     const choiceLabels = interaction === null || storyState.currentAct !== 2
       ? ["表示愿意继续核对", "质疑这份交接是否可靠"]
       : [interaction.label, "先听完接应人的完整说明"];
-    const continuationScenes = requiresDelivery
+    const continuationScenes = requiresDelivery && !leakAtArrival
       ? [
           {
             stepKey: nextStepKey,
@@ -391,7 +415,7 @@ function proposalForDecision(
             },
             objectiveLink: null,
             choices: [
-              { candidateId: `${nextStepKey}_${interaction === null || storyState.currentAct !== 2 ? "choice" : "interaction"}_1`, label: choiceLabels[0]! },
+              { candidateId: `${nextStepKey}_${leakAtArrival || (interaction !== null && storyState.currentAct === 2) ? "interaction" : "choice"}_1`, label: leakAtArrival ? "向渡口接应人泄露引荐细节" : choiceLabels[0]! },
               { candidateId: `${nextStepKey}_choice_2`, label: choiceLabels[1]! },
             ],
           },
@@ -408,12 +432,27 @@ function proposalForDecision(
       continuationScenes,
       terminal: {
         kind: "next_decision",
-        target: { kind: "continuation_step", stepKey: requiresDelivery ? deliveryStepKey : nextStepKey },
+        target: { kind: "continuation_step", stepKey: requiresDelivery && !leakAtArrival ? deliveryStepKey : nextStepKey },
       },
     };
     return { ok: true, kind: "decision", proposal };
   }
 
+  const promisedNpc = context.worldState.entityStore.records.find((record): record is NpcEntityRecord => record.core.kind === "npc" && record.core.id === job.focusNpcId);
+  const pledge = promisedNpc?.relationships.outgoing.flatMap((edge) => edge.commitments).find((entry) => entry.kind === "promise" && entry.confidentiality !== undefined);
+  const hasIntroduction = context.worldState.eventLedger.some((event) => event.payload.type === "story_interaction_resolved" && event.payload.operation === "request_introduction");
+  if (route === "private" && pledgedTerms(pledge) !== undefined && !hasIntroduction && promisedNpc !== undefined && pledge !== undefined) {
+    return { ok: true, kind: "decision", proposal: {
+      worldDelta: null,
+      interactionProposals: [{ proposalKey: "private_introduction", npcId: promisedNpc.core.id, operation: "request_introduction",
+        condition: [{ kind: "promise_status", npcId: promisedNpc.core.id, promiseId: pledge.commitmentId, status: "open" }],
+        factIds: pledgedTerms(pledge)!.protectedFactIds, goalIds: [], promiseId: pledge.commitmentId,
+        audienceIds: [PLAYER_ENTITY_ID], evidenceEventIds: [] }],
+      currentScene: { segments: mandatorySegments(context), npcLine: npcLineForJob(context, "保密承诺已立；你可以据此请求引荐。"), objectiveLink: job.objectiveTransition.after === null ? null : { questId: String(job.objectiveTransition.after.questId), objectiveIndex: job.objectiveTransition.after.objectiveIndex, mode: "progress" },
+        choices: [{ candidateId: "current_scene_interaction_1", label: "凭保密承诺请求引荐" }, { candidateId: "current_scene_choice_2", label: "暂缓引荐，继续核对" }] },
+      continuationScenes: [], terminal: { kind: "next_decision", target: { kind: "current_scene" } },
+    } };
+  }
   const after = job.objectiveTransition.after;
   const npc = after === null
     ? undefined
@@ -424,7 +463,14 @@ function proposalForDecision(
   const interactions = currentNpcId === undefined
     ? []
     : context.worldState.npcs.find((entry) => String(entry.id) === currentNpcId)?.memory.interactionHistory;
-  const candidates = buildNarrativeBundleDescriptors({ worldState: context.worldState, storyState, transition: job.objectiveTransition }).currentChoiceCandidates;
+  const descriptors = buildNarrativeBundleDescriptors({ worldState: context.worldState, storyState, transition: job.objectiveTransition });
+  if (descriptors.steps.length > 0) return { ok: true, kind: "decision", proposal: {
+    worldDelta: null, currentScene: { segments: mandatorySegments(context), npcLine: npcLineForJob(context, "已经说出的话无法收回；信筒仍须亲手交付。"), objectiveLink: after === null ? null : { questId: String(after.questId), objectiveIndex: after.objectiveIndex, mode: "progress" }, choices: [] },
+    continuationScenes: descriptors.steps.map((step) => ({ stepKey: step.stepKey, scene: { segments: [], npcLine: step.arrivalNpc === undefined ? null : { npcId: String(step.arrivalNpc.id), text: "信筒收到，剩下的话可以继续说。", emotion: "guarded" as const, answeredBeatIds: [], usedFactIds: [], usedEventIds: [] }, objectiveLink: null,
+      choices: step.choiceCandidates.map((candidate, index) => ({ candidateId: candidate.candidateId, label: index === 0 ? "表示愿意继续核对" : "质疑这份交接是否可靠" })) } })),
+    terminal: descriptors.terminal,
+  } };
+  const candidates = descriptors.currentChoiceCandidates;
   const hasInstalledInteraction = candidates[0]?.action.type === "talk" && candidates[0].action.interactionId !== undefined;
   const interactionChoiceIds = candidates.map((candidate) => candidate.candidateId);
   const currentInteraction = routeInteraction(route);
@@ -445,7 +491,7 @@ function proposalForDecision(
   return { ok: true, kind: "decision", proposal };
 }
 
-export function createTempleLetterBundleSource(route: TempleRoute = "private"): NarrativeBundleSource {
+export function createTempleLetterBundleSource(route: TempleRoute = "private", options: TempleJourneyOptions = {}): NarrativeBundleSource {
   const candidate = openingCandidate();
   return {
     async generate(context): Promise<NarrativeBundleSourceResult> {
@@ -455,6 +501,11 @@ export function createTempleLetterBundleSource(route: TempleRoute = "private"): 
           kind: "opening",
           proposal: {
             opening: candidate,
+            ...(route === "exit_return" || route === "exit_keep" ? { interactionProposals: [{
+              proposalKey: "delivery_pledge", npcId: asNpcId("npc_0"), operation: "promise_confidentiality" as const,
+              condition: [], factIds: [], goalIds: [], promiseId: null, audienceIds: [PLAYER_ENTITY_ID], evidenceEventIds: [],
+              confidentiality: { protectedFactIds: [asFactId(FIRST_FACT_ID)], allowedAudienceIds: [PLAYER_ENTITY_ID, asNpcId("npc_0")], fulfillment: { kind: "story_delivery" as const } },
+            }] } : {}),
             currentScene: {
               segments: [{ beatId: "opening", text: candidate.opening.firstScene!.narration }],
               npcLine: {
@@ -466,14 +517,16 @@ export function createTempleLetterBundleSource(route: TempleRoute = "private"): 
                 usedEventIds: [],
               },
               objectiveLink: null,
-              choices: candidate.opening.firstScene!.choices,
+              choices: route === "exit_return" || route === "exit_keep"
+                ? [{ candidateId: "interaction:delivery_pledge", label: "先许下递送期间的保密承诺" }, { candidateId: "challenge_route", label: "质疑这份委托" }]
+                : candidate.opening.firstScene!.choices,
             },
             continuationScenes: [],
             terminal: { kind: "next_decision", target: { kind: "current_scene" } },
           },
         };
       }
-      return proposalForDecision(context, route);
+      return proposalForDecision(context, route, options.leakBeforeDelivery);
     },
   };
 }
@@ -481,7 +534,7 @@ export function createTempleLetterBundleSource(route: TempleRoute = "private"): 
 type JourneyStore = ReturnType<typeof createSqliteGameRepository>;
 
 function openJourneyRepository(dbPath: string): JourneyStore {
-  return createSqliteGameRepository({ clientFactory: () => createSqliteClient(dbPath), logError: () => {} });
+  return createSqliteGameRepository({ clientFactory: () => createSqliteClient(dbPath), logError: (context, error) => { throw new Error(`${context}:${String(error)}`); } });
 }
 
 async function currentRecord(repository: JourneyStore): Promise<GameRecord> {
@@ -542,10 +595,18 @@ async function submitChoice(
     expectedRevision: record.revision,
     choiceMap: buildChoiceMap(record.worldState, record.storyState, record.revision),
   }, { repository, now: () => FIXED_NOW });
-  if (!result.ok) throw new Error(`行动提交失败：${result.code}`);
+  if (!result.ok) throw new Error(`行动提交失败：${result.code}:${result.feedback}`);
   actionCount.value += 1;
     snapshots.push(await currentRecord(repository));
     await settlePending(repository, source, snapshots);
+}
+
+async function requireRejectedChoiceWithoutWrites(repository: JourneyStore, token: string, actionId: string): Promise<void> {
+  const before = await currentRecord(repository);
+  const result = await performTurn({ gameId: before.gameId, actionId, interaction: { kind: "fixed_choice", choiceToken: token },
+    expectedRevision: before.revision, choiceMap: buildChoiceMap(before.worldState, before.storyState, before.revision),
+  }, { repository, now: () => FIXED_NOW });
+  if (result.ok || JSON.stringify(await currentRecord(repository)) !== JSON.stringify(before)) throw new Error("非法返还选项不得提交任何写入");
 }
 
 async function submitSceneChoice(
@@ -657,7 +718,7 @@ export async function runTempleLetterJourney(
   const root = mkdtempSync(join(tmpdir(), "ai-rpg-temple-letter-"));
   const dbPath = join(root, "journey.sqlite");
   let repository = openJourneyRepository(dbPath);
-  const source = createTempleLetterBundleSource(route);
+  const source = createTempleLetterBundleSource(route, options);
   const snapshots: GameRecord[] = [];
   const actionCount = { value: 0 };
   try {
@@ -669,38 +730,43 @@ export async function runTempleLetterJourney(
     if (!created.ok) throw new Error(`开局创建失败：${created.code}`);
     snapshots.push(await currentRecord(repository));
 
-    await submitSceneChoice(repository, source, actionCount, snapshots, "先问清楚");
-    await submitSceneChoice(repository, source, actionCount, snapshots, "质疑");
-    await moveToNextAct(repository, source, actionCount, snapshots);
-
-    const interaction = routeInteraction(route);
-    if (interaction !== null) {
-      if (route === "verify_first") {
-        await submitFreeform(repository, source, actionCount, snapshots, "我走了");
+    if (route === "exit_return" || route === "exit_keep") {
+      if (route === "exit_return") {
+        const beforePledge = await currentRecord(repository);
+        const unpreparedReturn = choiceTokenForAction(beforePledge, (action) => action.type === "give_item" && action.npcId === asNpcId("npc_0"));
+        await requireRejectedChoiceWithoutWrites(repository, unpreparedReturn, "unprepared_return");
       }
-      await submitSceneChoice(repository, source, actionCount, snapshots, interaction.label);
-      await playTwoRoundDialogue(repository, source, actionCount, snapshots, "质疑");
-    } else {
-      await playTwoRoundDialogue(repository, source, actionCount, snapshots);
-    }
-
-    if (options.reloadBeforeFinalAct === true) {
-      await repository.close();
-      repository = openJourneyRepository(dbPath);
-    }
-    await moveToNextAct(repository, source, actionCount, snapshots);
-    if (route === "exit_keep") {
+      await submitSceneChoice(repository, source, actionCount, snapshots, "先许下递送期间的保密承诺");
+      if (route === "exit_return") {
+        const beforeReturn = await currentRecord(repository);
+        const returnToken = choiceTokenForAction(beforeReturn, (action) => action.type === "give_item" && action.npcId === asNpcId("npc_0"));
+        await submitChoice(repository, source, actionCount, snapshots, returnToken);
+        await requireRejectedChoiceWithoutWrites(repository, returnToken, "stale_return");
+      }
       await submitWorldAction(repository, source, actionCount, snapshots, (action) => action.type === "abandon_quest");
     } else {
+      await submitSceneChoice(repository, source, actionCount, snapshots, "先问清楚");
+      await submitSceneChoice(repository, source, actionCount, snapshots, "质疑");
+      await moveToNextAct(repository, source, actionCount, snapshots);
+      const interaction = routeInteraction(route)!;
+      if (route === "verify_first") await submitFreeform(repository, source, actionCount, snapshots, "我走了");
+      await submitSceneChoice(repository, source, actionCount, snapshots, interaction.label);
+      if (route === "private") await submitSceneChoice(repository, source, actionCount, snapshots, "凭保密承诺请求引荐");
+      await playTwoRoundDialogue(repository, source, actionCount, snapshots, "质疑");
+      if (options.reloadBeforeFinalAct === true) {
+        await repository.close();
+        repository = openJourneyRepository(dbPath);
+      }
+      await moveToNextAct(repository, source, actionCount, snapshots);
+      if (route === "private" && options.leakBeforeDelivery === true) {
+        await submitSceneChoice(repository, source, actionCount, snapshots, "泄露引荐细节");
+        if (options.reloadBeforeFinalAct === true) { await repository.close(); repository = openJourneyRepository(dbPath); }
+      }
       await submitWorldAction(repository, source, actionCount, snapshots, (action) => action.type === "give_item");
-      if (route === "exit_return") {
-        await submitWorldAction(repository, source, actionCount, snapshots, (action) => action.type === "abandon_quest");
-      } else {
-        await playTwoRoundDialogue(repository, source, actionCount, snapshots);
-        const afterDialogue = await currentRecord(repository);
-        if (afterDialogue.worldState.ending === null) {
-          await submitWorldAction(repository, source, actionCount, snapshots, (action) => action.type === "talk" && action.dialogueAct === "support");
-        }
+      await playTwoRoundDialogue(repository, source, actionCount, snapshots);
+      const afterDialogue = await currentRecord(repository);
+      if (afterDialogue.worldState.ending === null) {
+        await submitWorldAction(repository, source, actionCount, snapshots, (action) => action.type === "talk" && action.dialogueAct === "support");
       }
     }
 

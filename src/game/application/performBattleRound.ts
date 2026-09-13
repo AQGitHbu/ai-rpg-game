@@ -168,6 +168,7 @@ export async function performBattleRound(
         : { ...narrativeCheckpoint.storySnapshot };
       const restoredStoryState: StoryState = {
         ...restoredStoryBase,
+        ...(preBattleSnapshot?.delivery === undefined ? {} : { delivery: preBattleSnapshot.delivery ?? undefined }),
         ...(preBattleSnapshot?.threads === undefined
           ? {}
           : {

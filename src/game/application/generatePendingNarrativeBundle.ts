@@ -53,6 +53,7 @@ export type GeneratePendingNarrativeBundleDeps = {
   readonly repository: GameRepository;
   readonly source: NarrativeBundleSource;
   readonly now: () => string;
+  readonly domainTime?: (key: string) => string;
   readonly logger?: GameLogger;
   readonly auditLink?: AiTextAuditLink;
   /** Optional semantic reviewer; production composition injects the live reviewer. */
@@ -500,7 +501,7 @@ export async function generatePendingNarrativeBundle(
         kind: lastFailureKind,
         reason: persistedAiRepairReason(lastRepair ?? { attempt: 1, reason: "invalid_schema" }),
         phase: "scene",
-        failedAt: deps.now(),
+        failedAt: deps.domainTime?.(`failed:${job.jobId}:${job.attempt?.epoch ?? 0}`) ?? deps.now(),
       },
       lastPresentedScene,
       ...(narrative.dialogueSession === undefined ? {} : { dialogueSession: narrative.dialogueSession }),
@@ -599,7 +600,7 @@ export async function generatePendingNarrativeBundle(
       turnId: job.turnId,
       actionId: job.actionId,
       turnNumber: job.turnNumber,
-      committedAt: deps.now(),
+      committedAt: deps.domainTime?.(`committed:${job.jobId}:${job.attempt?.epoch ?? 0}`) ?? deps.now(),
     },
     entityStore: approvedWorldState.entityStore,
   });

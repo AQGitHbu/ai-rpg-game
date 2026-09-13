@@ -182,6 +182,8 @@ P1 增加的最小语义围绕样本需要：请求合作、展示已有证据�
 
 NPC 反应依据目标、已知事实、当前证据、相关承诺与关系；不能只由 support/challenge 的全局固定加减决定。AI 提议情境解释，玩法层验证并产生数值/条件变化；unsupported 意图不伪装成已完成动作。
 
+保密承诺的最小条款为 `confidentiality: { protectedFactIds, allowedAudienceIds, fulfillment: { kind: "story_delivery" } }`，随关系 promise 保存。先成功许诺，再用真实 promise ID 的 open 条件请求引荐；许诺事件不冒充引荐。保密期止于已绑定递送物品的显式成功交付，期间玩家向排除听众的已提交 `share_known_fact` 才构成违约；旧知识、NPC 自行说话和未提交候选不产生玩家违约。通用任务关系信号不能结案保密条款，最终支持立场不能覆盖累计 broken。`share_known_fact` 的主体为玩家、接收方为显式同场 NPC；另外两类信息互动仍由 NPC 依自身知识和披露权限说话。
+
 ### 6.3 自由输入与新增策略
 
 P1 先保留当前自由输入作为合法话语提交，但必须保存原话并让场景真正回应。输入“我把信交出去了”只表示话语，不自动转移物品。

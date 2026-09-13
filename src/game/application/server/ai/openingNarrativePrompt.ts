@@ -83,7 +83,7 @@ ${noveltyLines}
 - storyContract 必须是 {"version":1,"targetActs":${targetActs},"centralConflict":"...","endingDirections":[{"key":"trust","theme":"..."},{"key":"doubt","theme":"..."}]}；递送型开局可额外包含 delivery={"itemKey":"...","recipientKey":"...","verificationFactKeys":["public_fact"]}，这些是本地 key，核验 key 必须来自 publicFacts。
 - opening.location 只能含 name、description、buildingName、scale，scale 固定为 "town"；名称与描述服从题材，town 不等于古镇或客栈。
 - opening.npc 只能含 name、role、description、knownFactKeys、privateFactKeys、anchors、goals。knownFactKeys 与 privateFactKeys 只能引用 world.publicFacts 的 key，二者不得相交。knownFactKeys 是可在首屏、台词、选项、公开 history 渲染和 thread 问题中使用的公开事实。privateFactKeys 可被 history.factKeys 引用并存入 ledger，history.factKeys 不要求全部属于 knownFactKeys；但私密事实正文不得出现在 prologue、currentScene、choices、公开 history 渲染、thread question 或 response。
-- 递送型开局才在 opening.item 建立一件唯一任务物品，精确包含 key、name、description、kind、tags；item.key 必须等于 storyContract.delivery.itemKey。owner 由服务端固定为 player，接应目标只保留本地 recipientKey，不在开局预生成 NPC 或 runtime ID；没有明确递送开端时省略 item/delivery。
+- 递送型开局才在 opening.item 建立一件唯一任务物品，精确包含 key、name、description、kind、tags；item.key 必须等于 storyContract.delivery.itemKey。owner 由服务端固定为 player，开局 NPC 是委托方；接应目标只保留本地 recipientKey，在最终幕主线 NPC 具象化时由规则绑定，不在开局预生成 NPC 或 runtime ID；没有明确递送开端时省略 item/delivery。
 - anchors 精确包含 selfConcept、values、speechStyle、capabilityBoundaries、taboos；values 1–4，capabilityBoundaries 1–4，taboos 0–4，单条正文不超过 200 字。
 - goals 为 1–4 条，每项精确包含 horizon、description、priority、reason；horizon 枚举为 short、long，priority 为 1、2、3、4、5。不得输出 goalId 或 status。
 - opening.quest 精确包含 name、description、objective，objective 固定为 {"kind":"talk_to_opening_npc"}；名称和描述只概括眼前问题，不表示玩家已经接取或完成。

@@ -5,10 +5,13 @@ import { parseNarrativeRuntimeState } from "@/game/domain/narrative";
 import { parseNarrativeHistory } from "@/game/domain/narrativeHistory";
 import {
   classifyStoryStateSchemaVersion,
+  STORY_STATE_SCHEMA_VERSION,
+  isStoryDeliveryState,
   type StoryState,
   type PacingNeed,
 } from "@/game/domain/storyState";
 import { parseStoryThread, unresolvedStoryThreadIds } from "@/game/domain/storyThreads";
+import { getEntity, type EntityStore } from "@/game/domain/entity";
 
 export type PersistableStoryStateValidationResult =
   | { readonly ok: true; readonly value: StoryState }
@@ -22,7 +25,7 @@ const REQUIRED_STORY_KEYS = [
   "prologueShown", "prologueText", "memory", "history", "contract", "evolution",
   "dialogueFocus",
 ] as const;
-const ALL_STORY_KEYS = [...REQUIRED_STORY_KEYS, "history", "reveal"] as const;
+const ALL_STORY_KEYS = [...REQUIRED_STORY_KEYS, "history", "reveal", "delivery"] as const;
 const PACING_NEEDS: readonly PacingNeed[] = ["reveal", "develop", "complicate", "escalate", "climax", "resolve"];
 
 function isObject(value: unknown): value is JsonObject {
@@ -71,7 +74,7 @@ function isStoryShape(value: JsonObject): value is JsonObject & {
   readonly threads: unknown;
 } {
   return hasExactStoryKeys(value)
-    && value.version === 11
+    && value.version === STORY_STATE_SCHEMA_VERSION
     && isNonNegativeInteger(value.turnNumber)
     && isNonNegativeInteger(value.currentAct)
     && isNonNegativeInteger(value.targetActs)
@@ -90,6 +93,7 @@ function isStoryShape(value: JsonObject): value is JsonObject & {
     && typeof value.endingAllowed === "boolean"
     && typeof value.endingProposed === "boolean"
     && isObject(value.contract)
+    && (value.contract.delivery === undefined ? value.delivery === undefined : isStoryDeliveryState(value.delivery))
     && typeof value.prologueShown === "boolean"
     && typeof value.prologueText === "string"
     && isObject(value.evolution)
@@ -106,11 +110,12 @@ function sameJson(left: unknown, right: unknown): boolean {
   }
 }
 
-/** SQLite boundary parser for v11 StoryState. Memory is accepted only when it
+/** SQLite boundary parser for current StoryState. Memory is accepted only when it
  * is byte-for-byte equivalent to the read model rebuilt from the supplied world ledger. */
 export function parsePersistableStoryState(
   value: unknown,
   ledger: readonly CommittedNarrativeEvent[],
+  entityStore?: EntityStore,
 ): PersistableStoryStateValidationResult {
   if (!isObject(value)) return { ok: false, code: "INVALID_STORY_STATE" };
   const classification = classifyStoryStateSchemaVersion(value.version);
@@ -121,6 +126,14 @@ export function parsePersistableStoryState(
     };
   }
   if (!isStoryShape(value)) return { ok: false, code: "INVALID_STORY_STATE" };
+  if (isStoryDeliveryState(value.delivery) && entityStore !== undefined) {
+    const delivery = value.delivery;
+    if (getEntity(entityStore, delivery.itemId)?.core.kind !== "item"
+      || getEntity(entityStore, delivery.giverNpcId)?.core.kind !== "npc"
+      || (delivery.recipientNpcId !== null && getEntity(entityStore, delivery.recipientNpcId)?.core.kind !== "npc")) {
+      return { ok: false, code: "INVALID_STORY_STATE" };
+    }
+  }
 
   const narrative = parseNarrativeRuntimeState(value.narrative);
   if (!narrative.ok) return { ok: false, code: "INVALID_STORY_STATE" };

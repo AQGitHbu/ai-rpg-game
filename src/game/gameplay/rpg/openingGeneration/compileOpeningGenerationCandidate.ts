@@ -318,6 +318,9 @@ export function compileOpeningGenerationCandidate(
     memory: rebuildEpisodicMemory(committedWorldState.eventLedger),
     targetActs: candidate.storyContract.targetActs,
     contract: candidate.storyContract,
+    ...(candidate.storyContract.delivery === undefined ? {} : {
+      delivery: { itemId: openingItems[0]!.id, giverNpcId: npcId, recipientNpcId: null },
+    }),
     prologueText: candidate.prologue,
     evolution: {
       nextLocationOrdinal: 1,

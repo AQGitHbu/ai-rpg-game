@@ -35,6 +35,19 @@ function fakeDeps(overrides: Partial<NarrativeP1JourneyDeps> = {}): NarrativeP1J
 }
 
 describe("narrative P1 live journey protocol", () => {
+  it("registers diagnostic as an isolated one-route claim with 200 HTTP and 30 minutes", async () => {
+    const paths = tempPaths();
+    try {
+      const input = { profile: "diagnostic" as const, runId: "diagnostic", ...paths };
+      expect(await runNarrativeP1Journey({ ...input, mode: "register" }, fakeDeps())).toEqual({ completedRoutes: 0, plannedRoutes: 1, passed: true });
+      const protocol = JSON.parse(readFileSync(paths.protocolPath, "utf8"));
+      expect(protocol).toMatchObject({ claimScope: "diagnostic", plannedRoutes: 1, budget: { httpBatch: 200, wallClockMs: 1_800_000, maxRouteActions: 24 } });
+      const called: string[] = [];
+      expect(await runNarrativeP1Journey({ ...input, mode: "live" }, fakeDeps({ routeRunner: async ({ route }) => { called.push(route.routeId); return { completed: true, httpAttempts: 0 }; } }))).toEqual({ completedRoutes: 1, plannedRoutes: 1, passed: true });
+      expect(called).toEqual(["S1-diagnostic"]);
+      expect(NARRATIVE_P1_PLANNED_ROUTES).toBe(6);
+    } finally { rmSync(paths.root, { recursive: true, force: true }); }
+  });
   it("cannot promote a fabricated replay summary to acceptance or overwrite live evidence", async () => {
     const paths = tempPaths();
     try {
@@ -43,7 +56,7 @@ describe("narrative P1 live journey protocol", () => {
       const replayPath = join(paths.artifactDirectory, "replay-routes.json");
       writeFileSync(summaryPath, '{"original":true}');
       writeFileSync(replayPath, '{"S1-private":{"completed":true}}');
-      expect(await runNarrativeP1Journey({ mode: "replay", runId: "replay", ...paths }, fakeDeps())).toEqual({ completedRoutes: 0, plannedRoutes: 6, passed: false });
+      expect(await runNarrativeP1Journey({ mode: "replay", runId: "replay", ...paths }, fakeDeps({ routeRunner: undefined }))).toEqual({ completedRoutes: 0, plannedRoutes: 6, passed: false });
       expect(readFileSync(summaryPath, "utf8")).toBe('{"original":true}');
       expect(readFileSync(replayPath, "utf8")).toBe('{"S1-private":{"completed":true}}');
     } finally { rmSync(paths.root, { recursive: true, force: true }); }

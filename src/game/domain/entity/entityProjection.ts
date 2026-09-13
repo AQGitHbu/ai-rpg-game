@@ -52,6 +52,7 @@ export type EntityReferenceIssueCode =
   | "unknown_item_owner_ref"
   | "unknown_quest_objective_ref"
   | "unknown_npc_fact_ref"
+  | "unknown_confidentiality_ref"
   | "unknown_player_location"
   | "unknown_town_npc_ref"
   | "town_npc_location_mismatch"
@@ -883,6 +884,17 @@ export function validateEntityReferences(store: EntityStore): readonly EntityRef
       if (!known.facts.has(entry.factId)) {
         issues.push({ code: "unknown_npc_fact_ref", entityId: record.core.id, referencedId: entry.factId });
       }
+    }
+  }
+
+  for (const record of entitiesOfKind(store, "npc")) {
+    const terms = [
+      ...(record.interactions ?? []).flatMap((interaction) => interaction.confidentiality === undefined ? [] : [interaction.confidentiality]),
+      ...record.relationships.outgoing.flatMap((edge) => edge.commitments.flatMap((commitment) => commitment.kind === "promise" && commitment.confidentiality !== undefined ? [commitment.confidentiality] : [])),
+    ];
+    for (const term of terms) {
+      for (const id of term.protectedFactIds) if (!known.facts.has(id)) issues.push({ code: "unknown_confidentiality_ref", entityId: record.core.id, referencedId: id });
+      for (const id of term.allowedAudienceIds) if (id !== PLAYER_ENTITY_ID && !known.npcs.has(id as NpcId)) issues.push({ code: "unknown_confidentiality_ref", entityId: record.core.id, referencedId: id });
     }
   }
 

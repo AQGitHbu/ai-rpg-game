@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { createNarrativeP1ReplayRuntime } from "./narrativeP1Replay.mjs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -71,6 +72,7 @@ test("production runner creates two openings and copies each closed checkpoint i
           assert.equal(command.expectedRevision, 0);
           return { ok: false, code: "TEST_AFTER_COMMAND" };
         },
+        ackPrologue: async () => ({ ok: true }),
         close: async () => { closed.add(env.GAME_DB_PATH); },
       }),
       createSqliteClient: (path) => ({ execute: async () => { assert.equal(closed.has(path), true); checkpoints.push(path); return { rows: [{ busy: 0 }] }; }, close() {} }),
@@ -96,11 +98,64 @@ test("parses register/live/replay arguments without accepting unknown modes", ()
     "--output=artifacts",
   ]), {
     mode: "register",
+    profile: "matrix",
+    replaySource: "",
     runId: "sample-1",
     protocolPath: "protocol.json",
     output: "artifacts",
   });
   assert.equal(validateNarrativeP1Args({ mode: "other", runId: "x", protocolPath: "p", output: "o" }), "INVALID_MODE");
+});
+
+test("actual response tape strictly matches requests and state, preserves failures and original artifacts", async () => {
+  const root = mkdtempSync(join(tmpdir(), "p1-tape-"));
+  try {
+    const recording = createNarrativeP1ReplayRuntime({ mode: "live", directory: root, stream: "S1-private" });
+    const gameId = recording.options.identity("gameId");
+    const time = recording.options.domainTime("action:1");
+    const request = { role: "narrative_bundle", callId: recording.options.aiRuntime.nextCallId(), attempt: 1, context: { purpose: "npc_deliberation" }, model: "test", messages: [{ role: "user", content: "秘密" }], options: { timeoutMs: 200 } };
+    const failure = { ok: false, code: "timeout", retryable: true, latencyMs: 10 };
+    await recording.options.aiRuntime.attempt(request, async () => failure);
+    recording.state("commit", { gameId, createdAt: time, revision: 2, storyState: { narrative: { job: { attempt: { leaseId: "live", leaseExpiresAt: "live-expiry" } } } } });
+    recording.finish();
+    const original = readFileSync(join(root, "S1-private.runtime.json"), "utf8");
+    const fresh = () => createNarrativeP1ReplayRuntime({ mode: "replay", directory: join(root, "replay"), sourceDirectory: root, stream: "S1-private" });
+    const replay = fresh();
+    assert.equal(replay.options.identity("gameId"), gameId);
+    assert.equal(replay.options.domainTime("action:1"), time);
+    assert.deepEqual(await replay.options.aiRuntime.attempt(request, () => { throw new Error("NETWORK_FORBIDDEN"); }), failure);
+    replay.state("commit", { gameId, createdAt: time, revision: 2, storyState: { narrative: { job: { attempt: { leaseId: "replay", leaseExpiresAt: "replay-expiry" } } } } });
+    assert.equal(replay.finish().replayedTransportAttempts, 1);
+    assert.equal(readFileSync(join(root, "S1-private.runtime.json"), "utf8"), original);
+    await assert.rejects(fresh().options.aiRuntime.attempt({ ...request, attempt: 2 }, async () => failure), /REPLAY_REQUEST_MISMATCH/);
+    await assert.rejects(fresh().options.aiRuntime.attempt({ ...request, messages: [] }, async () => failure), /REPLAY_REQUEST_MISMATCH/);
+    assert.throws(() => fresh().finish(), /REPLAY_RESPONSE_EXTRA/);
+    assert.throws(() => fresh().state("commit", { revision: 3 }), /REPLAY_SEMANTIC_MISMATCH/);
+    assert.throws(() => createNarrativeP1ReplayRuntime({ mode: "replay", directory: root, stream: "missing" }), /REPLAY_IDENTITY_TAPE_MISSING/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("bound replay refuses cross-protocol tapes and missing or modified raw audit", async () => {
+  const root = mkdtempSync(join(tmpdir(), "p1-bound-tape-"));
+  const binding = { protocolHash: "registered", codeFingerprint: "code", inputHash: "input" };
+  try {
+    const runtime = createNarrativeP1ReplayRuntime({ mode: "live", directory: root, stream: "S1-opening", binding, auditFiles: ["audit/events.jsonl"] });
+    const request = { role: "narrative_bundle", callId: "call", attempt: 1, context: { purpose: "opening" }, messages: [{ role: "user", content: "story" }], options: {}, model: "test" };
+    const output = { ok: true, content: "{}", latencyMs: 1 };
+    await runtime.options.aiRuntime.attempt(request, async () => output);
+    mkdirSync(join(root, "audit"));
+    const auditPath = join(root, "audit/events.jsonl");
+    const audit = JSON.stringify({ sequence: 1, timestamp: "2026-09-13", kind: "ai_call", callId: "call", attempt: 1, role: request.role, input: { messages: request.messages }, output }) + "\n";
+    writeFileSync(auditPath, audit);
+    runtime.finish();
+    const replay = () => createNarrativeP1ReplayRuntime({ mode: "replay", directory: join(root, "replay"), sourceDirectory: root, stream: "S1-opening", binding });
+    assert.doesNotThrow(replay);
+    assert.throws(() => createNarrativeP1ReplayRuntime({ mode: "replay", directory: root, stream: "S1-opening", binding: { ...binding, protocolHash: "unrelated" } }), /REPLAY_BINDING_MISMATCH/);
+    writeFileSync(auditPath, audit.replace('"content":"{}"', '"content":"changed"'));
+    assert.throws(replay, /REPLAY_AUDIT_INVALID/);
+    rmSync(auditPath);
+    assert.throws(replay, /REPLAY_AUDIT_INVALID/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("defaults keep protocol and artifacts in the narrative P1 namespace", () => {

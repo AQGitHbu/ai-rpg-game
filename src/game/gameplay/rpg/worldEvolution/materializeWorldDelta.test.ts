@@ -11,7 +11,7 @@ import {
   type WorldStateFixtureOverrides,
 } from "@/game/domain/testing/worldStateFixture.testutil";
 import type { WorldDeltaProposal } from "@/game/domain/worldDelta";
-import { asFactId, asLocationId, asNpcId, asGenerationId, type GenerationMetadata } from "@/game/domain/worldEntity";
+import { asFactId, asItemId, asLocationId, asNpcId, asGenerationId, type GenerationMetadata } from "@/game/domain/worldEntity";
 import { entitiesOfKind } from "@/game/domain/entity";
 import { approveWorldDelta, type ApprovedWorldDeltaCore } from "./approveWorldDelta";
 import { createTownRuntime, bindNpcToTownSlot } from "@/game/gameplay/rpg/town";
@@ -117,6 +117,18 @@ function nextActProposal(): WorldDeltaProposal {
 }
 
 describe("materializeWorldDelta", () => {
+  it("binds the deferred delivery recipient only when the final main act is materialized", () => {
+    const ws = makeWorld();
+    const delivery = { itemId: asItemId("item_0"), giverNpcId: asNpcId("npc_0"), recipientNpcId: null };
+    const ss = makeStory({ currentAct: 3, targetActs: 3, delivery });
+    const approved = approve({ proposal: nextActProposal(), need: { kind: "next_act", act: 3 }, ws, ss });
+    const result = materializeWorldDelta({ approved, need: { kind: "next_act", act: 3 }, ws, ss, now: () => "2026-01-02" });
+    expect(result.previewStoryState.delivery?.recipientNpcId).toBe(approved.newNpcs[0]?.id);
+    expect(ss.delivery?.recipientNpcId).toBeNull();
+    const earlier = makeStory({ currentAct: 2, targetActs: 3, delivery });
+    const earlyApproved = approve({ proposal: nextActProposal(), need: { kind: "next_act", act: 2 }, ws, ss: earlier });
+    expect(materializeWorldDelta({ approved: earlyApproved, need: { kind: "next_act", act: 2 }, ws, ss: earlier, now: () => "2026-01-02" }).previewStoryState.delivery?.recipientNpcId).toBeNull();
+  });
   it("materializes private initial knowledge without adding it to player knowledge", () => {
     const ws = makeWorld();
     const ss = makeStory({ currentAct: 2, targetActs: 3, evolution: { ...makeStory().evolution, status: "needs_next_act" } });

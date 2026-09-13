@@ -285,7 +285,7 @@ function compileInteractionProposals(input: {
     for (const rawAudienceId of proposal.audienceIds) {
       const audienceId = resolveSceneReference(String(rawAudienceId), bindings);
       const audience = audienceId === null ? null : activeAudience(worldState, audienceId);
-      if (audienceId === null || audience === null || audienceSet.has(audienceId) || audienceId === npcId) {
+      if (audienceId === null || audience === null || audienceSet.has(audienceId) || (proposal.operation !== "share_known_fact" && audienceId === npcId)) {
         return { ok: false, detail: `audience:${String(rawAudienceId)}` };
       }
       audienceSet.add(audienceId);
@@ -308,14 +308,32 @@ function compileInteractionProposals(input: {
     const npcRecord = getEntity(worldState.entityStore, npcId);
     if (npcRecord?.core.kind !== "npc") return { ok: false, detail: `npc:${npcId}` };
     const npc = npcRecord as NpcEntityRecord;
-    if (!factIds.every((factId) => npc.knowledge.entries.some((entry) => entry.factId === factId))) {
+    const player = getEntity(worldState.entityStore, PLAYER_ENTITY_ID);
+    const known = proposal.operation === "share_known_fact" && player?.core.kind === "player_character"
+      ? (player as import("@/game/domain/entity").PlayerEntityRecord).knowledge.knownFactIds : npc.knowledge.entries.map((entry) => entry.factId);
+    if (proposal.operation === "share_known_fact" && (!audienceIds.includes(asNpcId(npcId)) || audienceIds.some((id) => {
+      const target = getEntity(worldState.entityStore, id);
+      return target?.core.kind !== "npc" || (target as NpcEntityRecord).position.locationId !== npc.position.locationId;
+    }))) return { ok: false, detail: "share_audience" };
+    if (!factIds.every((factId) => known.includes(factId))) {
       return { ok: false, detail: "npc_knowledge" };
+    }
+    let confidentiality: StoryInteraction["confidentiality"];
+    if (proposal.confidentiality !== undefined) {
+      const protectedFactIds = proposal.confidentiality.protectedFactIds.map((id) => resolveSceneReference(String(id), bindings));
+      const allowedAudienceIds = proposal.confidentiality.allowedAudienceIds.map((id) => resolveSceneReference(String(id), bindings));
+      if (protectedFactIds.some((id) => id === null || !npc.knowledge.entries.some((entry) => String(entry.factId) === id))
+        || allowedAudienceIds.some((id) => id === null || activeAudience(worldState, id) === null)
+        || new Set(protectedFactIds).size !== protectedFactIds.length || new Set(allowedAudienceIds).size !== allowedAudienceIds.length
+        || !allowedAudienceIds.includes(String(PLAYER_ENTITY_ID))) return { ok: false, detail: "confidentiality_references" };
+      confidentiality = { protectedFactIds: protectedFactIds.map((id) => asFactId(id!)), allowedAudienceIds: allowedAudienceIds as EntityId[], fulfillment: { kind: "story_delivery" } };
     }
     const id = `interaction:${String(jobId)}:${proposal.proposalKey}`;
     const interaction: StoryInteraction = {
       id,
       npcId: asNpcId(npcId),
       operation: proposal.operation,
+      ...(confidentiality === undefined ? {} : { confidentiality }),
       condition,
       factIds,
       goalIds: [...proposal.goalIds],
@@ -1112,9 +1130,18 @@ export function approveNarrativeBundle(
         Number(selectedInteractionIds.has(b.id)) - Number(selectedInteractionIds.has(a.id))) };
     }) },
   };
+  const deliveryReturn = previewStoryState.delivery;
+  const returnItem = deliveryReturn === undefined ? undefined : getEntity(previewWorldState.entityStore, deliveryReturn.itemId);
+  const returnGiver = deliveryReturn === undefined ? undefined : getEntity(previewWorldState.entityStore, deliveryReturn.giverNpcId);
+  const returnOwner = returnItem?.core.kind === "item" ? (returnItem as import("@/game/domain/entity").ItemEntityRecord).possession.owner : undefined;
+  const includeDeliveryReturn = deliveryReturn !== undefined
+    && returnOwner?.kind === "player" && returnOwner.playerId === PLAYER_ENTITY_ID
+    && returnGiver?.core.kind === "npc" && returnGiver.core.lifecycle === "active" && (returnGiver as NpcEntityRecord).position.locationId === previewWorldState.currentLocationId
+    && proposal.continuationScenes.some((step) => step.stepKey === `give_item:${deliveryReturn.itemId}:${deliveryReturn.giverNpcId}`);
   const graph = buildNarrativeBundleDescriptors({
     worldState: descriptorWorld,
     storyState: previewStoryState,
+    includeDeliveryReturn,
     transition: descriptorTransition,
   });
 

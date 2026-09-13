@@ -1,5 +1,6 @@
 import { createNarrativeBundleSource } from "./server/ai/liveNarrativeBundleSource";
 import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
+import { asItemId } from "@/game/domain/worldEntity";
 import { asTurnId } from "@/game/domain/events";
 import { describe, expect, it } from "vitest";
 import { approveNarrativeBundle, installStoryInteractionProposals } from "./approveNarrativeBundle";
@@ -983,6 +984,7 @@ describe("approveNarrativeBundle", () => {
       worldState: input.worldState, jobId: asNarrativeJobId("older_job"), focusNpcId: String(npcDyn1),
       proposals: ["old_one", "old_two"].map((proposalKey) => ({
         proposalKey, npcId: npcDyn1, operation: "promise_confidentiality", condition: [], factIds: [],
+        confidentiality: { protectedFactIds: [factTracks], allowedAudienceIds: [PLAYER_ENTITY_ID, npcDyn1], fulfillment: { kind: "story_delivery" } },
         goalIds: [], promiseId: null, audienceIds: [PLAYER_ENTITY_ID], evidenceEventIds: [],
       })),
     });
@@ -1019,5 +1021,35 @@ describe("approveNarrativeBundle", () => {
     });
     const npc = result.approved.nextWorldState.npcs.find((entry) => entry.id === npcDyn1);
     expect(npc).toBeDefined();
+  });
+});
+
+describe("bounded delivery return proposal", () => {
+  it("prepares the exact held item for the present giver without returning it, and rejects other objects", () => {
+    const itemId = asItemId("item_return");
+    const current = buildWorld({
+      locations: [{ ...townLocation, npcIds: [npcDyn1] }, { ...templeLocation, npcIds: [] }],
+      npcs: [{ ...templeNpc, locationId: locTown }],
+      quests: [{ ...mainQuest, objectives: [{ kind: "talk_to_npc", npcId: npcDyn1 }] }],
+      items: [{ id: itemId, name: "信筒", description: "封口信筒", kind: "quest", tags: [] }], inventory: [itemId],
+    });
+    const ss = { ...storyState(), delivery: { itemId, giverNpcId: npcDyn1, recipientNpcId: null } };
+    const ordinary = approveNarrativeBundle(baseInput({ worldState: current, storyState: ss, proposal: currentSceneProposal() }));
+    expect(ordinary.ok).toBe(true);
+    const proposalFor = (stepKey: string): NarrativeBundleProposal => ({
+      worldDelta: null, currentScene: { ...currentSceneProposal().currentScene, choices: [] },
+      continuationScenes: [{ stepKey, scene: { ...currentSceneProposal().currentScene,
+        choices: [{ candidateId: `${stepKey}_choice_1`, label: "继续交谈" }, { candidateId: `${stepKey}_choice_2`, label: "保留疑问" }] } }],
+      terminal: { kind: "next_decision", target: { kind: "continuation_step", stepKey } },
+    });
+    const snapshot = JSON.stringify(current);
+    expect(approveNarrativeBundle(baseInput({ worldState: current, storyState: ss, proposal: proposalFor(`give_item:${itemId}:${npcDyn1}`) })).ok).toBe(true);
+    expect(JSON.stringify(current)).toBe(snapshot);
+    for (const stepKey of [`give_item:item_wrong:${npcDyn1}`, `give_item:${itemId}:${npcDyn2}`]) {
+      expect(approveNarrativeBundle(baseInput({ worldState: current, storyState: ss, proposal: proposalFor(stepKey) })).ok).toBe(false);
+      expect(JSON.stringify(current)).toBe(snapshot);
+    }
+    const elsewhere = { ...ss, delivery: { ...ss.delivery, giverNpcId: npcDyn2 } };
+    expect(approveNarrativeBundle(baseInput({ worldState: current, storyState: elsewhere, proposal: proposalFor(`give_item:${itemId}:${npcDyn2}`) })).ok).toBe(false);
   });
 });

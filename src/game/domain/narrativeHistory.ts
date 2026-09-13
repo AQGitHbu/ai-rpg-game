@@ -134,7 +134,7 @@ export function narrativeSceneHistoryEntries(input: {
 }): readonly HistoryEntry[] {
   const expressions = input.scene.expressions === undefined
     ? sceneExpressionsOf({
-        segments: [{ beatId: "narration", text: input.scene.narration }],
+        segments: input.scene.narration.trim() === "" ? [] : [{ beatId: "narration", text: input.scene.narration }],
         npcLine: input.scene.npcLine,
       })
     : input.scene.expressions;

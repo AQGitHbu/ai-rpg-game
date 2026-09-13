@@ -1,3 +1,4 @@
+import { isStoryDeliveryComplete, isStoryDeliveryReturned } from "@/game/gameplay/rpg/storyDelivery";
 import type { ItemEntry, WorldState } from "@/game/domain/worldState";
 import { findLocation, findNpc, findItem } from "@/game/domain/worldState";
 import type { Action } from "@/game/domain/action";
@@ -57,10 +58,18 @@ function abandonmentCommitmentMutations(
   keepQuestItem: boolean,
 ): EntityMutation[] {
   if (storyState === undefined) return [];
-  const refs = storyState.threads
+  const threadRefs = storyState.threads
     .filter((thread) => thread.questIds.some((id) => String(id) === questId))
-    .flatMap((thread) => thread.promiseRefs)
-    .filter((ref, index, all) => all.findIndex((candidate) => candidate.npcId === ref.npcId && candidate.promiseId === ref.promiseId) === index);
+    .flatMap((thread) => thread.promiseRefs);
+  const deliveryRefs = storyState.delivery === undefined ? [] : ws.entityStore.records.flatMap(record => {
+    if (record.core.kind !== "npc") return [];
+    return (record as NpcEntityRecord).relationships.outgoing
+      .filter(edge => edge.targetId === PLAYER_ENTITY_ID)
+      .flatMap(edge => edge.commitments.filter(commitment => commitment.kind === "promise" && commitment.confidentiality !== undefined)
+        .map(commitment => ({ npcId: (record as NpcEntityRecord).core.id, promiseId: commitment.commitmentId })));
+  });
+  const refs = [...threadRefs, ...deliveryRefs]
+    .filter((ref, index, all) => all.findIndex(candidate => candidate.npcId === ref.npcId && candidate.promiseId === ref.promiseId) === index);
   const supportingEventId = eventIdFor(deps.turnId, `quest_abandoned:${questId}`);
   const mutations: EntityMutation[] = [];
   for (const ref of refs) {
@@ -68,6 +77,7 @@ function abandonmentCommitmentMutations(
     if (npc === undefined || npc.core.kind !== "npc") continue;
     const npcRecord = npc as NpcEntityRecord;
     const commitment = npcRecord.relationships.outgoing
+      .filter((edge) => edge.targetId === PLAYER_ENTITY_ID)
       .flatMap((edge) => edge.commitments)
       .find((entry) => entry.commitmentId === ref.promiseId && entry.kind === "promise" && entry.status === "open");
     if (commitment === undefined) continue;
@@ -75,7 +85,8 @@ function abandonmentCommitmentMutations(
       kind: "apply_relationship_commitment",
       fromNpcId: ref.npcId,
       targetId: PLAYER_ENTITY_ID,
-      operation: { kind: keepQuestItem ? "break" : "release", commitmentId: ref.promiseId },
+      operation: { kind: (commitment.kind === "promise" && commitment.confidentiality !== undefined
+        ? !isStoryDeliveryReturned(ws, storyState) : keepQuestItem) ? "break" : "release", commitmentId: ref.promiseId },
       source: { kind: "action", actionId: deps.actionId, turnNumber: deps.turnNumber },
       supportingEventId,
     });
@@ -327,6 +338,7 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
       };
     }
     case "abandon_quest": {
+      if (deps.storyState !== undefined && isStoryDeliveryComplete(ws, deps.storyState)) return { ok: false, feedback: "递送已经完成，不能再放弃委托。" };
       const quest = ws.quests.find((entry) => entry.id === action.questId);
       if (quest === undefined || quest.kind !== "main" || quest.status !== "active") {
         return { ok: false, feedback: "当前任务不可放弃。" };

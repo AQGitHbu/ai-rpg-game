@@ -4,6 +4,7 @@ import type { Action } from "@/game/domain/action";
 import type { StoryState } from "@/game/domain/storyState";
 import { DIALOGUE_ACTS } from "@/game/domain/action";
 import { getEntity, type EntityRecord, type NpcEntityRecord } from "@/game/domain/entity";
+import { isStoryDeliveryComplete } from "@/game/gameplay/rpg/storyDelivery";
 
 function isNpcRecord(record: EntityRecord | undefined): record is NpcEntityRecord {
   return record?.core.kind === "npc";
@@ -97,6 +98,9 @@ export function validateAction(ws: WorldState, action: Action, storyState?: Stor
       return { ok: true };
     }
     case "abandon_quest": {
+      if (storyState !== undefined && isStoryDeliveryComplete(ws, storyState)) {
+        return { ok: false, code: "QUEST_NOT_ABANDONABLE", params: { questId: String(action.questId) } };
+      }
       const quest = ws.quests.find((entry) => entry.id === action.questId);
       if (quest === undefined || quest.kind !== "main" || quest.status !== "active") {
         return { ok: false, code: "QUEST_NOT_ABANDONABLE", params: { questId: String(action.questId) } };

@@ -11,7 +11,7 @@ import {
 import { asEventId, asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
 import type { ResolvedEvent } from "@/game/domain/resolvedEvent";
-import { entitiesOfKind } from "@/game/domain/entity";
+import { createEntityStore, entitiesOfKind, type NpcEntityRecord, type RelationshipCommitment } from "@/game/domain/entity";
 import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
 import { projectNpcDeliberation } from "./projectNpcDeliberation";
@@ -206,4 +206,28 @@ describe("projectNpcDeliberation", () => {
     });
     expect(recipient.knowledge.entries.some((entry) => entry.factId === PRIVATE_FACT)).toBe(false);
   });
+});
+
+it("shows only this NPC's open and resolved confidentiality terms in private deliberation", () => {
+  const base = worldState();
+  const terms = { protectedFactIds: [PRIVATE_FACT], allowedAudienceIds: [PLAYER_ENTITY_ID, BOSS], fulfillment: { kind: "story_delivery" as const } };
+  const store = createEntityStore(base.entityStore.records.map((record) => {
+    if (record.core.kind !== "npc") return record;
+    const npcRecord = record as NpcEntityRecord;
+    const commitments: RelationshipCommitment[] = ["open", "broken", "fulfilled"].map((status) => ({
+      kind: "promise", commitmentId: `${record.core.id}:${status}`, promisor: "target", status: status as "open" | "broken" | "fulfilled",
+      description: record.core.id === BOSS ? "本人的保密约定" : "其他NPC的秘密约定",
+      source: { kind: "action", actionId: "pledge", turnNumber: 1 }, confidentiality: terms,
+    }));
+    return { ...npcRecord, relationships: { outgoing: npcRecord.relationships.outgoing.map((edge) => ({ ...edge, commitments })) } };
+  }));
+  const input = projectNpcDeliberation({ worldState: { ...base, entityStore: store }, storyState: pendingStoryState(), npcId: BOSS, jobId: JOB_ID, candidateVersion: 1 });
+  const context = JSON.parse(input.privateContext);
+  expect(context.relationships[0].openCommitments).toEqual([expect.objectContaining({ commitmentId: `${BOSS}:open`, status: "open", confidentiality: terms })]);
+  expect(context.relationships[0].resolvedCommitments).toEqual([
+    expect.objectContaining({ commitmentId: `${BOSS}:broken`, status: "broken", confidentiality: terms }),
+    expect.objectContaining({ commitmentId: `${BOSS}:fulfilled`, status: "fulfilled", confidentiality: terms }),
+  ]);
+  expect(input.privateContext).not.toContain("其他NPC的秘密约定");
+  expect(input.privateContext).not.toContain(`${RECIPIENT}:broken`);
 });

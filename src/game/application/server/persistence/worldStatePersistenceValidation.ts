@@ -1,3 +1,4 @@
+import { isStoryDeliveryState } from "@/game/domain/storyState";
 import { entitiesOfKind, parseEntityStore, projectEntityStore, validateEntityCompatibilityProjection, validateEntityReferences, validateEntityStoreProvenance } from "@/game/domain/entity";
 import type { EntityCompatibilityProjection, EntityStore } from "@/game/domain/entity";
 import { isWellFormedEventId, parseCommittedEventLedger, type CommittedNarrativeEvent } from "@/game/domain/events";
@@ -75,10 +76,11 @@ function isDialogueFocus(value: unknown): value is { readonly eventIds: readonly
 }
 
 function isBattleSnapshot(value: unknown): boolean {
-  if (!isObject(value) || !hasRequiredAndOptionalKeys(value, ["entityStore", "eventLedger"], ["history", "threads", "dialogueFocus"]) || !Array.isArray(value.eventLedger)) return false;
+  if (!isObject(value) || !hasRequiredAndOptionalKeys(value, ["entityStore", "eventLedger"], ["history", "threads", "dialogueFocus", "delivery"]) || !Array.isArray(value.eventLedger)) return false;
   const store = parseEntityStore(value.entityStore);
   const ledger = parseCommittedEventLedger(value.eventLedger);
   if (!store.ok || !ledger.ok) return false;
+  if (value.delivery !== undefined && value.delivery !== null && !isStoryDeliveryState(value.delivery)) return false;
   if (value.history !== undefined && !parseNarrativeHistory(value.history).ok) return false;
   if (value.threads !== undefined
     && (!Array.isArray(value.threads)

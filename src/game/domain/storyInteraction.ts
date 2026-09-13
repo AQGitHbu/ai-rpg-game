@@ -17,7 +17,14 @@ export const STORY_INTERACTION_OPERATIONS = [
 ] as const;
 export type StoryInteractionOperation = (typeof STORY_INTERACTION_OPERATIONS)[number];
 
+export type ConfidentialityTerms = Readonly<{
+  protectedFactIds: readonly FactId[];
+  allowedAudienceIds: readonly EntityId[];
+  fulfillment: Readonly<{ kind: "story_delivery" }>;
+}>;
+
 export type StoryInteraction = Readonly<{
+  confidentiality?: ConfidentialityTerms;
   id: string;
   npcId: NpcId;
   operation: StoryInteractionOperation;
@@ -79,7 +86,7 @@ export function parseStoryCondition(value: unknown): StoryCondition | null {
 
 /** Strict runtime parser for interaction definitions stored in Entity. */
 export function parseStoryInteraction(value: unknown, path = "interaction"): StoryInteractionParseResult {
-  if (!isRecord(value) || !exactKeys(value, ["id", "npcId", "operation", "condition", "factIds", "goalIds", "promiseId", "audienceIds", "evidenceEventIds"])) {
+  if (!isRecord(value) || !exactKeys(value, ["id", "npcId", "operation", "condition", "factIds", "goalIds", "promiseId", "audienceIds", "evidenceEventIds"], ["confidentiality"])) {
     return { ok: false, code: "INVALID_INTERACTION", path };
   }
   if (!nonEmptyString(value.id) || !nonEmptyString(value.npcId) || !STORY_INTERACTION_OPERATIONS.includes(value.operation as StoryInteractionOperation)) {
@@ -92,9 +99,12 @@ export function parseStoryInteraction(value: unknown, path = "interaction"): Sto
     || (value.promiseId !== null && !nonEmptyString(value.promiseId))) {
     return { ok: false, code: "INVALID_INTERACTION", path };
   }
+  const confidentiality = value.confidentiality === undefined ? undefined : parseConfidentialityTerms(value.confidentiality);
+  if (confidentiality === null || (value.operation === "promise_confidentiality" ? confidentiality === undefined : confidentiality !== undefined)) return { ok: false, code: "INVALID_INTERACTION", path };
   return {
     ok: true,
     value: {
+      ...(confidentiality === undefined ? {} : { confidentiality }),
       id: value.id,
       npcId: value.npcId as NpcId,
       operation: value.operation as StoryInteractionOperation,
@@ -116,7 +126,7 @@ export function parseStoryInteractionProposal(
   if (!isRecord(value) || !exactKeys(value, [
     "proposalKey", "npcId", "operation", "condition", "factIds", "goalIds",
     "promiseId", "audienceIds", "evidenceEventIds",
-  ])) {
+  ], ["confidentiality"])) {
     return { ok: false, code: "INVALID_INTERACTION", path };
   }
   if (!nonEmptyString(value.proposalKey)) return { ok: false, code: "INVALID_INTERACTION", path };
@@ -128,3 +138,12 @@ export function parseStoryInteractionProposal(
 }
 
 export type StoryInteractionTargetId = PlayerEntityId | NpcId;
+
+export function parseConfidentialityTerms(value: unknown): ConfidentialityTerms | null {
+  if (!isRecord(value) || !exactKeys(value, ["protectedFactIds", "allowedAudienceIds", "fulfillment"])
+    || !stringArray(value.protectedFactIds) || value.protectedFactIds.length === 0
+    || !stringArray(value.allowedAudienceIds) || value.allowedAudienceIds.length === 0
+    || !isRecord(value.fulfillment) || !exactKeys(value.fulfillment, ["kind"])
+    || value.fulfillment.kind !== "story_delivery") return null;
+  return { protectedFactIds: value.protectedFactIds as FactId[], allowedAudienceIds: value.allowedAudienceIds as EntityId[], fulfillment: { kind: "story_delivery" } };
+}

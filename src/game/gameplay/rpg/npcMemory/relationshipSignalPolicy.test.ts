@@ -16,7 +16,7 @@ import {
   type RelationshipStage,
   type RelationshipTrend,
 } from "@/game/domain/entity";
-import { PLAYER_ENTITY_ID, asNpcId, type NpcId, type PlayerEntityId } from "@/game/domain/worldEntity";
+import { PLAYER_ENTITY_ID, asFactId, asNpcId, type NpcId, type PlayerEntityId } from "@/game/domain/worldEntity";
 import { asEventId } from "@/game/domain/events";
 import {
   RELATIONSHIP_SIGNAL_CAPS,
@@ -1007,6 +1007,16 @@ describe("commitment 操作", () => {
     const ids = secondGift.commitments.map((commitment) => commitment.commitmentId);
     expect(new Set(ids).size).toBe(2);
     expectValidEdge(secondGift, "two debts from two actions");
+  });
+
+  it("generic promise signals cannot close a confidentiality contract", () => {
+    const edge = openPromiseEdge();
+    const protectedEdge: DirectedRelationshipEdge = { ...edge, commitments: edge.commitments.map((commitment) => commitment.kind === "promise" ? {
+      ...commitment, confidentiality: { protectedFactIds: [asFactId("fact_private")], allowedAudienceIds: [PLAYER_ENTITY_ID, NPC_A], fulfillment: { kind: "story_delivery" } },
+    } : commitment) };
+    for (const signal of ["kept_promise", "broke_promise", "betrayed"] as const) {
+      expect(applySignal({ signal, actionId: `act_${signal}`, turnNumber: 4, edge: protectedEdge }).commitments[0]?.status).toBe("open");
+    }
   });
 
   it("kept_promise 结案最近一条 open promise，没有可结案对象时仍写入维度", () => {

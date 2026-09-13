@@ -1,3 +1,4 @@
+import { parseConfidentialityTerms, type ConfidentialityTerms } from "../storyInteraction";
 import { DIALOGUE_ACTS } from "../action";
 import type { StructuredDialogueTopic } from "../action";
 import { NARRATIVE_EMOTIONS } from "../narrative";
@@ -351,6 +352,7 @@ export type RelationshipCommitment =
       kind: "promise";
       commitmentId: string;
       promisor: (typeof RELATIONSHIP_PROMISORS)[number];
+      confidentiality?: ConfidentialityTerms;
       status: RelationshipPromiseStatus;
       description: string;
       source: RelationshipSource;
@@ -733,12 +735,13 @@ function validateCommitment(issues: Issues, raw: unknown, path: string): void {
     return;
   }
   if (raw.kind === "promise") {
-    if (!hasExactKeys(raw, PROMISE_COMMITMENT_KEYS, PROMISE_COMMITMENT_KEYS)) {
+    if (!hasExactKeys(raw, PROMISE_COMMITMENT_KEYS, [...PROMISE_COMMITMENT_KEYS, "confidentiality"])) {
       issues.push(issue("invalid_component_shape", path));
       return;
     }
     checkText(issues, raw.commitmentId, `${path}.commitmentId`);
     checkText(issues, raw.description, `${path}.description`);
+    if (raw.confidentiality !== undefined && parseConfidentialityTerms(raw.confidentiality) === null) issues.push(issue("invalid_field_value", `${path}.confidentiality`));
     checkClosedSet(issues, raw.promisor, `${path}.promisor`, RELATIONSHIP_PROMISORS);
     checkClosedSet(issues, raw.status, `${path}.status`, RELATIONSHIP_PROMISE_STATUSES);
     validateRelationshipSource(issues, raw.source, `${path}.source`);

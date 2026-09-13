@@ -4,7 +4,7 @@ import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { StoryState } from "@/game/domain/storyState";
 import type { WorldState } from "@/game/domain/worldState";
 import type { NpcId } from "@/game/domain/worldEntity";
-import type { NpcKnowledgeEntry, NpcKnowledgeSource } from "@/game/domain/entity";
+import type { NpcKnowledgeEntry, NpcKnowledgeSource, RelationshipCommitment } from "@/game/domain/entity";
 import type { NpcDeliberationInput } from "./npcDeliberationSource";
 
 type NpcPrivateFact = Readonly<{
@@ -93,6 +93,19 @@ function goalContext(npc: NpcEntityRecord): readonly unknown[] {
     }));
 }
 
+function commitmentContext(commitment: RelationshipCommitment) {
+  return {
+    kind: commitment.kind,
+    commitmentId: commitment.commitmentId,
+    description: commitment.description,
+    status: commitment.status,
+    ...(commitment.kind === "debt" ? { direction: commitment.direction } : {
+      promisor: commitment.promisor,
+      ...(commitment.confidentiality === undefined ? {} : { confidentiality: commitment.confidentiality }),
+    }),
+  };
+}
+
 function relationshipContext(store: EntityStore, npc: NpcEntityRecord): readonly unknown[] {
   const result: Array<{
     readonly targetId: string;
@@ -100,6 +113,7 @@ function relationshipContext(store: EntityStore, npc: NpcEntityRecord): readonly
     readonly stage: string;
     readonly trend: string;
     readonly openCommitments: readonly unknown[];
+    readonly resolvedCommitments: readonly unknown[];
   }> = [];
   for (const edge of npc.relationships.outgoing) {
     const target = getEntity(store, String(edge.targetId));
@@ -111,12 +125,11 @@ function relationshipContext(store: EntityStore, npc: NpcEntityRecord): readonly
         trend: edge.trend,
         openCommitments: edge.commitments
           .filter((commitment) => commitment.status === "open")
-          .map((commitment) => ({
-            kind: commitment.kind,
-            commitmentId: commitment.commitmentId,
-            description: commitment.description,
-            ...(commitment.kind === "debt" ? { direction: commitment.direction } : { promisor: commitment.promisor }),
-          }))
+          .map(commitmentContext)
+          .sort((left, right) => compareId(left.commitmentId, right.commitmentId)),
+        resolvedCommitments: edge.commitments
+          .filter((commitment) => commitment.status !== "open")
+          .map(commitmentContext)
           .sort((left, right) => compareId(left.commitmentId, right.commitmentId)),
       });
   }

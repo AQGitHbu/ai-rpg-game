@@ -135,7 +135,7 @@ function baseInteractionDraft(
   return {
     eventKey: `story_interaction_resolved:${interaction.id}`,
     episodeKey: "turn",
-    actorIds: interaction.operation === "promise_confidentiality" ? [PLAYER_ENTITY_ID] : [PLAYER_ENTITY_ID, action.npcId],
+    actorIds: (interaction.operation === "promise_confidentiality" || interaction.operation === "share_known_fact") ? [PLAYER_ENTITY_ID] : [PLAYER_ENTITY_ID, action.npcId],
     targetIds: audienceIds.flatMap((id): readonly (PlayerEntityId | NpcId)[] => {
       const record = getEntity(worldState.entityStore, String(id));
       if (record?.core.kind === "npc") return [record.core.id];
@@ -177,9 +177,10 @@ function audienceMutations(
   const mutations: EntityMutation[] = [];
   const eventId = eventIdFor(deps.turnId, `story_interaction_resolved:${interaction.id}`);
   for (const audienceId of interaction.audienceIds) {
-    if (String(audienceId) === String(action.npcId)) return null;
+    if (interaction.operation !== "share_known_fact" && String(audienceId) === String(action.npcId)) return null;
     const audience = getEntity(worldState.entityStore, String(audienceId));
     if (audience?.core.kind === "player_character") {
+      if (interaction.operation === "share_known_fact") return null;
       mutations.push(...factDiscoveryMutations(worldState, factIds));
       continue;
     }
@@ -193,14 +194,14 @@ function audienceMutations(
         disclosure: "public",
         source: {
           kind: "action",
-          mode: "npc_revealed",
+          mode: interaction.operation === "share_known_fact" ? "player_told" : "npc_revealed",
           actionId: deps.actionId,
           eventId,
           turnNumber: deps.turnNumber,
-          sourceNpcId: action.npcId,
+          ...(interaction.operation === "share_known_fact" ? {} : { sourceNpcId: action.npcId }),
         },
       });
-      mutations.push({
+      if (interaction.operation !== "share_known_fact") mutations.push({
         kind: "apply_relationship_signal",
         fromNpcId: action.npcId,
         targetId: audience.core.id,
@@ -233,10 +234,12 @@ export function resolveStoryInteraction(
   if (!interaction.audienceIds.every((audienceId) => entityExists(worldState, audienceId))) {
     return { ok: false, feedback: "互动引用了未知听众。" };
   }
-  if (!knownFacts(worldState, action.npcId, interaction.factIds)) {
+  const playerShares = interaction.operation === "share_known_fact";
+  if (playerShares && (!interaction.audienceIds.includes(action.npcId) || interaction.audienceIds.some((id) => npcOf(worldState, id as NpcId)?.position.locationId !== worldState.currentLocationId))) return { ok: false, feedback: "告知听众不在现场。" };
+  if (!(playerShares ? interaction.factIds.every((id) => knowsFact(worldState, PLAYER_ENTITY_ID, id)) : knownFacts(worldState, action.npcId, interaction.factIds))) {
     return { ok: false, feedback: "角色没有足够的事实依据。" };
   }
-  if (interaction.operation !== "promise_confidentiality" && !canDiscloseFactsToAudiences(worldState, interaction, action.npcId)) {
+  if (!playerShares && interaction.operation !== "promise_confidentiality" && !canDiscloseFactsToAudiences(worldState, interaction, action.npcId)) {
     return { ok: false, feedback: "角色没有足够的披露权限。" };
   }
   if (interaction.operation === "request_verification" && !evidenceExists(worldState, interaction.evidenceEventIds)) {
@@ -249,6 +252,13 @@ export function resolveStoryInteraction(
     return { ok: false, feedback: "互动没有事实结果。" };
   }
 
+  if (interaction.operation === "promise_confidentiality" && interaction.confidentiality === undefined) return { ok: false, feedback: "保密承诺缺少明确条款。" };
+  if (interaction.confidentiality !== undefined && (
+    !knownFacts(worldState, action.npcId, interaction.confidentiality.protectedFactIds)
+    || !interaction.confidentiality.allowedAudienceIds.every((id) => entityExists(worldState, id))
+    || !interaction.confidentiality.allowedAudienceIds.includes(PLAYER_ENTITY_ID))) {
+    return { ok: false, feedback: "保密承诺引用无效。" };
+  }
   const eventId = eventIdFor(deps.turnId, `story_interaction_resolved:${interaction.id}`);
   const mutations: EntityMutation[] = [];
   switch (interaction.operation) {
@@ -257,7 +267,7 @@ export function resolveStoryInteraction(
         kind: "apply_relationship_commitment",
         fromNpcId: action.npcId,
         targetId: PLAYER_ENTITY_ID,
-        operation: { kind: "open_promise", openKey: interaction.id, promisor: "target", description: "relationship.promise.confidentiality" },
+        operation: { kind: "open_promise", openKey: interaction.id, promisor: "target", description: "relationship.promise.confidentiality", ...(interaction.confidentiality === undefined ? {} : { confidentiality: interaction.confidentiality }) },
         source: { kind: "action", actionId: deps.actionId, turnNumber: deps.turnNumber },
         supportingEventId: eventId,
       });

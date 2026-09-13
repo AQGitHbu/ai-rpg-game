@@ -161,6 +161,7 @@ describe("buildNarrativeBundleDescriptors", () => {
     });
     const definitions: StoryInteraction[] = ["first", "second", "blocked", "verification"].map((id) => ({
       id, npcId: npcDyn1, operation: id === "verification" ? "request_verification" : "promise_confidentiality",
+      ...(id === "verification" ? {} : { confidentiality: { protectedFactIds: [factTracks], allowedAudienceIds: [PLAYER_ENTITY_ID, npcDyn1], fulfillment: { kind: "story_delivery" as const } } }),
       condition: id === "blocked" ? [{ kind: "knows_fact", actorId: PLAYER_ENTITY_ID, factId: factTracks }] : [],
       factIds: id === "verification" ? [factTracks] : [], goalIds: [], promiseId: null, audienceIds: [PLAYER_ENTITY_ID], evidenceEventIds: [],
     }));

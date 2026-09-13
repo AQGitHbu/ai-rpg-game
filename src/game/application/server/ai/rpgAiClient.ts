@@ -105,6 +105,14 @@ export type CreateRpgAiClientOptions = Readonly<{
   readonly logger?: Pick<GameLogger, "warn">;
   readonly policies?: RpgAiRolePolicyOverrides;
   readonly auditRecorder?: AiTextAuditRecorder;
+  readonly runtime?: RpgAiRuntime;
+}>;
+
+/** Acceptance recording lives below source parsing and policy, never at game API level. */
+export type RpgAiRuntime = Readonly<{
+  nextCallId?(context: AiTextAuditContext): string;
+  attempt?(request: Readonly<{ role: RpgAiRole; callId: string; attempt: number; context: AiTextAuditContext; model: string; messages: readonly AiMessage[]; options: unknown }>, send: () => Promise<AiCompletionResult>): Promise<AiCompletionResult>;
+  readonly offline?: boolean;
 }>;
 
 const RETRYABLE_ROLE_CODES = new Set([
@@ -239,9 +247,9 @@ export function createRpgAiClient(options: CreateRpgAiClientOptions): RpgAiClien
         ...(completeOptions?.policyOverride ?? {}),
       };
       const maxAttempts = Math.max(1, Math.floor(policy.maxAttempts));
-      const callId = typeof crypto !== "undefined" && crypto.randomUUID
+      const callId = options.runtime?.nextCallId?.(auditContext ?? defaultAuditContext(role)) ?? (typeof crypto !== "undefined" && crypto.randomUUID
         ? crypto.randomUUID()
-        : `call-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        : `call-${Date.now()}-${Math.random().toString(36).slice(2)}`);
       const auditContextToUse = auditContext ?? defaultAuditContext(role);
       const callerRetry = auditContextToUse.retry;
       // transport retry 只在此层识别：attempt>1 时为 provider 重试，
@@ -272,11 +280,12 @@ export function createRpgAiClient(options: CreateRpgAiClientOptions): RpgAiClien
           policy.reasoningEffort,
           ),
         };
-        const result = await completeWithinRpgDeadline(
+        const send = () => completeWithinRpgDeadline(
           policy.timeoutMs,
           completeOptions?.signal,
           signal => options.transport.complete(options.config, messages, { ...providerOptions, signal }),
         );
+        const result = options.runtime?.attempt === undefined ? await send() : await options.runtime.attempt({ role, callId, attempt, context: auditContextToUse, model: options.config.model, messages, options: providerOptions }, send);
 
         // Record the audit entry for this attempt. Best-effort: never throws.
         if (audit?.enabled) {
@@ -384,6 +393,7 @@ export function createServerRpgAiClient(
   env: Record<string, string | undefined> = process.env,
   logger?: GameLogger,
   auditRecorder?: AiTextAuditRecorder,
+  runtimeHooks?: RpgAiRuntime,
 ): RpgAiClient | undefined {
   const runtime = parseAiRuntimeConfig(env);
   if (runtime.status !== "available") return undefined;
@@ -401,10 +411,11 @@ export function createServerRpgAiClient(
   ) as RpgAiRolePolicyOverrides;
 
   return createRpgAiClient({
-    transport: createOpenAiCompatibleTransport(),
+    transport: runtimeHooks?.offline ? { complete: async () => { throw new Error("REPLAY_NETWORK_FORBIDDEN"); }, stream: async () => { throw new Error("REPLAY_NETWORK_FORBIDDEN"); } } : createOpenAiCompatibleTransport(),
     config: runtime.config,
     logger,
     policies,
+    runtime: runtimeHooks,
     ...(auditRecorder !== undefined ? { auditRecorder } : {}),
   });
 }

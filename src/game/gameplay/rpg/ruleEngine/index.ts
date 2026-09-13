@@ -24,6 +24,7 @@ import { advanceStoryReveal } from "@/game/gameplay/rpg/worldEvolution";
 import { validateEntityStoreProvenance } from "@/game/domain/entity";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 import { advanceStoryThreads } from "@/game/gameplay/rpg/storyThreads";
+import { reconcileConfidentialityPromises } from "@/game/gameplay/rpg/storyInteraction";
 import { unresolvedStoryThreadIds } from "@/game/domain/storyThreads";
 import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 
@@ -373,6 +374,7 @@ export function resolveTurn(
     committedEvents = commitResult.appended;
     nextWorldState = { ...ending.nextWorldState, eventLedger: commitResult.ledger };
   }
+  nextWorldState = reconcileConfidentialityPromises(nextWorldState, ending.nextStoryState);
   const provenanceIssue = validateEntityStoreProvenance(nextWorldState.entityStore, nextWorldState.eventLedger)[0];
   if (provenanceIssue !== undefined) {
     return { ok: false, code: "INVALID_RESOLUTION", feedback: `NPC 事件证据无效: ${provenanceIssue.entityId ?? "unknown"}` };

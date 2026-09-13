@@ -75,7 +75,8 @@ const FACADES: readonly FacadeSpec[] = [
   { name: "narrativeMemory", path: "@/game/gameplay/rpg/narrativeMemory", anchors: ["eventPolicy", "retrieveNarrativeMemory"] },
   { name: "narrativeContext", path: "@/game/gameplay/rpg/narrativeContext", anchors: ["objectiveRules", "deriveObjectiveTransition"] },
   { name: "storyInteraction", path: "@/game/gameplay/rpg/storyInteraction", anchors: ["resolveStoryInteraction"] },
-  { name: "storyThreads", path: "@/game/gameplay/rpg/storyThreads", anchors: ["advanceStoryThreads"] }
+  { name: "storyThreads", path: "@/game/gameplay/rpg/storyThreads", anchors: ["advanceStoryThreads"] },
+  { name: "storyDelivery", path: "@/game/gameplay/rpg/storyDelivery", anchors: ["storyDelivery"] }
 ] as const satisfies readonly FacadeSpec[];
 
 /** 由 facade 清单生成 deep-import 规则：只许门面本体，禁止任何内部文件。 */
