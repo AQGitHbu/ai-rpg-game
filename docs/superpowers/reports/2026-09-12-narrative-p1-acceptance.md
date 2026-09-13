@@ -6,7 +6,7 @@
 
 恢复段严格 replay 为 HTTP 0、9 次响应、12 个状态匹配。原中断段缺正常封存，不能称全程无中断或整条严格 replay 通过。全文仍有物品拾取时序、终幕通用标签和收束偏弱的问题；前两项已按规则契约修复并回归。core03 已实际验证取物时序，但 16 行动后终局结构失败，36 次响应严格失败重放一致，完整流程仍未通过。
 
-数据库依赖修复已完成：RPG 存档与共享日志改用 Node 24.15.0 内置 SQLite，未自编译原生驱动；独立审核、跨项目完整门禁与真实进程关闭重开检查通过。随后唯一新样本 core06 正常退出，4 行动、15 HTTP 后因剧情审批失败结束；数据库完整性、重载及全部响应的严格重放通过，无原生崩溃。该样本暴露的 NPC 创建知识与说话权限契约已由 801139ff 修复并完成离线验证；未给旧 NPC 回填知识，也未补造可回答金额。用户确认后已完成原故事正式重试和独立中篇，两者严格重放一致，但均未通关；中篇暴露多线程闭合与结局需求不一致，证据如下。
+数据库依赖修复已完成：RPG 存档与共享日志改用 Node 24.15.0 内置 SQLite，未自编译原生驱动；独立审核、跨项目完整门禁与真实进程关闭重开检查通过。随后唯一新样本 core06 正常退出，4 行动、15 HTTP 后因剧情审批失败结束；数据库完整性、重载及全部响应的严格重放通过，无原生崩溃。该样本暴露的 NPC 创建知识与说话权限契约已由 801139ff 修复并完成离线验证；未给旧 NPC 回填知识，也未补造可回答金额。原故事重试和独立中篇在 0bd094e4 均失败，严格重放一致。中篇暴露的多线程闭合与结局需求冲突已由 3c40de6e 修复；同局经一次正式重试和一次玩家立场选择成功通关，新段严格重放通过。正文收束质量仍未通过，证据如下。
 
 本轮四项工作的状态如下。首要目标“完整小故事”已取得恢复后通关证据，正式六矩阵和创建到终局的实机 UI 验收没有执行，不记为通过，也不进入 P2。历史 `p1-07` 的 0/6 来自六次独立开局，不是新协议矩阵。根因与后续架构方向见 [失败分析](2026-09-13-narrative-p1-failure-analysis.md)。
 
@@ -53,11 +53,25 @@
 
 中篇最后失败不是 runner 忽略了结局按钮：存档已包含 ending_dyn_0/1，但 endingAllowed=false，正式 read model 和 choice map 只有移动与普通交谈。随后玩家合法选择交谈。末次 job 的三个候选均尝试再次提供 endingPair，被确定性审批拒绝，没有进入语义审阅。
 
-上游规则不一致：最终主线完成只按 mainThreadId 关闭一条线程，但 endingAllowed 要求整个 unresolvedThreads 为空。开局两条 question 线程都关联 quest_0，第一条 resolved，第二条 thread_init_t_first_run 仍 advanced，导致全部任务完成、进度 100 后仍无结局入口。同时行动推进设 needs_ending_pair，作者据此强制生成 endingPair，实际审批却因已有两个结局派生 need=none，返回 no_need:no_evolution_need。后续应先统一线程闭合与结局需求契约，不能靠重复生成、增加提示或直接把所有线程标成 resolved 来通过。
+上游规则不一致：最终主线完成只按 mainThreadId 关闭一条线程，但 endingAllowed 要求整个 unresolvedThreads 为空。开局两条 question 线程都关联 quest_0，第一条 resolved，第二条 thread_init_t_first_run 仍 advanced，导致全部任务完成、进度 100 后仍无结局入口。同时行动推进设 needs_ending_pair，作者据此强制生成 endingPair，实际审批却因已有两个结局派生 need=none，返回 no_need:no_evolution_need。该矛盾已在 Task 12 统一契约后通过同局续跑验证，未直接清空线程、修改原存档或新增样本。
 
-独立审核确认中篇四名动态 NPC 的显式既有事实知识均已在 SQLite 持久化，本次 NPC 最小修复实际生效。两次均是未完成故事，不作完整叙事质量评分，不计 P1 通过或优于 main。运行后未修改规则、回填状态或再开样本。
+独立审核确认中篇四名动态 NPC 的显式既有事实知识均已在 SQLite 持久化，本次 NPC 最小修复实际生效。两次均是未完成故事，不作完整叙事质量评分，不计 P1 通过或优于 main。上述两次原始运行期间未修改规则、回填状态或再开样本；修复后的中篇续接另记如下。
 
 证据：artifacts/narrative-p1/core06-npc-retry/ 的 summary、retry-manifest、complete-story、failure-review 与 replay；artifacts/narrative-p1/medium-story-01/ 的 protocol、live/summary、live/complete-story、live/acceptance-review 与 replay。中篇驱动 artifacts/run-medium-story.mjs 经独立审核，固定 64 行动/400 HTTP/90 分钟，绑定代码、输入、provider 与驱动哈希。数据库只读核验在 artifacts/story-runs-database-integrity.json。
+
+## 中篇结束流程修复与同局通关（3c40de6e）
+
+Task 12 只闭合有正式任务绑定、完成/失败事件且无额外 closure/goal/promise 约束的线程，保留事件依据；已有结局对时作者与审批共同派生无演化需求。正式 retry 在同 job 的 CAS 内重算派生状态，不重做 Action、改写 World/Event 或直接授予结局。独立 SpecPASS/QualityPASS；179 项受影响测试、完整 2830 tests（1 skipped）、typecheck、131 boundaries、check:docs、lint（0 errors）通过。
+
+- 原始来源为 medium-story-01，gameId `d81cade3-bd4b-44ec-b247-586134eafde3`、28 行动、69 HTTP、revision 43/turn 25。独立复制后只正式 retry 一次，原 SQLite、steps、runtime、protocol 和两份审计的六项文件哈希未变。
+- 新增 3 HTTP（角色判断、作者、审阅各一次）后，同一失败 job 恢复 ready，revision 44/turn 25；endingAllowed=true，两条线程有规则依据，已有两条 ending 未重复生成，此时 ending 仍为空。
+- 玩家实际看见认可/保留疑虑两个服务端选项，选择“我认可你的回应，愿意继续合作。”，提交 `medium-complete-action-28`，写入唯一成功 `ending_reached:ending_dyn_0`。最终“信义说合”、outcome=success、narrative=ready，revision 45/turn 26，五幕五项主线完成，无递送契约。
+- 新增 1 行动，累计 29 行动、72 HTTP。live/replay 正常退出 0；新段严格 replay 为 HTTP 0、3 响应、4 状态一致。两份 SQLite integrity_check=ok，终态与 runtime 哈希一致，原 NPC 完整知识条目保留。
+- 原 69 响应/33 状态在 0bd094e4 严格重放，新段在 3c40de6e 重放；这是同故事跨修复版本恢复通关，不是单一版本无中断全程通过。
+
+全文已读。规则终局可达，但正文仍说“你要往渡口去说合”“先听明白了再拿主意”，结局描述却跳至三方愿意先解缆再清账；最终立场沿用已批准场景，没有新增结果场景。因此剧情收束质量不记通过，也不证明优于 main。后续应核对中心冲突的实际行动结果与终幕表达，不能以重复抽样或措辞补丁代替；本轮不再新增生成。
+
+证据：`artifacts/narrative-p1/medium-ending-retry-01/` 下的 protocol、live/replay、verification.json、complete-story.md、acceptance-review.md；完整测试日志 `artifacts/task-12-full-tests-final.log`。原失败证据原样保留。
 
 ## 门禁结果
 
