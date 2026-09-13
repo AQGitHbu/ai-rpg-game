@@ -24,6 +24,7 @@
 - `mode="ai"` 只投影已审批的 `generated` 场景。缺少正式 NPC focus 台词时投影单一权威 `ask`；失败仍进入同 job 的 failed 状态，不合成 deterministic/default 文案。
 - 内容审批同时检查强制节拍、当前地点和焦点 NPC、`objectiveLink`、下一步抵达 NPC、实体引用、题材限制和 NPC speech authority。审批失败不部分写入。
 - 决策上下文以 `consumer=author|reviewer` 共用事实、权限、行动及演化依据；作者获得 sceneDrafts 传输契约，审阅器获得实际编译后 NarrativeBundleProposal 契约（含服务端附加的 npcOutwardProposals）。作者修复指令和抵达输出骨架不进入审阅上下文，candidateHash 仍绑定原内部候选；审阅不改写候选、不按作者传输字段误判内部表示。
+- 审阅缺陷路径相对内部候选；允许明确请求外壳的单层 `proposal.` 或 `$.proposal.` 前缀，校验实际字段后保存候选相对路径。未知字段、错误数组索引、重复包装仍拒绝，不过滤缺陷或转为通过。
 - 生产语义审阅的 `ruleBasis` 由服务端投影当前输入、真实 Action 与候选绑定、续接 step、正式物品及事实/权限。阻断缺陷必须带可存在性校验的候选 `path` 和 `evidence={basisKey,impact,detail}`；依据必须存在、影响种类须属于该依据，detail 说明具体规则后果。物品状态影响只能引用具体正式物品或绑定该物品的 take/give 步骤，普通无效果服饰、环境或风格写入 `qualityObservations`，不改变规则 verdict。无依据、空缺陷或混入非法缺陷的 revise 整体成为显式 uncertain，不过滤后冒充 pass。服务端校验依据与路径，不以此替代模型对语义冲突的判断。
 - 事实引用许可与披露正文分别投影：获准 NPC 互动提案里的事实 ID 存在且可用于对应提案，不要求出现在公开正文目录；该许可不授权当前台词说出秘密，也不代表行动已执行。秘密正文继续按 speaker authority 裁剪。
 - 每个完整 opening/decision 候选由服务端计算 `candidateVersion` 与 `candidateHash`，最多保留初稿加两次修订；结构/规则预检通过后只做一次语义审阅。审阅只能返回非空缺陷或明确 provider/uncertain 失败，不能修改候选、规则或知识；正文、受众、NPC outward 依据或 proposal 任一变化都会使旧 pass 失效。

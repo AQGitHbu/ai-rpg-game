@@ -110,14 +110,23 @@ export function parseRuleEvidence(value: unknown, catalog: readonly NarrativeRul
   return { basisKey: record.basisKey, impact: record.impact as CandidateRuleImpact, detail: record.detail };
 }
 
-/** Accept only concrete object/array paths, never selectors or guessed fields. */
-export function resolveCandidatePath(candidate: unknown, path: string): boolean {
-  const normalized = path.replace(/^\$\.?/, "");
-  if (!/^[A-Za-z_][A-Za-z_0-9]*(?:\[\d+\]|\.[A-Za-z_][A-Za-z_0-9]*)*$/.test(normalized)) return false;
+/** One explicit request-envelope prefix is accepted; output is candidate-relative. */
+export function canonicalCandidatePath(candidate: unknown, path: string): string | null {
+  let normalized = path.startsWith("$.") ? path.slice(2) : path;
+  if (normalized.startsWith("proposal.")) normalized = normalized.slice("proposal.".length);
+  if (!/^[A-Za-z_][A-Za-z_0-9]*(?:\[\d+\]|\.[A-Za-z_][A-Za-z_0-9]*)*$/.test(normalized)) return null;
   let current: unknown = candidate;
-  for (const key of normalized.replace(/\[(\d+)\]/g, ".$1").split(".")) {
-    if (current === null || typeof current !== "object" || !Object.prototype.hasOwnProperty.call(current, key)) return false;
+  for (const token of normalized.match(/[A-Za-z_][A-Za-z_0-9]*|\[\d+\]/g) ?? []) {
+    const indexed = token.startsWith("[");
+    const key = indexed ? token.slice(1, -1) : token;
+    if (current === null || typeof current !== "object" || Array.isArray(current) !== indexed
+      || !Object.prototype.hasOwnProperty.call(current, key)) return null;
     current = (current as Record<string, unknown>)[key];
   }
-  return true;
+  return normalized;
+}
+
+/** Accept only concrete object/array paths, never selectors or guessed fields. */
+export function resolveCandidatePath(candidate: unknown, path: string): boolean {
+  return canonicalCandidatePath(candidate, path) !== null;
 }

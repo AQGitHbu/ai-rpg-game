@@ -2,7 +2,7 @@ import type { AiMessage } from "@ai-game/ai-transport";
 import { parseStructuredJsonObject } from "@/game/core/json";
 import type { GameLogger } from "@/game/logging";
 import { candidateReviewMatches, type CandidateDefect, type CandidateDefectCode, type CandidateReviewResult, type CandidateReviewScope, type NarrativeCandidateReviewer } from "../../narrativeCandidateReview";
-import { buildNarrativeReviewRules, parseRuleEvidence, resolveCandidatePath } from "./narrativeReviewRules";
+import { buildNarrativeReviewRules, parseRuleEvidence, canonicalCandidatePath } from "./narrativeReviewRules";
 import type { CandidateQualityObservation } from "../../narrativeCandidateReview";
 import type { NarrativeCandidateReviewInput } from "../../narrativeCandidateReview";
 import type { RpgAiClient } from "./rpgAiClient";
@@ -98,14 +98,15 @@ function parseDefects(
       return null;
     }
     const evidence = parseRuleEvidence(entry.evidence, buildNarrativeReviewRules(input));
-    if (evidence === null || !resolveCandidatePath(input.proposal, entry.path)) return null;
+    const path = canonicalCandidatePath(input.proposal, entry.path);
+    if (evidence === null || path === null) return null;
     defects.push({
       evidence,
       candidateVersion: input.candidateVersion,
       candidateHash: input.candidateHash,
       scope,
       code,
-      path: entry.path,
+      path,
       reason: entry.reason,
     });
   }
@@ -216,7 +217,7 @@ export function createLiveNarrativeCandidateReview(
             content: [
               "你是 RPG 整场候选的逻辑语义审阅器。",
               "只检查当前输入是否被回应、事实依据、实际受众披露、选项动作与正文因果。",
-              "阻断缺陷必须引用 context.ruleBasis 中真实存在的 key，并选择该依据列出的 impact，再具体解释哪项规则后果被改写。evidence={basisKey,impact,detail}，path 必须定位候选中真实存在的字段。",
+              "阻断缺陷必须引用 context.ruleBasis 中真实存在的 key，并选择该依据列出的 impact，再具体解释哪项规则后果被改写。evidence={basisKey,impact,detail}，path 必须定位候选中真实存在的字段，使用候选内路径（如 currentScene.npcLine.text）；也接受请求包装的单层 proposal. 或 $.proposal. 前缀，返回缺陷时服务端统一去掉该前缀。数组必须使用真实数字索引 [0]，不得用其他包装别名、多层 proposal 或猜测字段。",
               "无玩法效果的服饰、环境、动作姿态和风格属于 qualityObservations=[{path,reason}]，不影响 verdict；物品持有/交付违规必须引用具体正式 item 的依据，不能因为普通装饰没有 Entity ID 就判背包违规。真实交付、知识披露、Action 绑定与续接顺序仍须严格检查。",
               "fact 目录区分 ID 存在、获准提案引用与当前允许披露正文；authorizedProposalKeys 许可结构化提案引用，不表示玩家已知或现在可说出正文。未在公开事实正文中列出不能推断 ID 不存在。不要根据秘密 ID 猜测内容。",
               "不得改写候选、补造事实、授予知识或输出思维链。",

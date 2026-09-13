@@ -293,6 +293,32 @@ describe("live narrative candidate reviewer", () => {
     expect(JSON.stringify(rules)).not.toContain(secret!.text);
   });
 
+  it.each(["proposal.", "$.proposal.", "", "$."])("canonicalizes the explicit %s review root and retains both revise defects", async prefix => {
+    const proposal: NarrativeBundleProposal = { ...(candidate as NarrativeBundleProposal), currentScene: {
+      ...(candidate as NarrativeBundleProposal).currentScene,
+      npcLine: { npcId: "npc_0", text: "两项有争议的断言。", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedEventIds: [] },
+    } };
+    const defects = ["UNSUPPORTED_FACT", "DISCLOSURE"].map((code, index) => ({
+      scope: "scene", code, path: `${prefix}currentScene.npcLine.text`, reason: `第${index + 1}项须修订`,
+      evidence: { basisKey: "opening:contract", impact: index === 0 ? "fact_claim" : "disclosure", detail: "具体事实后果与正式契约冲突。" },
+    }));
+    const complete = vi.fn().mockResolvedValue({ ok: true, content: JSON.stringify({ verdict: "revise", defects }) });
+    const reviewer = createLiveNarrativeCandidateReview({ aiClient: client(complete) });
+    const result = await reviewer.reviewNarrativeCandidate({ context: reviewContext, proposal, candidateVersion: 1, candidateHash: hashNarrativeCandidate(proposal) });
+    expect(result).toMatchObject({ ok: false, defects: defects.map(defect => ({ ...defect, path: "currentScene.npcLine.text" })) });
+    expect(result).not.toHaveProperty("failure");
+  });
+
+  it.each(["proposal.proposal.currentScene.segments[0].text", "context.proposal.currentScene.segments[0].text",
+    "$.proposal.currentScene.unknown", "proposal.currentScene.segments[99].text", "proposal.currentScene[0]",
+    "proposal.currentScene.segments.length", "$proposal.currentScene.segments[0].text"])("retains UNCERTAIN for invalid review root/path %s", async path => {
+    const complete = vi.fn().mockResolvedValue({ ok: true, content: JSON.stringify({ verdict: "revise", defects: [{
+      scope: "scene", code: "UNSUPPORTED_FACT", path, reason: "需修订", evidence: { basisKey: "opening:contract", impact: "fact_claim", detail: "具体断言冲突" },
+    }] }) });
+    const reviewer = createLiveNarrativeCandidateReview({ aiClient: client(complete) });
+    expect(await reviewer.reviewNarrativeCandidate({ context: reviewContext, proposal: candidate, candidateVersion: 1, candidateHash: hashNarrativeCandidate(candidate) })).toMatchObject({ ok: false, failure: "UNCERTAIN" });
+  });
+
   it("uses the existing narrative_bundle role and returns server-bound defects", async () => {
     const complete = vi.fn().mockResolvedValue({
       ok: true,

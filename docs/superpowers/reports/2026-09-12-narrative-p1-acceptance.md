@@ -28,7 +28,7 @@
 
 ## 门禁结果
 
-- `npm run accept`：通过；lint 0 errors，218 个测试文件通过，2795 tests passed、1 skipped，typecheck、fast gates、build 均通过。终局结构修复的独立审核与 90 项相关回归通过。
+- `npm run accept`：通过；lint 0 errors，218 个测试文件通过，2806 tests passed、1 skipped，typecheck、fast gates、build 均通过。终局结构、终止边界与审阅路径均完成独立审核；原 core04 审阅响应归一化后仍保留两条缺陷并进入修订，不转为通过。
 - `npm run test:narrative-p1-script`：通过；20 passed。
 - `npm run check:docs`、`npm run test:docs`、`git diff --check`：通过。
 - `npm run env:check`：通过；`.env.local` 仅注入当前进程，密钥未写入协议、审计摘要或报告。
@@ -69,6 +69,12 @@
 `38b8ea51` 在原失败存档的独立副本调用一次正式 `retry:true`，同一游戏追加第 17 次行动后达到成功结局“渡口交付”，7 HTTP，进程正常退出 0。独立范围为 `failed_ending_explicit_retry`，预算与原批分开，原库/步骤/协议哈希及旧新代码均绑定；不算原批无中断通关。`artifacts/narrative-p1/core03-ending-retry/replay/` 严格重放 HTTP 0、7 响应、4 状态一致。
 
 终局首稿结构与审批已通过；正式结局立场仍被 performTurn 当作普通 NPC 对话，规则已经写入 ending_reached 后又创建 pending job，导致额外生成结局对并被世界增量审批拒绝。成功结局真实存在，但后台失败状态不能算完整稳定闭环。此终止边界在 main 的同入口也存在，不能归因于本次元数据编译；后续收束为正式终局提交后停止生成，保留退出故事另行生成终场的契约。
+
+### p1-core-04：修订意见路径契约不一致
+
+`dc27bb4d` 新建普通短篇，开局通过，1 次行动后失败，5 HTTP、138053 ms，进程正常退出 1。全程严格重放为 HTTP 0、5 响应和相同失败状态；产物分别在 `artifacts/narrative-p1/p1-core-04/` 与 `p1-core-04-replay/replay/`。
+
+本次不是三个候选耗尽：最终 epoch 0、candidateVersion 1、当前 job HTTP 3。审阅请求以 `{...,proposal}` 包装候选，模型返回两条 `proposal.currentScene.npcLine.text` 修订路径；解析器却只相对内部 candidate 解路径，转成 UNCERTAIN，调度据此非重试失败，第二、第三版未执行。修订本身仍须保留：木匠工序是否属于无害表达与“柳伯没答应抵押”是否改变人物承诺，不能为了通关一律删除。修复只统一明确请求外壳与内部路径，不改变审阅 verdict 或事实边界。
 
 ## 固定初态核心诊断
 
