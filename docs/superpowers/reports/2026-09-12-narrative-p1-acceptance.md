@@ -17,7 +17,7 @@ P1-A 与 P1-B 的离线实现和门禁通过；P1-C 仍未通过。最新完整�
 
 ## 门禁结果
 
-- `npm run accept`：通过；lint 0 errors/50 existing warnings，211 个测试文件中 2696 passed、1 skipped，typecheck、fast gates、build 均通过。
+- `npm run accept`：通过；lint 0 errors/50 existing warnings，211 个测试文件中 2698 passed、1 skipped，typecheck、fast gates、build 均通过。
 - `npm run test:narrative-p1-script`：通过；7 passed。
 - `npm run check:docs`、`npm run test:docs`、`git diff --check`：通过。
 - `npm run env:check`：通过；`.env.local` 仅注入当前进程，密钥未写入协议、审计摘要或报告。
