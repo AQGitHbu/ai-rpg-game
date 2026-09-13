@@ -189,7 +189,7 @@ function expectedBundleProjection(worldState: WorldState, storyState: StoryState
     ? "当前场景不允许 choices；终点步骤的 choices 必须使用下方对应候选。"
     : descriptorGraph.currentChoiceCandidates.map(candidateProjection).join("；");
   const expectedSteps = draft.terminal.kind === "ending" ? "无 continuation step。" : nextActProjection !== null
-    ? `- move:${nextActProjection.locationId}；choices: move:${nextActProjection.locationId}_choice_1 => ${candidateActionProjection({ type: "talk", npcId: nextActProjection.npcId as never, dialogueAct: "support" })}；move:${nextActProjection.locationId}_choice_2 => ${candidateActionProjection({ type: "talk", npcId: nextActProjection.npcId as never, dialogueAct: "challenge" })}；到达 NPC: ${nextActProjection.npcId}；这是终点步骤，scene.npcLine 必须是该 NPC 的直接开场对白，不能为 null。`
+    ? `- move:${nextActProjection.locationId}；choices: move:${nextActProjection.locationId}_choice_1 => ${candidateActionProjection({ type: "talk", npcId: nextActProjection.npcId as never, dialogueAct: "support" })}；move:${nextActProjection.locationId}_choice_2 => ${candidateActionProjection({ type: "talk", npcId: nextActProjection.npcId as never, dialogueAct: "challenge" })}；到达 NPC: ${nextActProjection.npcId}；展示时玩家已经抵达该地点；这是终点步骤，scene.npcLine 必须是该 NPC 的直接开场对白，不能为 null。`
     : descriptorGraph.steps.length === 0
       ? "无 continuation step。"
       : descriptorGraph.steps.map((step) => {
@@ -200,7 +200,7 @@ function expectedBundleProjection(worldState: WorldState, storyState: StoryState
             && step.arrivalNpc !== undefined
             ? `；这是终点步骤，scene.npcLine 必须是到达 NPC ${step.arrivalNpc.id} 的直接开场对白，不能为 null`
             : "";
-          return `- ${step.stepKey}；choices: ${choices}${terminalArrivalRequirement}`;
+          return `- ${step.stepKey}；展示时规则结果：${JSON.stringify(draft.slots.find(slot => slot.slotKey === step.stepKey)?.resolution)}；choices: ${choices}${terminalArrivalRequirement}`;
         }).join("\n");
   const expectedTerminal = draft.terminal;
   const currentTalkNpcIds = descriptorGraph.terminal.kind === "next_decision"
@@ -443,7 +443,7 @@ export function buildDecisionNarrativeContextBlocks(
       id: "bundle:item-acquisition", slot: "output_contract", title: "物品获取方式",
       authority: "rule", retention: "mandatory", priority: 1000,
       source: { kind: "narrative_bundle_schema", refs: [] },
-      content: "worldDelta.newItem 可额外包含 acquisition，只能是 scene 或 npc_gift，省略时按 scene。scene 物品放在场景中，由玩家点击拾取；npc_gift 物品由同包 newNpc 持有，在该 NPC 的约定对话完成后由规则交给玩家。npc_gift 必须同时提供同地点 newNpc 和 nextMainQuest；不能提交 giver ID、giftFromNpcId、任意奖励或直接修改背包。不要在抵达或尚未完成的对话中提前叙述赠予成功，只有本回合已结算的 item_obtained 节拍才可写已获得。NPC 给予后不再要求场景拾取。",
+      content: "worldDelta.newItem 可额外包含 acquisition，只能是 scene 或 npc_gift，省略时按 scene。scene 物品放在场景中，由玩家点击拾取；npc_gift 物品由同包 newNpc 持有，在该 NPC 的约定对话完成后由规则交给玩家。npc_gift 必须同时提供同地点 newNpc 和 nextMainQuest；不能提交 giver ID、giftFromNpcId、任意奖励或直接修改背包。不要在抵达或尚未完成的对话中提前叙述赠予成功，current 槽只有本回合已结算的 item_obtained 节拍才可写已获得。续接槽则在该 slot 的 trigger 成功后才展示：take_item 槽必须承接玩家已经拾取，give_item 槽必须承接已经交付；生成时的背包快照不能覆盖展示时该触发器已结算的结果。此前 current 或抵达槽仍不得提前写获得。NPC 给予后不再要求场景拾取。",
     }),
     block({
       id: "bundle:world-delta-investigation-contract", slot: "output_contract", title: "事实调查方式契约",

@@ -1,5 +1,6 @@
 import { projectEntityStore } from "@/game/domain/entity";
-import type { NarrativeBundleTerminal } from "@/game/domain/narrativeBundle";
+import type { NarrativeBundleTerminal, NarrativeBundleTrigger } from "@/game/domain/narrativeBundle";
+import { asLocationId } from "@/game/domain/worldEntity";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { StoryState } from "@/game/domain/storyState";
 import type { WorldState } from "@/game/domain/worldState";
@@ -11,6 +12,22 @@ export type NarrativeDraftContext = Readonly<{
   job: Pick<PendingNarrativeJob, "objectiveTransition" | "actionSummary">;
   includeDeliveryReturn?: boolean;
 }>;
+
+/** A continuation is displayed after this rule trigger, not before the action. */
+export function narrativeSlotResolution(trigger: NarrativeBundleTrigger) {
+  const settledOutcome = (() => {
+    switch (trigger.kind) {
+      case "move": return `玩家已经抵达 ${trigger.locationId}，不是尚待出发。`;
+      case "take_item": return `物品 ${trigger.itemId} 已由规则交给玩家持有；不能仍写成留在原处、等待拾取或禁止玩家伸手。`;
+      case "give_item": return `玩家已将物品 ${trigger.itemId} 交给 ${trigger.npcId}，不能仍写成尚未交付。`;
+      case "battle_started": return `与 ${trigger.enemyId} 的战斗已开始，尚未判定胜负。`;
+      case "battle_resolved": return `玩家已战胜 ${trigger.enemyId}，胜利已经结算，而非仍在等待开战。`;
+      case "investigate": return `玩家已完成对 ${trigger.factId} 的核验，按该步骤授权事实回应结果。`;
+      case "explore": return `玩家已在 ${trigger.locationId} 完成该次探索，按该步骤授权事实回应结果。`;
+    }
+  })();
+  return { displayTiming: "after_successful_trigger" as const, trigger, settledOutcome };
+}
 
 /** This projection owns routing only. Every word and action label remains authored. */
 export function projectNarrativeDraft(input: NarrativeDraftContext) {
@@ -32,6 +49,9 @@ export function projectNarrativeDraft(input: NarrativeDraftContext) {
   return { descriptorGraph, nextActProjection, stepKeys, terminal,
     slots: ["current", ...stepKeys].map(slotKey => ({
       slotKey,
+      resolution: slotKey === "current" ? null : narrativeSlotResolution(nextActProjection !== null
+        ? { kind: "move", locationId: asLocationId(nextActProjection.locationId) }
+        : descriptorGraph.steps.find(step => step.stepKey === slotKey)!.trigger),
       choiceCount: terminal.kind === "next_decision"
         && (terminal.target.kind === "current_scene" ? slotKey === "current" : slotKey === terminal.target.stepKey) ? 2 : 0,
     })),

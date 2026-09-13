@@ -18,11 +18,12 @@
 - bundle step 必须由服务端 descriptor 投影；stepKey 唯一、无环、最多 12 步。非终点没有 choices，`next_decision` 终点恰好两个选项，`ending` 终点没有 choices 且没有 continuation scenes。
 - 决策 prompt 为每个已有 `candidateId` 同时投影服务端 Action；对话候选包含目标 NPC、dialogueAct 和结构化 topic。新增互动须提交封闭的 `interactionProposals` 并经预览审批，才能绑定相应候选；不能按选项数组位置把一个 label 改绑到另一种 Action，也不能根据裸 candidateId 猜测行动语义或改写 registry。
 - NPC 的 `offer_condition` 带有已授权互动提案时，作者须在终点提供对应 `interaction:proposalKey` 的真实行动选择，并保留原条款；不得把答应条件写成普通交谈。应用层按候选引用携带原提案并拒绝冲突修改，语义审阅核对台词与行动及条件先后；提案获准不等于条件已经成立。
+- 续接槽按正式 trigger 投影 `resolution`，正文展示于触发成功之后：move 已抵达、take_item 已归玩家、give_item 已交付、战斗开始与胜利分别承接对应结果。作者与 reviewer 共用这一时序；生成时旧背包/地点快照仅是起点，不能覆盖该槽展示时的已结算结果，current 槽仍只承接本回合已提交行动。
 - 生产移动、探索、取物、给予、战斗开始与胜利交接必须消费匹配的 bundle 步骤；缺失或失效零写入。活跃战斗、战败恢复和终幕立场由规则直接处理，不增加 provider 调用。`PreparedContinuationState` 及其消费函数只供显式离线 fixture；不能据此描述生产续接。
 - `mode="ai"` 只投影已审批的 `generated` 场景。缺少正式 NPC focus 台词时投影单一权威 `ask`；失败仍进入同 job 的 failed 状态，不合成 deterministic/default 文案。
 - 内容审批同时检查强制节拍、当前地点和焦点 NPC、`objectiveLink`、下一步抵达 NPC、实体引用、题材限制和 NPC speech authority。审批失败不部分写入。
 - 决策上下文以 `consumer=author|reviewer` 共用事实、权限、行动及演化依据；作者获得 sceneDrafts 传输契约，审阅器获得实际编译后 NarrativeBundleProposal 契约（含服务端附加的 npcOutwardProposals）。作者修复指令和抵达输出骨架不进入审阅上下文，candidateHash 仍绑定原内部候选；审阅不改写候选、不按作者传输字段误判内部表示。
-- 生产语义审阅的 `ruleBasis` 由服务端投影当前输入、真实 Action 与候选绑定、续接 step、正式物品及事实/权限。阻断缺陷必须带可存在性校验的候选 `path` 和 `evidence={basisKey,impact,detail}`；依据必须存在、影响种类须属于该依据，detail 说明具体规则后果。物品状态影响只能引用具体正式物品，普通无效果服饰、环境或风格写入 `qualityObservations`，不改变规则 verdict。无依据、空缺陷或混入非法缺陷的 revise 整体成为显式 uncertain，不过滤后冒充 pass。服务端校验依据与路径，不以此替代模型对语义冲突的判断。
+- 生产语义审阅的 `ruleBasis` 由服务端投影当前输入、真实 Action 与候选绑定、续接 step、正式物品及事实/权限。阻断缺陷必须带可存在性校验的候选 `path` 和 `evidence={basisKey,impact,detail}`；依据必须存在、影响种类须属于该依据，detail 说明具体规则后果。物品状态影响只能引用具体正式物品或绑定该物品的 take/give 步骤，普通无效果服饰、环境或风格写入 `qualityObservations`，不改变规则 verdict。无依据、空缺陷或混入非法缺陷的 revise 整体成为显式 uncertain，不过滤后冒充 pass。服务端校验依据与路径，不以此替代模型对语义冲突的判断。
 - 事实引用许可与披露正文分别投影：获准 NPC 互动提案里的事实 ID 存在且可用于对应提案，不要求出现在公开正文目录；该许可不授权当前台词说出秘密，也不代表行动已执行。秘密正文继续按 speaker authority 裁剪。
 - 每个完整 opening/decision 候选由服务端计算 `candidateVersion` 与 `candidateHash`，最多保留初稿加两次修订；结构/规则预检通过后只做一次语义审阅。审阅只能返回非空缺陷或明确 provider/uncertain 失败，不能修改候选、规则或知识；正文、受众、NPC outward 依据或 proposal 任一变化都会使旧 pass 失效。
 

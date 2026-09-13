@@ -2,18 +2,20 @@
 
 ## 结论
 
-P1 仍未通过，尚无完整 live 小故事。规则依据审阅与同轮 NPC 授权复用已落地，普通生产主线 `p1-core-01` 从真实创建开始，开局及两轮后续生成均获批，在第 2 个有效行动后因脚本漏收地图入口停止。失败已严格重放；已补齐正式地图/物品/建筑入口，准备重新冻结验证。此前固定初态两批失败证据保留，不能用新范围覆盖旧分母。
+首个真实 AI 短篇已在正式规则下完成，但 P1 整体仍未通过。`b6cc0e5b` 的 `p1-core-02` 创建“青石渡”故事，完成九次行动后 Node 原生进程中断；保留原库，在独立副本通过正式 ensure 恢复同一游戏，续至第十八次行动与成功结局“一盏直烟”。实际移动、两次取物、四轮战斗、三项主线任务完成和成功结局事件均已核实。
 
-本轮四项工作的状态如下。首要目标“完整小故事”未达成，正式六矩阵和创建到终局的实机 UI 验收没有执行，不记为通过，也不进入 P2。历史 `p1-07` 的 0/6 来自六次独立开局，不是新协议矩阵。根因与后续架构方向见 [失败分析](2026-09-13-narrative-p1-failure-analysis.md)。
+恢复段严格 replay 为 HTTP 0、9 次响应、12 个状态匹配。原中断段缺正常封存，不能称全程无中断或整条严格 replay 通过。全文仍有物品拾取时序、终幕通用标签和收束偏弱的问题；前两项已按规则契约修复并回归，尚未在新冻结 live 中验证。
+
+本轮四项工作的状态如下。首要目标“完整小故事”已取得恢复后通关证据，正式六矩阵和创建到终局的实机 UI 验收没有执行，不记为通过，也不进入 P2。历史 `p1-07` 的 0/6 来自六次独立开局，不是新协议矩阵。根因与后续架构方向见 [失败分析](2026-09-13-narrative-p1-failure-analysis.md)。
 
 | 工作 | 结果 | 未关闭边界 |
 | --- | --- | --- |
 | 保密、引荐、交付与退出规则 | 已完成；正式 SQLite 旅程及独立复审通过 | 不代表 live 作者可稳定使用这些能力 |
-| 原始响应生产链重放 | 已完成机制与集成验证；diag02 开局成功路径、diag04 整次失败初始化实际重放一致 | 尚无完整 live 故事可用于端到端重放；diag03 旧磁带缺失败收尾清单，未补造 |
-| 单故事、六矩阵、实机 UI | 四次独立开局诊断和两次固定初态诊断均未得到完整故事 | 六矩阵及实际 UI 创建→中途重载→终局仍待验收；UI harness 代码不算实机证据 |
-| 原文审核与验收结论 | 已读诊断原文、复现拒绝并记录 P1 不通过 | 未完成路线不评分，不能评定完整叙事质量或优于 main |
+| 原始响应生产链重放 | 已完成机制与集成验证；diag02 开局成功路径、diag04 整次失败初始化实际重放一致 | core02 恢复段完整重放；原中断段和 diag03 旧磁带缺失败收尾清单，未补造 |
+| 单故事、六矩阵、实机 UI | 早期诊断均未完成；core02 正式恢复后十八行动成功结局 | 六矩阵及实际 UI 创建→中途重载→终局仍待验收；UI harness 代码不算实机证据 |
+| 原文审核与验收结论 | 已读完整通关原文，独立审计核对规则与叙事缺陷 | 完整样本存在确认的规则表达缺陷，不评为质量通过；未作 main 对照 |
 
-历史 `p1-07` 的 `S1-private` 已持久化到第 5 个有效行动，随后因 `approval_rejected` 结束；其他路线在开局或审阅阶段结束。审阅耗尽背后存在作者/reviewer 契约冲突、缺少上一稿的修订，以及互动未接入作者等本地根因，不能仅归因于模型质量。`p1-08` 使用 DeepSeek `reasoning_effort=low` 与 240 秒审阅超时，长时间等待后中止且没有 summary；现存完成请求审计不足以判断中断时卡在哪一层。没有完整 live 轨迹，不填写人工质量分，也不能开始 P2。
+历史 `p1-07` 的 `S1-private` 已持久化到第 5 个有效行动，随后因 `approval_rejected` 结束；其他路线在开局或审阅阶段结束。审阅耗尽背后存在作者/reviewer 契约冲突、缺少上一稿的修订，以及互动未接入作者等本地根因，不能仅归因于模型质量。`p1-08` 使用 DeepSeek `reasoning_effort=low` 与 240 秒审阅超时，长时间等待后中止且没有 summary；现存完成请求审计不足以判断中断时卡在哪一层。这些历史批次没有完整 live 轨迹，不填写其人工质量分。
 
 ## 已完成的离线证据
 
@@ -26,7 +28,7 @@ P1 仍未通过，尚无完整 live 小故事。规则依据审阅与同轮 NPC 
 
 ## 门禁结果
 
-- `npm run accept`：通过；lint 0 errors，218 个测试文件通过，2782 tests passed、1 skipped，typecheck、fast gates、build 均通过。
+- `npm run accept`：通过；lint 0 errors，218 个测试文件通过，2784 tests passed、1 skipped，typecheck、fast gates、build 均通过。
 - `npm run test:narrative-p1-script`：通过；20 passed。
 - `npm run check:docs`、`npm run test:docs`、`git diff --check`：通过。
 - `npm run env:check`：通过；`.env.local` 仅注入当前进程，密钥未写入协议、审计摘要或报告。
@@ -37,6 +39,22 @@ P1 仍未通过，尚无完整 live 小故事。规则依据审阅与同轮 NPC 
 - 阻断为 runner `ROUTE_POLICY_UNSUPPORTED`：只收集对话/当前地点按钮，漏掉 `worldMap.locations[].travelChoice`。实际状态已有合法 `move:loc_dyn_1` 和对应地图按钮，不是生成失败或游戏无路可走。
 - 原产物 `artifacts/narrative-p1/p1-core-01/`；独立重放 `artifacts/narrative-p1/p1-core-01-replay/replay/`，HTTP 0、10 原始响应、所有状态一致，保留同一失败码。未完成不能评分。
 - 修复入口收集覆盖正式地图、可获取物品、NPC 与建筑 arrival token；core 建筑回退仅接受真实 Action `explore`。4 项生产 projection、20 项脚本、typecheck 和独立复审通过；本次不修改生产剧情、规则或审阅结果。
+
+### p1-core-02：中断后同故事通关
+
+- 原 run：`b6cc0e5b`、真实创建、25 个完整原始响应（opening 4 + route 21），九次行动；第 4 次行动后正式重载。第九次行动后 Node `v24.15.0` 以 `-1073741819`（0xC0000005）退出，无 JavaScript 错误或正常 summary；存档留下 1 次未完成 HTTP reservation。原 summary 的 0 HTTP 是中断前初始 checkpoint，不能当最终实际计数。
+- 恢复：`artifacts/resume-core-02.mjs` 绑定原协议、代码、驱动与 SQLite 哈希；原库只读，独立副本走正式 ensure/performTurn，接续 action 9–17。原预算继续生效，独立范围 `interrupted_core_story_recovery`。恢复消耗 9 次 HTTP；合计 34 个完整响应，另 1 个已预留但未记录完成的请求，不宣称全部 HTTP 精确值。
+- 唯一 gameId：`d0059431-27e9-4532-9124-5bb78a44ca6a`；18 个 action ID 无重复。两次 `item_obtained`，最终两物品 owner 均为玩家；battle_started、battle_resolved:victory、enemy_defeated 与三项 quest_completed 均有事件，战后玩家 75 HP。action 17 写 `ending_reached:ending_dyn_0`，最终 outcome=success，无递送契约。
+- 恢复产物：`artifacts/narrative-p1/p1-core-02-resume/`；其 `replay/` 为 HTTP 0、9 次响应和 12 状态一致。原中断目录只读，未补造正常收尾、未改原协议为 pass。
+- 完整玩家正文：`artifacts/narrative-p1/p1-core-02-resume/complete-story.md`，独立审核核对全部文本、状态与来源。
+
+### 文本审核与规则收敛
+
+1. take_item 后的预生成场景仍说传帖未拿、信牌在架，和实际 owner 冲突。根因是续接槽缺展示时已结算语义，通用提示又以当前生成时 item_obtained 限制所有槽。修复让每个 slot 由正式 trigger 投影 after_successful_trigger 与规则结果，author/reviewer 共同使用；具体 take/give step 可作为物品状态审阅依据。不是修改已生成原文。
+2. 终幕 support/challenge 按钮原为硬编码“证据/真相”，与本线递交生计诉求脱节。改为中性认可/保留疑虑，既有 Action 与结局条件不变。
+3. 故事有茶棚→船家→执事的完整递话链，但停航缘由、决策者与恢复生计未落实，成功结局仍等待回音；战斗必要性弱，最后主要按 NPC 好感分流。因此本次证明规则终局可达，不证明已解决渡口纠纷、选择后果充分或叙事优于 main。后续应围绕具体主线目标及其可验证结局收束，不扩大记忆/Entity 或堆叠 reviewer。
+
+两项代码修复经过独立复审与相关回归；通关文本来自修改前 b6cc0e5b，后续规则提示尚未取得新的 live 效果证据。原生 crash 暂无确定根因，不为此次恢复修改依赖；无中断稳定性仍需单独验证。
 
 ## 固定初态核心诊断
 

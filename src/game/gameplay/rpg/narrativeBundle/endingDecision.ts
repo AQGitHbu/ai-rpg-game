@@ -50,12 +50,12 @@ export function endingDecisionStances(
   return [
     {
       candidateId: "ending_stance_support",
-      label: "我愿意和你一起把证据摊开，让该承担的人面对真相。",
+      label: "我认可你的回应，愿意继续合作。",
       action: { type: "talk", npcId: npc.id, dialogueAct: "support" },
     },
     {
       candidateId: "ending_stance_challenge",
-      label: "我会核对每一份证据，在确认之前不会把结论交给任何人。",
+      label: "我仍有疑虑，暂不认可你的回应。",
       action: { type: "talk", npcId: npc.id, dialogueAct: "challenge" },
     },
   ];

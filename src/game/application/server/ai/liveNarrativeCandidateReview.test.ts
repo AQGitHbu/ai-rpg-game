@@ -1,4 +1,7 @@
-import { createEntityStore } from "@/game/domain/entity";
+import { createEntityStore, projectEntityStore } from "@/game/domain/entity";
+import { createWorldStateFixtureWith } from "@/game/domain/testing/worldStateFixture.testutil";
+import { asItemId, asQuestId } from "@/game/domain/worldEntity";
+import { projectNarrativeDraft } from "./narrativeDraftProjection";
 import { describe, expect, it, vi } from "vitest";
 import type { AiMessage } from "@ai-game/ai-transport";
 import type { NarrativeBundleSourceContext } from "../../narrativeBundleSource";
@@ -117,6 +120,39 @@ function makeJob(): PendingNarrativeJob {
 
 
 describe("live narrative candidate reviewer", () => {
+  it("grounds a take-item continuation in the post-pickup rule result for both author and reviewer", async () => {
+    const initial = makeWorldState();
+    const itemId = asItemId("item_letter");
+    const questId = asQuestId("quest_letter");
+    const worldState = createWorldStateFixtureWith({ generation: initial.generation, base: projectEntityStore(initial.entityStore) }, {
+      locations: initial.locations.map(location => ({ ...location, availableItemIds: [itemId] })),
+      items: [{ id: itemId, name: "传帖", description: "桌上的传帖。", kind: "quest", tags: [] }],
+      quests: [{ id: questId, name: "取帖", description: "取得传帖", kind: "main", stage: 1, status: "active", tags: [],
+        objectives: [{ kind: "obtain_item", itemId }], onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" } }],
+    });
+    const job = { ...makeJob(), objectiveTransition: { before: null, completed: [],
+      after: { questId, objectiveIndex: 0, label: "取得传帖" }, mode: "progressed" as const } };
+    const context = { kind: "decision" as const, worldState, storyState: makeStoryState(), job };
+    const slot = projectNarrativeDraft(context).slots.find(entry => entry.slotKey === "take_item:item_letter");
+    expect(slot?.resolution).toMatchObject({ displayTiming: "after_successful_trigger", trigger: { kind: "take_item", itemId } });
+    expect(worldState.inventory).not.toContain(itemId);
+    for (const consumer of ["author", "reviewer"] as const) {
+      const prompt = buildDecisionNarrativeContextBlocks({ ...context, consumer }).map(block => block.content).join("\n");
+      expect(prompt).toContain("物品 item_letter 已由规则交给玩家持有");
+      expect(prompt).toContain("生成时的背包快照不能覆盖展示时该触发器已结算的结果");
+    }
+    const proposal: NarrativeBundleProposal = { ...(candidate as NarrativeBundleProposal), continuationScenes: [{ stepKey: "take_item:item_letter", scene: {
+      segments: [{ beatId: "atmosphere", text: "传帖仍在桌上，别急着伸手。" }], npcLine: null, objectiveLink: null, choices: [],
+    } }] };
+    const complete = vi.fn().mockResolvedValue({ ok: true, content: JSON.stringify({ verdict: "revise", defects: [{
+      scope: "scene", code: "BROKEN_CAUSALITY", path: "continuationScenes[0].scene.segments[0].text",
+      reason: "拾取后的场景仍把物品放在原处。", evidence: { basisKey: "step:take_item:item_letter", impact: "item_state", detail: "此场景展示时玩家已持有传帖。" },
+    }] }) });
+    const result = await createLiveNarrativeCandidateReview({ aiClient: client(complete) }).reviewNarrativeCandidate({
+      context, proposal, candidateVersion: 1, candidateHash: hashNarrativeCandidate(proposal),
+    });
+    expect(result).toMatchObject({ ok: false, defects: [{ evidence: { impact: "item_state" } }] });
+  });
   it.each(["stable", "needs_next_act"] as const)("reviews the compiled %s DTO without the author's draft transport contract", async (evolution) => {
     const storyState = makeStoryState();
     const context = {

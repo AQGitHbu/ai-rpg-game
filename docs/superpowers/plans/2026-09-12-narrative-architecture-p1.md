@@ -120,8 +120,16 @@ node scripts/narrativeP1Journey.mjs --mode=live --profile=focused --run-id=p1-fo
 
 - [x] 协议测试验证 core 输入/路线/来源冻结，不能注入 seed；政策测试验证实际 Action 选路，不用 label 关键词或状态补丁。
 - [x] 实现 core 完成条件与正式选路；24 有效动作、200 HTTP、90 分钟、每 epoch 现有 3 版本/24 HTTP，上限不增加。
-- [ ] 通过完整门禁与独立复审后冻结，register/live 使用新目录 p1-core-01。失败先封存和根因定位；不以重试同样样本代替修复。
+- [x] 通过完整门禁与独立复审后冻结，执行 p1-core-01；修复正式地图入口后执行 p1-core-02。原生进程中断后保留存档，正式恢复同故事至成功终局，证据见报告。
 - [ ] 完成生产短篇后严格零网络 replay，检查任务/位置/物品/结局事件及中途重载；阅读完整正文但规则通关闭环与叙事质量分开报告。再回到交付/退出专项。
+
+### D3：通关文本暴露的规则时序边界
+
+**Files:** `narrativeDraftProjection.ts`、`narrativeBundleContext.ts`、`narrativeReviewRules.ts`、`liveNarrativeCandidateReview.test.ts`、`endingDecision.ts` 与对应系统文档。
+
+- [x] 续接槽由真实 trigger 投影展示时已结算语义，作者与审阅共用；take/give 不再受生成时旧背包的限制，仍不允许 current 槽提前获取。增加正式 store/graph/prompt 与物品状态阻断回归。
+- [x] 终幕规则按钮改为中性支持/疑虑，不凭空引入证据、真相；Action 和结局条件不变。独立复审通过。
+- [ ] 后续冻结 live 验证新提示效果与无中断稳定性。现有通关证据属于 b6cc0e5b，不能将后续提示修改算作已真实验证。
 
 ## 后续 P1 验收边界
 
@@ -132,4 +140,5 @@ node scripts/narrativeP1Journey.mjs --mode=live --profile=focused --run-id=p1-fo
 - C1：实现与独立复审通过；17 个脚本测试通过，退出任务失败事件与交付前分叉均已验证。
 - C2：实现与独立复审通过；相关 87 tests、typecheck、130 项边界通过。
 - C3：focused01 与唯一修复批 focused02 均失败，各五行动后结束，退出路线未执行；两批全部 55 次真实响应均严格重放一致。格式契约已修复，剩余审阅判定和修订依赖边界见上节。完整故事仍未完成，不执行第三批连续重采。
-- P1 总结论：未通过；核心诊断、生产创建、UI 与 main 对照分别记证据。
+- D1/D2：规则审阅与入口收集完成；b6cc0e5b 的真实短篇经进程中断恢复后完成 18 次行动和成功终局。恢复段 9 次响应、12 状态严格重放，原中断流无完整封存，不算全程无中断通过。
+- P1 总结论：未通过；首个完整故事已取得，后续先验证规则时序修复和进程稳定性，交付/退出、UI 与 main 对照分别记证据。

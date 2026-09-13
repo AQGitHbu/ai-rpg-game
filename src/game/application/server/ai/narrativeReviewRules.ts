@@ -3,7 +3,7 @@ import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import type { NarrativeCandidateReviewInput, CandidateRuleEvidence, CandidateRuleImpact } from "../../narrativeCandidateReview";
 import { buildNpcSpeechAuthority } from "../../npcSpeechAuthority";
 import { buildEntityContextProjection } from "../../entityContextProjection";
-import { projectNarrativeDraft } from "./narrativeDraftProjection";
+import { narrativeSlotResolution, projectNarrativeDraft } from "./narrativeDraftProjection";
 import { OPENING_SEMANTIC_CONTRACT } from "./openingSemanticContract";
 
 export type NarrativeRuleBasis = Readonly<{
@@ -46,7 +46,11 @@ export function buildNarrativeReviewRules(input: NarrativeCandidateReviewInput):
       add(`action:${candidate.candidateId}`, "action", ["action_binding", "interaction_effect"], candidate);
     }
     for (const step of graph.descriptorGraph.steps) {
-      add(`step:${step.stepKey}`, "step", ["step_order"], { stepKey: step.stepKey, currentLocationId: worldState.currentLocationId });
+      add(`step:${step.stepKey}`, "step", step.trigger.kind === "take_item" || step.trigger.kind === "give_item"
+        ? ["step_order", "item_state"] : ["step_order"], {
+        stepKey: step.stepKey, generationLocationId: worldState.currentLocationId,
+        resolution: narrativeSlotResolution(step.trigger),
+      });
       for (const candidate of step.choiceCandidates) add(`action:${candidate.candidateId}`, "action", ["action_binding", "interaction_effect"], candidate);
     }
   }
