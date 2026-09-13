@@ -4,7 +4,7 @@
 
 P1-A 与 P1-B 的离线实现和门禁通过；P1-C 仍未通过。最新完整固定矩阵 `p1-07` 为 0/6，HTTP 44 次，六条路线均未到达终局。此次批次没有再出现 `context_budget_exceeded`：本地叙事包上下文预算闸门已在 `85ca21af` 移除，thinking provider 的实际上下文交给 provider 处理。
 
-最新批次的剩余失败属于 provider 超时和候选语义审阅/修订耗尽。`S1-private` 已持久化到第 5 个有效行动，随后因 `approval_rejected` 结束；其他路线在开局或候选审阅阶段结束。没有完整 live 轨迹，因此不填写人工质量分，也不能宣布 P1 通过或开始 P2。
+最新完整批次的剩余失败属于 provider 超时和候选语义审阅/修订耗尽。`S1-private` 已持久化到第 5 个有效行动，随后因 `approval_rejected` 结束；其他路线在开局或候选审阅阶段结束。随后执行的 `p1-08` 使用 DeepSeek `reasoning_effort=low` 与 240 秒审阅超时，但因 provider 请求长时间无返回而中止，没有生成 summary，不能作为正式通过率。没有完整 live 轨迹，因此不填写人工质量分，也不能宣布 P1 通过或开始 P2。
 
 ## 已完成的离线证据
 
@@ -48,6 +48,7 @@ P1-A 与 P1-B 的离线实现和门禁通过；P1-C 仍未通过。最新完整�
 | `p1-05` | 未完成 | 使用上下文闸门修复前版本；观察到历史增长导致 `context_budget_exceeded`，随后为切换新策略而停止，不作为完整批次结论 |
 | `p1-06` | 未生成 summary | 使用无本地预算闸门版本启动；首条路线运行期间会话中断，保留局部审计产物，不作为完整批次结论 |
 | `p1-07` | 0/6，HTTP 44 | 无 `context_budget_exceeded`；剩余为 provider timeout、语义审阅修订耗尽和 `approval_rejected` |
+| `p1-08` | 未完成，无 summary | 显式 `reasoning_effort=low`、author/review 240 秒；前两条路线各完成 3 次开局生成但未落盘，`S1-verify_first` 推进到 revision 25 后因 provider 长时间无返回而中止，不计入正式矩阵 |
 
 已落地的代码级修复如下：
 
@@ -55,5 +56,6 @@ P1-A 与 P1-B 的离线实现和门禁通过；P1-C 仍未通过。最新完整�
 - `b282f42a`：为观察到的 reviewer scope/code 兼容词建立受控归一化，未知值仍 fail closed。
 - `bdc60a9d`：runner 等待后台叙事生成完成后才计有效行动，避免 pending poll 消耗行动预算。
 - `85ca21af`：移除叙事包本地 8,000 estimated-token 拒绝闸门，并更新 TDD 覆盖；provider 失败仍走既有失败协议。
+- `4970e11e`：审阅单次超时调整为 240 秒，并按 DeepSeek 官方字段显式发送 `thinking.type=enabled` 与 `reasoning_effort=low`；参数透传和协议冻结均有 TDD 覆盖。
 
 `p1-07` 的 0/6 不是 P1 通过证据：AI provider 的调用和审计链已经实际运行，但候选质量/超时尚未稳定达到六条完整终局的门槛。后续若继续 live，应另建 protocol run，并针对 provider 超时与语义审阅失败单独收集证据；不能用再次扩大局部修补轮次替代 P1-C 的完整矩阵和人工评分。
