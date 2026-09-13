@@ -36,7 +36,7 @@ import {
 } from "@/game/domain/narrativeGenerationAttempt";
 
 // ---------------------------------------------------------------------------
-// SQLite adapter：GameRepository 端口的 libsql 实现。
+// SQLite adapter：GameRepository 端口的 Node SQLite 实现。
 //   - 使用 game_records / current_game 保存当前存档，使用 opening_history 保存
 //     已用过的开局指纹；清档只移除当前存档，不清除去重历史；
 //   - 旧存档不迁移（spec：新架构重开新局）；
@@ -644,7 +644,7 @@ export function createSqliteGameRepository(
   }
 
   async function applyNarrativeAttemptState(input: ApplyStateInput): Promise<ApplyStateResult> {
-    // 两个恢复 worker 可能同时打开各自的 SQLite 写事务。libsql 在本地
+    // 两个恢复 worker 可能同时打开各自的 SQLite 写事务。SQLite 在本地
     // 文件锁竞争时返回 SQLITE_BUSY；短暂退避后重试，第二次会由完整 CAS
     // 谓词把已经获胜的 worker 判定为 stale，而不是把正常竞争暴露成基础设施失败。
     let result = await applyState(input);

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "engines": {
-    "node": ">=20.9.0",
+    "node": ">=24.15.0",
     "npm": ">=10.0.0"
   },
   "packageManager": "npm@11.5.2",
@@ -68,7 +68,6 @@
     "@ai-game/ai-transport": "file:.foundation/packages/ai-transport",
     "@ai-game/logging": "file:.foundation/packages/logging",
     "@ai-game/ui": "file:.foundation/packages/ui",
-    "@libsql/client": "0.17.3",
     "next": "16.2.10",
     "react": "19.1.0",
     "react-dom": "19.1.0",
@@ -79,7 +78,7 @@
     "@testing-library/jest-dom": "6.6.3",
     "@testing-library/react": "16.3.0",
     "@testing-library/user-event": "14.6.1",
-    "@types/node": "22.15.29",
+    "@types/node": "24.10.1",
     "@types/react": "19.1.6",
     "@types/react-dom": "19.1.6",
     "eslint": "9.27.0",

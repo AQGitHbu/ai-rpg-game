@@ -6,6 +6,7 @@
 
 ## 当前契约
 
+- 服务端与验收脚本使用 Node.js ≥24.15.0；SQLite 由 Node 内置 `node:sqlite` 提供，无需安装或自行编译数据库原生驱动。Next.js API 使用 Node runtime。
 - `AI_API_BASE_URL`、`AI_MODEL`、`AI_API_KEY` 和 `AI_OUTPUT_FORMAT` 由 `application/server/ai/aiRuntimeConfig.ts` 解析；`GAME_DB_PATH` 只由 `src/game/application/server/persistence/sqliteClient.ts` 读取，缺省为 `db/rpg.sqlite`。
 - `AI_RUNTIME_THINKING_ROLES` 控制角色 thinking，未配置时关闭；可用角色及语义以环境示例和 runtime policy 为准。生产生成统一使用 `NarrativeBundleSource`，不能把角色枚举当作独立调用链。
 - composition root 在 `src/game/application/server/compositionRoot.ts` 装配 repository、`RpgAiClient`、audit recorder、logger、background ensure coordinator 和 narrative bundle source。AI transport 只在 `application/server/ai/` 使用。

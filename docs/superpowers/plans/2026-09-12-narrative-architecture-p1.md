@@ -6,7 +6,7 @@
 
 **Architecture:** 保留 main 继承的完整场景作者、Entity/History/Thread、正式规则、权限与 A/B 提交。服务端投影并编译续接结构；AI 一次生成完整场景内容和具体选择。固定初态仅用于诊断，后续均走生产 provider 和仓储。
 
-**Tech Stack:** TypeScript、Next.js、SQLite/@libsql/client、Vitest；不新增运行时依赖，不改 foundation。
+**Tech Stack:** TypeScript、Next.js Node runtime、Node 24 内置 SQLite、Vitest；不引入自编译原生驱动。数据库替换覆盖 RPG 持久化与 foundation 共享日志，其余叙事范围不变。
 
 ## Global Constraints
 
@@ -147,9 +147,30 @@ node scripts/narrativeP1Journey.mjs --mode=live --profile=focused --run-id=p1-fo
 core05 与同故事恢复均发生原生异常，转储与准确上游版本源码指向 libsql 0.9.30 重复关闭缺陷；证据与边界见验收报告。此时停止新故事抽样，不继续增加剧情提示补丁。
 
 - [x] 捕获单游戏进程转储，独立核对故障模块、版本与第一层调用点；确认准确发布源码及未合并的上游修复，不把随机探针未复现当作排除。
-- [ ] 在隔离依赖构建中验证关闭幂等修复，形成原生复现前后对照；未验证前不升级到预发行版、不保留连接泄漏或移除正常关闭。
+- [ ] 使用现成的 Node 24 `node:sqlite` 替换 libsql，禁止自编译原生依赖。旧存档无需兼容迁移，验收创建新数据库；历史故障证据保留。
 - [ ] 核对 RPG 存档与共享日志两个实际消费者的依赖解析和供应链固定方式；若涉及 foundation 公共 package，按共享流程建立同名工作树及消费者合同，不能在 RPG 改同步副本或直接改 sibling 主仓。
 - [ ] 依赖修复通过持久化 CAS/回滚/租约/重载及日志合同后，再冻结普通故事 live、严格 replay 与终局 ready 验收。数据库故障不改变 P1 的故事目标或放宽规则。
+
+### Task 10：现成 SQLite 驱动与完整故事前置
+
+**Files:** RPG `src/game/application/server/persistence/sqliteClient.ts`、同目录测试、`src/dependencyBoundaries.test.ts`、`package.json`/lock、开发规范及数据库/AI 环境文档；foundation 同名 worktree 的 `packages/logging/src/sqlite/logDatabase.ts`、公共类型、package/lock、测试与 dist。
+
+**Interfaces:** RPG 保留仓储实际使用的 `execute(statement)`、`batch(statements, mode)`、`transaction(mode)`、`close()`，仅声明所需本地接口，不再依赖 libsql 类型。事务必须隔离异步调用间的写入，提交后释放，未提交 close 回滚，重复 close 安全；同文件多个 client 的竞争不能同步等待锁而阻止持锁调用继续。日志保留已公开的查询/事务/迁移/retention 契约，驱动仅用于 Node 服务端。Node 下限固定为 24.15.0，使用当前现成安装，不构建 Node/SQLite/Rust/C++。
+
+- [ ] 写并运行真实 SQLite 回归：参数绑定（含特殊路径）、提交与未提交回滚、双 client 并发 CAS、失败后重用、关闭幂等、重开读回；现有 lease 与 repository 测试保留。
+
+```ts
+const first = await client.transaction("write");
+await first.execute("INSERT INTO sample (id) VALUES (1)");
+first.close();
+expect((await client.execute("SELECT * FROM sample")).rows).toHaveLength(0);
+client.close();
+client.close();
+```
+
+- [ ] 实现上述最小适配；共享日志在 foundation 自己的工作树安装/构建/测试，两个消费者通过公开 API 消费，不编辑 sibling main，不复制共享实现。
+- [ ] 独立审核事务与关闭语义，运行 RPG 完整 accept、日志公共测试/消费者合同及 family 门禁，确认实际进程不加载 libsql 原生模块。
+- [ ] 冻结代码与依赖，新建 core 普通故事；正式 createGame → 真实选项 → 成功 ending 且 narrative ready → 严格零网络 replay。若失败报告实际阻断，不补提示、不重采掩盖失败。
 
 ## 后续 P1 验收边界
 

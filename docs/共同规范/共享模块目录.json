@@ -59,7 +59,7 @@
     {
       "name": "@ai-game/logging",
       "status": "shared-local",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "responsibility": [
         "通用结构化日志 envelope、traceId 与时间戳",
         "递归脱敏、校验、事件大小限制与有界降级队列",

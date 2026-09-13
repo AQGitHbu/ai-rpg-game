@@ -13,22 +13,10 @@ const nextConfig: NextConfig = {
   // 允许通过 127.0.0.1 访问时建立 Next.js 开发 HMR 连接；否则
   // Next 会拦截 /_next/webpack-hmr，页面在开发态会反复停留在 SSR 加载态。
   allowedDevOrigins: ["127.0.0.1"],
-  serverExternalPackages: ["@libsql/client"],
   transpilePackages: ["@ai-game/ui"],
   outputFileTracingRoot: workspaceRoot,
   turbopack: {
     root: workspaceRoot,
-  },
-  webpack(config, { isServer }) {
-    if (isServer) {
-      config.externals = [
-        ...(config.externals ?? []),
-        {
-          "@libsql/client": "commonjs @libsql/client",
-        },
-      ];
-    }
-    return config;
   },
 };
 

@@ -87,6 +87,62 @@ describe("createSqliteClient：真实本地文件客户端", () => {
       createSqliteClient(join(RUN_ROOT, "missing", "nested", "broken.sqlite"))
     ).toThrow();
   });
+
+  it("参数绑定保留特殊文本，特殊文件名可重开读取", async () => {
+    const path = join(RUN_ROOT, "save #% 汉字.sqlite");
+    const client = createSqliteClient(path);
+    openedClients.push(client);
+    await client.execute("CREATE TABLE sample (id INTEGER PRIMARY KEY, value TEXT NOT NULL)");
+    const value = "quote ' % # ? \\ newline\n汉字";
+    await client.execute({ sql: "INSERT INTO sample (value) VALUES (?)", args: [value] });
+    client.close();
+    const reopened = createSqliteClient(path);
+    openedClients.push(reopened);
+    expect((await reopened.execute("SELECT value FROM sample")).rows[0]?.["value"]).toBe(value);
+  });
+
+  it("未提交 close 回滚，重复 close 安全", async () => {
+    const client = createSqliteClient(join(RUN_ROOT, "rollback.sqlite"));
+    openedClients.push(client);
+    await client.execute("CREATE TABLE sample (id INTEGER PRIMARY KEY)");
+    const tx = await client.transaction("write");
+    await tx.execute("INSERT INTO sample (id) VALUES (1)");
+    tx.close();
+    tx.close();
+    expect((await client.execute("SELECT * FROM sample")).rows).toHaveLength(0);
+    client.close();
+    client.close();
+  });
+
+  it("失败事务回滚后 client 可继续使用", async () => {
+    const client = createSqliteClient(join(RUN_ROOT, "reuse.sqlite"));
+    openedClients.push(client);
+    await client.execute("CREATE TABLE sample (id INTEGER PRIMARY KEY)");
+    const tx = await client.transaction();
+    await tx.execute("INSERT INTO sample (id) VALUES (1)");
+    await expect(tx.execute("INSERT INTO sample (id) VALUES (1)")).rejects.toThrow();
+    tx.close();
+    await client.execute("INSERT INTO sample (id) VALUES (2)");
+    expect((await client.execute("SELECT id FROM sample")).rows.map((row) => row["id"])).toEqual([2]);
+  });
+
+  it("同文件双 client 写事务异步排队并保持 CAS", async () => {
+    const path = join(RUN_ROOT, "cas.sqlite");
+    const firstClient = createSqliteClient(path);
+    const secondClient = createSqliteClient(path);
+    openedClients.push(firstClient, secondClient);
+    await firstClient.execute("CREATE TABLE state (id INTEGER PRIMARY KEY, revision INTEGER NOT NULL)");
+    await firstClient.execute("INSERT INTO state VALUES (1, 0)");
+    const first = await firstClient.transaction("write");
+    expect((await first.execute("UPDATE state SET revision = 1 WHERE id = 1 AND revision = 0")).rowsAffected).toBe(1);
+    const secondPending = secondClient.transaction("write");
+    await Promise.resolve();
+    await first.commit();
+    const second = await secondPending;
+    expect((await second.execute("UPDATE state SET revision = 2 WHERE id = 1 AND revision = 0")).rowsAffected).toBe(0);
+    await second.commit();
+    expect((await firstClient.execute("SELECT revision FROM state")).rows[0]?.["revision"]).toBe(1);
+  });
 });
 
 describe("createServerSqliteClientFactory：生产组合根用的工厂", () => {

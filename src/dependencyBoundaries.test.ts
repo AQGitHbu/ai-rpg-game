@@ -170,10 +170,10 @@ const RELATIVE_APPLICATION_SERVER_IMPORT: BoundaryPattern = {
   regex: /["'](?:\.\.\/)+game\/application\/server\//
 };
 
-/** 全库只有 sqliteClient.ts 允许 @libsql/client（该文件本身由下方静态守卫单独盯防）。 */
+/** 数据库驱动只能由 sqliteClient.ts 适配；旧 libsql 导入也永久禁止。 */
 const LIBSQL_IMPORT: BoundaryPattern = {
-  label: "@libsql/client import (only sqliteClient.ts may import it)",
-  regex: /["']@libsql\//
+  label: "SQLite driver import (only sqliteClient.ts may import it)",
+  regex: /["'](?:@libsql\/[^"']*|node:sqlite)["']/
 };
 
 /** SQLite 适配器模块名兜底：无论别名还是相对路径都不得指向 sqliteClient/sqliteGameRepository。 */
@@ -653,7 +653,7 @@ describe("canonical AI sources stay server-only and layered", () => {
         (specifier) =>
           /persistence\//.test(specifier) ||
           /sqlite(?:Client|GameRepository)/.test(specifier) ||
-          /@libsql\//.test(specifier)
+          /@libsql\//.test(specifier) || specifier === "node:sqlite"
       );
       expect(offenders, toPosixRelative(file)).toEqual([]);
     }
@@ -732,7 +732,7 @@ describe("ai-transport stays confined to application/server/ai", () => {
         (specifier) =>
           /persistence\//.test(specifier) ||
           /sqlite(?:Client|GameRepository)/.test(specifier) ||
-          /@libsql\//.test(specifier)
+          /@libsql\//.test(specifier) || specifier === "node:sqlite"
       );
       expect(offenders, relative).toEqual([]);
     }
@@ -812,20 +812,27 @@ describe("server-only modules stay out of client-importable code", () => {
     (file) => toPosixRelative(file) !== "dependencyBoundaries.test.ts"
   );
 
-  it("only sqliteClient.ts imports @libsql/client (all files incl. tests)", () => {
+  it("no source imports the retired libsql driver", () => {
     const offenders = allFiles
-      .filter((file) => toPosixRelative(file) !== `${SERVER_DIR}persistence/sqliteClient.ts`)
       .filter((file) => /["']@libsql\//.test(readFileSync(file, "utf8")))
       .map(toPosixRelative);
     expect(offenders).toEqual([]);
   });
 
-  it("sqliteClient.ts itself still imports @libsql/client (guard is not vacuous)", () => {
+  it("only sqliteClient.ts imports node:sqlite (including tests)", () => {
+    const offenders = allFiles
+      .filter((file) => toPosixRelative(file) !== `${SERVER_DIR}persistence/sqliteClient.ts`)
+      .filter((file) => /["']node:sqlite["']/.test(readFileSync(file, "utf8")))
+      .map(toPosixRelative);
+    expect(offenders).toEqual([]);
+  });
+
+  it("sqliteClient.ts uses the Node built-in SQLite driver", () => {
     const source = readFileSync(
       resolve(sourceRoot, "game/application/server/persistence/sqliteClient.ts"),
       "utf8"
     );
-    expect(/["']@libsql\/client["']/.test(source)).toBe(true);
+    expect(/["']node:sqlite["']/.test(source)).toBe(true);
   });
 
   it("application/server is only reachable via the sanctioned entry points", () => {
@@ -1051,7 +1058,7 @@ describe("one canonical executable chain remains", () => {
     const config = JSON.parse(readFileSync(resolve(sourceRoot, "../tsconfig.json"), "utf8")) as {
       readonly exclude?: readonly string[];
     };
-    expect(config.exclude ?? []).toEqual(["node_modules", ".next"]);
+    expect(config.exclude ?? []).toEqual(["node_modules", ".next", "artifacts"]);
     expect((config.exclude ?? []).filter((entry) => /(?:src|app|api|component|game\/application)/i.test(entry))).toEqual([]);
   });
 });

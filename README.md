@@ -6,7 +6,7 @@ AI 驱动的单人叙事 RPG，支持短篇与中篇。玩家通过地图、小�
 
 ## 开始开发
 
-需要 Node.js ≥20.9、npm ≥10，以及同级 `ai-game-foundation` 仓库提供的本地公共依赖。
+需要 Node.js ≥24.15.0、npm ≥10，以及同级 `ai-game-foundation` 仓库提供的本地公共依赖。
 
 ```sh
 npm run setup
@@ -14,7 +14,7 @@ npm run env:check
 npm run dev
 ```
 
-AI 配置、独立存档与真实调用检查见 [AI 环境](docs/agent/AI环境.md)。技术栈为 Next.js、React、TypeScript、Zustand、Vitest 与 SQLite/libSQL，实际版本见 [package.json](package.json)。
+AI 配置、独立存档与真实调用检查见 [AI 环境](docs/agent/AI环境.md)。技术栈为 Next.js、React、TypeScript、Zustand、Vitest 与 Node 内置 SQLite，实际版本见 [package.json](package.json)。
 
 ## 验证与协作
 
