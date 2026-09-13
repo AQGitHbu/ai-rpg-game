@@ -17,8 +17,8 @@ P1 仍未通过。历史完整批次 `p1-07` 为 0/6、HTTP 44 次；旧 runner 
 
 ## 门禁结果
 
-- `npm run accept`：通过；lint 0 errors，216 个测试文件通过，2739 tests passed、1 skipped，typecheck、fast gates、build 均通过。
-- `npm run test:narrative-p1-script`：通过；13 passed。
+- `npm run accept`：通过；lint 0 errors，216 个测试文件通过，2749 tests passed、1 skipped，typecheck、fast gates、build 均通过。
+- `npm run test:narrative-p1-script`：通过；14 passed。
 - `npm run check:docs`、`npm run test:docs`、`git diff --check`：通过。
 - `npm run env:check`：通过；`.env.local` 仅注入当前进程，密钥未写入协议、审计摘要或报告。
 
@@ -37,7 +37,7 @@ P1 仍未通过。历史完整批次 `p1-07` 为 0/6、HTTP 44 次；旧 runner 
 
 ## Live 执行边界
 
-历史批次保留 S1/S2 × private/public/verify_first 六路线分母，未完成路线未从分母删除；旧实现未共享同 scenario 开局快照。这些是诊断样本，协议 v2 的新矩阵须重新登记运行。
+历史批次保留 S1/S2 × private/public/verify_first 六路线分母，未完成路线未从分母删除；旧实现未共享同 scenario 开局快照。这些是诊断样本，协议 v3 的新矩阵须重新登记运行。
 
 | 批次 | 结果 | 主要边界 |
 | --- | --- | --- |
@@ -58,10 +58,13 @@ P1 仍未通过。历史完整批次 `p1-07` 为 0/6、HTTP 44 次；旧 runner 
 - `85ca21af`：移除叙事包本地 8,000 estimated-token 拒绝闸门，并更新 TDD 覆盖；provider 失败仍走既有失败协议。
 - `4970e11e`：审阅单次超时调整为 240 秒，并按 DeepSeek 官方字段显式发送 `thinking.type=enabled` 与 `reasoning_effort=low`；参数透传和协议冻结均有 TDD 覆盖。
 
-具体保密条件、真实引荐、真实归还及送达后禁止弃约的规则闭环已补齐；后续完成响应 replay，并按冻结协议新建诊断与正式矩阵批次。修复后的离线门禁见 [失败分析](2026-09-13-narrative-p1-failure-analysis.md)；本报告门禁数字为本次修复后的工程检查，输出见本地 artifacts/p1-diag-contract-accept.log；不代表已完成 live 验收。响应 replay 已实现：新 SQLite 重走原始响应解析、NPC 判断、审阅、审批和规则写入，严格比对请求与逻辑存档；协议绑定、原始审计哈希和零网络集成测试通过。真实诊断/矩阵的 replay 仍待运行。
+具体保密条件、真实引荐、真实归还及送达后禁止弃约的规则闭环已补齐；后续完成响应 replay，并按冻结协议新建诊断与正式矩阵批次。修复后的离线门禁见 [失败分析](2026-09-13-narrative-p1-failure-analysis.md)；本报告门禁数字为本次修复后的工程检查，输出见本地 artifacts/p1-diag04-accept.log；不代表已完成 live 验收。响应 replay 已实现：新 SQLite 重走原始响应解析、NPC 判断、审阅、审批和规则写入，严格比对请求与逻辑存档；协议绑定、原始审计哈希和零网络集成测试通过。真实诊断/矩阵的 replay 仍待运行。
 
 
 ## 当前诊断样本
 
 - p1-diag-01（575354ca）：0/1，8 HTTP，1 个行动，226916 ms。开局首次结构错误经修订后通过；随后 NPC 输入列出 npc_met，outward 却拒绝该 ID，消耗两次候选机会。第三版作者补造接应人识别方式，被审阅正确拒绝。未完成路线不评分。
 - 诊断同时暴露 runner 漏读 NPC 面板选择，只点到地点通用交谈；对应完整读模型及最终显式交付回归已补齐。NPC 证据、真实当前表达、互动 schema 和开局核验依据契约已统一，独立审核通过；待新冻结批次验证。
+- p1-diag-02（cc0fecbe）：开局 author/reviewer 两次响应成功，首个保密动作落盘到 revision 1；后续预留 1 次 HTTP 后进程异常中断，没有正常结束摘要。启动快照中的 HTTP 0 不是最终计数。未见续租或请求超时审计，现有证据不足以区分宿主中断与事件循环阻塞。其完整开局已在新 SQLite 中零网络重放，匹配 2 次原始响应与 opening 全状态；仅为开局证据。
+- p1-diag-03（cc0fecbe）：独立隐藏后台进程正常结束，0/1，8 HTTP，1 个行动，418962 ms。开局给出了暗语与半枚铜钱短痕的核验方法；首个实际选择是私下请求引荐，尚非正式承诺。NPC 第 1 版因把 secret 放入普通 factIds 被拒，第 2 版因听众自指被拒，第 3 版通过；作者未把保密条件绑定成可执行 interaction，且提前透露部分线索，审阅正确要求修订，但候选额度已耗尽。该未完成路线不评分。
+- diag03 同时定位到条件披露的权限缺口：privateFactKeys 编成 secret，而既有规则没有“真实保密承诺后可引荐告知”的路径。另有正常失败退出未封存 replay 审计清单的问题；原始响应仍完整保留，但该失败磁带不可声称已严格重放。修复须使用新冻结样本，不修改旧审计补造通过。

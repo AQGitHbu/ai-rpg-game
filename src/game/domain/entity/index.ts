@@ -138,3 +138,5 @@ export {
   type EntityReferenceIssue,
   type EntityReferenceIssueCode,
 } from "./entityProjection";
+
+export { canNpcDiscloseFact, hasCommittedConfidentialityPermission, hasCommittedDisclosureToPlayer } from "./npcDisclosure";

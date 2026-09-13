@@ -35,6 +35,7 @@
 - `replay` 在全新的 SQLite 中重新执行同一开局、作者、NPC 判断、语义审核、审批、规则、CAS 和旅程循环，仅最底层请求消费原始响应磁带。它不读取密钥、不创建网络 transport，也不读取旧 `completed` 布尔作为通过证据。重放输出固定写入指定输出目录的 `replay/` 子目录，原始 live 文件只读。
 - 每个 opening/route stream 的 `<stream>.runtime.json` 保存完整非密请求、原始响应、稳定 gameId/seed/callId、按业务键记录的领域时间及每个决策前和终局的逻辑存档。文件含规范 JSON 哈希，并绑定 protocolHash、代码指纹和输入哈希；完成时在连接/审计队列关闭后保存原始审计文件哈希，重放校验 envelope sequence、callId/attempt 唯一顺序、messages 和 raw output。摘要列出原始产物目录及全部磁带文件 SHA256，不能混用别的登记或删除审计后通过；缺失旧磁带、请求/顺序/响应数量/领域状态不一致均拒绝。重放仍实际获取和续租，只有明确的临时 leaseId/leaseExpiresAt 不参与语义比较；原值与重放值另存 comparison，未知存档字段默认精确比较。HTTP 为 0，磁带消费另报 `replayedTransportAttempts`。
 - 协议哈希、固定路线、规范化输入或代码指纹不匹配时，在任何 provider I/O 前拒绝运行。
+- 正常失败路线同样在后台任务和审计排空后记录失败码、动作数及最终存档，封存磁带。失败轨迹重放一致仍保留 `completed=false` 与原失败码，不能计为故事通过；缺少完整收尾的进程中断样本不能补造完成证据。
 - 退出码：`0` 表示该登记范围内全部路线完成（matrix 为六条，diagnostic 为一条）；`1` 表示路线未完成、硬错误或协议违约；`2` 表示参数、未登记或显式门禁错误。
 
 ## 产物边界

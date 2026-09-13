@@ -1,5 +1,8 @@
 import {
   getEntity,
+  canNpcDiscloseFact,
+  hasCommittedConfidentialityPermission,
+  hasCommittedDisclosureToPlayer,
   type DirectedRelationshipEdge,
   type EntityRecord,
   type EntityStore,
@@ -251,7 +254,10 @@ export function authorizeNpcDeliberationOutward(input: {
         targetContext: { targetId: targetId as PlayerEntityId | NpcId },
       });
       if (audienceAuthority === null
-        || parsed.value.factIds.some((factId) => !audienceAuthority.allowedFactIds.some((allowedFactId) => String(allowedFactId) === String(factId)))) {
+        || parsed.value.factIds.some((factId) => !canNpcDiscloseFact(speaker, factId, targetId, input.eventLedger)
+          || !audienceAuthority.allowedFactIds.some((allowedFactId) => String(allowedFactId) === String(factId))
+          && !((parsed.value.operation === "request_introduction" || parsed.value.operation === "request_verification")
+            && hasCommittedConfidentialityPermission(speaker, factId, targetId, input.eventLedger)))) {
         return { ok: false, code: "invalid_fact_disclosure" };
       }
     }
@@ -387,14 +393,6 @@ function targetEdgeOf(
   return npc.relationships.outgoing.find((edge) => String(edge.targetId) === String(targetId));
 }
 
-function canDisclose(entry: NpcEntityRecord["knowledge"]["entries"][number], target: NpcSpeechRelationship | undefined): boolean {
-  if (entry.disclosure === "secret") return false;
-  if (entry.disclosure === "public") return true;
-  return target?.stage === "cooperative"
-    || target?.stage === "trusted"
-    || target?.stage === "bonded";
-}
-
 /**
  * Project the speaker's disclosure and reference authority from entity components.
  * This function deliberately never consults the compatibility `NpcEntry.memory` view.
@@ -420,10 +418,16 @@ export function buildNpcSpeechAuthority(input: NpcSpeechAuthorityInput): NpcSpee
       .map((record) => [String(record.core.id), record]),
   );
   const visibleFactIds = new Set(input.sceneVisibleFactIds.map(String));
+  const playerRecord = getEntity(input.store, "player_0");
+  const playerKnownFactIds = playerRecord?.core.kind === "player_character"
+    ? (playerRecord as import("@/game/domain/entity").PlayerEntityRecord).knowledge.knownFactIds : [];
   const allowedEntries = speakerRecord.knowledge.entries.filter((entry) =>
     factRecords.has(String(entry.factId))
       && visibleFactIds.has(String(entry.factId))
-      && canDisclose(entry, targetRelationship),
+      && (entry.disclosure !== "secret" || playerKnownFactIds.includes(entry.factId))
+      && (canNpcDiscloseFact(speakerRecord, entry.factId, targetId, input.eventLedger)
+        || (playerKnownFactIds.includes(entry.factId)
+          && hasCommittedDisclosureToPlayer(speakerRecord, entry.factId, targetId, input.eventLedger))),
   );
   const allowedFactIds = uniqueSorted(allowedEntries.map((entry) => entry.factId), String);
   const allowedFactIdSet = new Set(allowedFactIds.map(String));

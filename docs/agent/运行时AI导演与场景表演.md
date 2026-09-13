@@ -16,6 +16,7 @@
 - 成功路径是审批生成包、提交场景事件、重建记忆，再调用 `repository.applyState`。世界增量、ready scene、choice registry、bundle 和记忆在同一次 scene CAS 中写回。
 - bundle step 必须由服务端 descriptor 投影；stepKey 唯一、无环、最多 12 步。非终点没有 choices，`next_decision` 终点恰好两个选项，`ending` 终点没有 choices 且没有 continuation scenes。
 - 决策 prompt 为每个已有 `candidateId` 同时投影服务端 Action；对话候选包含目标 NPC、dialogueAct 和结构化 topic。新增互动须提交封闭的 `interactionProposals` 并经预览审批，才能绑定相应候选；不能按选项数组位置把一个 label 改绑到另一种 Action，也不能根据裸 candidateId 猜测行动语义或改写 registry。
+- NPC 的 `offer_condition` 带有已授权互动提案时，作者须在终点提供对应 `interaction:proposalKey` 的真实行动选择，并保留原条款；不得把答应条件写成普通交谈。应用层按候选引用携带原提案并拒绝冲突修改，语义审阅核对台词与行动及条件先后；提案获准不等于条件已经成立。
 - 生产移动、探索、取物、给予、战斗开始与胜利交接必须消费匹配的 bundle 步骤；缺失或失效零写入。活跃战斗、战败恢复和终幕立场由规则直接处理，不增加 provider 调用。`PreparedContinuationState` 及其消费函数只供显式离线 fixture；不能据此描述生产续接。
 - `mode="ai"` 只投影已审批的 `generated` 场景。缺少正式 NPC focus 台词时投影单一权威 `ask`；失败仍进入同 job 的 failed 状态，不合成 deterministic/default 文案。
 - 内容审批同时检查强制节拍、当前地点和焦点 NPC、`objectiveLink`、下一步抵达 NPC、实体引用、题材限制和 NPC speech authority。审批失败不部分写入。

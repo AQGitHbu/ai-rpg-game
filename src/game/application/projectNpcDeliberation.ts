@@ -1,4 +1,4 @@
-import { getEntity, type EntityRecord, type EntityStore, type FactEntityRecord, type NpcEntityRecord } from "@/game/domain/entity";
+import { canNpcDiscloseFact, hasCommittedConfidentialityPermission, getEntity, type EntityRecord, type EntityStore, type FactEntityRecord, type NpcEntityRecord } from "@/game/domain/entity";
 import type { EventId, NarrativeJobId } from "@/game/domain/events";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { StoryState } from "@/game/domain/storyState";
@@ -235,6 +235,9 @@ export function projectNpcDeliberation(input: {
     outwardAuthority: {
       allowedDiscloseFactIds: authority?.allowedFactIds ?? [],
       allowedEvidenceEventIds: authority?.allowedEventIds ?? [],
+      allowedIntroductionFactIds: npc.knowledge.entries.filter(entry => canNpcDiscloseFact(npc, entry.factId, PLAYER_ENTITY_ID, input.worldState.eventLedger)
+        && (authority?.allowedFactIds.includes(entry.factId)
+          || hasCommittedConfidentialityPermission(npc, entry.factId, PLAYER_ENTITY_ID, input.worldState.eventLedger))).map(entry => entry.factId),
     },
     currentJob: {
       jobId: String(job.jobId),

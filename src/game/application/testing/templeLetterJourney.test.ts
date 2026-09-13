@@ -2,9 +2,13 @@
 import { describe, expect, it } from "vitest";
 import {
   runTempleDepartureProbes,
+  runConditionalSecretIntroductionProbe,
   runTempleLetterJourney,
   type TempleRoute,
 } from "./templeLetterJourney.testutil";
+import { resolveStoryInteraction } from "@/game/gameplay/rpg/storyInteraction";
+import { createEntityStore, type NpcEntityRecord } from "@/game/domain/entity";
+import { asTurnId } from "@/game/domain/events";
 import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 
 describe("破庙来信 production journey", () => {
@@ -87,4 +91,33 @@ describe("破庙来信 production journey", () => {
     expect(result.freeformItemOwner).toBe(PLAYER_ENTITY_ID);
     expect(result.freeformWasNeutral).toBe(true);
   });
+});
+
+
+it("persists an opening secret, a real pledge and explicit introduction separately through SQLite reload", async () => {
+  const snapshots = await runConditionalSecretIntroductionProbe();
+  const secret = snapshots[0]!.worldState.worldFacts.find(fact => fact.text === "引荐人的信物藏在第三块砖下。")!;
+  expect(secret.discovered).toBe(false);
+  const pledged = snapshots.filter(snapshot => snapshot.worldState.eventLedger.some(event => event.payload.type === "story_interaction_resolved" && event.payload.operation === "promise_confidentiality")
+    && !snapshot.worldState.eventLedger.some(event => event.payload.type === "story_interaction_resolved" && event.payload.operation === "request_introduction"));
+  expect(pledged.length).toBeGreaterThanOrEqual(2);
+  for (const snapshot of pledged) expect(snapshot.worldState.worldFacts.find(fact => fact.factId === secret.factId)?.discovered).toBe(false);
+  const beforeIntroduction = pledged.at(-1)!;
+  const giver = beforeIntroduction.worldState.entityStore.records.find(record => record.core.id === "npc_0") as NpcEntityRecord;
+  const definition = giver.interactions!.find(entry => entry.operation === "request_introduction")!;
+  const action = { type: "talk" as const, npcId: giver.core.id, interactionId: definition.id, dialogueAct: "ask" as const };
+  const deps = { actionId: "negative_probe", turnId: asTurnId("negative_probe"), turnNumber: 2, now: () => "2026-09-12T00:00:00.000Z" };
+  // Even a previously approved token must recheck permissions against current state.
+  for (const status of ["broken", "released"] as const) {
+    const changed = { ...giver, interactions: [{ ...definition, condition: [] }], relationships: { outgoing: giver.relationships.outgoing.map(edge => ({ ...edge,
+      commitments: edge.commitments.map(commitment => commitment.kind === "promise" ? { ...commitment, status } : commitment),
+    })) } };
+    const world = { ...beforeIntroduction.worldState, entityStore: createEntityStore(beforeIntroduction.worldState.entityStore.records.map(record => record.core.id === giver.core.id ? changed : record)) };
+    expect(resolveStoryInteraction(world, action, deps)).toMatchObject({ ok: false });
+  }
+  expect(resolveStoryInteraction({ ...beforeIntroduction.worldState, eventLedger: [] }, action, deps)).toMatchObject({ ok: false });
+  const final = snapshots.at(-1)!;
+  expect(final.worldState.worldFacts.find(fact => fact.factId === secret.factId)?.discovered).toBe(true);
+  const npc = final.worldState.entityStore.records.find(record => record.core.id === "npc_0") as import("@/game/domain/entity").NpcEntityRecord;
+  expect(npc.knowledge.entries.find(entry => entry.factId === secret.factId)?.disclosure).toBe("secret");
 });

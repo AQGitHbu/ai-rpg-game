@@ -135,6 +135,58 @@ test("actual response tape strictly matches requests and state, preserves failur
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("normal failed routes seal drained audit and replay the exact failure state", async () => {
+  const root = mkdtempSync(join(tmpdir(), "p1-failed-route-"));
+  const replayDirectory = join(root, "replay");
+  mkdirSync(replayDirectory);
+  const binding = { protocolHash: "protocol", codeFingerprint: "code", inputHash: "input" };
+  const failureState = { ok: true, status: "active", record: { revision: 1, storyState: { narrative: { status: "provider_failed", failedAt: "recorded-time" } } } };
+  const drained = new Set();
+  const adapters = {
+    createServerGameEntryPoints: (env, _unused, _repository, options) => {
+      const audits = [];
+      return {
+        createGame: async () => { writeFileSync(env.GAME_DB_PATH, "opening"); return { ok: true }; },
+        ackPrologue: async () => {
+          const request = { role: "narrative_bundle", callId: options.aiRuntime.nextCallId(), attempt: 1, context: { purpose: "npc_deliberation" }, messages: [{ role: "user", content: "request" }], model: "fixture", options: {} };
+          const output = await options.aiRuntime.attempt(request, async () => {
+            assert.equal(options.aiRuntime.offline, false);
+            return { ok: false, code: "timeout", latencyMs: 1 };
+          });
+          audits.push({ kind: "ai_call", sequence: 1, timestamp: "2026-09-13", role: request.role, callId: request.callId, attempt: 1, input: { messages: request.messages }, output });
+          return { ok: true };
+        },
+        getCurrentGame: async () => ({ ok: true, status: "active", revision: 1, view: { ending: null, narrativeGeneration: { status: "failed" } } }),
+        close: async () => {
+          drained.add(env.GAME_DB_PATH);
+          const directory = join(env.AI_TEXT_AUDIT_DIR, env.AI_TEXT_AUDIT_RUN_ID);
+          mkdirSync(directory, { recursive: true });
+          writeFileSync(join(directory, "events.jsonl"), audits.map(row => JSON.stringify(row)).join("\n"));
+        },
+      };
+    },
+    createSqliteGameRepository: ({ clientFactory: env }) => ({ getCurrentGame: async () => ({ ...structuredClone(failureState), drained: drained.has(env.GAME_DB_PATH) }) }),
+    createServerSqliteClientFactory: env => env,
+    createSqliteClient: () => ({ execute: async () => ({ rows: [{ busy: 0 }] }), close() {} }),
+    buildChoiceMap: () => new Map(),
+  };
+  try {
+    const input = { route: { routeId: "S1-diagnostic", scenarioId: "S1", kind: "diagnostic" }, setup: { personalityTags: [] }, budget: { used: 0, reserve: () => true } };
+    const live = await createProductionRouteRunner({}, adapters, root, binding);
+    assert.equal((await live({ ...input, mode: "live", artifactDirectory: root })).failureCode, "AI_GENERATION_FAILED");
+    const original = readFileSync(join(root, "S1-diagnostic.runtime.json"), "utf8");
+    const tape = JSON.parse(original).tape;
+    assert.equal(tape.audit.length, 1);
+    assert.equal(tape.states.find(state => state.key === "failure").semantic.state.drained, true);
+    const replay = await createProductionRouteRunner({}, adapters, root, binding);
+    const result = await replay({ ...input, mode: "replay", artifactDirectory: replayDirectory });
+    assert.equal(result.completed, false);
+    assert.equal(result.failureCode, "AI_GENERATION_FAILED");
+    assert.equal(result.replayedTransportAttempts, 1);
+    assert.equal(readFileSync(join(root, "S1-diagnostic.runtime.json"), "utf8"), original);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("bound replay refuses cross-protocol tapes and missing or modified raw audit", async () => {
   const root = mkdtempSync(join(tmpdir(), "p1-bound-tape-"));
   const binding = { protocolHash: "registered", codeFingerprint: "code", inputHash: "input" };

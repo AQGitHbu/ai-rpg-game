@@ -1,6 +1,6 @@
 import type { Action, TalkAction } from "@/game/domain/action";
 import { eventIdFor, type NarrativeEventDraft } from "@/game/domain/events";
-import { getEntity, type EntityId, type EntityRecord, type ItemEntityRecord, type NpcEntityRecord } from "@/game/domain/entity";
+import { canNpcDiscloseFact, getEntity, type EntityId, type EntityRecord, type ItemEntityRecord, type NpcEntityRecord } from "@/game/domain/entity";
 import type { EntityMutation } from "@/game/gameplay/rpg/entityWorld";
 import { applyEntityMutations } from "@/game/gameplay/rpg/entityWorld";
 import { PLAYER_ENTITY_ID, type FactId, type NpcId, type PlayerEntityId } from "@/game/domain/worldEntity";
@@ -98,13 +98,7 @@ function canDiscloseFactToAudience(
 ): boolean {
   const npc = npcOf(worldState, npcId);
   if (npc === undefined) return false;
-  const entry = npc?.knowledge.entries.find((candidate) => String(candidate.factId) === String(factId));
-  if (entry === undefined || entry.disclosure === "secret") return false;
-  if (entry.disclosure === "public") return true;
-  const relationship = npc.relationships.outgoing.find((edge) => String(edge.targetId) === String(audienceId));
-  return relationship?.stage === "cooperative"
-    || relationship?.stage === "trusted"
-    || relationship?.stage === "bonded";
+  return canNpcDiscloseFact(npc, factId, audienceId, worldState.eventLedger);
 }
 
 function canDiscloseFactsToAudiences(

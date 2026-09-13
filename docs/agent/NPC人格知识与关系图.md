@@ -12,7 +12,7 @@ NPC 的人格锚点、动态目标、知识、关系、承诺与结构化交互�
 - `promise_confidentiality` 必须携带 `confidentiality`：非空 `protectedFactIds`、非空 `allowedAudienceIds` 和 `fulfillment: { kind: "story_delivery" }`。引用经审批绑定到已有事实与听众，条款随 promise 持久化；未来接应人由故事递送绑定按需确定，不提前建立 NPC。许诺只开启承诺；换取引荐必须再选择 `request_introduction`，其 `promise_status` 条件引用真实已成立的 open promise。
 - 保密保护期自玩家成功许诺到本故事物品正式递送完成。规则仅消费此期间玩家成功执行 `share_known_fact` 的已提交事件：保护事实向允许名单之外的实际听众披露才成为 broken；过去知情、NPC 自主披露、私下引荐、失败行动和未选提案不算玩家违约。通用 kept_promise/broke_promise 等关系信号不结算这些条款；无违约且真实 give_item 送到绑定接应人才 fulfilled，broken 不随之后交付或立场改变恢复。
 - `share_known_fact` 表示玩家明确向当前目标 NPC 及显式同场 NPC 分享玩家已知事实，写入 player_told 来源知识；目标无需预先知情，不能指定远程听众或玩家自己。引荐/核验仍由 NPC 说话并受 NPC 对各听众的披露权限约束。
-- `NpcSpeechAuthority` 从 speaker components、当前 scene-visible facts、目标和该 NPC history 计算 allowed/withheld facts、allowed Event 引用、anchors 和 evidence。secret fact 不因 NPC 已知就自动可说；conditional fact 需要关系条件。
+- `NpcSpeechAuthority` 从 speaker components、当前 scene-visible facts、目标和该 NPC history 计算 allowed/withheld facts、allowed Event 引用、anchors 和 evidence。secret fact 不因 NPC 已知就自动可说；conditional fact 需要关系条件。secret 表示尚未授权披露，不是永久禁令：同一 NPC 已批准、玩家真实选择的保密互动形成 open promise，条款覆盖该事实且允许本人和玩家、来源与成功提交的保密事件及承诺 ID 对应时，才允许向玩家提出并执行引荐/核验。其他 NPC、旁观者、仅有承诺组件或文本、broken/released 均不能获得这项权限。条件许可复用持久化条款与 ledger，不改变原 secret 标签。原 NPC 已通过成功引荐/核验事件向玩家实际告知且玩家仍已知的事实，可以在承诺履行或违约后向同一玩家复述；这只恢复台词引用，不为新引荐/核验或其他听众赋权。
 - `projectNpcDeliberation` 的私密关系上下文只读取本人 outgoing edges；openCommitments 与 resolvedCommitments 均保留 status 和 confidentiality 条款，供本人判断持续义务及已发生违约，不把其他 NPC 私密关系或该私密 envelope 传给作者。`NpcDeliberationSource` 的 proposal 只允许返回 response、目标引用、依据事件、事实披露引用和结构化互动提议；live source 复用 `narrative_bundle` AI role，但审计 purpose 单独记为 `npc_deliberation`。服务端再按实际 audience 运行 authority，拒绝秘密、失效依据、非当前目标和越权互动。
 - 生产 `prepareNpcNarrativeContext` 只在当前同场焦点需要条件/承诺/互动判断时调用该 source；开局和普通问候跳过。私密输入不进入作者上下文，获准 outward 投影进入同版作者与审阅，HTTP 使用同一 job 的预算与取消信号。
 - 每条 NPC line/dialogue 必须提供 `usedFactIds` 与 `usedEventIds`；缺失、重复、非 speaker 所有或不在 allowlist 的引用会拒绝整包。
@@ -33,7 +33,7 @@ EntityStore components + committed events
 ```
 
 NPC history 只保存结构化交互、主题和事件引用。玩家原话若需影响回应，作为当前 job 输入并受审计策略约束，不写成长期 NPC 私密历史。
-NPC 的秘密可以影响拒绝、追问或条件，但不会因模型“打算告知”而传播；只有规则结算的实际 `audienceIds` 会写入玩家发现或另一 NPC 的 `action` 来源知识。
+NPC 的秘密可以影响拒绝、追问或条件，但不会因模型“打算告知”而传播；只有规则结算的实际 `audienceIds` 会写入玩家发现或另一 NPC 的 `action` 来源知识。私下判断的 `allowedIntroductionFactIds` 只授权结构化引荐/核验提案引用；`allowedDiscloseFactIds` 仍要求当前场景可见事实，承诺成立但引荐未执行时，不能把秘密正文带入当前台词。许诺提案将未披露事实仅放在 `confidentiality.protectedFactIds`，使用空 `factIds` 和玩家听众。
 
 ## 代码与测试入口
 

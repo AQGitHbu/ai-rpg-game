@@ -857,3 +857,53 @@ export async function runTempleDepartureProbes(): Promise<TempleDepartureProbeRe
     try { rmSync(root, { recursive: true, force: true }); } catch { /* test cleanup */ }
   }
 }
+
+
+/** Actual create/turn/CAS/reopen path for a hidden opening fact under a pledge. */
+export async function runConditionalSecretIntroductionProbe(): Promise<readonly GameRecord[]> {
+  const root = mkdtempSync(join(tmpdir(), "rpg-secret-introduction-"));
+  const dbPath = join(root, "journey.sqlite");
+  let repository = openJourneyRepository(dbPath);
+  const base = createTempleLetterBundleSource("exit_keep");
+  const secretId = asFactId("fact_" + openingCandidate().world.publicFacts.length);
+  const source: NarrativeBundleSource = { async generate(context) {
+    const result = await base.generate(context);
+    if (!result.ok) return result;
+    if (result.kind === "opening") {
+      const candidate = result.proposal.opening;
+      return { ...result, proposal: { ...result.proposal,
+        opening: { ...candidate, world: { ...candidate.world, publicFacts: [...candidate.world.publicFacts, { key: "private_route", text: "引荐人的信物藏在第三块砖下。" }] },
+          opening: { ...candidate.opening, npc: { ...candidate.opening.npc, privateFactKeys: [...candidate.opening.npc.privateFactKeys, "private_route"] } } },
+        interactionProposals: result.proposal.interactionProposals!.map(proposal => ({ ...proposal,
+          confidentiality: { protectedFactIds: [secretId], allowedAudienceIds: [PLAYER_ENTITY_ID, asNpcId("npc_0")], fulfillment: { kind: "story_delivery" as const } } })),
+      } };
+    }
+    if (context.kind !== "decision") throw new Error("expected decision");
+    const alreadyIntroduced = context.worldState.eventLedger.some(event => event.payload.type === "story_interaction_resolved" && event.payload.operation === "request_introduction");
+    if (alreadyIntroduced) return result;
+    const npc = context.worldState.entityStore.records.find((record): record is NpcEntityRecord => record.core.kind === "npc" && record.core.id === "npc_0")!;
+    const pledge = npc.relationships.outgoing.flatMap(edge => edge.commitments).find(entry => entry.kind === "promise")!;
+    return { ...result, proposal: { ...result.proposal,
+      interactionProposals: [{ proposalKey: "conditional_secret", npcId: npc.core.id, operation: "request_introduction", factIds: [secretId],
+        condition: [{ kind: "promise_status", npcId: npc.core.id, promiseId: pledge.commitmentId, status: "open" }],
+        goalIds: [], promiseId: pledge.commitmentId, audienceIds: [PLAYER_ENTITY_ID], evidenceEventIds: [] }],
+      currentScene: { ...result.proposal.currentScene, choices: [{ candidateId: "interaction:conditional_secret", label: "在保密承诺下请求引荐" }, result.proposal.currentScene.choices[1]!] },
+    } };
+  } };
+  const snapshots: GameRecord[] = [];
+  try {
+    await repository.initializeSchema();
+    const created = await createGame({ gameId: asGameId("conditional_secret"), gameType: "wuxia", gameLength: "short", seed: "conditional-secret" },
+      { repository, source, now: () => FIXED_NOW, aiEnabled: false });
+    if (!created.ok) throw new Error(`secret opening: ${created.code}`);
+    snapshots.push(await currentRecord(repository));
+    const count = { value: 0 };
+    await submitSceneChoice(repository, source, count, snapshots, "先许下递送期间");
+    await repository.close();
+    repository = openJourneyRepository(dbPath);
+    await repository.initializeSchema();
+    snapshots.push(await currentRecord(repository));
+    await submitSceneChoice(repository, source, count, snapshots, "在保密承诺下请求引荐");
+    return snapshots;
+  } finally { await repository.close(); try { rmSync(root, { recursive: true, force: true }); } catch { /* test cleanup */ } }
+}

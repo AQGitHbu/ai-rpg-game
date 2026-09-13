@@ -9,7 +9,6 @@ import type {
 import type { NpcInteraction } from "@/game/domain/worldEntries";
 import { asFactId, asLocationId, asNpcId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import { asEventId } from "@/game/domain/events";
-import type { CommittedNarrativeEvent } from "@/game/domain/events";
 import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
 import {
   authorizeNpcDeliberationOutward,
@@ -556,4 +555,60 @@ it("only accepts explicit current events with ledger proof and NPC participation
   expect(buildNpcSpeechAuthority({ ...input, eventLedger: [event] })?.allowedEventIds).toContain(event.eventId);
   expect(buildNpcSpeechAuthority(input)?.allowedEventIds).not.toContain(event.eventId);
   expect(buildNpcSpeechAuthority({ ...input, eventLedger: [{ ...event, targetIds: [NPC_B] }] })?.allowedEventIds).not.toContain(event.eventId);
+});
+
+
+describe("committed confidentiality disclosure boundary", () => {
+  function setup(status: "open" | "broken" | "released" | "fulfilled" = "open") {
+    const pledgeEvent = makeCommittedEvent({ type: "story_interaction_resolved", interactionId: "interaction:pledge", npcId: NPC_A,
+      operation: "promise_confidentiality", factIds: [], audienceIds: [PLAYER_ENTITY_ID], evidenceEventIds: [] },
+      { actionId: "pledge_action", outcome: "success" });
+    const npc = npcRecord();
+    const pledged: NpcEntityRecord = { ...npc, relationships: { outgoing: [{ ...edge(PLAYER_ENTITY_ID), commitments: [{
+      kind: "promise", commitmentId: "cmt:action:pledge_action:open_promise:interaction:pledge", promisor: "target", status,
+      description: "relationship.promise.confidentiality", source: { kind: "action", actionId: "pledge_action", turnNumber: 1 },
+      confidentiality: { protectedFactIds: [FACT_SECRET], allowedAudienceIds: [PLAYER_ENTITY_ID, NPC_A], fulfillment: { kind: "story_delivery" } },
+    }] }] } };
+    return { store: { version: 3 as const, records: records().map(record => record.core.id === NPC_A ? pledged : record) },
+      speakerNpcId: NPC_A, sceneVisibleFactIds: [FACT_PUBLIC], targetContext: { targetId: PLAYER_ENTITY_ID }, eventLedger: [pledgeEvent] };
+  }
+  const proposal = { response: "offer_condition" as const, evidenceEventIds: [], discloseFactIds: [], interactionProposals: [{
+    proposalKey: "introduce", npcId: NPC_A, operation: "request_introduction" as const, condition: [], factIds: [FACT_SECRET],
+    goalIds: [], promiseId: null, audienceIds: [PLAYER_ENTITY_ID], evidenceEventIds: [],
+  }] };
+  it("permits the real introduction offer after a committed pledge but withholds unspoken secret from speech", () => {
+    const input = setup();
+    expect(authorizeNpcDeliberationOutward({ ...input, proposal }).ok).toBe(true);
+    expect(buildNpcSpeechAuthority(input)?.allowedFactIds).not.toContain(FACT_SECRET);
+    expect(authorizeNpcDeliberationOutward({ ...input, proposal: { ...proposal, discloseFactIds: [FACT_SECRET] } })).toMatchObject({ ok: false, code: "invalid_fact_disclosure" });
+    expect(buildNpcSpeechAuthority({ ...input, sceneVisibleFactIds: [FACT_PUBLIC, FACT_SECRET] })?.allowedFactIds).not.toContain(FACT_SECRET);
+    const disclosed = { ...input, sceneVisibleFactIds: [FACT_PUBLIC, FACT_SECRET], store: { ...input.store, records: input.store.records.map(record => record.core.kind === "player_character" ? { ...(record as import("@/game/domain/entity").PlayerEntityRecord), knowledge: { knownFactIds: [FACT_SECRET] } } : record) } };
+    expect(buildNpcSpeechAuthority(disclosed)?.allowedFactIds).toContain(FACT_SECRET);
+  });
+  it("requires actual matching selected promise evidence, not only a commitment component", () => {
+    expect(authorizeNpcDeliberationOutward({ ...setup(), eventLedger: [], proposal }).ok).toBe(false);
+    const input = setup();
+    expect(authorizeNpcDeliberationOutward({ ...input, eventLedger: input.eventLedger.map(event => ({ ...event, actionId: "unrelated" })), proposal }).ok).toBe(false);
+  });
+  for (const status of ["broken", "released"] as const) it(`does not unlock a ${status} pledge`, () => {
+    expect(authorizeNpcDeliberationOutward({ ...setup(status), proposal }).ok).toBe(false);
+  });
+  for (const status of ["fulfilled", "broken", "released"] as const) it(`can retell already disclosed facts after ${status}, but cannot authorize a fresh introduction`, () => {
+    const input = setup(status);
+    const disclosure = makeCommittedEvent({ type: "story_interaction_resolved", interactionId: "interaction:introduce", npcId: NPC_A,
+      operation: "request_introduction", factIds: [FACT_SECRET], audienceIds: [PLAYER_ENTITY_ID], evidenceEventIds: [] },
+      { actionId: "intro_action", outcome: "success", actorIds: [PLAYER_ENTITY_ID, NPC_A] });
+    const known = { ...input, sceneVisibleFactIds: [FACT_PUBLIC, FACT_SECRET], store: { ...input.store, records: input.store.records.map(record => record.core.kind === "player_character" ? { ...(record as import("@/game/domain/entity").PlayerEntityRecord), knowledge: { knownFactIds: [FACT_SECRET] } } : record) } };
+    expect(buildNpcSpeechAuthority(known)?.allowedFactIds).not.toContain(FACT_SECRET);
+    const disclosed = { ...known, eventLedger: [...input.eventLedger, disclosure] };
+    expect(buildNpcSpeechAuthority(disclosed)?.allowedFactIds).toContain(FACT_SECRET);
+    expect(buildNpcSpeechAuthority({ ...disclosed, sceneVisibleFactIds: [FACT_PUBLIC] })?.allowedFactIds).not.toContain(FACT_SECRET);
+    expect(buildNpcSpeechAuthority({ ...disclosed, store: input.store })?.allowedFactIds).not.toContain(FACT_SECRET);
+    expect(buildNpcSpeechAuthority({ ...disclosed, targetContext: { targetId: NPC_B } })?.allowedFactIds).not.toContain(FACT_SECRET);
+    expect(authorizeNpcDeliberationOutward({ ...disclosed, proposal }).ok).toBe(false);
+  });
+  it("does not extend the agreement to a bystander or another speaker", () => {
+    expect(authorizeNpcDeliberationOutward({ ...setup(), proposal: { ...proposal, interactionProposals: [{ ...proposal.interactionProposals[0]!, audienceIds: [PLAYER_ENTITY_ID, NPC_B] }] } }).ok).toBe(false);
+    expect(authorizeNpcDeliberationOutward({ ...setup(), speakerNpcId: NPC_B, proposal }).ok).toBe(false);
+  });
 });

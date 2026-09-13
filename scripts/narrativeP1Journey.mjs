@@ -221,12 +221,16 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
     if (!["live", "replay"].includes(mode)) return { completed: false, httpAttempts: 0, failureCode: "UNEXPECTED_ROUTE_MODE" };
     const httpBefore = budget.used;
     const replayBefore = replayedAttempts;
-    const routeResult = (value) => ({ ...value, httpAttempts: budget.used - httpBefore, replayedTransportAttempts: replayedAttempts - replayBefore });
-    const opening = await initialize(route.scenarioId, { setup, budget, artifactDirectory, signal, mode });
+    let outcome;
+    const routeResult = (value) => (outcome = { ...value, httpAttempts: budget.used - httpBefore, replayedTransportAttempts: replayedAttempts - replayBefore });
+    let opening;
+    try { opening = await initialize(route.scenarioId, { setup, budget, artifactDirectory, signal, mode }); }
+    catch (error) { return routeResult({ completed: false, failureCode: error.message?.startsWith("REPLAY_") ? error.message : "OPENING_RUNNER_CRASHED" }); }
     if (!opening.ok) return routeResult({ completed: false, failureCode: opening.code });
     if (signal?.aborted) return routeResult({ completed: false, failureCode: "BATCH_INTERRUPTED" });
     const databasePath = resolve(artifactDirectory, `${route.routeId}.sqlite`);
-    copyFileSync(opening.databasePath, databasePath, constants.COPYFILE_EXCL);
+    try { copyFileSync(opening.databasePath, databasePath, constants.COPYFILE_EXCL); }
+    catch { return routeResult({ completed: false, failureCode: "ROUTE_SNAPSHOT_COPY_FAILED" }); }
     const entryEnv = {
       ...runtimeEnv,
       NODE_ENV: "test",
@@ -236,7 +240,9 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
       AI_TEXT_AUDIT_RUN_ID: route.routeId,
     };
     const auditFiles = [];
-    const runtime = makeRuntime({ mode, directory: artifactDirectory, sourceDirectory: replaySource, stream: route.routeId, binding, auditFiles: () => auditFiles.filter(file => existsSync(resolve(artifactDirectory, file))) });
+    let runtime;
+    try { runtime = makeRuntime({ mode, directory: artifactDirectory, sourceDirectory: replaySource, stream: route.routeId, binding, auditFiles: () => auditFiles.filter(file => existsSync(resolve(artifactDirectory, file))) }); }
+    catch (error) { return routeResult({ completed: false, failureCode: error.message?.startsWith("REPLAY_") ? error.message : "PRODUCTION_ROUTE_CRASHED" }); }
     let repository;
     const createEntry = () => {
       const auditStream = auditFiles.length === 0 ? route.routeId : `${route.routeId}-reload-${auditFiles.length}`;
@@ -248,6 +254,7 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
     let entry = null;
     const steps = [];
     let actionCount = 0;
+    let finalized = false;
     let verifySubmitted = false;
     const performed = new Set();
     const performedActions = new Set();
@@ -272,6 +279,7 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
           await closeNarrativeP1Entry(entry);
           entry = null;
           runtime.finish();
+          finalized = true;
           const routeSatisfied = route.kind === "diagnostic" ? performed.has("promise_confidentiality") && performed.has("request_introduction") && performed.has("request_verification") && verifySubmitted : route.kind === "private" ? performed.has("promise_confidentiality") && performed.has("request_introduction") : performed.has("request_verification") && (route.kind !== "verify_first" || verifySubmitted);
           return routeResult({ completed: routeSatisfied, actionCount, ...(!routeSatisfied ? { failureCode: "ROUTE_POLICY_NOT_EXERCISED" } : {}) });
         }
@@ -363,7 +371,26 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
       } catch {
         // The route result is still more useful than an artifact write exception.
       }
+      if (!finalized && outcome !== undefined) {
+        try {
+          // A failed story is still replayable. Drain workers and audit before
+          // reading its actual terminal state and sealing the tape.
+          await closeNarrativeP1Entry(entry);
+          entry = null;
+          try {
+            runtime.state("failure", { outcome: { completed: outcome.completed, actionCount: outcome.actionCount ?? 0, failureCode: outcome.failureCode }, state: repository === undefined ? null : await repository.getCurrentGame() });
+          } finally { await repository?.close?.(); }
+          runtime.finish();
+        } catch (error) {
+          outcome.completed = false;
+          outcome.failureCode = runtime.failureCode ?? (error.message?.startsWith("REPLAY_") ? error.message : "REPLAY_FINALIZATION_FAILED");
+        }
+      }
       await closeNarrativeP1Entry(entry);
+      if (outcome !== undefined) {
+        outcome.httpAttempts = budget.used - httpBefore;
+        outcome.replayedTransportAttempts = replayedAttempts - replayBefore;
+      }
     }
   };
 }

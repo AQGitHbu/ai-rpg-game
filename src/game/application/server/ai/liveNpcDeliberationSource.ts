@@ -28,7 +28,7 @@ export type LiveNpcDeliberationSourceDeps = Readonly<{
 }>;
 
 const SYSTEM_PROMPT = [
-  "selectedExpression records the current selected player action or freeform input; a player_choice label is not necessarily spoken dialogue. Evidence references must come from currentEvidence; discloseFactIds must be in outwardAuthority.allowedDiscloseFactIds. Knowing a private fact does not authorize disclosing it.",
+  "selectedExpression records the current selected player action or freeform input; a player_choice label is not necessarily spoken dialogue. Evidence references must come from currentEvidence; discloseFactIds must be in outwardAuthority.allowedDiscloseFactIds. Knowing a private fact does not authorize disclosing it. allowedIntroductionFactIds additionally permits references in request_introduction/request_verification proposals, not current speech or discloseFactIds; the player must execute that interaction before learning the fact.",
   storyInteractionPrompt(false),
   "Return only NPC deliberation and interactionProposals; do not output choices, continuationScenes or worldDelta.",
   "你正在进行一次单个 NPC 的私下角色判断。",
