@@ -28,6 +28,19 @@ export async function closeNarrativeP1Entry(entry) {
   }
 }
 
+export function projectNarrativeP1GameSetup(setup) {
+  return {
+    characterName: setup.characterName,
+    characterIdentity: setup.characterIdentity,
+    ...(setup.characterProfile === undefined ? {} : { characterProfile: setup.characterProfile }),
+    personalityTags: [...setup.personalityTags],
+    worldPremise: setup.worldPremise,
+    storyOpening: setup.storyOpening,
+    narrativeStyle: setup.narrativeStyle,
+    contentIntensity: setup.contentIntensity,
+  };
+}
+
 export function parseNarrativeP1Args(argv) {
   const parsed = {
     mode: "replay",
@@ -157,7 +170,7 @@ async function createProductionRouteRunner(runtimeEnv) {
       const created = await entry.createGame({
         gameType: setup.gameType,
         gameLength: setup.gameLength,
-        setup,
+        setup: projectNarrativeP1GameSetup(setup),
       }, `${route.routeId}-create`);
       if (!created.ok) return { completed: false, httpAttempts: budget.used, failureCode: created.code ?? "CREATE_FAILED" };
 

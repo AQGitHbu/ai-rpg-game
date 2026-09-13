@@ -5,6 +5,7 @@ import {
   DEFAULT_NARRATIVE_P1_OUTPUT_ROOT,
   closeNarrativeP1Entry,
   parseNarrativeP1Args,
+  projectNarrativeP1GameSetup,
   resolveNarrativeP1ArtifactDirectory,
   validateNarrativeP1Args,
 } from "./narrativeP1Journey.mjs";
@@ -46,4 +47,28 @@ test("does not append the run id twice when output already names the run directo
 
 test("cleanup does not replace a route failure when an entry close rejects", async () => {
   await assert.doesNotReject(() => closeNarrativeP1Entry({ close: async () => { throw new Error("close failed"); } }));
+});
+
+test("projects validated NewGameInput to the exact GameSetup contract", () => {
+  assert.deepEqual(projectNarrativeP1GameSetup({
+    gameType: "wuxia",
+    gameLength: "short",
+    characterName: "沈行",
+    characterIdentity: "过路旅人",
+    characterProfile: "先核实身份",
+    personalityTags: ["谨慎"],
+    worldPremise: "渡口附近有破庙和客栈。",
+    storyOpening: "我来到渡口寻找接应人。",
+    narrativeStyle: "novel",
+    contentIntensity: "normal",
+  }), {
+    characterName: "沈行",
+    characterIdentity: "过路旅人",
+    characterProfile: "先核实身份",
+    personalityTags: ["谨慎"],
+    worldPremise: "渡口附近有破庙和客栈。",
+    storyOpening: "我来到渡口寻找接应人。",
+    narrativeStyle: "novel",
+    contentIntensity: "normal",
+  });
 });
