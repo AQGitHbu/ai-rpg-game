@@ -318,6 +318,11 @@ export async function performTurn(
     resolution.primaryResult,
     converted.action,
   );
+  // A settled formal ending stance consumes the already authored ending; it
+  // does not request another scene. Story exit still requires its own prose.
+  const settledEndingStance = endingStance !== undefined
+    && revealed.worldState.ending !== null
+    && resolution.domainEvents.some(event => event.kind === "ending_reached");
   if (isFormalNarrativeChoice
     || isNpcTalkEntryPoint
     || endingStance !== undefined
@@ -340,10 +345,10 @@ export async function performTurn(
       mandatoryBeats: narrative.mandatoryBeats,
       dialogueChoiceLabel: dialogueChoiceLabel ?? endingStance?.label,
       playerHistoryText,
-      generationKind: converted.action.type === "abandon_quest"
+      generationKind: settledEndingStance ? null : converted.action.type === "abandon_quest"
         ? "story_exit"
         : command.interaction.kind === "free_text" ? "npc_free_text" : "npc_fixed_choice",
-      sceneRequestKind: converted.action.type === "abandon_quest" ? "story_exit" : "npc_response",
+      sceneRequestKind: settledEndingStance ? null : converted.action.type === "abandon_quest" ? "story_exit" : "npc_response",
     });
   }
 

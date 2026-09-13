@@ -24,7 +24,8 @@ const VALID_MODES = new Set(["register", "live", "replay"]);
 export function hasCompletedCoreStory(state, isDeliveryComplete) {
   if (!state.ok || state.status !== "active") return false;
   const { worldState, storyState } = state.record;
-  return worldState.ending?.outcome === "success"
+  return storyState.narrative?.status === "ready"
+    && worldState.ending?.outcome === "success"
     && worldState.eventLedger.some(event => event.payload.type === "ending_reached"
       && event.payload.endingId === worldState.ending.endingId && event.payload.outcome === "success")
     && (storyState.delivery === undefined || isDeliveryComplete(worldState, storyState));

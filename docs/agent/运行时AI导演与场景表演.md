@@ -15,6 +15,7 @@
 - 决策作者使用 `{worldDelta, sceneDrafts:[{slotKey,scene}], interactionProposals?, graph?}`；`projectNarrativeDraft` 为 prompt 和 `compileNarrativeDraft` 提供同一槽投影，程序按明确 key 组装上述内部提案。普通决策、下一幕抵达和退出终局都由当前正式状态决定步骤与终点；可用归还图须显式选择 `graph=return_delivery`。缺失、重复、未知槽或选择数量错误带路径拒绝，不按数组位置猜归属，不补正文或改绑行动。作者省略 npcLine 的 emotion 时编译为 neutral，省略 answeredBeatIds、usedFactIds、usedEventIds 时编译为空数组；这表示未声明相应引用，不授予权限或免除强制节拍校验。显式值（含非法值）保留，正文与 npcId 不补造。旧 DTO 仅能通过显式 `allowLegacyDecisionDto` 历史 fixture 适配，生产不启用；合法 `@current.location` 可解析为当前地点 ID，不按名称猜测。编译后仍执行相同 parser 与审批。
 - `generatePendingNarrativeBundle` 每个持久化 epoch 最多三个不可复用的候选版本。后续版本携带稳定解析、引用或审批拒绝原因；仍失败则保留同一 `jobId` 的 `provider_failed`，由显式 `{ "retry": true }` 手动重试。候选版本、候选 hash、lease 和 HTTP 预算均随 pending job 落盘，恢复 worker 先抢 10 分钟 lease；旧 worker 的完整 attempt predicate 不匹配时只能得到 stale。
 - 成功路径是审批生成包、提交场景事件、重建记忆，再调用 `repository.applyState`。世界增量、ready scene、choice registry、bundle 和记忆在同一次 scene CAS 中写回。
+- 已审批终局对的正式立场行动若在本次规则提交产生 `ending_reached`，直接原子保存结局与玩家历史，不再创建下一轮 NPC 生成任务；准备终局对仍需 AI，主动退出仍使用 `story_exit` 生成退出场景。
 - bundle step 必须由服务端 descriptor 投影；stepKey 唯一、无环、最多 12 步。非终点没有 choices，`next_decision` 终点恰好两个选项，`ending` 终点没有 choices 且没有 continuation scenes。
 - 决策 prompt 为每个已有 `candidateId` 同时投影服务端 Action；对话候选包含目标 NPC、dialogueAct 和结构化 topic。新增互动须提交封闭的 `interactionProposals` 并经预览审批，才能绑定相应候选；不能按选项数组位置把一个 label 改绑到另一种 Action，也不能根据裸 candidateId 猜测行动语义或改写 registry。
 - NPC 的 `offer_condition` 带有已授权互动提案时，作者须在终点提供对应 `interaction:proposalKey` 的真实行动选择，并保留原条款；不得把答应条件写成普通交谈。应用层按候选引用携带原提案并拒绝冲突修改，语义审阅核对台词与行动及条件先后；提案获准不等于条件已经成立。

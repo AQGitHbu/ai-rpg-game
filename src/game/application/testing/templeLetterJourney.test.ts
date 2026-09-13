@@ -29,6 +29,17 @@ describe("破庙来信 production journey", () => {
       expect(result.snapshots.length).toBeGreaterThan(3);
       const final = result.snapshots.at(-1);
       expect(final).toBeDefined();
+      expect(final!.storyState.narrative.status).toBe("ready");
+      if (route !== "exit_return" && route !== "exit_keep") {
+        const endedSnapshots = result.snapshots.filter(snapshot => snapshot.worldState.ending !== null);
+        expect(endedSnapshots.length).toBeGreaterThan(0);
+        expect(endedSnapshots.every(snapshot => snapshot.storyState.narrative.status === "ready")).toBe(true);
+        const endingEvent = final!.worldState.eventLedger.find(event => event.kind === "ending_reached")!;
+        expect(endingEvent).toBeDefined();
+        const playerAction = final!.storyState.history.entries.find(entry => entry.actionId === endingEvent.actionId && entry.speakerId === PLAYER_ENTITY_ID);
+        expect(playerAction).toBeDefined();
+        expect(playerAction!.jobId).toBeNull();
+      }
       const itemGivenCount = final?.worldState.eventLedger.filter((event) => event.kind === "item_given").length;
       expect(itemGivenCount).toBe(route === "exit_keep" ? 0 : 1);
       expect(result.publicExposure).toBe(route === "public");

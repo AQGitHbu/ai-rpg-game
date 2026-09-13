@@ -352,10 +352,15 @@ test("core route follows formal progression without forcing side interactions an
 
 test("core completion requires an actual successful ending event and any bound delivery", async () => {
   const {hasCompletedCoreStory}=await import('./narrativeP1Journey.mjs');
-  const state={ok:true,status:"active",record:{worldState:{ending:{endingId:"e",outcome:"success"},eventLedger:[]},storyState:{}}};
+  const state={ok:true,status:"active",record:{worldState:{ending:{endingId:"e",outcome:"success"},eventLedger:[]},storyState:{narrative:{status:"ready"}}}};
   assert.equal(hasCompletedCoreStory(state,()=>true),false);
   state.record.worldState.eventLedger.push({payload:{type:"ending_reached",endingId:"e",outcome:"success"}});
   assert.equal(hasCompletedCoreStory(state,()=>true),true);
+  for (const status of ["provider_pending", "provider_failed"]) {
+    state.record.storyState.narrative.status=status;
+    assert.equal(hasCompletedCoreStory(state,()=>true),false);
+  }
+  state.record.storyState.narrative.status="ready";
   state.record.storyState.delivery={itemId:"letter"};
   assert.equal(hasCompletedCoreStory(state,()=>false),false);
   state.record.worldState.ending.outcome="failure";

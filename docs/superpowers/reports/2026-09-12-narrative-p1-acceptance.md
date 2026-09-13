@@ -64,6 +64,12 @@
 
 原始产物在 `artifacts/narrative-p1/p1-core-03/`；修改代码前已在独立 `p1-core-03-replay/replay/` 完成严格重放：HTTP 0、36 次原始响应、16 次行动和最终失败一致。原进程在正常失败摘要封存后再次以 `0xC0000005` 退出，重放正常退出 1。隔离 SQLite 探针的 10 个独立进程均正常退出，未复现崩溃；不能据此认定依赖、GC 或业务代码为根因。诊断证据在 `artifacts/native-sqlite-probe/`，未猜测性修改依赖。
 
+### core03 终局显式重试
+
+`38b8ea51` 在原失败存档的独立副本调用一次正式 `retry:true`，同一游戏追加第 17 次行动后达到成功结局“渡口交付”，7 HTTP，进程正常退出 0。独立范围为 `failed_ending_explicit_retry`，预算与原批分开，原库/步骤/协议哈希及旧新代码均绑定；不算原批无中断通关。`artifacts/narrative-p1/core03-ending-retry/replay/` 严格重放 HTTP 0、7 响应、4 状态一致。
+
+终局首稿结构与审批已通过；正式结局立场仍被 performTurn 当作普通 NPC 对话，规则已经写入 ending_reached 后又创建 pending job，导致额外生成结局对并被世界增量审批拒绝。成功结局真实存在，但后台失败状态不能算完整稳定闭环。此终止边界在 main 的同入口也存在，不能归因于本次元数据编译；后续收束为正式终局提交后停止生成，保留退出故事另行生成终场的契约。
+
 ## 固定初态核心诊断
 
 `p1-focused-01` 的 `claimScope=fixed_opening_story`，源为 `p1-diag-03/S1-opening.sqlite` 的零回合获批初态，原库只读。协议冻结源协议、runtime、audit、数据库和语义哈希，两路线独立复制；原始文件在 `artifacts/narrative-p1/p1-focused-01/`。

@@ -287,7 +287,7 @@ describe("performTurn 单次 CAS 提交", () => {
     expect(job?.actionSummary).toEqual({ kind: "abandon_quest", questId: "quest_0" });
   });
 
-  it("最终正式选择结算结局后仍创建 pending，由叙事包生成最终文本", async () => {
+  it("最终正式选择结算结局后保留已批准终局，不再创建 pending", async () => {
     const finalWorld = buildWorldState({
       quests: [{
         id: asQuestId("quest_final"),
@@ -340,7 +340,8 @@ describe("performTurn 单次 CAS 提交", () => {
     expect(result.ok).toBe(true);
     expect(applyCalls()).toHaveLength(1);
     expect(record()?.worldState.ending).not.toBeNull();
-    expect(record()?.storyState.narrative.status).toBe("provider_pending");
+    expect(record()?.storyState.narrative.status).toBe("ready");
+    expect(record()?.worldState.eventLedger.some(event => event.kind === "ending_reached")).toBe(true);
   });
 
   it("结局包内没有可消费步骤时，服务端铸造的结局立场仍可结算结局", async () => {
@@ -418,7 +419,8 @@ describe("performTurn 单次 CAS 提交", () => {
     expect(result.ok).toBe(true);
     expect(applyCalls()).toHaveLength(1);
     expect(record()?.worldState.ending?.endingId).toBe(asEndingId("ending_trust"));
-    expect(record()?.storyState.narrative.status).toBe("provider_pending");
+    expect(record()?.storyState.narrative.status).toBe("ready");
+    expect(record()?.worldState.eventLedger.some(event => event.kind === "ending_reached")).toBe(true);
   });
 
   it("活跃战斗推进直接 CAS，不创建 pending narrative job", async () => {
