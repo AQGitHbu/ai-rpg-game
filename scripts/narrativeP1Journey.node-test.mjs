@@ -361,3 +361,13 @@ test("core completion requires an actual successful ending event and any bound d
   state.record.worldState.ending.outcome="failure";
   assert.equal(hasCompletedCoreStory(state,()=>true),false);
 });
+
+test("core consumes a projected building arrival when automatic discovery has no HUD token", () => {
+  const view = { narrative: { choices: [], npcDialogues: [] }, story: { currentObjectiveChoiceToken: null },
+    currentLocation: { actions: [], town: { interactiveBuildings: [
+      { displayName: "茶棚", arrivalChoiceToken: "arrive" }, { displayName: "仓房" },
+    ] } } };
+  const actions = new Map([["arrive", { type: "explore" }]]);
+  assert.equal(selectProductionChoice(view, "complete", actions, [], new Set())?.choiceToken, "arrive");
+  assert.equal(selectProductionChoice(view, "complete", new Map(), [], new Set()), undefined);
+});

@@ -2,7 +2,7 @@
 
 ## 结论
 
-P1 仍未通过，尚无完整 live 小故事。已完成固定初态两路线、场景槽编译和作者/审阅表示契约隔离。最后冻结 `3d6260ee` 的 `p1-focused-02` 完成五个有效行动和中途重载，换幕稿修订耗尽：0/2、27 HTTP、1130298 ms；退出路线未执行。27 次真实响应与全部状态已零网络严格重放，仍得到同一失败码。本轮到此停止连续重采；固定初态诊断不代表自由开局通过。
+P1 仍未通过，尚无完整 live 小故事。规则依据审阅与同轮 NPC 授权复用已落地，普通生产主线 `p1-core-01` 从真实创建开始，开局及两轮后续生成均获批，在第 2 个有效行动后因脚本漏收地图入口停止。失败已严格重放；已补齐正式地图/物品/建筑入口，准备重新冻结验证。此前固定初态两批失败证据保留，不能用新范围覆盖旧分母。
 
 本轮四项工作的状态如下。首要目标“完整小故事”未达成，正式六矩阵和创建到终局的实机 UI 验收没有执行，不记为通过，也不进入 P2。历史 `p1-07` 的 0/6 来自六次独立开局，不是新协议矩阵。根因与后续架构方向见 [失败分析](2026-09-13-narrative-p1-failure-analysis.md)。
 
@@ -26,10 +26,17 @@ P1 仍未通过，尚无完整 live 小故事。已完成固定初态两路线�
 
 ## 门禁结果
 
-- `npm run accept`：通过；lint 0 errors，217 个测试文件通过，2767 tests passed、1 skipped，typecheck、fast gates、build 均通过。
-- `npm run test:narrative-p1-script`：通过；17 passed。
+- `npm run accept`：通过；lint 0 errors，218 个测试文件通过，2782 tests passed、1 skipped，typecheck、fast gates、build 均通过。
+- `npm run test:narrative-p1-script`：通过；20 passed。
 - `npm run check:docs`、`npm run test:docs`、`git diff --check`：通过。
 - `npm run env:check`：通过；`.env.local` 仅注入当前进程，密钥未写入协议、审计摘要或报告。
+
+## 普通生产主线
+
+- `p1-core-01`：冻结 `bb9b2177`，`claimScope=production_core_story`；0/1、10 HTTP、310848 ms、2 有效动作。真实开局通过；第二次行动后的新幕和续接场景已正式提交，最后一次 reviewer 为 pass。
+- 阻断为 runner `ROUTE_POLICY_UNSUPPORTED`：只收集对话/当前地点按钮，漏掉 `worldMap.locations[].travelChoice`。实际状态已有合法 `move:loc_dyn_1` 和对应地图按钮，不是生成失败或游戏无路可走。
+- 原产物 `artifacts/narrative-p1/p1-core-01/`；独立重放 `artifacts/narrative-p1/p1-core-01-replay/replay/`，HTTP 0、10 原始响应、所有状态一致，保留同一失败码。未完成不能评分。
+- 修复入口收集覆盖正式地图、可获取物品、NPC 与建筑 arrival token；core 建筑回退仅接受真实 Action `explore`。4 项生产 projection、20 项脚本、typecheck 和独立复审通过；本次不修改生产剧情、规则或审阅结果。
 
 ## 固定初态核心诊断
 

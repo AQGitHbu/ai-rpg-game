@@ -6,6 +6,26 @@ import { buildChoiceMap } from "../buildChoiceMap";
 // @ts-expect-error Executable acceptance runner shares the production read model.
 import { offeredProductionChoices, selectProductionChoice, currentStoryInteractions, findOfferedStoryDelivery } from "../../../../scripts/narrativeP1Choices.mjs";
 
+it("selects the formal map move at an act boundary even without scene or location buttons", async () => {
+  const { snapshots } = await runTempleLetterJourney("private");
+  const boundary = snapshots.find(record => {
+    const view = projectGameSessionView(record.worldState, record.storyState, record.revision, "hud-move");
+    const actions = buildChoiceMap(record.worldState, record.storyState, record.revision);
+    return view.story.currentObjectiveChoiceToken !== null
+      && actions.get(view.story.currentObjectiveChoiceToken)?.type === "move";
+  });
+  expect(boundary).toBeDefined();
+  if (boundary === undefined) throw new Error("formal move boundary missing");
+  const view = projectGameSessionView(boundary.worldState, boundary.storyState, boundary.revision, "hud-move");
+  const actions = buildChoiceMap(boundary.worldState, boundary.storyState, boundary.revision);
+  const selected = selectProductionChoice({ ...view, narrative: { ...view.narrative, choices: [], npcDialogues: [] },
+    currentLocation: { ...view.currentLocation, actions: [] } }, "complete", actions,
+    currentStoryInteractions(boundary.worldState), new Set());
+  expect(selected?.choiceToken).toBe(view.story.currentObjectiveChoiceToken);
+  expect(view.worldMap.locations.map(location => location.travelChoice)).toContainEqual(selected);
+  expect(actions.get(selected?.choiceToken)).toMatchObject({ type: "move" });
+});
+
 it("selects the actual NPC panel promise instead of a generic location greeting", async () => {
   const { snapshots } = await runTempleLetterJourney("exit_keep");
   const opening = snapshots[0]!;

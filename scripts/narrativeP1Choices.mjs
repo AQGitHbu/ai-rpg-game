@@ -7,7 +7,15 @@ export function offeredProductionChoices(view) {
     ...(dialogue.choices ?? []), ...(dialogue.giveChoices ?? []).map(entry => entry.choice),
   ]);
   const battleChoices = (view.battle?.controls ?? []).filter(choice => choice.enabled !== false && choice.choiceToken);
-  return [...new Map([...view.narrative.choices, ...npcChoices, ...view.currentLocation.actions, ...battleChoices].map((choice) => [choice.choiceToken, choice])).values()];
+  const worldChoices = [
+    ...(view.worldMap?.locations ?? []).flatMap(location => location.travelChoice ? [location.travelChoice] : []),
+    ...(view.obtainableItems ?? []).map(item => item.choice),
+    ...(view.currentLocation.npcs ?? []).flatMap(npc => npc.talkChoice ? [npc.talkChoice] : []),
+    ...(view.currentLocation.town?.interactiveBuildings ?? []).flatMap(building => building.arrivalChoiceToken ? [{
+      choiceToken: building.arrivalChoiceToken, label: building.displayName,
+    }] : []),
+  ];
+  return [...new Map([...worldChoices, ...view.narrative.choices, ...npcChoices, ...view.currentLocation.actions, ...battleChoices].map((choice) => [choice.choiceToken, choice])).values()];
 }
 
 export function findOfferedStoryDelivery(view, actionMap, delivery) {
@@ -39,7 +47,8 @@ export function selectProductionChoice(view, routeKind, actionMap, interactions,
     if (objective && actionMap.get(objective.choiceToken).type !== "talk") return objective;
     const dialogueChoices = [...view.narrative.choices, ...(view.narrative.npcDialogues ?? []).flatMap(dialogue => dialogue.choices ?? [])];
     return dialogueChoices.find(choice => allowed(choice) && operation(choice) === undefined)
-      ?? dialogueChoices.find(allowed) ?? objective;
+      ?? dialogueChoices.find(allowed) ?? objective
+      ?? choices.find(choice => allowed(choice) && actionMap.get(choice.choiceToken).type === "explore");
   }
   if (routeKind === "deliver" || routeKind === "withdraw") {
     if (routeKind === "withdraw" && actionCount >= 4) return choices.find(choice => actionMap.get(choice.choiceToken)?.type === "abandon_quest");
