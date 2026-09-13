@@ -618,7 +618,7 @@ register 生成的模型值/设置由可用环境读取并冻结；此命令块�
 
 - **P1-A：** 已完成。Task 1–4 已实现并提交；Task 4 五路线、SQLite 重载、普通离场/自由输入负向探针及相关规则回归证据见 [P1-A 验收报告](../reports/2026-09-13-narrative-architecture-p1-a.md)。
 - **P1-B：** 实现与离线门禁已完成；Task 5–9 的实现提交和测试证据见 [P1 旅程协议](../reports/2026-09-12-narrative-p1-protocol.md) 及 [P1 验收记录](../reports/2026-09-12-narrative-p1-acceptance.md)。尚无 live 质量结论。
-- **P1-C：** 已执行但未通过；两批固定 live 矩阵均为 0/6，失败边界和完整产物见 [P1 验收记录](../reports/2026-09-12-narrative-p1-acceptance.md)。未完成路线未填写质量分，不能以离线证据替代 live 成绩。
+- **P1-C：** 已执行但未通过；最新完整固定 live 矩阵 `p1-07` 为 0/6。该批没有再出现 `context_budget_exceeded`，剩余失败为 provider 超时、语义审阅/修订耗尽和 `approval_rejected`；失败边界和完整产物见 [P1 验收记录](../reports/2026-09-12-narrative-p1-acceptance.md)。未完成路线未填写质量分，不能以离线证据替代 live 成绩。
 - **P1 总结论：** 未通过；P1-B 离线实现门禁通过，但 P1-C 的六条 live 路线与质量门槛均未通过。按本计划暂停扩展 P2，后续 live 批次须另行明确范围。
 
 P2 的检索摘要与中篇验证、P3 的丰富 Entity/世界行为、P4 的扩容与性能仍只维护在总 Spec，当前不生成它们的实施 Task。

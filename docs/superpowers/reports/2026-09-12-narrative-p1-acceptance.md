@@ -2,7 +2,9 @@
 
 ## 结论
 
-本记录覆盖当前 worktree 的离线实现验收和已授权的两批 live 尝试。P1-C 未通过：两批均为 0/6 完成，不能填写未完成路线的质量分，也不能宣布 P1 通过。
+P1-A 与 P1-B 的离线实现和门禁通过；P1-C 仍未通过。最新完整固定矩阵 `p1-07` 为 0/6，HTTP 44 次，六条路线均未到达终局。此次批次没有再出现 `context_budget_exceeded`：本地叙事包上下文预算闸门已在 `85ca21af` 移除，thinking provider 的实际上下文交给 provider 处理。
+
+最新批次的剩余失败属于 provider 超时和候选语义审阅/修订耗尽。`S1-private` 已持久化到第 5 个有效行动，随后因 `approval_rejected` 结束；其他路线在开局或候选审阅阶段结束。没有完整 live 轨迹，因此不填写人工质量分，也不能宣布 P1 通过或开始 P2。
 
 ## 已完成的离线证据
 
@@ -15,29 +17,43 @@
 
 ## 门禁结果
 
-- `npm run accept`：通过；全量测试 211 个文件、2693 passed、1 skipped，typecheck、fast gates、build 均通过。
-- `npm run test:narrative-p1-script`：通过。
-- `npm run check:docs`、`git diff --check`：通过。
-- `npm run env:check`：在用户补充 `.env.local` 后通过；脚本仅将配置注入当前进程，不把密钥写入协议或报告。
+- `npm run accept`：通过；lint 0 errors/50 existing warnings，211 个测试文件中 2696 passed、1 skipped，typecheck、fast gates、build 均通过。
+- `npm run test:narrative-p1-script`：通过；7 passed。
+- `npm run check:docs`、`npm run test:docs`、`git diff --check`：通过。
+- `npm run env:check`：通过；`.env.local` 仅注入当前进程，密钥未写入协议、审计摘要或报告。
 
 ## A1–A10 范围
 
 | 项目 | 当前证据 | live 状态 |
 | --- | --- | --- |
-| A1 | P1-A 私下/公开规则旅程 | 两批均未进入正式行动 |
-| A2 | P1-A SQLite 重载与承诺状态 | 两批开局未提交，无 live 重载证据 |
+| A1 | P1-A 私下/公开规则旅程 | `p1-07` 未完成正式终局 |
+| A2 | P1-A SQLite 重载与承诺状态 | `p1-07` 仅有 `S1-private` 中途存档，无 live 重载终局 |
 | A3 | NPC continuity / knowledge boundary 离线测试 | 未完成 live 路线 |
 | A4–A5 | story evidence 正式检索与长期证据测试 | 未完成 live 路线 |
-| A6 | P1-A `verify_first` 合法核验后显式交付 | 未完成 live 路线 |
-| A7 | 候选 review/修订与 stale hash 测试 | 仅有离线证据，live 未完成 |
-| A8–A9 | Task 8 recovery、CAS、token/revision 隔离测试 | 仅有离线证据，live 未完成 |
-| A10 | P1-A 交付/主动退出终局测试 | 未完成 live 路线 |
+| A6 | P1-A `verify_first` 合法核验后显式交付 | `p1-07` 未完成路线 |
+| A7 | 候选 review/修订与 stale hash 测试 | 离线通过；live 出现审阅修订耗尽 |
+| A8–A9 | Task 8 recovery、CAS、token/revision 隔离测试 | 离线通过；live 未走到对应完整轨迹 |
+| A10 | P1-A 交付/主动退出终局测试 | 离线通过；live 未完成终局 |
 
 ## Live 执行边界
 
-两批 live 均先完成零网络 register，再执行同一固定 6-route 矩阵：
+所有批次均使用固定的 S1/S2 × private/public/verify_first 六路线分母；未完成路线未从分母删除。
 
-- `p1-01`：0/6，HTTP attempts 10；5 条记录为旧 runner 的 `ROUTE_RUNNER_CRASHED`，1 条为 `AI_GENERATION_FAILED`。该批产物保留在旧版重复目录中。
-- `p1-02`：0/6，HTTP attempts 9；6 条均为修复收尾遮蔽后保留的 `PRODUCTION_ROUTE_CRASHED`，六个 SQLite 均为 0 条 `game_records`，所有路线均未进入正式行动。
+| 批次 | 结果 | 主要边界 |
+| --- | --- | --- |
+| `p1-01` | 0/6，HTTP 10 | 旧 runner 产物路径重复；5 条 `ROUTE_RUNNER_CRASHED`，1 条 `AI_GENERATION_FAILED` |
+| `p1-02` | 0/6，HTTP 9 | 生产路由 setup 合同不匹配，六条 `PRODUCTION_ROUTE_CRASHED`，SQLite 均无 `game_records` |
+| `p1-03` | 0/6，HTTP 12 | reviewer 兼容词未归一化，候选进入 `AI_GENERATION_FAILED` |
+| `p1-04` | 0/6，HTTP 34 | reviewer 兼容词已修复；后台生成仍被 runner 当作有效行动反复轮询，出现 `ROUTE_ACTION_BUDGET_EXHAUSTED` |
+| `p1-05` | 未完成 | 使用上下文闸门修复前版本；观察到历史增长导致 `context_budget_exceeded`，随后为切换新策略而停止，不作为完整批次结论 |
+| `p1-06` | 未生成 summary | 使用无本地预算闸门版本启动；首条路线运行期间会话中断，保留局部审计产物，不作为完整批次结论 |
+| `p1-07` | 0/6，HTTP 44 | 无 `context_budget_exceeded`；剩余为 provider timeout、语义审阅修订耗尽和 `approval_rejected` |
 
-可确认的失败边界是：live provider 已返回并被审计的作者响应，但路线在开局持久化前失败；审计中可见部分首次响应触发了结构修订，未形成可验收的完整故事轨迹。当前没有足够证据把失败归因到某个具体规则分支，也没有进行人工文本评分；下一批若要继续，必须另建协议 run，先增加不泄露正文的生产异常分类/诊断，再由操作者明确授权。
+已落地的代码级修复如下：
+
+- `abc531be`：把 runner 的验证输入投影为正式 `GameSetup`，修复生产入口 setup 合同。
+- `b282f42a`：为观察到的 reviewer scope/code 兼容词建立受控归一化，未知值仍 fail closed。
+- `bdc60a9d`：runner 等待后台叙事生成完成后才计有效行动，避免 pending poll 消耗行动预算。
+- `85ca21af`：移除叙事包本地 8,000 estimated-token 拒绝闸门，并更新 TDD 覆盖；provider 失败仍走既有失败协议。
+
+`p1-07` 的 0/6 不是 P1 通过证据：AI provider 的调用和审计链已经实际运行，但候选质量/超时尚未稳定达到六条完整终局的门槛。后续若继续 live，应另建 protocol run，并针对 provider 超时与语义审阅失败单独收集证据；不能用再次扩大局部修补轮次替代 P1-C 的完整矩阵和人工评分。
