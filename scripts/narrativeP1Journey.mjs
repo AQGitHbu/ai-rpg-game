@@ -28,6 +28,22 @@ export async function closeNarrativeP1Entry(entry) {
   }
 }
 
+export async function waitForNarrativeP1Generation(entry, traceId, options = {}) {
+  const pollIntervalMs = options.pollIntervalMs ?? 250;
+  const maxPolls = options.maxPolls ?? 3_600;
+  for (let poll = 0; poll <= maxPolls; poll += 1) {
+    const current = await entry.getCurrentGame(traceId);
+    if (!current.ok || current.status !== "active" || current.view === undefined) return current;
+    if (current.view.narrativeGeneration.status !== "pending") return current;
+
+    const ensured = await entry.ensureNarrativeScene({}, `${traceId}-ensure-${poll}`);
+    if (!ensured.ok) return { ok: false, status: "error", code: ensured.code };
+    if (poll === maxPolls) break;
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+  return { ok: false, status: "error", code: "NARRATIVE_GENERATION_TIMEOUT" };
+}
+
 export function projectNarrativeP1GameSetup(setup) {
   return {
     characterName: setup.characterName,
@@ -174,18 +190,18 @@ async function createProductionRouteRunner(runtimeEnv) {
       }, `${route.routeId}-create`);
       if (!created.ok) return { completed: false, httpAttempts: budget.used, failureCode: created.code ?? "CREATE_FAILED" };
 
-      for (; actionCount < 24; actionCount += 1) {
-        const current = await entry.getCurrentGame(`${route.routeId}-${actionCount}`);
+      while (actionCount < 24) {
+        const current = await waitForNarrativeP1Generation(entry, `${route.routeId}-${actionCount}`);
         if (!current.ok || current.status !== "active" || current.view === undefined) {
-          return { completed: false, httpAttempts: budget.used, actionCount, failureCode: "CURRENT_GAME_UNAVAILABLE" };
+          return {
+            completed: false,
+            httpAttempts: budget.used,
+            actionCount,
+            failureCode: current.code ?? "CURRENT_GAME_UNAVAILABLE",
+          };
         }
         if (current.view.ending !== null) return { completed: true, httpAttempts: budget.used, actionCount };
         const view = current.view;
-        if (view.narrativeGeneration.status === "pending") {
-          const ensured = await entry.ensureNarrativeScene({}, `${route.routeId}-ensure-${actionCount}`);
-          if (!ensured.ok) return { completed: false, httpAttempts: budget.used, actionCount, failureCode: ensured.code };
-          continue;
-        }
         if (view.narrativeGeneration.status === "failed") {
           return { completed: false, httpAttempts: budget.used, actionCount, failureCode: "AI_GENERATION_FAILED" };
         }
@@ -229,7 +245,8 @@ async function createProductionRouteRunner(runtimeEnv) {
           ok: after.ok,
         });
         if (!after.ok) return { completed: false, httpAttempts: budget.used, actionCount, failureCode: after.code };
-        if (actionCount === 3) {
+        actionCount += 1;
+        if (actionCount === 4) {
           await closeNarrativeP1Entry(entry);
           entry = createEntry();
           steps.push({ kind: "reload", revision: after.revision });

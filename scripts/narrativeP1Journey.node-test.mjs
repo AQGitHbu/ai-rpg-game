@@ -7,6 +7,7 @@ import {
   parseNarrativeP1Args,
   projectNarrativeP1GameSetup,
   resolveNarrativeP1ArtifactDirectory,
+  waitForNarrativeP1Generation,
   validateNarrativeP1Args,
 } from "./narrativeP1Journey.mjs";
 
@@ -71,4 +72,35 @@ test("projects validated NewGameInput to the exact GameSetup contract", () => {
     narrativeStyle: "novel",
     contentIntensity: "normal",
   });
+});
+
+test("waits for background narrative generation without consuming an action", async () => {
+  let reads = 0;
+  let ensures = 0;
+  const entry = {
+    async getCurrentGame() {
+      reads += 1;
+      return {
+        ok: true,
+        status: "active",
+        view: {
+          ending: null,
+          narrativeGeneration: { status: reads === 1 ? "pending" : "ready" },
+        },
+      };
+    },
+    async ensureNarrativeScene() {
+      ensures += 1;
+      return { ok: true, result: "queued" };
+    },
+  };
+
+  const result = await waitForNarrativeP1Generation(entry, "route-1", {
+    pollIntervalMs: 0,
+    maxPolls: 2,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(reads, 2);
+  assert.equal(ensures, 1);
 });
