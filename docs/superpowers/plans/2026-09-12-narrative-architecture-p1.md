@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans. Steps use checkbox (`- [x]`) syntax for tracking.
 
-**Goal:** 先让真实 AI 从正式新游戏创建走到普通短篇的成功结局，确认规则与持久化闭环，再验证交付、主动退出和选择后果。
+**Goal:** 先让真实 AI 从正式新游戏创建，完成三幕公开递送、实际交付与成功结局，确认规则和持久化闭环，再验证主动退出和选择后果。
 
 **Architecture:** 保留 main 继承的完整场景作者、Entity/History/Thread、正式规则、权限与 A/B 提交。服务端投影并编译续接结构；AI 一次生成完整场景内容和具体选择。固定初态仅用于诊断，后续均走生产 provider 和仓储。
 
@@ -15,7 +15,7 @@
 - “质量与游戏性优先于 token、调用数和耗时。”不增加 Entity 字段、reviewer、互动操作或记忆类别。
 - “规则已结算结果不可被后续循环改写”；“AI 失败显式重试，确定性内容只用于规则反馈和显式 fixture”。
 - 固定初态诊断必须标 `claimScope=fixed_opening_story`；不叫自由开局，不修改原数据库或旧响应，不重用旧代码的 pass 作为新生成 pass。
-- 先 core 生产主线，再交付/退出专项；每路线最多 24 动作、每 epoch 3 候选/24 HTTP；core 与 focused 各批 200 HTTP、90 分钟。focused 内先 deliver 成功再 withdraw，不用短退出增加完成数。
+- 先 core 三幕递送生产主线，再交付/退出专项；每路线最多 24 动作、每 epoch 3 候选/24 HTTP；core 与 focused 各批 200 HTTP、90 分钟。focused 内先 deliver 成功再 withdraw，不用短退出增加完成数。
 - 必须使用实际 read model 选项/token，经正式 performTurn、ensure、SQLite；无开发状态补丁，无替代剧情。
 - 所有已有规则/权限回归保留。六路线综合覆盖移到核心诊断后，不删除失败分母、不改旧报告为通过。
 
@@ -268,3 +268,17 @@ expect(secondAuthorRequest).toContain('newFact2');
 - C3：focused01 与唯一修复批 focused02 均失败，各五行动后结束，退出路线未执行；两批全部 55 次真实响应均严格重放一致。格式契约已修复，剩余审阅判定和修订依赖边界见上节。完整故事仍未完成，不执行第三批连续重采。
 - D1/D2：规则审阅与入口收集完成；b6cc0e5b 的真实短篇经进程中断恢复后完成 18 次行动和成功终局。恢复段 9 次响应、12 状态严格重放，原中断流无完整封存，不算全程无中断通过。
 - P1 总结论：未通过；首个恢复后的完整故事已取得，数据库替换与验证已完成。NPC 创建与权限契约修复已完成；原故事重试仍失败；独立中篇经 Task 12 结束契约修复后同局恢复通关，新增 3 响应/4 状态严格重放通过。short-closure-03 已实际验证回合号修复及机械通关，但 NPC 代办关键前提与概要越权使正文失败。限定补漏已在 1d635bfa 审核冻结，short-closure-04 于第二幕普通 NPC 事实/听众审批失败，未到终局；补漏后的完整故事证据仍缺。交付/退出、UI 与 main 对照分别记证据。
+
+### Task 16：围绕可执行中心结果收敛三幕主线
+
+**目标与范围：** 承接 Spec §9.1，以现有递送规则证明完整小故事可达。不继续修补渡口事故台词，不重新设计终幕，不增加 Action、Entity、记忆、reviewer、知识传播权限或通用规划器。Task 13/15 的未通过 live 验收由本项新的核心协议继续验证；旧样本保持失败，不重新执行旧普通纠纷输入。
+
+**Files:** `src/game/application/server/ai/narrativeContext/narrativeBundleContext.ts`、`openingSemanticContract.ts`、`narrativeDraftProjection.ts` 及既有相关测试；可在同目录增加一个纯函数投影及其测试，复用现有 StoryContract/StoryState，不增加持久化字段。仅在生产旅程证实交付步骤缺失时修改 `src/game/gameplay/rpg/narrativeBundle/descriptors.ts` 与相关测试。系统事实原位维护 `docs/agent/运行时AI导演与场景表演.md`；不改 shared foundation。根任务负责 Spec/Plan、独立验证 driver 和报告。
+
+**契约：** 对已有 delivery 合同，从现有状态给作者/既有审阅提供同一中心动作、角色绑定、物品归属、完成证据及当前幕职责依据；不能只追加场景专用警告。第二幕与第三幕只需服务交付的地点、NPC 和主线，现有 nullable newItem/newEnemy 不再被提示为必填；最终幕必须保留绑定接应人的 talk 与真实 give 步骤。普通公开约定可作为 verificationFactKeys 的依据，通过现有对话使用，不要求额外身份谜题或新核验状态。需要陈述开局公开依据的后续 NPC 沿既有 existingFactIds 显式声明；不静默复制玩家知识或从台词反推授权。非递送故事保留既有能力。
+
+**最小验证：** 先用现有正式管线测试证明跨幕前瞻、抵达与 talk 不会吞掉 give；从真实 read model 选择经 performTurn，交付前不通关，交付后唯一归属和事件一致，结束后重载一致。可用测试 provider，但不得手造绕过实际投影的 bundle，且不称为真实 AI 通过。只修复被这条流程证实的断点。
+
+- [x] 完成上述最小生产契约与旅程回归；独立审核 Spec/Quality 通过。131 项定向测试、typecheck、131 项 boundaries、check:docs 通过，完整测试以 2 workers 运行 2842 passed、1 skipped；默认并行两轮仅文件扫描超时，保留记录。lint 0 errors、50 项既有 warning。正式 AI 验收仍待执行。
+- [ ] 冻结代码并登记一个全新 production_core_story 协议：三幕公开递送短篇、S1-complete、正式 createGame、24 动作/200 HTTP/90 分钟上限；必须产生 delivery 合同和实际交付，缺失即失败。沿实际选项推进，中途重载，成功 ending/ready 后严格零网络 replay。
+- [ ] 阅读完整故事核对起因、阻碍、选择、实际后果与收束，并记录规则、正文、持久化三项结论。失败则封存并定位具体流程断点，不连续抽样或追加剧情提示。只在核心通过后推进已有专项；本项不扩展 UI、main 对照或后续 P 阶段。

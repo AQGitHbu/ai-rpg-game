@@ -1,6 +1,6 @@
 import { projectEntityStore } from "@/game/domain/entity";
 import type { NarrativeBundleTerminal, NarrativeBundleTrigger } from "@/game/domain/narrativeBundle";
-import { asLocationId } from "@/game/domain/worldEntity";
+import { asLocationId, asNpcId } from "@/game/domain/worldEntity";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { StoryState } from "@/game/domain/storyState";
 import type { WorldState } from "@/game/domain/worldState";
@@ -43,18 +43,35 @@ export function projectNarrativeDraft(input: NarrativeDraftContext) {
   const nextActProjection = !ending && input.storyState.evolution.status === "needs_next_act"
     ? { locationId: `loc_dyn_${input.storyState.evolution.nextLocationOrdinal}`, npcId: `npc_dyn_${input.storyState.evolution.nextNpcOrdinal}` }
     : null;
+  // The next-act NPC is bound by materialization to the final recipient. Keep
+  // the author/compiler slots identical to that approval preview's move/give
+  // graph, before the new entity exists in the current store.
+  const nextActDelivery = nextActProjection !== null
+    && input.storyState.currentAct >= input.storyState.targetActs
+    && input.storyState.contract.delivery !== undefined
+    && input.storyState.delivery !== undefined
+    && worldState.inventory.includes(input.storyState.delivery.itemId)
+    ? { kind: "give_item" as const, itemId: input.storyState.delivery.itemId, npcId: asNpcId(nextActProjection.npcId) }
+    : null;
+  const nextActTriggers: readonly NarrativeBundleTrigger[] = nextActProjection === null ? [] : [
+    { kind: "move", locationId: asLocationId(nextActProjection.locationId) },
+    ...(nextActDelivery === null ? [] : [nextActDelivery]),
+  ];
   const stepKeys = ending ? [] : nextActProjection === null
-    ? descriptorGraph.steps.map(step => step.stepKey) : [`move:${nextActProjection.locationId}`];
+    ? descriptorGraph.steps.map(step => step.stepKey) : [
+      `move:${nextActProjection.locationId}`,
+      ...(nextActDelivery === null ? [] : [`give_item:${nextActDelivery.itemId}:${nextActDelivery.npcId}`]),
+    ];
   const terminal: NarrativeBundleTerminal = ending ? { kind: "ending" } : nextActProjection === null
     ? descriptorGraph.terminal
-    : { kind: "next_decision", target: { kind: "continuation_step", stepKey: stepKeys[0]! } };
+    : { kind: "next_decision", target: { kind: "continuation_step", stepKey: stepKeys.at(-1)! } };
   return { descriptorGraph, nextActProjection, stepKeys, terminal,
     endingResolutions: ending && input.job.actionSummary.kind !== "abandon_quest"
       ? projectEndingResolutions(worldState, input.storyState) : [],
-    slots: ["current", ...stepKeys].map(slotKey => ({
+    slots: ["current", ...stepKeys].map((slotKey, index) => ({
       slotKey,
       resolution: slotKey === "current" ? null : narrativeSlotResolution(nextActProjection !== null
-        ? { kind: "move", locationId: asLocationId(nextActProjection.locationId) }
+        ? nextActTriggers[index - 1]!
         : descriptorGraph.steps.find(step => step.stepKey === slotKey)!.trigger),
       choiceCount: terminal.kind === "next_decision"
         && (terminal.target.kind === "current_scene" ? slotKey === "current" : slotKey === terminal.target.stepKey) ? 2 : 0,

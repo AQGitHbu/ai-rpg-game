@@ -685,7 +685,7 @@ describe("createNarrativeBundleSource", () => {
     const systemPrompt = messages[0]!.content as string;
     const locationId = `loc_dyn_${storyState.evolution.nextLocationOrdinal}`;
     const npcId = `npc_dyn_${storyState.evolution.nextNpcOrdinal}`;
-    expect(systemPrompt).toContain(`下一幕抵达场景骨架：{"slotKey":"move:${locationId}","scene":`);
+    expect(systemPrompt).toContain(`下一幕场景骨架（逐槽填写正文，不改变选择数量）：[{"slotKey":"move:${locationId}","scene":`);
     expect(systemPrompt).not.toContain('下一幕抵达场景骨架：{"stepKey"');
     expect(systemPrompt).toContain(`move:${locationId}_choice_1`);
     expect(systemPrompt).toContain(npcId);
