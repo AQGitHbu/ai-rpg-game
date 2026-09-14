@@ -122,7 +122,7 @@ function sourceLinkedMemoryText(memory: NarrativeMemoryContext): string {
   ].join("\n");
 }
 
-function repairInstruction(repair: NarrativeBundleRepair): string {
+function repairInstruction(repair: NarrativeBundleRepair, requiresWorldDelta: boolean): string {
   const duplicateEntries = repair.detail?.startsWith("duplicate_name:")
     ? repair.detail.slice("duplicate_name:".length).split("|")
       .map((entry) => entry.match(/^(npc|location|item|enemy|quest):(.+)$/u))
@@ -134,7 +134,7 @@ function repairInstruction(repair: NarrativeBundleRepair): string {
   const rejectionSpecificInstruction = repair.rejectionCode === "invented_beat_id"
     ? "- currentScene.segments 的 beatId 只能逐字复制 current_resolution 列出的节拍 ID；本轮不要使用 dialogue、narration、response 等自造 beatId。若列表只有 atmosphere，就省略 segments 或只使用 beatId=atmosphere。"
     : repair.reason === "invalid_schema" && repair.detail?.startsWith("world_delta_invalid")
-      ? "- worldDelta 结构校验失败；按错误路径检查该对象，不能假定错误来自 newFact。worldDelta.beatSummary 必须是非空字符串；结局 endingPair 必须与 beatSummary 同置于 worldDelta 内，不能放到顶层。"
+      ? !requiresWorldDelta ? "- 本回合 worldDelta 必须为 null，不生成 beatSummary 或任何世界增量字段；不要修补该对象，直接返回 null。" : "- worldDelta 结构校验失败；按错误路径检查该对象，不能假定错误来自 newFact。worldDelta.beatSummary 必须是非空字符串；结局 endingPair 必须与 beatSummary 同置于 worldDelta 内，不能放到顶层。"
       : "";
   return `${renderAiRepairFeedback(repair)}
 本轮只需修正被拒绝的那一项，其余中文叙事文本可以沿用你自己的写法。硬性要求：
@@ -385,7 +385,9 @@ export function buildDecisionNarrativeContextBlocks(
       && event.payload.itemId === delivery.itemId && event.payload.npcId === delivery.recipientNpcId).map(event => String(event.eventId)),
     publicExistingFacts: visibleFacts.filter(fact => declarableExistingFactIds.includes(String(fact.factId))).map(fact => ({ factId: String(fact.factId), text: fact.text })),
   };
-  const worldDeltaContract = `- 若要求 worldDelta，严格使用 {\"beatSummary\":\"...\",\"newLocation\":{\"name\":\"...\",\"description\":\"...\",\"scale\":\"scene\",\"placement\":\"world\",\"connectFromLocationId\":\"现有地点 ID\"},\"newNpc\":{\"name\":\"...\",\"role\":\"...\",\"description\":\"...\",\"locationRef\":{\"kind\":\"new_location\"},\"anchors\":{\"selfConcept\":\"...\",\"values\":[\"...\"],\"speechStyle\":\"...\",\"capabilityBoundaries\":[\"...\"],\"taboos\":[]},\"goals\":[{\"horizon\":\"short\",\"description\":\"...\",\"priority\":3,\"reason\":\"...\"}],\"relationshipSeeds\":[{\"targetNpcId\":\"既有 active NPC ID\",\"stance\":\"ally|protective_of|indebted_to|rival|wary\",\"reason\":\"...\"}]},\"newItem\":null或{\"name\":\"...\",\"description\":\"...\",\"locationRef\":\"new_location\"},\"newEnemy\":null或{\"name\":\"...\",\"tier\":\"normal\",\"locationRef\":\"new_location\"},\"newFact\":null或{\"text\":\"...\",\"visibility\":\"public或private\",\"investigationLabel\":\"可选\",\"investigationApproaches\":[{\"approachId\":\"...\",\"label\":\"...\",\"hint\":\"可选\",\"evidenceQuality\":\"clean或noisy\",\"tensionDelta\":-5到20}]},\"nextMainQuest\":{\"name\":\"...\",\"description\":\"...\",\"objectiveText\":\"...\"},\"endingPair\":null或[{\"themeKey\":\"trust\",\"name\":\"...\",\"description\":\"...\"},{\"themeKey\":\"doubt\",\"name\":\"...\",\"description\":\"...\"}]}；anchors 五个字段都必需，goals 至少 1 条且最多 4 条；relationshipSeeds 最多 4 条，每项只能包含 targetNpcId、stance、reason，targetNpcId 只能引用实体规则闭包中的既有 active NPC，stance 只能使用上述定性枚举，reason 必须非空且≤200字；不得提交 affinity、stage、evidence 或 actionId；goalId/status 由服务端生成，禁止输出。未要求字段必须为 null。`;
+  const worldDeltaContract = structuralEvolutionNeed.kind === "none"
+    ? "- 本回合 worldDelta 必须为 null；不生成 beatSummary，也不输出世界增量对象。"
+    : `- 若要求 worldDelta，严格使用 {\"beatSummary\":\"...\",\"newLocation\":{\"name\":\"...\",\"description\":\"...\",\"scale\":\"scene\",\"placement\":\"world\",\"connectFromLocationId\":\"现有地点 ID\"},\"newNpc\":{\"name\":\"...\",\"role\":\"...\",\"description\":\"...\",\"locationRef\":{\"kind\":\"new_location\"},\"anchors\":{\"selfConcept\":\"...\",\"values\":[\"...\"],\"speechStyle\":\"...\",\"capabilityBoundaries\":[\"...\"],\"taboos\":[]},\"goals\":[{\"horizon\":\"short\",\"description\":\"...\",\"priority\":3,\"reason\":\"...\"}],\"relationshipSeeds\":[{\"targetNpcId\":\"既有 active NPC ID\",\"stance\":\"ally|protective_of|indebted_to|rival|wary\",\"reason\":\"...\"}]},\"newItem\":null或{\"name\":\"...\",\"description\":\"...\",\"locationRef\":\"new_location\"},\"newEnemy\":null或{\"name\":\"...\",\"tier\":\"normal\",\"locationRef\":\"new_location\"},\"newFact\":null或{\"text\":\"...\",\"visibility\":\"public或private\",\"investigationLabel\":\"可选\",\"investigationApproaches\":[{\"approachId\":\"...\",\"label\":\"...\",\"hint\":\"可选\",\"evidenceQuality\":\"clean或noisy\",\"tensionDelta\":-5到20}]},\"nextMainQuest\":{\"name\":\"...\",\"description\":\"...\",\"objectiveText\":\"...\"},\"endingPair\":null或[{\"themeKey\":\"trust\",\"name\":\"...\",\"description\":\"...\"},{\"themeKey\":\"doubt\",\"name\":\"...\",\"description\":\"...\"}]}；anchors 五个字段都必需，goals 至少 1 条且最多 4 条；relationshipSeeds 最多 4 条，每项只能包含 targetNpcId、stance、reason，targetNpcId 只能引用实体规则闭包中的既有 active NPC，stance 只能使用上述定性枚举，reason 必须非空且≤200字；不得提交 affinity、stage、evidence 或 actionId；goalId/status 由服务端生成，禁止输出。未要求字段必须为 null。`;
   const blocks: NarrativeContextBlock[] = [
     block({
       id: "bundle:progress-contract", slot: "system_rules", title: "推进与有限收束",
@@ -492,10 +494,10 @@ export function buildDecisionNarrativeContextBlocks(
       authority: "rule", retention: "mandatory", priority: 925,
       source: { kind: "narrative_bundle_descriptors", refs: [String(job.actionId)] },
       content: `以下范围对作者、修订和审阅共同生效：${JSON.stringify({
-        current: { fields: ["currentScene", "worldDelta.beatSummary"], authorSlotKey: "current", basisKey: `action:${job.actionId}`, action: job.actionSummary, playerLocationId: String(worldState.currentLocationId) },
+        current: { fields: structuralEvolutionNeed.kind === "none" ? ["currentScene"] : ["currentScene", "worldDelta.beatSummary"], authorSlotKey: "current", basisKey: `action:${job.actionId}`, action: job.actionSummary, playerLocationId: String(worldState.currentLocationId) },
         conditionalContinuations: projection.slots.filter(slot => slot.slotKey !== "current").map(slot => ({ basisKey: `step:${slot.slotKey}`, slotKey: slot.slotKey, resolution: slot.resolution })),
         conditionalEndings: projection.endingResolutions.map(resolution => resolution.basisKey),
-      })}。\nworldDelta.beatSummary 只概括当前已提交行动及 current 场景中的回应，不概括整个生成包或下一幕剧情。当前幕编号变化、创建新地点/NPC/任务或预写续接正文，都不表示玩家已经移动、会面、交付或完成新任务。新地点和人物可作为下一步去向介绍，不能把那里的遭遇写进当前经历。\n续接场景仅在各自成功 trigger 之后展示，其 settledOutcome 只在该槽及后续已触发的槽成立；条件结局只在对应立场行动后成立，两个结果不同时发生。不能将这些条件结果回填到 currentScene 或 beatSummary。修订任一未来场景后仍按本范围核对摘要，不能沿用上一版越界摘要。`,
+      })}。\n仅当本回合要求 worldDelta 时，beatSummary 才存在，并且只概括当前已提交行动及 current 场景中的回应，不概括整个生成包或下一幕剧情。当前幕编号变化、创建新地点/NPC/任务或预写续接正文，都不表示玩家已经移动、会面、交付或完成新任务。新地点和人物可作为下一步去向介绍，不能把那里的遭遇写进当前经历。\n续接场景仅在各自成功 trigger 之后展示，其 settledOutcome 只在该槽及后续已触发的槽成立；条件结局只在对应立场行动后成立，两个结果不同时发生。不能将这些条件结果回填到 currentScene 或 beatSummary。修订任一未来场景后仍按本范围核对摘要，不能沿用上一版越界摘要。`,
     }),
     ...(projection.endingResolutions.length === 0 ? [] : [block({
       id: "bundle:ending-resolution", slot: "legal_actions", title: "条件结局行动与后果依据",
@@ -609,7 +611,7 @@ export function buildDecisionNarrativeContextBlocks(
       id: "bundle:repair", slot: "current_resolution", title: "上一轮拒绝与内容修复",
       authority: "state", retention: "mandatory", priority: 950,
       source: { kind: "narrative_bundle_repair", refs: [String(job.jobId)] },
-      content: repairInstruction(contentRepair),
+      content: repairInstruction(contentRepair, structuralEvolutionNeed.kind !== "none"),
     }));
   }
   for (const entity of entityContext.optional) {

@@ -344,9 +344,7 @@ describe("createNarrativeBundleSource", () => {
     expect(systemPrompt).toContain("tension=55");
     expect(systemPrompt).toContain("nextPacingNeed=complicate");
     expect(systemPrompt).toContain("fact_discovered");
-    expect(systemPrompt).toContain("anchors 五个字段都必需");
-    expect(systemPrompt).toContain("horizon");
-    expect(systemPrompt).toContain("capabilityBoundaries");
+    expect(systemPrompt).toContain("本回合 worldDelta 必须为 null");
     expect(systemPrompt).not.toContain('goals":["..."]');
     for (let index = 1; index <= 5; index += 1) {
       expect(systemPrompt).toContain(`evt:interact:${index}`);
@@ -523,12 +521,14 @@ describe("createNarrativeBundleSource", () => {
     await source.generate({
       kind: "decision",
       worldState: makeWorldState(),
-      storyState: makeStoryState(),
+      storyState: { ...makeStoryState(), evolution: { ...makeStoryState().evolution, status: "needs_next_act" } },
       job: makeJob(),
     });
 
     const systemPrompt = (complete.mock.calls[0]![1] as readonly AiMessage[])[0]!.content as string;
     expect(systemPrompt).toContain('"relationshipSeeds"');
+    expect(systemPrompt).toContain("horizon");
+    expect(systemPrompt).toContain("capabilityBoundaries");
     expect(systemPrompt).toContain('"targetNpcId"');
     expect(systemPrompt).toContain("只能引用实体规则闭包中的既有 active NPC");
     expect(systemPrompt).toContain("不得提交 affinity、stage、evidence 或 actionId");
@@ -886,7 +886,7 @@ describe("createNarrativeBundleSource", () => {
   it("does not misdiagnose a generic world delta rejection as an optional newFact failure", async () => {
     const complete = vi.fn().mockResolvedValue({ ok: true, content: JSON.stringify(validBundleResponse) });
     const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete), allowLegacyDecisionDto: true });
-    await source.generate({ kind: "decision", worldState: makeWorldState(), storyState: makeStoryState(), job: makeJob(),
+    await source.generate({ kind: "decision", worldState: makeWorldState(), storyState: { ...makeStoryState(), evolution: { ...makeStoryState().evolution, status: "needs_next_act" } }, job: makeJob(),
       contentRepair: { attempt: 1, reason: "invalid_schema", detail: "world_delta_invalid" } });
     const prompt = (complete.mock.calls[0]![1] as readonly AiMessage[])[0]!.content as string;
     expect(prompt).toContain("不能假定错误来自 newFact");

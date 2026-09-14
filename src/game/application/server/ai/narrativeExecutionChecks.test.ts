@@ -168,6 +168,16 @@ describe("server-bound narrative execution extraction", () => {
     expect(author.context.selected.some(block => block.id === "bundle:ending-resolution")).toBe(false);
     expect(JSON.stringify(context)).toBe(before);
   });
+  it("does not advertise a world delta schema or require a summary during an ordinary dialogue repair", () => {
+    const value = input(false);
+    if (value.context.kind !== "decision") throw new Error("decision expected");
+    const author = compileDecisionNarrativeContext({ ...value.context,
+      contentRepair: { attempt: 1, reason: "invalid_schema", detail: "world_delta_invalid" } });
+    expect(author.prompt).toContain("本回合 worldDelta 必须为 null");
+    expect(author.prompt).not.toContain("worldDelta.beatSummary 必须是非空字符串");
+    expect(author.context.selected.find(block => block.id === "bundle:output-contract")!.content).not.toContain('"newLocation":{');
+    expect(author.context.selected.find(block => block.id === "bundle:temporal-scope")!.content).toContain('"fields":["currentScene"]');
+  });
   it.each([false, true])("admits only the descriptor's unmet arrival NPC after visit→discover→talk (delivery=%s)", delivery => {
     const original = input(false);
     if (original.context.kind !== "decision" || "opening" in original.proposal) throw new Error("decision expected");
