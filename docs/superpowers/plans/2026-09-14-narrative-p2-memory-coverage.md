@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- 本页是待实施计划；当前 `narrative-p2/v1` 驱动尚未支持本页的分阶段协议、议题日程和 UI 接续。先完成 [剧情修复](2026-09-14-narrative-p2-story-repair.md) 与本页驱动任务，再冻结新批次。
+- 首要产物是一篇真实生成的三幕小故事及全文质量结论。现有 A 驱动已通过生产链离线验证，收尾当前修改后即可冻结并执行 A；Task 2 的两臂/UI 接续和 Task 3 的紧凑记忆覆盖不再作为 A 的前置条件，仅在 A 质量通过后按收益决定继续。
 - 保持 EntityStore3 / World7 / Story12、整场作者、现有单次 reviewer 和生产失败策略。不动 main、staged、`.foundation` 或阶段指针。
 - 原 p2-01 产物与协议保持。新行为登记 `narrative-p2/v2`，拒绝用新代码重解释 v1 磁带；需要检查旧证据时使用原冻结实现。
 - 摘要阈值 50、每批 10、每 job 最多两批/8 次摘要 HTTP；三版候选与24次叙事 HTTP保持。不能改变有效 History 定义、拆段计数、注入 History、重复问题或强制长回答凑量。
@@ -38,9 +38,9 @@ A 未通过时保留短篇失败与中篇“计划但未执行”，整批不通
 
 **Interfaces:** v2 登记输入、代码/配置 hash、阶段顺序、议题表与选择规则、总/分支预算、固定 recall 文本、oracle 选择规则、UI 接续计划。`register` 仍零网络；阶段结果与质量审阅产物需绑定同一协议、磁带和代码 hash。B 读取显式 A 审阅通过证据，不凭一个可随意传入的 `passed:true` 参数执行。运行身份和接续状态只写入现有 v2 journey 输出目录中的 route manifest，不引入通用运行子系统：manifest 至少含协议/代码/输入/来源 hash、不可复用的 routeAttemptId、阶段与生命周期状态、初始化时间和绝对 deadline、已用 action/logical/transport/summary HTTP/批更新计数、tape cursor、revision、pending actionId、审计流和产物 hash。每次动作、HTTP 预留、摘要批更新与状态切换先原子持久化再执行；resume 校验 hash/revision/cursor 和未消费 actionId 后以 CAS 前进，任何缺项、回退、重复初始化、过期 deadline 或已消费 actionId 都 fail closed。
 
-- [ ] 分开 A/B 执行入口与结果文件，防止阶段暂停被当作可覆盖既有输出；同一阶段只允许一次初始化。实现 route manifest 的 `registered → running → awaiting_review|awaiting_ui → running → sealed_pass|sealed_fail` 单向转换；A review 等待不启动 B，B 的绝对 deadline 一旦初始化即包含 UI 操作和人工等待。机器门禁读取运行/回放结果，人工质量记录附候选/History引用与分维理由。
-- [ ] A 审阅产物采用固定 schema：`routeAttemptId`、protocol/code/input hash、terminal state/tape/完整 History hash、审阅者与时间、五个已命名维度分数、每维候选/History ID 引文、确认硬错误列表和 verdict。B 入口重新计算机器结果、严格回放及上述 hash，只接受均分≥4、每维≥3、硬错误为空且 verdict=pass 的未篡改产物；失败审阅封存 A 并保持 B `not_executed`，不能改写审阅或重跑 A 解锁。
-- [ ] 选择器只读当前 act、合法焦点、公开状态、已提交议题清单；每幕按下表顺序各问一次，在第一次正式推进回应前完成。焦点必须来自当前 view 的 `freeInputEnabled`，不得直接指定未来 NPC ID、隐藏名字或私密信息。
+- [x] 分开 A/B 执行入口与结果文件，防止阶段暂停被当作可覆盖既有输出；同一阶段只允许一次初始化。实现 route manifest 的 `registered → running → awaiting_review|awaiting_ui → running → sealed_pass|sealed_fail` 单向转换；A review 等待不启动 B，B 的绝对 deadline 一旦初始化即包含 UI 操作和人工等待。机器门禁读取运行/回放结果，人工质量记录附候选/History引用与分维理由。
+- [x] A 审阅产物采用固定 schema：`routeAttemptId`、protocol/code/input hash、terminal state/tape/完整 History hash、审阅者与时间、五个已命名维度分数、每维候选/History ID 引文、确认硬错误列表和 verdict。B 入口重新计算机器结果、严格回放及上述 hash，只接受均分≥4、每维≥3、硬错误为空且 verdict=pass 的未篡改产物；失败审阅封存 A 并保持 B `not_executed`，不能改写审阅或重跑 A 解锁。
+- [x] 选择器只读当前 act、合法焦点、公开状态、已提交议题清单；每幕按下表顺序各问一次，在第一次正式推进回应前完成。焦点必须来自当前 view 的 `freeInputEnabled`，不得直接指定未来 NPC ID、隐藏名字或私密信息。
 
 | 幕/议题ID | 固定输入文本 |
 | --- | --- |
@@ -62,10 +62,10 @@ A 未通过时保留短篇失败与中篇“计划但未执行”，整批不通
 
 议题不预置冲突答案，不暗示一定有反派、秘密或新事件；NPC 必须可以说明无此风险或不知道。不同意见的实际内容由故事产生，验收人员检查这些回答是否具有新增信息，不能仅按完成15个请求认定玩法改善。
 
-- [ ] 每次正式 `performTurn` 成功后登记 `(act, topicId, actionId, npcId)`，reload 从已提交步骤恢复；失败不把议题标为已完成，也不生成新 actionId 隐形重试。每幕至多按表中顺序问三次、全程至多15个不同议题，问完再使用原正式选项策略；不因 History 少而追加第4次问题或替换已跳过的问题。
-- [ ] 每个回答由登记路线的人工质量审阅记录 story-grounded 引文和判断，不增加 provider/judge 调用，也不使用关键词或长度规则。若回答与已问内容实质重复、没有故事依据或该故事确实无可回答内容，则停止该幕剩余议题并记录适用性/质量失败；剩余议题不替换、不挪到别幕，路线继续原正式选择至有限终局并保留失败分母。
-- [ ] 议题前后验证 currentAct、当前任务与 dialogueSession：追问可以写真实交互，但不会独自完成 talk 目标；两个正式回应仍可换幕。缺少合法焦点或必需议题窗口直接报告路线适用性/覆盖失败，禁止构造 token、回滚剧情或修改计数。
-- [ ] 选择器不向模型提交完成位和计数提示，不要求指定字数、段数或引用早话；步骤证据单独记录有效 History 增量、摘要水位、候选次数和所有用途 HTTP。
+- [x] 每次正式 `performTurn` 成功后登记 `(act, topicId, actionId, npcId)`，reload 从已提交步骤恢复；失败不把议题标为已完成，也不生成新 actionId 隐形重试。每幕至多按表中顺序问三次、全程至多15个不同议题，问完再使用原正式选项策略；不因 History 少而追加第4次问题或替换已跳过的问题。
+- [x] 每个回答由登记路线的人工质量审阅记录 story-grounded 引文和判断，不增加 provider/judge 调用，也不使用关键词或长度规则。若回答与已问内容实质重复、没有故事依据或该故事确实无可回答内容，则停止该幕剩余议题并记录适用性/质量失败；剩余议题不替换、不挪到别幕，路线继续原正式选择至有限终局并保留失败分母。
+- [x] 议题前后验证 currentAct、当前任务与 dialogueSession：追问可以写真实交互，但不会独自完成 talk 目标；两个正式回应仍可换幕。缺少合法焦点或必需议题窗口直接报告路线适用性/覆盖失败，禁止构造 token、回滚剧情或修改计数。
+- [x] 选择器不向模型提交完成位和计数提示，不要求指定字数、段数或引用早话；步骤证据单独记录有效 History 增量、摘要水位、候选次数和所有用途 HTTP。
 
 ## Task 2：有界追问、同源诊断和 UI 接续
 
@@ -94,7 +94,7 @@ A 未通过时保留短篇失败与中篇“计划但未执行”，整批不通
 
 **Files:** 新批次的协议/磁带/报告，原 P2 Plan 的验收 gate。
 
-- [ ] 固定同一代码、模型/配置、A/B输入及议题、oracle规则、预算、route manifest schema、绝对 deadline 和 UI 接续口径，先运行A并严格回放、按固定 hash-bound schema 独立阅读全文；不通过则封存，B保持未执行且尚未启动 deadline。
+- [ ] 固定同一代码、模型/配置、A/B输入及议题、oracle规则、预算、route manifest schema、绝对 deadline 和 UI 接续口径，优先运行A并严格回放、按固定 hash-bound schema 独立阅读全文；A 不等待完整中篇、两臂或 UI 接续实现；不通过则封存，B保持未执行且尚未启动 deadline。
 - [ ] A通过后按登记执行B、两臂与UI，不修改配置或追加议题；按完整History核查明确利害、具体分歧、选择回应与有限收束。游戏通关与未解决的社会问题分别记录。
 - [ ] 报告分别给出运行正确性、故事质量、记忆覆盖/准确性、UI完成性：每条质量均分≥4、单维≥3且无确认硬错误；摘要臂保留必需来源、无新增事实/权限错误，不能用省token抵消损害。
 - [ ] 描述哪次早期经历实际帮助理解人物或决定如何交付；仅复述正确原句不能单独证明游戏性提升。未覆盖项与失败留在结果中，不宣称已经优于main或自动合并。
