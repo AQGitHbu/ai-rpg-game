@@ -387,6 +387,11 @@ describe("generatePendingNarrativeBundle", () => {
   it("把 story_exit 的 B 结果提交为等待生成后的退出结局", async () => {
     const job = {
       ...createPendingJob(),
+      jobId: asNarrativeJobId("job_exit_turn_5"),
+      turnId: asTurnId("turn_exit_5"),
+      actionId: "action_exit_5",
+      expectedRevision: 8,
+      turnNumber: 5,
       actionSummary: { kind: "abandon_quest" as const, questId: asQuestId("quest_exit") },
       focusNpcId: undefined,
       objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" as const },
@@ -407,8 +412,8 @@ describe("generatePendingNarrativeBundle", () => {
     });
     const { repo, getRecord } = createInMemoryRepo({
       gameId: asGameId("story-exit"), worldState,
-      storyState,
-      revision: 0, createdAt: "2026-01-01T00:00:00.000Z",
+      storyState: { ...storyState, turnNumber: 5 },
+      revision: 8, createdAt: "2026-01-01T00:00:00.000Z",
     });
     const source: NarrativeBundleSource = {
       generate: vi.fn().mockResolvedValue({
@@ -435,6 +440,20 @@ describe("generatePendingNarrativeBundle", () => {
     expect(saved?.worldState.ending).not.toBeNull();
     expect(saved?.worldState.eventLedger.some((event) => event.payload.type === "ending_reached")).toBe(true);
     expect(saved?.storyState.narrative.status).toBe("ready");
+    if (saved?.storyState.narrative.status !== "ready") return;
+    // The approval pipeline builds a scene for revision 9. Exit publication
+    // must instead identify the action that actually ended the story: turn 5.
+    expect(saved.storyState.narrative.currentScene.turn).toBe(5);
+    expect(saved.storyState.history?.entries.filter((entry) => entry.actionId === "action_exit_5").map((entry) => entry.turnNumber)).toEqual([5]);
+    expect(saved.worldState.eventLedger
+      .filter((event) => event.kind === "ending_reached" || event.kind === "narrative_scene_presented")
+      .map((event) => event.turnNumber)).toEqual([5, 5]);
+
+    // The job is gone after the successful CAS, so replay cannot append a
+    // second scene, History entry, or ending event.
+    const replay = await generatePendingNarrativeBundle({ repository: repo, source, now: () => "2026-01-01T00:00:00.000Z" });
+    expect(replay).toEqual({ ok: false, code: "NOT_PENDING" });
+    expect(getRecord()).toBe(saved);
   });
 
   it("forges generated current-scene choices for the revision that will be persisted", async () => {

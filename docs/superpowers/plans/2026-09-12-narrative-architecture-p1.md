@@ -299,3 +299,5 @@ expect(secondAuthorRequest).toContain('newFact2');
 - [x] 最小入口修复与独立审核通过；真实 projector→实际按钮→opaque token 提交及状态抑制回归通过。98 项定向、typecheck、131 项 boundaries、完整 2855 passed/1 skipped、lint 0 errors/50 既有 warning、docs 检查通过。
 - [ ] 冻结并严格恢复公开递送基准，校验同初态/四行动前缀与真实可见退出入口；审核新协议后只执行一条退出 live。
 - [ ] 退出新流严格零网络 replay，核对两路任务、物品、事件和结局差异，阅读全文并独立审核。通过后记录最小 P1 收尾完成及 P2 准入；广泛矩阵、main 对照和 UI 打磨后移，不开展 P2 代码。
+
+**本次退出发布断点的限定修复：** 原可见退出已结算；验证脚本误将规则 `closed` 当失败，零 HTTP 停止后从独立副本续跑原 pending job。两次真实响应生成退出 ending/ready，但退出 currentScene.turn 使用提交 revision 9，与实际 Action/History/ending 的 turn 5 不一致。仅修 `generatePendingNarrativeBundle.ts` 的退出结果发布回合及对应真实审批→提交回归，使其与同一 job 的实际回合一致，保持正文、选择 token、审批与幂等契约。不得扩展终幕架构或提示。原失败严格重放保留；修复后用同一 pending DB 和已录制的两份真实响应做明确标注的离线修复验证，不称新 live 或修改旧磁带使之通过。

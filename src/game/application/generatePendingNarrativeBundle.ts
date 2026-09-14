@@ -601,12 +601,20 @@ export async function generatePendingNarrativeBundle(
           payload: { type: "ending_reached" as const, endingId: exitEnding.id, outcome: "failure" as const },
         },
       ];
+  // Approval binds generated scenes to the revision they will be written at so
+  // ordinary choice tokens remain valid. A story exit instead publishes the
+  // already-approved terminal scene for the action that created this job.
+  // Its displayed turn must therefore match the action, ending event, and
+  // History entries rather than the later generation write-back revision.
+  const publishedCurrentScene = exitEnding === undefined
+    ? approved.currentScene
+    : { ...approved.currentScene, turn: job.turnNumber };
 
   // Build the ready narrative with the approved bundle
   const readyNarrative: NarrativeRuntimeState = {
     status: "ready",
     mode: narrative.mode,
-    currentScene: approved.currentScene,
+    currentScene: publishedCurrentScene,
     choiceRegistry: approved.choiceRegistry,
     narrativeBundle: approved.bundle,
     ...(narrative.dialogueSession === undefined
@@ -638,7 +646,7 @@ export async function generatePendingNarrativeBundle(
   const history = storyState.history ?? { entries: [] };
   const nextHistory = appendHistory(history, narrativeSceneHistoryEntries({
     history,
-    scene: approved.currentScene,
+    scene: publishedCurrentScene,
     actionId: job.actionId,
     jobId: job.jobId,
     revision: record.revision + 1,
