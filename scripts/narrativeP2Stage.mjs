@@ -7,6 +7,7 @@ import { createNarrativeP2SegmentRuntime } from './narrativeP2SegmentRuntime.mjs
 import { hashP2Snapshot, readP2MemoryState } from './narrativeP2Production.mjs';
 import { projectNarrativeP1GameSetup, waitForNarrativeP1Generation, hasCompletedCoreStory } from './narrativeP1Journey.mjs';
 import { selectProductionChoice, currentStoryInteractions } from './narrativeP1Choices.mjs';
+import { freezeP2OpeningOracle, inspectP2RecallCoverage, isP2RecallWindow, p2TextHash } from './narrativeP2Recall.mjs';
 const fail = code => { throw Error(`P2_STAGE_${code}`); };
 const read = path => JSON.parse(readFileSync(path, 'utf8'));
 const write = (path, value) => { const fd = openSync(path, 'wx'); try { writeFileSync(fd, JSON.stringify(value, null, 2)); fsyncSync(fd); } finally { closeSync(fd); } return hashReplayValue(value); };
@@ -107,7 +108,7 @@ export async function createNarrativeP2StageRunner(runtimeEnv, options = {}) {
     const reader = createSqliteGameRepository({ clientFactory: () => createSqliteClient(database) });
     const client = createSqliteClient(database);
     const snapshot = async () => ({ game: await reader.getCurrentGame(), memory: await readP2MemoryState(client) });
-    let runtime, entry, timer, signal;
+    let runtime, entry, timer, signal, readersClosed = false;
     let reviewForSegment = null;
     const steps = [], topicFailures = [];
     try {
@@ -165,6 +166,8 @@ export async function createNarrativeP2StageRunner(runtimeEnv, options = {}) {
         runtime.state(`ready-${actionCount}`, latest);
       };
       await ready();
+      const oracle = prefix[0]?.oracle ?? freezeP2OpeningOracle(latest);
+      let recallCoverage = null, recallFocus = null;
       while (true) {
         const record = active(latest);
         if (current.view.ending !== null) {
@@ -189,9 +192,22 @@ export async function createNarrativeP2StageRunner(runtimeEnv, options = {}) {
           topicState = { ...topicState, stoppedActs: [...topicState.stoppedActs, failure.act] };
         }
         const selected = choice.kind === 'topic' ? null : formal;
+        if (stage === 'B' && choice.kind !== 'topic') {
+          const tapes = Array.from({ length: segment + 1 }, (_, index) => read(resolve(mode === 'live' ? directory : sourceDirectory, `${stage}.segment-${index}.json`)).tape);
+          recallCoverage = inspectP2RecallCoverage({ snapshot: latest, oracle, tapes, publications: manifest.read().publications });
+          if (isP2RecallWindow({ snapshot: latest, oracle, coverage: recallCoverage, topicState, focus, actionCount,
+            budget: route.budget, transportCount: mode === 'live' ? manifest.read().counters.transport : tapes.reduce((sum, tape) => sum + tape.calls.length, 0),
+            deadline: mode === 'live' ? manifest.read().deadline : Number.MAX_SAFE_INTEGER, now: Date.now() })) {
+            recallFocus = focus; pauseReason = 'recall_ui'; break;
+          }
+          if (selected && map.get(selected.choiceToken)?.type === 'give_item'
+            && !failures.some(f => f.code === 'P2_MEMORY_COVERAGE_FAILED')) {
+            const failure = { act: record.storyState.currentAct, code: 'P2_MEMORY_COVERAGE_FAILED' };
+            failures.push(failure); topicFailures.push(failure);
+          }
+        }
         if (choice.kind !== 'topic' && !selected) fail('NO_LEGAL_POLICY_ACTION');
         const interaction = choice.kind === 'topic' ? { kind: 'free_text', targetNpcId: choice.npcId, text: choice.topic.text } : { kind: 'fixed_choice', choiceToken: selected.choiceToken };
-        if (stage === 'B' && selected && map.get(selected.choiceToken)?.type === 'give_item') { pauseReason = 'recall_integration'; break; }
         if (actionCount >= route.budget.actions) fail('ACTION_BUDGET_EXHAUSTED');
         if (mode === 'live') change({ type: 'checkpoint', gameRevision: record.revision, sourceHash: hashP2Snapshot(latest), artifacts: { [`ready-${actionCount}`]: hashP2Snapshot(latest) } });
         const actionId = mode === 'live' ? change({ type: 'reserve_action', interaction }).pendingAction.actionId : expected.steps[steps.length]?.command.actionId;
@@ -246,8 +262,8 @@ export async function createNarrativeP2StageRunner(runtimeEnv, options = {}) {
         callId: c.request.callId, jobId: c.request.context.jobId, successfulTransport: c.output.ok, outputHash: hashReplayValue(c.output),
       }));
       const qualityFailures = [...failures, ...prefix.flatMap(e => e.review && e.review.verdict !== 'grounded' ? [{ act: Number(e.review.topicId.split('-')[0]), code: e.review.verdict }] : []), ...(reviewForSegment && reviewForSegment.verdict !== 'grounded' ? [{ act: Number(reviewForSegment.topicId.split('-')[0]), code: reviewForSegment.verdict }] : [])];
-      const stageEvidence = { stage, segment, qualityFailures, candidateIndex, oracle: historyOf(finalSnapshot).find(h => h.kind === 'npc_line' && h.audienceIds.includes('player_0')), review: reviewForSegment, steps, topicFailures, topicState, pauseReason, completed,
-        coveragePassed: stage === 'A' && completed, memoryIntegration: stage === 'B' ? 'recall_ui_not_implemented' : 'not_required', terminal: finalSnapshot, history: historyOf(finalSnapshot) };
+      const stageEvidence = { stage, segment, qualityFailures, candidateIndex, oracle, recallCoverage, review: reviewForSegment, steps, topicFailures, topicState, pauseReason, completed,
+        coveragePassed: stage === 'A' && completed, memoryIntegration: stage === 'B' ? 'ui_pending' : 'not_required', terminal: finalSnapshot, history: historyOf(finalSnapshot) };
       if (mode === 'replay') {
         if (hashP2Snapshot(stageEvidence) !== hashP2Snapshot(expected)) fail('REPLAY_EVIDENCE_MISMATCH');
         const replay = runtime.finish();
@@ -256,11 +272,25 @@ export async function createNarrativeP2StageRunner(runtimeEnv, options = {}) {
       const evidenceHash = write(resolve(directory, `${stage}.evidence-${segment}.json`), stageEvidence);
       change({ type: 'checkpoint', gameRevision: active(finalSnapshot).revision, sourceHash: hashP2Snapshot(finalSnapshot), artifacts: { [`stage-evidence-${segment}`]: evidenceHash } });
       const tape = runtime.finish(p2ManifestGuard(manifest.read()));
-      change({ type: 'pause', status: 'awaiting_review', reason: pauseReason, artifacts: { [`stage-result-${segment}`]: evidenceHash } });
-      return { ...stageEvidence, status: 'awaiting_review', strictReplayPassed: false, identity: { routeAttemptId: head.routeAttemptId, ...binding, evidenceHash, tapeHash: tape.hash }, counters: manifest.read().counters };
+      let uiCheckpoint = null;
+      const status = pauseReason === 'recall_ui' ? 'awaiting_ui' : 'awaiting_review';
+      if (status === 'awaiting_ui') {
+        await reader.close(); client.close(); readersClosed = true;
+        const reserved = change({ type: 'reserve_action', interaction: { kind: 'free_text', targetNpcId: recallFocus.npcId, text: protocol.recall } });
+        uiCheckpoint = { schema: 'narrative-p2-ui-checkpoint/v2', protocolHash: protocol.protocolHash, binding,
+          routeAttemptId: reserved.routeAttemptId, database, databaseHash: bytesHash(database), sourceHash: reserved.sourceHash,
+          revision: reserved.gameRevision, tapeCursor: reserved.tapeCursor, tapeHash: tape.hash, segment,
+          initializedAt: reserved.initializedAt, deadline: reserved.deadline, counters: reserved.counters,
+          pendingAction: reserved.pendingAction, recallTextHash: p2TextHash(protocol.recall), oracle,
+          coverage: recallCoverage, topicState, remainingTopics: protocol.topics.filter(t => !topicState.committed.some(c => c.topicId === t.topicId) && !topicState.stoppedActs.includes(t.act)),
+          evidenceHash, uiStatus: 'not_executed' };
+        const checkpointHash = write(resolve(directory, 'B.ui-checkpoint.json'), uiCheckpoint);
+        change({ type: 'pause', status, reason: pauseReason, artifacts: { [`stage-result-${segment}`]: evidenceHash, 'ui-checkpoint': checkpointHash } });
+      } else change({ type: 'pause', status, reason: pauseReason, artifacts: { [`stage-result-${segment}`]: evidenceHash } });
+      return { ...stageEvidence, status, uiCheckpoint, strictReplayPassed: false, identity: { routeAttemptId: head.routeAttemptId, ...binding, evidenceHash, tapeHash: tape.hash }, counters: manifest.read().counters };
     } catch (error) {
       if (mode === 'live' && manifest.read().status === 'running') change({ type: 'seal_fail', reason: error.message });
       throw error;
-    } finally { clearTimeout(timer); if (entry) await entry.close(); await reader.close(); client.close(); }
+    } finally { clearTimeout(timer); if (entry) await entry.close(); if (!readersClosed) { await reader.close(); client.close(); } }
   };
 }

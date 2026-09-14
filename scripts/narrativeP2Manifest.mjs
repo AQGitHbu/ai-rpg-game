@@ -20,7 +20,13 @@ function configuration(input) {
   if (!["A", "B"].includes(input.stage) || input.binding?.protocolVersion !== "narrative-p2/v2"
     || !nonempty(input.binding.codeFingerprint) || ["protocolHash", "inputHash", "sourceHash"].some(key => !digest(input.binding[key]))
     || !["actions", "http", "wallClockMs"].every(key => integer(input.budget?.[key]) && input.budget[key] > 0)) fail("MANIFEST_CONFIGURATION");
-  return { stage: input.stage, routeId: input.stage === "A" ? "S-short" : "M-medium", binding: clone(input.binding), budget: clone(input.budget) };
+  if (input.diagnostic && (input.stage !== 'B' || input.budget.actions !== 1 || input.budget.http !== 50 || input.budget.wallClockMs !== 2700000
+    || !digest(input.diagnostic.parentCheckpointHash) || !digest(input.diagnostic.pairHash)
+    || !['enabled', 'disabled'].includes(input.diagnostic.summaryMode)
+    || !/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(input.diagnostic.actionId)
+    || input.binding.sourceHash !== input.diagnostic.parentCheckpointHash)) fail('DIAGNOSTIC_CONFIGURATION');
+  return { stage: input.stage, routeId: input.stage === "A" ? "S-short" : "M-medium", binding: clone(input.binding), budget: clone(input.budget),
+    ...(input.diagnostic ? { diagnostic: clone(input.diagnostic) } : {}) };
 }
 function paths(input) {
   const base = resolve(input.directory, `${input.stage}.route-manifest`);
@@ -60,7 +66,7 @@ function transition(state, operation, now, owner) {
       if (operation.interaction.kind === "fixed_choice" ? !nonempty(operation.interaction.choiceToken)
         : !nonempty(operation.interaction.targetNpcId) || !nonempty(operation.interaction.text)) fail("ACTION_INVALID");
       // Only this function mints action identity. Reloads must use the existing UUID.
-      state.pendingAction = { actionId: randomUUID(), status: "reserved", interaction: clone(operation.interaction), expectedRevision: state.gameRevision, sourceHash: state.sourceHash, reservedAt: now };
+      state.pendingAction = { actionId: state.diagnostic?.actionId ?? randomUUID(), status: "reserved", interaction: clone(operation.interaction), expectedRevision: state.gameRevision, sourceHash: state.sourceHash, reservedAt: now };
       state.counters.actions++;
       break;
     case "begin_action":
@@ -76,6 +82,7 @@ function transition(state, operation, now, owner) {
       if (state.reservations.some(item => item.reservationId === operation.reservationId)) fail("RESERVATION_REUSED");
       if (operation.kind.startsWith("summary_") && (operation.purpose !== "memory_summary" || !nonempty(operation.observerId))) fail("RESERVATION_INVALID");
       const key = canonical([operation.jobId, operation.epoch]);
+      if (state.diagnostic && Object.keys(state.jobs).some(existing => existing !== key)) fail('DIAGNOSTIC_JOB_BUDGET');
       const job = state.jobs[key] ?? { ...emptyCounters(), narrativeTransport: 0 };
       if ((field === "transport" && state.counters.transport >= state.budget.http) || (field === "logical" && state.counters.logical >= state.budget.http)) fail("HTTP_BUDGET_EXHAUSTED");
       if ((field === "summaryHttp" && job.summaryHttp >= 8) || (field === "batchUpdates" && job.batchUpdates >= 2)
@@ -189,7 +196,7 @@ export function openP2RouteManifest(input, options = {}) {
       const { hash, auditHash, state } = JSON.parse(readFileSync(p.manifest, "utf8"));
       const audit = readFileSync(p.audit, "utf8").trimEnd().split("\n").map(line => JSON.parse(line));
       if (hash !== hashReplayValue(state) || state.formatVersion !== 1 || state.routeAttemptId !== marker.routeAttemptId
-        || canonical(config) !== canonical(marker.config) || ["stage", "routeId", "binding", "budget"].some(key => canonical(state[key]) !== canonical(config[key]))
+        || canonical(config) !== canonical(marker.config) || ["stage", "routeId", "binding", "budget", "diagnostic"].some(key => canonical(state[key]) !== canonical(config[key]))
         || !/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(state.routeAttemptId)
         || !["registered", "running", "awaiting_review", "awaiting_ui", "sealed_pass", "sealed_fail"].includes(state.status)
         || !["manifestRevision", "gameRevision", "tapeCursor", "initializedAt", "lastMutationAt", "deadline"].every(key => integer(state[key]))

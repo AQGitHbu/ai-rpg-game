@@ -39,6 +39,16 @@ dimensions 只允许 `localContinuity`、`motivation`、`causalityAndSuspense`�
 
 人工审阅不增加模型 judge 调用。审阅文件排他创建并绑定 manifest，失败或中断不能改写解锁 B；终局状态和产物在审阅及 B 准入时重新读取核验。操作入口见 [AI 环境](AI环境.md#运行与测试入口)。
 
+## P2 召回诊断审阅
+
+`scripts/narrativeP2Recall.mjs` 在开局 ready 固定第一条玩家可见 NPC History，保存全文、hash、speaker/audience、turn 与开场幕。B 在本幕登记议题完成后的第一个合法窗口检查两个不同 player preparation job 的成功发布事件、当前同批来源指纹与 oracle 水位。驱动关闭磁带、保存数据库及来源 hash、累计预算、剩余议题和唯一保留 UUID 后进入 `awaiting_ui`，不提交主线召回。最后交付前窗口仍不足时保留 `P2_MEMORY_COVERAGE_FAILED`，继续有限正式路线采集终局质量；终局后的摘要不改变此失败。
+
+`scripts/narrativeP2Diagnostic.mjs` 的 `inspectP2UiCheckpoint` 独立核验同路径 SQLite、manifest、闭合磁带、未消费 UUID、摘要证明及原始绝对 deadline。`runP2DiagnosticArms` 仅从该停点复制 enabled/disabled 两臂，各使用独立 manifest、1 job/50 HTTP/45 分钟。配对 UUID 和按 key 固定的 domain identity/time 相同，routeAttemptId、审计 callId、实际执行时间独立记录；失败仍占用该臂，不补跑，也不计完整路线。主线等待时间持续计入 B 原 deadline。
+
+`inspectP2DiagnosticArm` 返回来源/请求/实际提交回答和审阅 identity。固定 `narrative-p2-recall-review/v2` 顶层字段为 `schema`、`identity`、`reviewer`、`reviewedAt`、`oracleAssessment`、`motivation`、`conditions`、`permissionErrors`、`claims`。oracleAssessment 为 evaluable/sample_limitation，不允许改换 oracle。每条 claim 含 `historyId`、逐字 `quote`、`candidateCallId`、实际请求内的 `evidenceIds`、`reason`；motivation/conditions 各含 faithful/damaged/not_evaluable 的 `verdict`、`reason`、`claimHistoryIds`；permissionErrors 每项含 `reason`、`historyId`。`reviewP2DiagnosticArm` 排他保存并封存审阅，enabled 额外要求覆盖后来源进入作者请求且人工判定保真。prepared 来源种类与实际请求出现分别记录，避免把准备后被裁剪的来源算作作者可见。原话命中与长度仅是测量，不能推断内容质量；未省略 oracle 的概览不能证明“省略后仍能召回”。
+
+真实 UI adapter、浏览器提交/刷新/剩余议题与终局接续、B 最终质量准入仍未实现；诊断通过不能解锁 B 整条路线通过。
+
 ## 代码与测试入口
 
 - 契约：`src/game/application/server/ai/textAuditTypes.ts`

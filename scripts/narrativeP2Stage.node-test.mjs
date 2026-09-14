@@ -9,6 +9,7 @@ import { inspectP2Quality, validateP2TerminalReview, reviewP2Stage, admitP2Stage
 import { runNarrativeP2Journey } from './narrativeP2Journey.mjs';
 import { createP2RouteManifest, p2ManifestGuard } from './narrativeP2Manifest.mjs';
 import { hashReplayValue } from './narrativeP1Replay.mjs';
+import { inspectP2UiCheckpoint, runP2DiagnosticArms, inspectP2DiagnosticArm, reviewP2DiagnosticArm } from './narrativeP2Diagnostic.mjs';
 installTsHooks();
 const { createNarrativeP2Protocol } = await import('../src/game/application/testing/narrativeP2Journey.ts');
 const { buildOfflineP2Opening, buildOfflineP2Draft } = await import('../src/game/application/testing/narrativeP2Journey.testutil.ts');
@@ -143,9 +144,10 @@ test('actual B pauses each topic and resumes bounded policy with real citations'
     result = await run({ protocol, stage: 'B', directory, resume: true, review: reviewFor(result, i === 1 ? 'repeated' : 'grounded') });
     results.push(result);
   }
-  assert.equal(result.completed, false); assert.equal(result.pauseReason, 'recall_integration');
+  assert.equal(result.completed, false); assert.equal(result.pauseReason, 'recall_ui');
   const topics = results.flatMap(r => r.steps.filter(s => s.topic).map(s => s.topic.topicId));
-  assert.deepEqual(topics, ['1-reason', '1-cost', ...protocol.topics.filter(t => t.act > 1).map(t => t.topicId)]);
+  assert.deepEqual(topics, ['1-reason', '1-cost', ...protocol.topics.filter(t => t.act > 1 && t.act <= 3).map(t => t.topicId)]);
+  assert.equal(result.terminal.game.record.storyState.currentAct, 3);
   assert.ok(result.topicState.stoppedActs.includes(1));
   assert.ok(result.qualityFailures.some(f => f.act === 1 && f.code === 'repeated'));
   assert.equal(result.coveragePassed, false);
@@ -157,7 +159,38 @@ test('actual B pauses each topic and resumes bounded policy with real citations'
   }
   assert.ok(results.flatMap(r => r.steps).every(s => s.action?.type !== 'give_item'));
   const manifest = JSON.parse(readFileSync(join(directory, 'B.route-manifest.json'), 'utf8'));
-  assert.equal(manifest.state.status, 'awaiting_review');
+  assert.equal(manifest.state.status, 'awaiting_ui');
+  assert.equal(manifest.state.pendingAction.status, 'reserved');
+  assert.equal(result.recallCoverage.eligible, true);
+  assert.ok(new Set(result.recallCoverage.publications.map(p => p.jobId)).size >= 2);
+  assert.ok(result.recallCoverage.coveredThroughSequence >= result.oracle.history.sequence);
+  await assert.rejects(run({ protocol, stage: 'B', directory, resume: true, review: {} }), /RESUME_NOT_TOPIC/);
+  const inspected = await inspectP2UiCheckpoint(protocol, directory);
+  assert.equal(inspected.checkpoint.pendingAction.actionId, manifest.state.pendingAction.actionId);
+  await assert.rejects(inspectP2UiCheckpoint(protocol, directory, { now: inspected.state.deadline }), /CHECKPOINT/);
+  const arms = await runP2DiagnosticArms(protocol, directory, env, { offlineTransport, pollIntervalMs: 1 });
+  assert.deepEqual(arms.results.map(a => [a.summaryMode, a.status]), [['enabled', 'awaiting_review'], ['disabled', 'awaiting_review']]);
+  assert.equal(arms.completeRoutes, 0); assert.equal(arms.passed, false);
+  const armEvidence = ['enabled', 'disabled'].map(mode => JSON.parse(readFileSync(join(directory, 'diagnostics', mode, 'answer.json'), 'utf8')));
+  assert.deepEqual(armEvidence[0].answer.command, armEvidence[1].answer.command);
+  assert.equal(armEvidence[0].sourceHash, armEvidence[1].sourceHash);
+  assert.equal(armEvidence[0].sourceDatabaseHash, armEvidence[1].sourceDatabaseHash);
+  assert.notEqual(armEvidence[0].routeAttemptId, armEvidence[1].routeAttemptId);
+  assert.notEqual(armEvidence[0].answer.command.actionId, manifest.state.pendingAction.actionId);
+  const armTapes = ['enabled', 'disabled'].map(mode => JSON.parse(readFileSync(join(directory, 'diagnostics', mode, 'B.segment-0.json'), 'utf8')).tape);
+  for (const key of ['identities', 'times']) for (const id of Object.keys(armTapes[0][key]).filter(id => id in armTapes[1][key])) assert.equal(armTapes[0][key][id], armTapes[1][key][id]);
+  for (const mode of ['enabled', 'disabled']) {
+    const inspection = inspectP2DiagnosticArm(directory, mode), answer = inspection.evidence.answer.answers[0];
+    const source = inspection.evidence.answer.sources.find(s => s.callId === answer.candidateCallId && s.inAuthorRequest);
+    const judgment = { verdict: 'damaged', reason: 'Fixture statement exercises a failed human judgment; no literary quality inferred.', claimHistoryIds: [answer.history.id] };
+    const review = { schema: 'narrative-p2-recall-review/v2', identity: inspection.identity, reviewer: 'Offline reviewer', reviewedAt: new Date().toISOString(),
+      oracleAssessment: 'evaluable', motivation: judgment, conditions: judgment, permissionErrors: [],
+      claims: [{ historyId: answer.history.id, quote: answer.history.text, candidateCallId: answer.candidateCallId, evidenceIds: [source.id], reason: 'Fixture citation authority only.' }] };
+    assert.equal(reviewP2DiagnosticArm(directory, mode, review).passed, mode === 'disabled');
+    assert.throws(() => reviewP2DiagnosticArm(directory, mode, review), /ARM_NOT_REVIEWABLE/);
+  }
+  assert.equal(readFileSync(join(directory, 'B.route-manifest.json'), 'utf8'), JSON.stringify(manifest));
+  await assert.rejects(runP2DiagnosticArms(protocol, directory, env, { offlineTransport, pollIntervalMs: 1 }), /EEXIST/);
   const count = sends;
   for (let replaySegment = 0; replaySegment < results.length; replaySegment++) {
     await run({ protocol, stage: 'B', mode: 'replay', directory: join(root, 'replay'), sourceDirectory: directory, replaySegment });

@@ -15,7 +15,7 @@ const project = (value, at = "") => Array.isArray(value) ? value.map((x, i) => p
  * replays an uncertain send. The stage caller independently reads SQLite for checkpoint
  * and resolveAttempt; this runtime does not infer epoch or source from prompt text. */
 export function createNarrativeP2SegmentRuntime({ mode, directory, sourceDirectory = directory, stage, segment,
-  binding, manifest, checkpoint, routeAttemptId, resolveAttempt, auditFiles = () => [] }) {
+  binding, manifest, checkpoint, routeAttemptId, resolveAttempt, diagnosticPair, auditFiles = () => [] }) {
   if (!["live", "replay"].includes(mode) || !["A", "B"].includes(stage) || !Number.isSafeInteger(segment) || segment < 0
     || binding?.protocolVersion !== "narrative-p2/v2" || (mode === "replay" && !routeAttemptId)) fail("CONFIGURATION");
   if (mode === "live") {
@@ -25,6 +25,7 @@ export function createNarrativeP2SegmentRuntime({ mode, directory, sourceDirecto
     // Persist the manifest's value, never retain a mutable caller-owned identity.
     binding = clone(registered.binding);
     routeAttemptId = registered.routeAttemptId;
+    if (!!diagnosticPair !== !!registered.diagnostic || (diagnosticPair && hashReplayValue(diagnosticPair) !== registered.diagnostic.pairHash)) fail('DIAGNOSTIC_BINDING');
   }
   const filename = index => `${stage}.segment-${index}.json`;
   const root = mode === "replay" ? sourceDirectory : directory;
@@ -125,8 +126,12 @@ export function createNarrativeP2SegmentRuntime({ mode, directory, sourceDirecto
   }
   const runtime = {
     options: {
-      identity: key => keyed(tape.identities, usedIdentities, key, randomUUID),
-      domainTime: key => keyed(tape.times, usedTimes, key, () => new Date().toISOString()),
+      identity: key => keyed(tape.identities, usedIdentities, key, () => {
+        if (!diagnosticPair) return randomUUID();
+        const digest = createHash('sha256').update(canonical([diagnosticPair.identitySeed, key])).digest('hex');
+        return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-a${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
+      }),
+      domainTime: key => keyed(tape.times, usedTimes, key, () => diagnosticPair?.domainTime ?? new Date().toISOString()),
       beforeNarrativeRequest: async input => {
         const metadata = await metadataFor(input.auditContext);
         const settle = mode === "live" ? reserve("logical", metadata) : value => event("settlement", { kind: "logical", metadata, value });
