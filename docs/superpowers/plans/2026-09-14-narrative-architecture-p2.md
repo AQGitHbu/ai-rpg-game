@@ -27,7 +27,7 @@
 
 | 里程碑 | Task | 独立交付 | gate |
 | --- | --- | --- | --- |
-| P2-A 旧事真正进入当前互动 | 1–2 | 有权限、有来源、有原话的统一记忆包进入作者与单 NPC 判断 | 长间隔、错误指代、未选项、秘密与旧状态覆盖通过正式请求断言 |
+| P2-A 旧事真正进入当前互动 | 1–2 | 有权限、有来源、有原话的统一记忆包及作者/NPC 消费接口 | 长间隔、错误指代、未选项、秘密与旧状态覆盖通过真实 prompt 构造断言；生产 generator 装配由 Task 5 验证 |
 | P2-B 安全的派生摘要 | 3–5 | 50/10 分批、可重建概览、独立缓存、失败无断档、并发不影响 A/B | 原始来源与覆盖水位可验证；摘要关闭/失败时故事仍可用原文运行 |
 | P2-C 完整短/中篇验证 | 6–7 | 离线完整中篇、两条新 live 完整路线、同状态摘要对照和实机追问 | 完成性、回忆、权限和全文质量分别通过 |
 
@@ -127,7 +127,7 @@ const requiredEventIds = [...new Set([
 **Files:**
 
 - Create: `src/game/domain/narrativeMemoryContext.ts`；`src/game/gameplay/rpg/narrativeMemory/buildNarrativeMemoryContext.ts`、对应 `.test.ts`。
-- Modify: `src/game/gameplay/rpg/narrativeMemory/index.ts`、`src/game/application/projectNpcDeliberation.ts`、`src/game/application/narrativeBundleSource.ts`。
+- Modify: `src/game/gameplay/rpg/narrativeMemory/index.ts`、`src/game/application/projectNpcDeliberation.ts`、`src/game/application/prepareNpcNarrativeContext.ts` 及其测试、`src/game/application/narrativeBundleSource.ts`。
 - Modify: `src/game/application/entityContextProjection.ts` 及其测试，接入已验证的记忆实体引用。
 - Modify: `src/game/application/server/ai/narrativeContext/narrativeBundleContext.ts`、`src/game/application/server/ai/liveNarrativeCandidateReview.ts` 及上述相关测试。
 - Create: `src/game/application/testing/narrativeMemoryContext.integration.test.ts`；Docs: 连续性与记忆、NPC 系统。
@@ -154,7 +154,8 @@ Task 2 的 `coveredThroughSequence=-1`、overviewHistoryIds/overviewEventIds 为
 - [ ] 写 RED：作者收到玩家可见的旧 NPC 原句；NPC 自知包只收到自己听见/说过的旧表达；另一 NPC 不知。玩家选择 label 被保留为 action expression，不能以 NPC 亲闻原话的身份跨回合传入。当前 `currentNpcPlayerExpressions` 的本轮特例保持明确。
 - [ ] 用完整 `projectNpcDeliberation` 与真实 bundle prompt 构造测试检查实际输入；不能仅断言 build helper 返回字符串。运行上述 integration、projectNpcDeliberation、bundle context tests。
 - [ ] 实现同一记忆包的两个 observer 投影；作者用 player，单 NPC 用自身。所有未覆盖、已提交且可见原文都进入 uncovered，不以“近期四场结构卡”替代。回忆条目标记原 speaker/kind/turn，旧物品归属或旧承诺状态标为当时记录，当前状态仍由 Entity 单独注入。
-- [ ] 接入 NarrativeBundleSourceContext 的 `memoryContext?: NarrativeMemoryContext` 和 NPC projection 的同名可选输入；Task 5 完成装配后生产必须传入，现有纯 fixture 可显式使用源状态构造。reviewer 看同版作者包及自己的规则投影，不能从别的 observer 私密记忆推断可公开内容。
+- [ ] 接入 NarrativeBundleSourceContext 的 `memoryContext?: NarrativeMemoryContext`，此字段只允许 player 包；NPC projection 的同名可选输入只允许对应 npcId 的包。扩展 `prepareNpcNarrativeContext(context, source, privateMemory?: NarrativeMemoryContext)`，第三参由应用编排局部持有，只传给 `projectNpcDeliberation`，不得展开进返回的公共 context；返回作者的仍只有经既有授权校验的 npcOutward。observer 不匹配时明确拒绝，不能退回公共包。Task 5 完成装配后生产必须传入，现有纯 fixture 可显式使用源状态构造。reviewer 看同版作者包及自己的规则投影，不能从别的 observer 私密记忆推断可公开内容。
+- [ ] 在 `prepareNpcNarrativeContext.ts` 抽取共用纯函数 `selectNpcDeliberationTarget(context: NarrativeBundleSourceContext): EntityId | undefined`，原样复用现有 decision/focus/在场/active/greetingOnly/needsJudgment 条件，给 Task 5 的私密记忆准备和本函数使用。最多仍判断一个 NPC，不复制两套选择条件，不借记忆接入扩大判断触发范围。
 - [ ] 将 manifest 的 mandatory 映射为独立 ContextBlock；所有 uncovered 为 mandatory，recalled 依据来源区分；有歧义时给候选及证据，不自动把当前焦点作为过去行为人。旧原话进入 NPC 私密判断并不扩大 `npcSpeechAuthority` 的 outward 授权集合。
 - [ ] `buildEntityContextProjection` 增加 `memoryEntityIds?: readonly EntityId[]`，消费上述已验证引用，按当前 EntityStore 生成最小相关卡片；复用既有字段可见性和可选实体上限，不把整份 NPC knowledge/JSON 注入作者。旧回忆中的位置、owner、承诺状态仍是历史，当前卡片才说明现在状态；停用/离场实体可被回忆，不自动获得在场或可交互资格。
 - [ ] 检验来源状态在构造前后完全不变：
@@ -285,19 +286,59 @@ WHERE game_id = ? AND generation_id = ? AND observer_id = ?
 **Files:**
 
 - Create: `src/game/application/prepareNarrativeMemory.ts`、对应 `.test.ts`；`src/game/application/server/ai/narrativeMemoryPolicy.ts`、对应 `.test.ts`。
-- Modify: `src/game/application/generatePendingNarrativeBundle.ts`、`projectNpcDeliberation.ts`、`narrativeBundleSource.ts`、`src/game/application/server/compositionRoot.ts`。
+- Modify: `src/game/application/generatePendingNarrativeBundle.ts`、`prepareNpcNarrativeContext.ts`、`projectNpcDeliberation.ts`、`narrativeBundleSource.ts` 及相关测试、`src/game/application/server/compositionRoot.ts`。
+- Modify: Task 4 的 `narrativeMemorySummaryRepository.ts`、`sqliteNarrativeMemorySummaryRepository.ts` 及 SQLite 初始化/清档和相关测试，保存本 Task 的尝试预算及固定准备结果。
 - Modify: `src/game/application/server/ai/narrativeContext/narrativeBundleContext.ts`、`liveNarrativeBundleSource.ts`、`liveNarrativeCandidateReview.ts`、`liveNpcDeliberationSource.ts`、`narrativeRequestClient.ts` 与相应测试。
 - Modify: `.env.example`（本 Task 的非秘密配置说明）；Docs: 连续性与记忆、运行时 AI、AI 环境、AI 文本审计。
 
-**Interfaces:** `prepareNarrativeMemory(input: { record:GameRecord; observerId:EntityId; job:PendingNarrativeJob; source:NarrativeMemorySummarySource; repository:NarrativeMemorySummaryRepository; policy:NarrativeMemoryPolicy; summaries:"enabled"|"disabled"; signal:AbortSignal; reserveSummaryHttpAttempt:()=>Promise<boolean> }): Promise<{ok:true;context:NarrativeMemoryContext}|{ok:false;code:"MEMORY_CONTEXT_OVERFLOW"|"CANCELLED"}>`。`NarrativeMemoryPolicy` 类型在 `domain/narrativeMemoryContext.ts` 增加，字段为 `threshold`、`batchSize`、`rawSoftEstimatedTokens`、`summarySourceMaxEstimatedTokens`、`overviewMaxEstimatedTokens`、`promptMaxEstimatedTokens`，均为 number；server policy 文件负责默认值、环境校验与注入，application 不反向 import server。
+**Interfaces:** `prepareNarrativeMemory(input: { record:GameRecord; observerId:EntityId; job:PendingNarrativeJob; source:NarrativeMemorySummarySource; repository:NarrativeMemorySummaryRepository; policy:NarrativeMemoryPolicy; summaries:"enabled"|"disabled"; signal:AbortSignal; reserveBatchUpdate:()=>Promise<boolean>; reserveSummaryHttpAttempt:()=>Promise<boolean> }): Promise<{ok:true;context:NarrativeMemoryContext}|{ok:false;code:"MEMORY_CONTEXT_OVERFLOW"|"CANCELLED"}>`。这是单 observer 的构造函数；跨 observer 的固定与恢复由 generator 编排负责。`NarrativeMemoryPolicy` 类型在 `domain/narrativeMemoryContext.ts` 增加，字段为 `threshold`、`batchSize`、`rawSoftEstimatedTokens`、`summarySourceMaxEstimatedTokens`、`overviewMaxEstimatedTokens`、`promptMaxEstimatedTokens`，均为 number；server policy 文件负责默认值、环境校验与注入，application 不反向 import server。
+
+**尝试持久契约：** 在 Task 4 的同一端口增加下列类型/方法；`NarrativeJobAttemptPredicate` 复用现有 repository 类型，避免另造一套租约状态。固定包是生成尝试的派生输入，不是新的剧情事实表：
+
+```ts
+type MemoryAttemptKey = Readonly<{
+  gameId: GameId; generationId: GenerationId;
+  jobId: NarrativeJobId; epoch: number;
+}>;
+type MemoryAttemptGuard = Readonly<{
+  key: MemoryAttemptKey; expectedRevision: number;
+  expectedNarrativeJob: NarrativeJobAttemptPredicate; now: string;
+}>;
+type PreparedNarrativeMemory = Readonly<{
+  formatVersion: 1; policyVersion: "memory-p2/1";
+  sourceFingerprint: string; policy: NarrativeMemoryPolicy;
+  summaries: "enabled" | "disabled";
+  player: NarrativeMemoryContext; npc?: NarrativeMemoryContext;
+}>;
+// NarrativeMemorySummaryRepository 的新增方法：
+loadPrepared(key: MemoryAttemptKey): Promise<
+  {ok:true; prepared:PreparedNarrativeMemory|null; preparedHash:string|null}
+  | {ok:false; code:"MEMORY_PREPARATION_INVALID"|"UNAVAILABLE"}
+>;
+freezePrepared(input: MemoryAttemptGuard & {next:PreparedNarrativeMemory}): Promise<
+  {ok:true; prepared:PreparedNarrativeMemory; preparedHash:string}
+  | {ok:false; code:"STALE_ATTEMPT"|"MEMORY_PREPARATION_INVALID"|"UNAVAILABLE"}
+>;
+reserveBatchUpdate(input: MemoryAttemptGuard): Promise<MemoryReservationResult>;
+reserveHttpAttempt(input: MemoryAttemptGuard): Promise<MemoryReservationResult>;
+type MemoryReservationResult =
+  | {ok:true}
+  | {ok:false; code:"BUDGET_EXHAUSTED"|"STALE_ATTEMPT"|"UNAVAILABLE"};
+```
+
+`preparedHash` 为 server 对完整固定包稳定序列化计算的 SHA-256。`sourceFingerprint` 覆盖该 job 的行动输入及构造所依赖的原文、事件、实体当前状态/权限、活跃 Thread；不包含会随候选、HTTP、续租变化的 attempt 字段或可独立推进的摘要缓存版本。load/freeze 均读真实源校验引用/正文/权限与指纹。freeze 在校验当前租约的短事务内首次写入，已固定则返回原包，不能覆盖；调用方必须使用返回包。来源改变、包损坏或策略不兼容均显式终止本次尝试，不准换包继续。
 
 长度政策导出 `NarrativeMemoryPolicy`，初始值固定：阈值50/批10、旧原文软阈值 **24000 estimated tokens**、summary 单次源输入最多 **24000**、概览渲染最多 **6000**、完整 provider 请求硬阈值 **64000**。统一使用现有 `estimateNarrativeTokens`；硬阈值包括系统规则、修订前稿及 reviewer 的候选正文。`AI_NARRATIVE_INPUT_MAX_ESTIMATED_TOKENS` 可覆盖硬阈值为正整数；其他初值通过 server policy 注入。register 必须冻结值及模型已知输入能力，估算不是 provider 精确 tokenizer 或输出容量保证，不沿用 P1 的无限值，也不恢复未经验证的 8000 限制。
 
 - [ ] 写 RED：摘要超时/非法引用/概览失败时水位不动，全部未覆盖可见原文仍在请求里；50条后失败，到61条不得只发最后50条。超过硬预算时零 author HTTP、明确失败，A 的行动不重复结算。
-- [ ] 写 preparation 与真实 requestClient/generator 集成测试：同一 job 三版候选使用同一记忆快照；角色 outward 成功缓存仍复用，不因摘要修订重复判断。另一个 observer 的维护结果不能进入作者包。
-- [ ] 在取得既有 narrative job 租约后、角色判断和候选循环前准备一次；P2 采用请求内有界维护，不新建后台常驻服务或额外 gameplay provider 触发点。未触发生成的移动/物品消费不为摘要调用网络；下次合法生成入口再追赶。进程恢复可重建，缓存以来源和策略版本校验。compositionRoot 的测试/实验 options 增加 `memorySummaries?:"enabled"|"disabled"`、`memoryPolicy?:NarrativeMemoryPolicy`，生产默认 enabled；disabled 不读/写/生成摘要，读取全部可见原文，仍保留相同检索/权限与长度检查，不成为另一个生成实现。
+- [ ] 写 preparation 与真实 requestClient/generator 集成测试：同一 job 三版候选使用同一记忆快照；首版后崩溃→SQLite 重开→同 epoch 新租约继续第二版时 preparedHash、player/NPC 包均不变，即使 observer 摘要缓存已推进也不再准备。同一 worker 的角色 outward 成功缓存仍复用，不因摘要修订重复判断；跨 worker 仍沿既有角色判断恢复语义，不在 P2 另造 outward 持久缓存。
+- [ ] 从真实 `generatePendingNarrativeBundle` 入口捕获 NPC 与 author 的最终请求：玩家可见旧话进入作者，对应 NPC 私密旧话进入其判断，私密包不进入作者/reviewer，也不传给另一 NPC。仅测 projection helper 不足以通过本项。generator 通过 Task 2 共用 selector 确定 NPC，局部持有并以第三参传入桥接；公共 context.memoryContext 始终为固定 player 包。
+- [ ] 在取得既有 narrative job 租约后、角色判断和候选预留/循环前，先 loadPrepared；有合法固定包则直接恢复，不再推进摘要。无固定包且该 epoch 尚未预留任何候选时才依次准备 player/所需 NPC，再一次性 freezePrepared，成功后才允许角色/作者请求；准备中崩溃可在持久预算剩余额度内重建。已有候选但固定包丢失、源失效或冻结失败时显式失败，不改用最新缓存，A 不重复结算。既有续租心跳/AbortSignal 覆盖整个准备与冻结过程；guard 从最新 durableRecord 构造，不能使用已过期的候选谓词。
+- [ ] P2 采用请求内有界维护，不新建后台常驻服务或额外 gameplay provider 触发点。未触发生成的移动/物品消费不为摘要调用网络；下次合法生成入口再追赶。compositionRoot 的测试/实验 options 增加 `memorySummaries?:"enabled"|"disabled"`、`memoryPolicy?:NarrativeMemoryPolicy`，生产默认 enabled；disabled 不读/写/生成 observer 摘要，读取全部可见原文，仍使用同一尝试冻结、检索/权限与长度检查，不成为另一个生成实现。同 epoch 不切换模式或政策；实验两臂从 ready 状态经新行动创建各自 job。
 - [ ] 准备顺序固定为：observer 来源投影→校验/有界更新摘要→取得有效概览及 uncovered→收集这些记录已有 Entity/Event ID、当前行动/地点/焦点、活跃任务/Thread 引用→一次 retrieveStoryEvidence→当前实体卡与记忆包。全部可见 uncovered 引用可进入候选，近两场引用仅作排序加权；只有实际选中概览的引用参与，不累积被概览遗弃的旧 ID。软候选沿 Task 1 数量/长度约束进入上下文，不能一律标 mandatory 或递归膨胀。
-- [ ] 每 job/epoch 给所有 observer 合计最多 **8 次摘要 HTTP**，最多准备 **2 个批次更新**（每次叶+概览、每请求最多2次传输）；先 player，再当前需要判断的 NPC。其余保留原文，不延迟到无上限队列。原 author/NPC/review **24 HTTP/epoch、3候选**保持，P2 总上限明确为 **32 HTTP/epoch**；所有用途还共同受实验批预算。Task 4 的缓存端口/适配器在本 Task 增加 `reserveHttpAttempt(input:{gameId:GameId;generationId:GenerationId;jobId:NarrativeJobId;epoch:number}):Promise<boolean>`，使用独立 `narrative_memory_attempts` 表按这些键原子计数并在发送前预留；崩溃不退额度。不能挪用叙事额度后声称24次包含全部调用。计数表与缓存一起遵循清档/关闭策略，测试并发上限和重启保持。
+- [ ] 每 job/epoch 给所有 observer 合计最多 **8 次摘要 HTTP**，最多尝试 **2 个批次更新**（每次叶+概览、每请求最多2次传输）；先 player，再当前需要判断的 NPC。其余保留原文，不延迟到无上限队列。原 author/NPC/review **24 HTTP/epoch、3候选**保持，P2 总上限明确为 **32 HTTP/epoch**；所有用途还共同受实验批预算。独立 `narrative_memory_attempts` 表以 MemoryAttemptKey 为键保存 http_attempts、batch_updates、prepared_json、prepared_hash；批开始前和每次 HTTP 发送前分别原子预留，失败或崩溃不退额度，接管不得重置。不能挪用叙事额度后声称24次包含全部调用。
+- [ ] 预留/冻结事务读取真实 game_records，核对 generation、revision、provider_pending、job/epoch、非空 leaseId、完整 expectedNarrativeJob 与未过期租约；检查成功才改独立行，已固定时拒绝新的摘要维护预留。接管旧 worker 即使 epoch 相同也必须返回 STALE_ATTEMPT，零后续 HTTP、计数不增长。repository 保留结构化失败原因，generator 适配为 source 所需 boolean callback：仅 BUDGET_EXHAUSTED 可返回 false 后继续真实原文路径；STALE_ATTEMPT/UNAVAILABLE 在局部记录原因并 abort 当前尝试，再返回 false，不能作为可继续的摘要失败。freeze 错误同样映射现有生成失败出口并保留稳定原因，不能重跑 A。补三种拒绝原因的集成断言；派生 observer 缓存的 publish 仍按 Task 4 的源/CAS 校验，不能把它与发送授权混成同一条件。
+- [ ] 固定包与计数一起遵循清档/换 generation/关闭策略，保存于正式数据库但不进入权威 Story schema、BattleStartSnapshot 或普通日志。测试并发额度、同 epoch 接管、冻结前后崩溃、固定记录损坏/丢失、来源变化、SQLite 重开与换局隔离；尝试数据丢失不能被解释为恢复候选时可以重置预算。
 - [ ] preparation 超时/额度耗尽后若原文可装入完整预算，继续用旧有效概览+全部 uncovered；这是读取真实来源，不是确定性剧情回退。若仍装不入，沿同一 job 显式失败，允许用户重试，不能切掉 mandatory：
 
 ```ts
@@ -309,7 +350,7 @@ expect(recordAfter.storyState.history).toEqual(recordBefore.storyState.history);
 
 缓存不存在/失效时 `validSummary.coveredThroughSequence=-1`。当前输入、活跃 Thread/Promise 证据、精确追问来源即使已被摘要覆盖仍作为原始引用补回；不存在 source 的概要不得参与构造。
 - [ ] 完整 prompt 编译后检查 overflow 并在 provider 请求前拒绝；compiler 原有“保留 mandatory”的语义不改，optional 可按既有次序移除且记录 manifest。如果只一条原文就过长，不自动截断/续写，返回明确长度错误。
-- [ ] 扩展 source/review 的审计上下文记录 source 指纹、overview/批 ID、覆盖水位、raw/recall 数量、估计长度与失败原因；原文进入专用审计，不写普通日志。transport 磁带同时包含摘要用途，请求顺序受 preparation 冻结，replay 不启动隐形后台维护。
+- [ ] 扩展 source/review 的审计上下文记录 source 指纹、preparedHash、overview/批 ID、覆盖水位、raw/recall 数量、估计长度与失败原因；原文进入专用审计，不写普通日志。transport 磁带同时包含摘要用途，请求顺序受 preparation 冻结，replay 不启动隐形后台维护。
 - [ ] 运行 preparation、generator、NPC、review、composition/SQLite/request tests、typecheck/boundaries；更新系统文档和环境说明，提交 `feat: prepare bounded narrative memory without history gaps`。
 
 **P2-B gate：** 摘要成功、失败、关闭、缓存丢失、并发和重启均可解释；没有合法来源被静默漏掉，所有维护请求可计数回放。
@@ -347,7 +388,7 @@ expect(result.itemGivenEventCount).toBe(1);
 - [ ] 选择政策复用合法 Action/目标推进，不以 label 关键词猜 ID。中篇在第三幕或之后、仍未交付且已产生两次摘要时的首个合法 NPC 决策输入：“最初委托人对这封信说过什么？我想先回想原话，再决定是否交付。” 查询是谁、原话是什么以真实开局 History 为 oracle；不把期望原句注入玩家输入。触发条件始终没满足则记 coverage failure，不能为通过临时降低阈值或追加无意义动作。
 - [ ] 预登记 **短篇24动作/200 HTTP/90分钟，中篇48动作/500 HTTP/180分钟**；包括初始化、摘要、角色、作者、review及所有传输尝试。每 epoch 24叙事+8摘要，三候选，正式批不自动执行耗尽后的手动 retry。失败保留分母，不另抽成功开局。两个模型及所有参数沿同一实际配置冻结，记录代码/配置/策略/输入/来源 hash。
 - [ ] summary 摘录覆盖完成后、旧事追问前复制同一 ready SQLite 建立有/无摘要两臂诊断，均经正式动作输入同一追问；只改变 summary enabled/disabled，两臂规则、检索和权限相同。各最多一个生成 job、50 HTTP/45分钟，无后续循环采样；该诊断不增加“完成路线”分母，不称完整文本质量 A/B 结论。
-- [ ] 新磁带记录缓存初态/发布结果、所有 memory/author/NPC/review 请求、identity/domainTime、每次正式状态。replay 检查 prompt 哈希、响应完全消费、game状态及cache指纹/水位一致；重放逻辑尝试计数应一致，真实 HTTP 为零，两者分栏。不能删除摘要请求使磁带“匹配”。抽取 helper 的兼容验证用 P1 协议/磁带单元契约，保持其严格匹配规则。P2 已有意改变生产 prompt，不能要求旧 P1 live 磁带在新 prompt 下通过；完整旧故事回放只能在其对应冻结实现下进行，本 Plan 不另开该项实跑。
+- [ ] 新磁带记录缓存初态/发布结果、attempt 计数与固定包/哈希、所有 memory/author/NPC/review 请求、identity/domainTime、每次正式状态。replay 检查 prompt 哈希、响应完全消费、game状态、cache指纹/水位及 preparedHash 一致；重放逻辑尝试计数应一致，真实 HTTP 为零，两者分栏。恢复场景必须复现已固定包，不能再次请求摘要；包含原文的固定包按专用审计权限保存。不能删除摘要请求使磁带“匹配”。抽取 helper 的兼容验证用 P1 协议/磁带单元契约，保持其严格匹配规则。P2 已有意改变生产 prompt，不能要求旧 P1 live 磁带在新 prompt 下通过；完整旧故事回放只能在其对应冻结实现下进行，本 Plan 不另开该项实跑。
 - [ ] 运行 node 脚本测试、离线P2旅程及 P1 协议/回放测试、typecheck/boundaries；更新协议并提交 `test: cover complete medium stories and traceable memory experiments`。
 
 ## Task 7：冻结、实跑、全文阅读与 P2 判定
@@ -379,12 +420,12 @@ npm run journey:narrative:p2 -- --mode=live --run-id=p2-01 --protocol=artifacts/
 | 编号 | 必须成立 | 负责 Task |
 | --- | --- | --- |
 | M1 | 较早NPC/事件/原话可双向找到，摘要/近期引用可发起一次旧事补充，mandatory贯穿真实请求 | 1、2、5、6 |
-| M2 | 显示选项、隐藏名字、私密听众、代词歧义不制造错误知识 | 1、2、6 |
+| M2 | 显示选项、隐藏名字、私密听众、代词歧义不制造错误知识；真实作者/NPC 调用不串包 | 1、2、5、6 |
 | M3 | 50/10以有效History计数；source/sequence与Event/turn分离 | 3 |
 | M4 | 概览从原始叶来源重建，文字逐字对应、当前状态仍读Entity | 3、5 |
 | M5 | 摘要失败水位不动、所有未覆盖原文可读，溢出明确失败 | 3、5 |
 | M6 | cache写入不改变游戏revision/token，竞争/重载/回滚不串史 | 4–6 |
-| M7 | 同一job候选共享记忆快照，所有HTTP/缓存结果严格回放 | 5–7 |
+| M7 | 同 job/epoch 候选及崩溃接管共享固定包；过期租约不能占额度，所有 HTTP/缓存/固定包严格回放 | 5–7 |
 | M8 | 新短篇与五幕中篇均完成，中篇真实触发摘要/较长间隔回忆 | 6、7 |
 | M9 | 两臂诊断来源不回退，全文质量及实机流程通过 | 7 |
 
