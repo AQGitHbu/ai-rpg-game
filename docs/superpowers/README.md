@@ -20,3 +20,4 @@
 - [P2 记忆覆盖重规划](plans/2026-09-14-narrative-p2-memory-coverage.md)：先短篇质量门禁，再以有界议题形成自然经历；规定后续驱动、摘要追问、两臂与 UI 接续任务。
 - [P2 三幕短篇实跑](reports/2026-09-14-narrative-p2-short-story.md)：p2-02 的实际正文范围、生成失败依据与后续收敛方向。
 - [P2 时序边界修正实跑](reports/2026-09-14-narrative-p2-temporal-scope.md)：p2-03 的换幕证据、审阅阻断与实际剧情判断。
+- [P2 完整短篇评审](reports/2026-09-14-narrative-p2-complete-story.md)：p2-04/05 的运行证据、完整三幕故事与选择后果缺口。
