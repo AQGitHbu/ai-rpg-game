@@ -2,6 +2,8 @@
 
 ## 结论
 
+最新普通短篇 `short-closure-02` 在 `5101ec42` 下全程无中断达到成功 ending 且 narrative ready，18 次行动、32 HTTP，中途真实关闭重载通过；完整严格零网络 replay 匹配 32 次响应、23 个状态。规则通关与结果正文发布成立，但整体验收仍未通过：结果场景保留生成时 turn=14，而最终世界/History/展示事件已为 turn=15；另结果正文把尚未执行的返程对账、复航与债务结清写成事实，不满足 Task 13 的规则后果边界。未改源码、未重采、未修改失败判定。
+
 首个真实 AI 短篇已在正式规则下完成，但 P1 整体仍未通过。`b6cc0e5b` 的 `p1-core-02` 创建“青石渡”故事，完成九次行动后 Node 原生进程中断；保留原库，在独立副本通过正式 ensure 恢复同一游戏，续至第十八次行动与成功结局“一盏直烟”。实际移动、两次取物、四轮战斗、三项主线任务完成和成功结局事件均已核实。
 
 恢复段严格 replay 为 HTTP 0、9 次响应、12 个状态匹配。原中断段缺正常封存，不能称全程无中断或整条严格 replay 通过。全文仍有物品拾取时序、终幕通用标签和收束偏弱的问题；前两项已按规则契约修复并回归。core03 已实际验证取物时序，但 16 行动后终局结构失败，36 次响应严格失败重放一致，完整流程仍未通过。
@@ -49,6 +51,29 @@ Task 13 终幕结果闭环已冻结为 `2f6b2dd7`，离线回归与独立复审�
 独立初审指出手工注入第二次请求不足以证明真实编排，已补 generatePending → live source → 注入 client 的完整调用链回归并通过限定复审。122 项定向测试、typecheck、131 boundaries、check:docs 通过；完整 2837 tests passed、1 skipped，lint 0 errors、50 项既有 warning。旧 runtime/audit/SQLite 哈希未变。
 
 只读原 HTTP 9 响应，内存中仅移除 `newFact2` 即可由原严格 parser 接受，`existingFactIds=[fact_0,fact_1,fact_4]` 保留；第二次实际请求携带首稿，下一版主动删除声明不被回填，provider 无原稿失败后第三次请求不再带旧材料。此证据验证结构错误与修订输入，不证明模型必然正确修订，也不改变 short-closure-01 未通关或 P1 未通过的结论。
+
+## 普通短篇通关验证：short-closure-02
+
+用户授权 Task 14 修复后验证通关，冻结 `5101ec42`，使用原已审核驱动，仅更换产物路径以保留旧证据。普通武侠短篇输入不变，正式 createGame，无旧存档或开局注入；未在运行中改代码、提示或协议。
+
+| 项目 | 结果 |
+| --- | --- |
+| 协议哈希 | `6ca7041447bb479f9d330c7aa3f3ba8fbb7ff67b9e780f39d5bbd8cbd1c45375` |
+| 游戏 ID | `da1fa380-70d5-4d6d-90c3-92fcce6d0945` |
+| 进度 | 18 次行动、15 规则回合、3 幕主线全部完成、revision 26 |
+| 规则终局 | `ending_dyn_0`，success，“共担复航之险”，narrative ready |
+| 发布证据 | 实际结局对应的完整获批 scene 原样进入 currentScene/History；ending_reached 与结果展示事件各一次 |
+| 中途重载 | 第 4 行动后真实关闭/重开，语义状态一致 |
+| 真实调用 | 32 HTTP；最终结局立场消费不新增 provider 调用 |
+| 严格重放 | 0 HTTP、32 响应、23 状态一致，comparison passed=true；同样复现验收失败 |
+| SQLite | live/replay integrity_check 均为 ok |
+| 协议结果 | completed=false，`ENDING_OUTCOME_NOT_PUBLISHED` |
+
+该失败码不能解释成正文没有发布：与选中 endingId 绑定的获批 scene 完全一致，唯一发布比较差异是 scene.turn 未从 14 更新到最终回合 15。审批按生成时回合创建预备结果，performTurn 原样消费；History 与 scene-presented event 已正确使用 15。旧单测把预备 scene.turn 人工设成下一回合的 1，无法发现该真实生产差异。本次保留原协议失败，不事后放宽比较。
+
+全文已读并独立核对：开局倾听、查明修船账目、携带两边账单及现场分歧比早期样本完整，选择后也确实出现独立结果。但第 14 回合仍明确需要返回柳湾与柳三核定日期，实际最后行动只是既有 support；结果却写成回柳湾对账、三日后修船开渡、玩家船头看水、货物售出及赊账勾销。选择标签不能扩展 Action 能力，这些关键后果没有对应结算依据，因此剧情规则一致性不记为通过。仍需收敛这条结果契约，不能仅修回合号后宣称 P1 完成。
+
+证据位于 `artifacts/narrative-p1/short-closure-02/`：原 `live/`、`replay/`、全文 `complete-story.md`、规则核验 `verification.json` 与独立 `acceptance-review.md`。本轮只做验证，未修代码、未直接修改存档或再开样本；交付/退出、实机 UI 与 main 对照仍未执行。
 
 ## 已完成的离线证据
 
