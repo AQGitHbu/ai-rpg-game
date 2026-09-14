@@ -397,7 +397,9 @@ expect(result.itemGivenEventCount).toBe(1);
 
 **Interfaces:** 消费 Task 6 协议与正式 driver，输出完成性/回忆/权限/质量四类结论；不新增生产接口。
 
-- [ ] 先完成一次完整验收：lint、typecheck、boundaries、`npm test -- --minWorkers=1 --maxWorkers=2`、check:docs；涉及 production build 的本 Plan 再执行 `npm run build`。不能用P1旧成绩替代本版本结果。冻结代码与协议后运行：
+**执行证据：** `p2-01` 已冻结、实跑、严格回放并阅读全文，见 [验收报告](../reports/2026-09-14-narrative-p2-acceptance.md)。两路线通关，记忆覆盖与质量门槛未通过；两臂及UI因预定checkpoint未产生而未执行。以下保留未满足的验收条件，不以通关替代它们。
+
+- [x] 先完成一次完整验收：lint、typecheck、boundaries、`npm test -- --minWorkers=1 --maxWorkers=2`、check:docs；涉及 production build 的本 Plan 再执行 `npm run build`。不能用P1旧成绩替代本版本结果。冻结代码与协议后运行：
 
 ```powershell
 npm run journey:narrative:p2 -- --mode=register --run-id=p2-01 --protocol=artifacts/narrative-p2/p2-01/protocol.json --output=artifacts/narrative-p2/p2-01
@@ -411,9 +413,9 @@ npm run journey:narrative:p2 -- --mode=live --run-id=p2-01 --protocol=artifacts/
 - [ ] 两条新流分别严格零网络 replay，所有原文/状态与摘要维护一致。读取逐步完整 History、有效 summary、recalled source 和所有未通过候选，确认原文保留、无条件/否定改写、未知角色不冒领经历、旧状态未覆盖当前 owner/承诺。
 - [ ] 执行两臂诊断，记录原文覆盖、精确旧话命中、歧义/拒答、事实错误、请求长度与调用数。摘要臂至少不丢失指定必需来源且无新增硬错误；若无摘要更完整而摘要遗漏核心动机，P2摘要效果不通过，不能以省token抵消。
 - [ ] 在真实 UI 使用本次一条 live 的合法存档，执行旧事追问→刷新→继续至终局；记录实际输入、响应与reload状态。该操作可以承担预定路线的对应段，必须归入同一协议/产物，不能另外隐形计费或只展示已录制结局截图。
-- [ ] 人工阅读全文，按局部衔接、人物动机、因果/悬念、选择后果可感知、结局收束各1–5分：**每条均分≥4、单维≥3、没有确认事实/权限/行动硬错误**。分别说明哪次旧事真正影响后续问答或决策；模型重复旧句但无关当前问题，不算回忆收益。
-- [ ] 失败仅按检索、权限投影、摘要选编/覆盖、规则可完成性、创作/审阅、运行层归因，封存原批；有新实现再开新冻结批需单独明确范围。不得按失败句子增设规则、reviewer或继续重采到通过。
-- [ ] 完成 `npm run check:docs`、新增文档链接人工核查、`git diff --check`，提交 `docs: record P2 memory and complete-story acceptance`；P2通过不自动合并 main，也不宣称本分支整体叙事优于 main。
+- [x] 人工阅读全文并记录评分（已执行，门槛未通过），按局部衔接、人物动机、因果/悬念、选择后果可感知、结局收束各1–5分：**每条均分≥4、单维≥3、没有确认事实/权限/行动硬错误**。分别说明哪次旧事真正影响后续问答或决策；模型重复旧句但无关当前问题，不算回忆收益。
+- [x] 失败仅按检索、权限投影、摘要选编/覆盖、规则可完成性、创作/审阅、运行层归因，封存原批；有新实现再开新冻结批需单独明确范围。不得按失败句子增设规则、reviewer或继续重采到通过。
+- [x] 完成 `npm run check:docs`、新增文档链接人工核查、`git diff --check`，提交 `docs: record P2 memory and complete-story acceptance`；P2通过不自动合并 main，也不宣称本分支整体叙事优于 main。
 
 ## 验收矩阵与执行记录
 
@@ -433,5 +435,5 @@ npm run journey:narrative:p2 -- --mode=live --run-id=p2-01 --protocol=artifacts/
 
 - **P2-A：** 原文召回、Event 引用、权限及作者/NPC 请求路径已实现并有离线回归；摘要省略旧话后的真实请求命中另经完整五幕旅程验证，见 [准入修复验收](../reports/2026-09-14-narrative-p2-readiness-fixes.md)。
 - **P2-B：** 摘要、缓存、固定包、预留及完整输入边界已实现；成功/失败/关闭故事、真实 SQLite 来源变更/回滚/接管及生产请求回放有离线证据，详见同一报告。原任务清单中的组合场景不能因单层测试通过而推定全部实测。
-- **P2-C：** Task 6 的完整五幕离线故事、生产驱动和两臂严格回放已完成；真实 S-short/M-medium、UI 与全文质量评定未执行。
-- **P2 总结论：** 代码修复、工程检查和离线准入通过，可以进入 Task 7 冻结实跑。P2 整体质量尚未判定，不作优于 main 的结论。上述未勾选的历史步骤不表示对应代码完全缺失，是否已验证以所链接的实际证据为准，不代替尚未执行的组合验收。
+- **P2-C：** `p2-01` 不通过：真实短篇/中篇均通关且严格回放通过，但中篇49条有效History、零摘要，旧话追问/两臂/UI checkpoint未触发；两路线全文评分2.4/2.6，中篇出现已接受结局移动越权。见 [真实验收报告](../reports/2026-09-14-narrative-p2-acceptance.md)。
+- **P2 总结论：** 工程与离线准入通过，真实批次已执行并封存，整体P2不通过；未执行的两臂和UI明确保留缺口。后续优先处理行动一致性、具体冲突与收束、知识/时态职责，再单独规划真实记忆覆盖，不追加采样或宣称优于main。上述未勾选的历史步骤不表示代码完全缺失，具体执行与未覆盖项以报告为准。
