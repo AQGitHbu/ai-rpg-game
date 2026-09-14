@@ -11,4 +11,5 @@
 ## 独立架构设计入口
 
 - [持续局势、完整场景与长期信息架构](specs/2026-09-12-narrative-architecture-design.md)：main 起点的新设计，先验证完整小故事，再扩展长期记忆与角色/世界能力；现状及历史实验见其关联的基准报告。该入口不替代阶段配置中的执行 Plan。
-- [P1 完整小故事实施 Plan](plans/2026-09-12-narrative-architecture-p1.md)：上述总 Spec 的首期执行入口，按规则与历史闭环、真实生成接入、完整旅程验收三个里程碑实施；P2–P4 尚不展开实施任务。
+- [P1 完整小故事实施 Plan](plans/2026-09-12-narrative-architecture-p1.md)：保留首期建设、收敛与最小收尾的执行证据，旧失败批次不再作为继续实施入口。
+- [P2 较长经历召回与完整中篇 Plan](plans/2026-09-14-narrative-architecture-p2.md)：在现有代码上补齐旧事证据链、派生摘要和完整短/中篇验收；范围依据见 [P2 代码核查](reports/2026-09-14-narrative-p2-scope-review.md)。P3/P4 尚不展开实施任务。
