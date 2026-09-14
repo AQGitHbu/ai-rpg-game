@@ -2,7 +2,7 @@
 
 ## 结论
 
-最新普通短篇 `short-closure-03` 在 `34e48e92` 下完成 22 次行动、36 HTTP，成功 ending/ready，中途关闭重载通过；严格零网络 replay 匹配 36 响应、27 状态，两个数据库完整性正常。Task 15 发布回合项已实证修复：获批结果 turn=15，正式场景、History、结局与展示事件均为 turn=16，完整正文仅发布回合发生变化。但全文因果仍未通过：修订版虽然删去付款与修船，仍补写未到场 NPC 赶来完成双方对账，结局概要与本回合摘要也含未结算后果。第二项限定修复已通过独立复审及完整门禁，待冻结后的完整复验，不把机械通过写成 P1 通过。
+最新固定复验 `short-closure-04` 在 `1d635bfa` 下执行 4 行动、20 HTTP 后于第二幕第 4 回合生成失败，未到中途重载或终局；严格零网络 replay 匹配 20 响应、6 状态，两个数据库完整性正常。失败候选补写未授权的事故经过，并增加未授权旁听者，原候选预算耗尽。P1 仍未通过。本次两项代码修复及限定补漏均已独立复审并通过完整门禁；发布回合项已在 short-closure-03 实测通过，终幕后果补漏尚缺完整成功故事证据。未再开样本或扩展到 NPC 对话修复。
 
 首个真实 AI 短篇已在正式规则下完成，但 P1 整体仍未通过。`b6cc0e5b` 的 `p1-core-02` 创建“青石渡”故事，完成九次行动后 Node 原生进程中断；保留原库，在独立副本通过正式 ensure 恢复同一游戏，续至第十八次行动与成功结局“一盏直烟”。实际移动、两次取物、四轮战斗、三项主线任务完成和成功结局事件均已核实。
 
@@ -41,7 +41,24 @@ Task 13 终幕结果闭环已冻结为 `2f6b2dd7`，离线回归与独立复审�
 
 真实结局审阅首轮引用 ending:trust/doubt 拒绝未执行的对账、付款和修船。修订稿删掉付款、材料消耗与已复航，却仍安排乔三石到场、何老大从船寮赶来并逐笔核对账目。实际终局 Action 只有对朱万堂的支持，NPC 地点未改变，回合 11/12/15 仍将双方核对列为待办条件。worldDelta.beatSummary 提前称账目已对上，endingPair.description 继续宣称船家先动手、往后恢复航运。第二轮模型 pass 不足以认可这些因果跳步。
 
-证据目录：`artifacts/narrative-p1/short-closure-03/`，包含固定协议、完整 live/replay tape/audit/SQLite、`complete-story.md`、`verification.json` 与独立 `acceptance-review.md`。原 short-closure-02 证据哈希未变。此局不能勾选 Task 13 的完整正文验收。Task 15 第二项已补 NPC 前后地点、结局 name/description 的主题依据及选择前 beatSummary 的实际 Action 依据，不新增 Action/Entity/记忆或终幕架构。实际 seq18 原稿进入生产修订链回归；独立复审、191 项定向 tests、typecheck、131 boundaries、完整 2841 tests（1 skipped）、check:docs 通过，lint 0 errors（50 既有 warning）。待冻结后一次完整复验。
+证据目录：`artifacts/narrative-p1/short-closure-03/`，包含固定协议、完整 live/replay tape/audit/SQLite、`complete-story.md`、`verification.json` 与独立 `acceptance-review.md`。原 short-closure-02 证据哈希未变。此局不能勾选 Task 13 的完整正文验收。Task 15 第二项已补 NPC 前后地点、结局 name/description 的主题依据及选择前 beatSummary 的实际 Action 依据，不新增 Action/Entity/记忆或终幕架构。实际 seq18 原稿进入生产修订链回归；独立复审、191 项定向 tests、typecheck、131 boundaries、完整 2841 tests（1 skipped）、check:docs 通过，lint 0 errors（50 既有 warning）。冻结 1d635bfa 后只执行一次 short-closure-04，结果如下。
+
+### 限定补漏后的固定复验 short-closure-04
+
+| 项目 | 结果 |
+| --- | --- |
+| 冻结代码 | `1d635bfa` |
+| 协议哈希 | `2e89af98c5d9abf1fa5a0e81adb37a8c3a8129ede134884a99c26400376a4870` |
+| 游戏 ID | `4abdb57f-f04b-4c4a-b77c-d60e0817aedd` |
+| 正式流程 | 4 行动、20 HTTP，第二幕 turn 4 / revision 7 / provider_failed，ending=null |
+| 协议结果 | completed=false，AI_GENERATION_FAILED_NO_AUTOMATIC_RETRY |
+| 严格重放 | HTTP 0，20 响应、6 状态一致；两数据库 integrity_check 均 ok |
+| 尚未验证 | 中途重载、终局条件结果及本轮完整正文收束 |
+
+本局未进入终局，不能验证或否定已修复的条件结果效果。首稿普通 NPC 对话把获准的断木特征扩写为撞船当天的水势、险情等未授权往事，被语义审阅拒绝。第二稿 npcLine.text 与 emotion 之间缺少逗号，因 invalid_json 未进入审阅；第三稿再次补写载人、撑篙等事故细节，最终审阅又指出赖三被写成在场窃听，与 player_0 单一授权听众不符。三版候选耗尽，最终内层失败为 AI_RESPONSE_INVALID / approval_rejected。endingAllowed=false、无结局对，实际请求未包含 ending-resolution 块，因此未执行 Task 15 的终局投影。失败保留在正式 provider_failed 状态，没有静默回退或新 epoch 自动重试。完整审计与实际修订经过见 `artifacts/narrative-p1/short-closure-04/acceptance-review.md`。
+
+本次不再启动抽样或追加普通 NPC 修复。Task 15 的实现审核成立，但其完整验收仍未完成；不能把 short-closure-03 的机械通过或本轮单元测试替代修复后完整故事证据。后续 P1 的交付/退出、实机 UI 和 main 对照边界不变，不合并 main、不进入 P2。
+
 ## Task 13：终幕结果闭环与唯一普通短篇
 
 实现保留既有作者、审阅、规则与存储链，在生成包中增加固定 trust/doubt 两条获批结果场景。实际 endingId 决定消费哪条；保密违约仍可将 support 判为 doubt，玩家 History 保留真实选择。结果正文、场景展示事件、记忆与 ending 同次 CAS，未选结果不入 History，结局后不新增生成调用。最终幕承担中心冲突处理，纯主线 concern 由实际 ending 事件闭合；结局页面按玩家受众展示完整有序正文。独立首轮审核发现的受众/兼容正文与线程绑定范围问题已修复并复审通过。
