@@ -13,6 +13,7 @@ AI 文本审计是独立的 append-only JSONL，服务于 prompt/模型正文/�
 - `ai_call.role` 为 `intent`、`opening`、`scene`、`world` 或 `narrative_bundle`。生产 decision path 的 bundle manifest 只含 compiler version、预算、block 元数据和裁剪统计，不含 prompt 正文副本。
 - `context.retry` 区分 `normal`/`manual_failed_job` 与 `initial`/`transport`/`content_repair`；顶层 `ai_call.attempt` 是 transport 序号。历史 `repair` 只由 CLI 只读归一为 `legacy_unknown`，不改写原 JSONL。
 - provider 失败记录调用和稳定错误证据；`story_text.source` 只有审批后的 `generated` 才代表生产 AI 文本，`fixture` 只表示离线，`rule` 只表示规则反馈。
+- P2 摘要选择使用既有 `narrative_bundle` role，审计 purpose 为 `narrative_memory_summary`；请求只保存受权限投影的完整来源，selection 只能引用已有 History/Event ID。固定记忆包的 hash、覆盖水位和摘要维护失败原因属于专用审计元数据，不写普通日志，也不把摘要正文伪装成新的 Story text。
 
 ## 主要事件
 

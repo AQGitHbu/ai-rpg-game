@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import {
   createRequestLogContext,
   createServerLogRuntime,
   type RequestLogContext,
 } from "@/game/logging/serverConsoleLogger";
 import { asGameId, type GameId, type GameRepository } from "./persistence/gameRepository";
+import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import { createServerSqliteClientFactory } from "./persistence/sqliteClient";
 import { createSqliteGameRepository } from "./persistence/sqliteGameRepository";
 import { createGame } from "../createGame";
@@ -34,8 +36,35 @@ import { deriveEndingSessionIdentity, matchesEndingSessionIdentity } from "./end
 import { BackgroundEnsureCoordinator } from "./ai/_shared/ensureCoordinator";
 import { retryNarrativeGeneration } from "../retryNarrativeGeneration";
 import type { AiRetryOrigin } from "./ai/textAuditTypes";
+import { createLiveNarrativeMemorySummarySource } from "./ai/liveNarrativeMemorySummarySource";
+import { createSqliteNarrativeMemorySummaryRepository } from "./persistence/sqliteNarrativeMemorySummaryRepository";
+import { DEFAULT_NARRATIVE_MEMORY_POLICY, resolveNarrativeMemoryPolicy } from "./ai/narrativeMemoryPolicy";
+import { prepareNarrativeMemory } from "../prepareNarrativeMemory";
+import type { NarrativeMemoryPolicy } from "@/game/domain/narrativeMemoryContext";
+import type { MemoryAttemptGuard, PreparedNarrativeMemory } from "../narrativeMemorySummaryRepository";
 
 export type { RequestLogContext };
+
+function narrativeMemorySourceHash(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function memoryAttemptGuard(record: import("./persistence/gameRepository").GameRecord, job: import("@/game/domain/pendingNarrativeJob").PendingNarrativeJob, now: string): MemoryAttemptGuard | null {
+  if (job.attempt.leaseId === null) return null;
+  return {
+    key: { gameId: record.gameId, generationId: record.worldState.generation.generationId, jobId: job.jobId, epoch: job.attempt.epoch },
+    expectedRevision: record.revision,
+    expectedNarrativeJob: {
+      status: "provider_pending",
+      jobId: String(job.jobId),
+      epoch: job.attempt.epoch,
+      leaseId: job.attempt.leaseId,
+      candidateVersion: job.attempt.candidateVersion,
+      candidateHash: job.attempt.candidateHash,
+    },
+    now,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // 双状态模型的唯一 server-only 装配点。
@@ -225,6 +254,8 @@ export function createServerGameEntryPoints(
     readonly beforeNarrativeHttpAttempt?: () => Promise<boolean> | boolean;
     readonly narrativeAbortSignal?: AbortSignal;
     readonly aiRuntime?: RpgAiRuntime;
+    readonly memorySummaries?: "enabled" | "disabled";
+    readonly memoryPolicy?: NarrativeMemoryPolicy;
     readonly identity?: (kind: "gameId" | "generationSeed") => string;
     readonly domainTime?: (key: string) => string;
   }> = {},
@@ -242,6 +273,10 @@ export function createServerGameEntryPoints(
     clientFactory: createServerSqliteClientFactory(env),
     logError: (operation) => logger.error("sqlite_repository_failure", { operation }),
   });
+  const memorySummaryRepository = createSqliteNarrativeMemorySummaryRepository({
+    clientFactory: createServerSqliteClientFactory(env),
+    gameRepository: repository,
+  });
   const now = () => new Date().toISOString();
   const aiConfig = parseAiRuntimeConfig(env);
   const aiEnabled = aiConfig.status === "available";
@@ -252,6 +287,9 @@ export function createServerGameEntryPoints(
     aiClient,
     beforeTransportAttempt: options.beforeNarrativeHttpAttempt,
   });
+  const memorySummarySource = createLiveNarrativeMemorySummarySource({ aiClient, requestClient: narrativeRequestClient });
+  const memoryPolicy = options.memoryPolicy ?? resolveNarrativeMemoryPolicy(env, DEFAULT_NARRATIVE_MEMORY_POLICY);
+  const memorySummaries = options.memorySummaries ?? "enabled";
   const narrativeCandidateReviewer = createLiveNarrativeCandidateReview({ aiClient, requestClient: narrativeRequestClient, logger });
   const npcDeliberationSource = createLiveNpcDeliberationSource({ aiClient, requestClient: narrativeRequestClient, logger });
   // Unified source is the only runtime AI entry point for opening and decisions.
@@ -277,6 +315,43 @@ export function createServerGameEntryPoints(
       logger,
       reviewer: narrativeCandidateReviewer,
       npcDeliberationSource,
+      memorySummaryRepository,
+      prepareMemoryPackage: async ({ record, job, signal }): Promise<PreparedNarrativeMemory | null> => {
+        const guard = memoryAttemptGuard(record, job, now());
+        const prepareObserver = async (observerId: import("@/game/domain/entity/entityCore").EntityId) => {
+          const prepared = await prepareNarrativeMemory({
+            record, observerId, job, source: memorySummarySource, repository: memorySummaryRepository,
+            policy: memoryPolicy, summaries: memorySummaries, signal,
+            reserveBatchUpdate: async () => guard !== null && memorySummaryRepository.reserveBatchUpdate !== undefined
+              && (await memorySummaryRepository.reserveBatchUpdate(guard)).ok,
+            reserveSummaryHttpAttempt: async () => guard !== null && memorySummaryRepository.reserveHttpAttempt !== undefined
+              && (await memorySummaryRepository.reserveHttpAttempt(guard)).ok,
+          });
+          if (!prepared.ok) throw new Error(prepared.code);
+          return prepared.context;
+        };
+        const player = await prepareObserver(PLAYER_ENTITY_ID);
+        const focusedNpc = job.focusNpcId === undefined
+          ? undefined
+          : record.worldState.entityStore.records.some((entry) => String(entry.core.id) === String(job.focusNpcId))
+            ? job.focusNpcId
+            : undefined;
+        const npc = focusedNpc === undefined ? undefined : await prepareObserver(focusedNpc);
+        const sourceFingerprint = narrativeMemorySourceHash({
+          history: record.storyState.history.entries.map((entry) => [entry.id, entry.sequence, entry.text, entry.audienceIds]),
+          events: record.worldState.eventLedger.map((event) => [event.eventId, event.sequence]),
+          memory: player.manifest.map((entry) => entry.ref),
+        });
+        return {
+          formatVersion: 1,
+          policyVersion: "memory-p2/1",
+          sourceFingerprint,
+          policy: memoryPolicy,
+          summaries: memorySummaries,
+          player,
+          ...(npc === undefined ? {} : { npc }),
+        };
+      },
       ...(options.narrativeAbortSignal === undefined ? {} : { signal: options.narrativeAbortSignal }),
       auditLink: {
         ...(traceId !== undefined ? { traceId } : {}),
@@ -620,9 +695,13 @@ export function createServerGameEntryPoints(
         await repository.close();
       } finally {
         try {
-          await auditRecorder.close();
+          await memorySummaryRepository.close();
         } finally {
-          await logRuntime.close();
+          try {
+            await auditRecorder.close();
+          } finally {
+            await logRuntime.close();
+          }
         }
       }
     },

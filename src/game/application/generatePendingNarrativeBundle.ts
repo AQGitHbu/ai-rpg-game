@@ -8,6 +8,8 @@ import { approveNarrativeBundle, type ApprovedNarrativeBundle } from "./approveN
 import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
 import type { GameLogger } from "@/game/logging";
 import type { StoryState } from "@/game/domain/storyState";
+import type { NarrativeMemoryContext } from "@/game/domain/narrativeMemoryContext";
+import type { MemoryAttemptGuard, PreparedNarrativeMemory, NarrativeMemorySummaryRepository } from "./narrativeMemorySummaryRepository";
 import type { WorldState } from "@/game/domain/worldState";
 import { deriveStructuralEvolutionNeed } from "@/game/gameplay/rpg/worldEvolution";
 import type { ObjectiveTransition } from "@/game/domain/narrativeBeat";
@@ -60,6 +62,11 @@ export type GeneratePendingNarrativeBundleDeps = {
   readonly reviewer?: NarrativeCandidateReviewer;
   /** Server-owned lease identity; injected so recovery tests remain deterministic. */
   readonly leaseId?: () => string;
+  /** Optional P2 preparation hook; its result is frozen for every candidate version. */
+  readonly prepareMemoryContext?: (input: Readonly<{ record: import("./server/persistence/gameRepository").GameRecord; job: import("@/game/domain/pendingNarrativeJob").PendingNarrativeJob; signal: AbortSignal }>) => Promise<NarrativeMemoryContext | null>;
+  /** Optional server-owned preparation that can be frozen and recovered by job epoch. */
+  readonly prepareMemoryPackage?: (input: Readonly<{ record: import("./server/persistence/gameRepository").GameRecord; job: import("@/game/domain/pendingNarrativeJob").PendingNarrativeJob; signal: AbortSignal }>) => Promise<PreparedNarrativeMemory | null>;
+  readonly memorySummaryRepository?: NarrativeMemorySummaryRepository;
 };
 
 const NARRATIVE_LEASE_DURATION_MS = 10 * 60 * 1000;
@@ -86,6 +93,23 @@ function narrativeAttemptPredicate(
     candidateVersion: narrative.job.attempt.candidateVersion,
     candidateHash: narrative.job.attempt.candidateHash,
   } as const;
+}
+
+function memoryAttemptGuard(record: import("./server/persistence/gameRepository").GameRecord, job: import("@/game/domain/pendingNarrativeJob").PendingNarrativeJob, now: string): MemoryAttemptGuard | null {
+  if (job.attempt.leaseId === null) return null;
+  return {
+    key: { gameId: record.gameId, generationId: record.worldState.generation.generationId, jobId: job.jobId, epoch: job.attempt.epoch },
+    expectedRevision: record.revision,
+    expectedNarrativeJob: {
+      status: "provider_pending",
+      jobId: String(job.jobId),
+      epoch: job.attempt.epoch,
+      leaseId: job.attempt.leaseId,
+      candidateVersion: job.attempt.candidateVersion,
+      candidateHash: job.attempt.candidateHash,
+    },
+    now,
+  };
 }
 
 export async function generatePendingNarrativeBundle(
@@ -191,6 +215,8 @@ export async function generatePendingNarrativeBundle(
   };
 
   let effectiveContext: NarrativeBundleSourceContext | undefined;
+  let fixedMemoryContext: NarrativeMemoryContext | null = null;
+  let fixedNpcMemoryContext: NarrativeMemoryContext | undefined;
   // This closure belongs to one worker and its immutable gameplay snapshot.
   // Cache only authorized outward data, never request controls or failures.
   let authorizedOutward: Extract<NarrativeBundleSourceContext, { kind: "decision" }>["npcOutward"];
@@ -199,7 +225,7 @@ export async function generatePendingNarrativeBundle(
     const prepared = context.kind === "decision" && authorizedOutward !== undefined
       ? { ok: true as const, context: { ...context, npcOutward: authorizedOutward } }
       : deps.npcDeliberationSource === undefined ? { ok: true as const, context }
-        : await prepareNpcNarrativeContext(context, deps.npcDeliberationSource);
+        : await prepareNpcNarrativeContext(context, deps.npcDeliberationSource, fixedNpcMemoryContext);
     if (!prepared.ok) return prepared;
     if (prepared.context.kind === "decision") authorizedOutward = prepared.context.npcOutward;
     effectiveContext = prepared.context;
@@ -295,12 +321,57 @@ export async function generatePendingNarrativeBundle(
   let lastRepair: NarrativeBundleRepair | undefined;
   let candidateRevision: NarrativeCandidateRevision | undefined;
   let authorDraftRevision: NarrativeAuthorDraftRevision | undefined;
+  let memoryPreparationFailure = false;
+  const memoryGuard = durableRecovery ? memoryAttemptGuard(durableRecord, job, deps.now()) : null;
+  if (deps.memorySummaryRepository?.loadPrepared !== undefined && memoryGuard !== null) {
+    const loaded = await deps.memorySummaryRepository.loadPrepared(memoryGuard.key);
+    if (!loaded.ok) {
+      memoryPreparationFailure = true;
+      lastFailureKind = "AI_CALL_FAILED";
+      lastRepair = { attempt: 1, reason: "provider_failure", detail: loaded.code };
+    } else if (loaded.prepared !== null) {
+      fixedMemoryContext = loaded.prepared.player;
+      fixedNpcMemoryContext = loaded.prepared.npc;
+    } else if (deps.prepareMemoryPackage !== undefined && deps.memorySummaryRepository.freezePrepared !== undefined) {
+      try {
+        const next = await deps.prepareMemoryPackage({ record: durableRecord, job, signal: requestSignal });
+        if (next !== null) {
+          const frozen = await deps.memorySummaryRepository.freezePrepared({ ...memoryGuard, next });
+          if (!frozen.ok) {
+            memoryPreparationFailure = true;
+            lastFailureKind = "AI_CALL_FAILED";
+            lastRepair = { attempt: 1, reason: "provider_failure", detail: frozen.code };
+          } else {
+            fixedMemoryContext = frozen.prepared.player;
+            fixedNpcMemoryContext = frozen.prepared.npc;
+          }
+        }
+      } catch {
+        memoryPreparationFailure = true;
+        lastFailureKind = "AI_CALL_FAILED";
+        lastRepair = { attempt: 1, reason: "provider_failure", detail: "memory_preparation_failed" };
+      }
+    }
+  }
+  if (!memoryPreparationFailure && fixedMemoryContext === null && deps.prepareMemoryContext !== undefined) {
+    try {
+      fixedMemoryContext = await deps.prepareMemoryContext({ record: durableRecord, job, signal: requestSignal });
+    } catch {
+      memoryPreparationFailure = true;
+      lastFailureKind = "AI_CALL_FAILED";
+      lastRepair = { attempt: 1, reason: "provider_failure", detail: "memory_preparation_failed" };
+    }
+  }
   const revisionFindings: NarrativeBundleRepair[] = [];
   const bounded = await runBoundedAttempts<ApprovedNarrativeBundle, NarrativeBundleRepair>({
     maxAttempts: durableRecovery
       ? Math.max(1, MAX_NARRATIVE_BUNDLE_ATTEMPTS - job.attempt.candidateVersion)
       : MAX_NARRATIVE_BUNDLE_ATTEMPTS,
     runAttempt: async (attempt, priorRepair) => {
+      if (memoryPreparationFailure) {
+        const reason = lastRepair ?? { attempt, reason: "provider_failure" as const, detail: "memory_preparation_failed" };
+        return { ok: false, retryable: false, reason };
+      }
       if (priorRepair !== undefined) revisionFindings.push(priorRepair);
       // 自动修复从 1 开始；本次循环若由手动重试启动，则以 retryContext
       // 的首次修复序号为偏移。该偏移不代表之前多次手动重试的累计次数。
@@ -319,6 +390,7 @@ export async function generatePendingNarrativeBundle(
           worldState,
           storyState,
           job,
+          ...(fixedMemoryContext === null ? {} : { memoryContext: fixedMemoryContext }),
           auditLink: {
             ...(deps.auditLink ?? {}),
             gameId: String(record.gameId),
@@ -555,6 +627,8 @@ export async function generatePendingNarrativeBundle(
       failureKind: lastFailureKind,
     };
   }
+
+  if (memoryPreparationFailure) return failPendingJob();
 
   if (!bounded.ok) return failPendingJob();
   if (requestSignal.aborted) {

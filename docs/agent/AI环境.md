@@ -16,7 +16,9 @@
 
 ## 环境变量
 
-常用变量见 [环境示例](../../.env.example)：AI provider 三项、`AI_OUTPUT_FORMAT`、`AI_RUNTIME_THINKING_ROLES`、`GAME_DB_PATH`、日志数据库路径和审计开关。`RUN_REAL_AI_SMOKE=1` 只用于一次真实 smoke，不能持久化到项目环境。
+常用变量见 [环境示例](../../.env.example)：AI provider 三项、`AI_OUTPUT_FORMAT`、`AI_RUNTIME_THINKING_ROLES`、`AI_NARRATIVE_INPUT_MAX_ESTIMATED_TOKENS`、`GAME_DB_PATH`、日志数据库路径和审计开关。`RUN_REAL_AI_SMOKE=1` 与 `RUN_REAL_AI_JOURNEY=1` 只用于一次真实调用，不能持久化到项目环境。
+
+P2 离线协议入口为 `npm run journey:narrative:p2 -- --mode=register|live|replay --run-id=<id> --protocol=<path> --output=<dir>`；register 不调用网络，replay 只消费已冻结协议/磁带，live 必须显式设置 `RUN_REAL_AI_JOURNEY=1`。
 
 配置写入本仓未提交的 `.env.local`。`npm run env:bootstrap` 可初始化三项 provider 配置；运行时只读取本仓配置，不读取 SLG 文件。`npm run env:check` 校验配置且不回显密钥。调试使用独立 `GAME_DB_PATH`，不清理用户存档。
 
