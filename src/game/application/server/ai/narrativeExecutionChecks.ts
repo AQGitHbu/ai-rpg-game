@@ -63,11 +63,21 @@ export function buildNarrativeExecutionChecks(input: NarrativeCandidateReviewInp
   // Match server slot keys, never infer triggers or timing from candidate prose.
   const alternate = projectNarrativeDraft({ worldState, storyState, job, includeDeliveryReturn: true });
   const slots = [projection, alternate].flatMap(graph => graph.slots);
+  const descriptors = [projection, alternate].flatMap(graph => graph.descriptorGraph.steps);
   for (const [index, step] of proposal.continuationScenes.entries()) {
     const trigger = slots.find(slot => slot.slotKey === step.stepKey)?.resolution?.trigger;
     if (trigger !== undefined) {
       slotState = { ...slotState, itemOwners: slotState.itemOwners.map(item => ({ ...item })) };
       if (trigger.kind === "move") slotState.locationId = String(trigger.locationId);
+      // An existing unmet NPC can be authorized only for a future arrival.
+      // Extend this slot's scope from the server descriptor, never the prose or
+      // the destination's entire NPC roster; earlier snapshots stay unchanged.
+      const descriptor = descriptors.find(descriptor => descriptor.stepKey === step.stepKey);
+      const arrivals = entitiesOfKind(reviewWorld.entityStore, "npc").filter(npc => npc.core.lifecycle === "active"
+        && npc.position.locationId === slotState.locationId
+        && descriptor?.authority.allowedEntityIds.includes(String(npc.core.id))
+        && !slotState.npcLocations.some(known => known.npcId === npc.core.id));
+      slotState.npcLocations = [...slotState.npcLocations, ...arrivals.map(npc => ({ npcId: String(npc.core.id), locationId: String(npc.position.locationId) }))];
       if (trigger.kind === "take_item" || trigger.kind === "give_item") {
         slotState.transfers = [...slotState.transfers, { itemId: String(trigger.itemId), ownerId: trigger.kind === "take_item" ? String(PLAYER_ENTITY_ID) : String(trigger.npcId), basisKey: `step:${step.stepKey}` }];
         slotState.itemOwners = slotState.itemOwners.map(item => item.itemId === trigger.itemId ? { ...item, ownerId: trigger.kind === "take_item" ? String(PLAYER_ENTITY_ID) : String(trigger.npcId) } : item);

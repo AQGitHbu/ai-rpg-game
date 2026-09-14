@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createWorldStateFixtureWith, emptyProjection } from "@/game/domain/testing/worldStateFixture.testutil";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
-import { asGenerationId, asLocationId, asNpcId, asItemId } from "@/game/domain/worldEntity";
+import { asGenerationId, asLocationId, asNpcId, asItemId, asQuestId, asFactId } from "@/game/domain/worldEntity";
 import { asNarrativeJobId } from "@/game/domain/events";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { NarrativeBundleProposal } from "@/game/domain/narrativeBundle";
@@ -15,6 +15,7 @@ import type { RpgAiClient } from "./rpgAiClient";
 import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
 import { projectEntityStore } from "@/game/domain/entity";
 import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
+import { projectNarrativeDraft } from "./narrativeDraftProjection";
 
 function input(ending = true): NarrativeCandidateReviewInput {
   const locationId = asLocationId("inner_hall");
@@ -118,5 +119,55 @@ describe("server-bound narrative execution extraction", () => {
     expect(checks.find(check => check.path === "currentScene.segments[0].text")!.states[0]!.locationId).toBe("inner_hall");
     expect(checks.find(check => check.path === "continuationScenes[0].scene.segments[0].text")!.states[0]!.locationId).toBe("loc_dyn_1");
     expect(checks.find(check => check.path === "worldDelta.beatSummary")!.prerequisiteBasisKeys).not.toContain("step:move:loc_dyn_1");
+  });
+  it.each([false, true])("admits only the descriptor's unmet arrival NPC after visit→discover→talk (delivery=%s)", delivery => {
+    const original = input(false);
+    if (original.context.kind !== "decision" || "opening" in original.proposal) throw new Error("decision expected");
+    const npcId = asNpcId("boatman");
+    const locationId = asLocationId("dock");
+    const questId = asQuestId("arrival_quest");
+    const factId = asFactId("tracks");
+    const worldState = createWorldStateFixtureWith({ generation: original.context.worldState.generation, base: projectEntityStore(original.context.worldState.entityStore) }, {
+      npcs: [...original.context.worldState.npcs.map(npc => ({ ...npc, met: npc.id !== npcId })),
+        { ...original.context.worldState.npcs[1]!, id: asNpcId("hidden_bystander"), met: false, memory: { ...original.context.worldState.npcs[1]!.memory, npcId: asNpcId("hidden_bystander") } }],
+      locations: original.context.worldState.locations.map(location => ({ ...location, npcIds: location.id === locationId ? [npcId, asNpcId("hidden_bystander")] : [asNpcId("host")] })),
+      worldFacts: [{ factId, text: "码头留下脚印。", source: "generated", discovered: false, locationId }],
+      quests: [{ id: questId, name: "找到船工", description: "前往码头查看脚印并与船工谈话。", objectives: [
+        { kind: "visit_location", locationId }, { kind: "discover_fact", factId }, { kind: "talk_to_npc", npcId },
+      ], onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" }, tags: [], kind: "main", stage: 1, status: "active" }],
+    });
+    const storyState = { ...original.context.storyState, ...(delivery ? { currentAct: original.context.storyState.targetActs,
+      delivery: { itemId: asItemId("letter"), giverNpcId: asNpcId("host"), recipientNpcId: npcId },
+      contract: { ...original.context.storyState.contract, delivery: { itemKey: "letter", recipientKey: "boatman", verificationFactKeys: [] } },
+    } : {}) };
+    const context = { ...original.context, worldState, storyState, job: { ...original.context.job,
+      objectiveTransition: { before: null, completed: [], after: { questId, objectiveIndex: 0, label: "抵达码头" }, mode: "progressed" as const },
+    } };
+    const projection = projectNarrativeDraft(context);
+    expect(projection.descriptorGraph.steps[0]!.arrivalNpc?.id).toBe(npcId);
+    expect(projection.stepKeys).toEqual(delivery ? ["move:dock", "give_item:letter:boatman"] : ["move:dock"]);
+    const value = { ...original, context, proposal: { ...original.proposal, terminal: projection.terminal,
+      continuationScenes: projection.stepKeys.map(stepKey => ({ stepKey, scene: { segments: [{ beatId: "atmosphere", text: "船工在码头向你点头。" }], npcLine: null, objectiveLink: null, choices: [] } })),
+    } };
+    const before = JSON.stringify(value);
+    const checks = buildNarrativeExecutionChecks(value);
+    for (const check of checks) {
+      const ids = check.states[0]!.npcLocations.map(npc => npc.npcId);
+      expect(ids).not.toContain("hidden_bystander");
+      if (check.path.startsWith("continuationScenes")) expect(ids).toContain(npcId);
+      else expect(ids).not.toContain(npcId);
+    }
+    const verdict = response(value);
+    for (const check of verdict.executionChecks!) if (check.path.startsWith("continuationScenes")) {
+      Object.assign(check, { participants: [{ quote: check.quote, npcId, locationId }] });
+    }
+    expect(validate(value, verdict)).toEqual([]);
+    for (const path of ["currentScene.segments[0].text", "worldDelta.beatSummary"]) {
+      const premature = structuredClone(verdict);
+      const check = premature.executionChecks!.find(check => check.path === path)!;
+      Object.assign(check, { participants: [{ quote: check.quote, npcId, locationId }] });
+      expect(validate(value, premature)).toEqual([expect.objectContaining({ path, code: "ACTION_MISMATCH" })]);
+    }
+    expect(JSON.stringify(value)).toBe(before);
   });
 });
