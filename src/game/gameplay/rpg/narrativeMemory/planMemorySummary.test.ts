@@ -38,4 +38,16 @@ describe("planMemorySummary", () => {
     expect(planMemorySummary({ evidence: evidence(9), previous: null, forceForLength: true })).toEqual({ kind: "none" });
     expect(planMemorySummary({ evidence: evidence(10), previous: null, forceForLength: true })).toMatchObject({ kind: "batch", throughSequence: 9 });
   });
+
+  it("rejects duplicate History IDs even when one duplicate is before the watermark", () => {
+    const source = evidence(60);
+    const duplicate = { ...source.history[10]!, id: source.history[0]!.id, text: "被改写的旧原话" };
+    const withDuplicate = { ...source, history: [...source.history.slice(0, 10), duplicate, ...source.history.slice(11)] };
+
+    expect(planMemorySummary({
+      evidence: withDuplicate,
+      previous: { formatVersion: 1, observerId: PLAYER, policyVersion: "memory-p2/1", summaryRevision: 1, coveredThroughSequence: 9, coveredSourceFingerprint: "x", batches: [], overview: { historyIds: [], eventIds: [] } },
+      forceForLength: false,
+    })).toEqual({ kind: "none" });
+  });
 });

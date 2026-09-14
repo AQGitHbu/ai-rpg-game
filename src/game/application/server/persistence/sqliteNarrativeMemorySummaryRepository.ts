@@ -8,7 +8,11 @@ import type {
   PreparedNarrativeMemory,
 } from "@/game/application/narrativeMemorySummaryRepository";
 import type { GameRepository } from "./gameRepository";
-import type { SqliteClient, SqliteClientFactory } from "./sqliteClient";
+import { parsePersistableStoryState } from "./storyStatePersistenceValidation";
+import { validatePersistableWorldState } from "./worldStatePersistenceValidation";
+import type { SqliteClient, SqliteClientFactory, SqliteTransaction } from "./sqliteClient";
+import type { EntityId } from "@/game/domain/entity/entityCore";
+import { narrativeMemorySourceFingerprint } from "@/game/application/narrativeMemorySourceFingerprint";
 
 const POLICY_VERSION = "memory-p2/1";
 
@@ -83,6 +87,40 @@ function preparedHash(value: PreparedNarrativeMemory): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
+async function currentObserverSourceFingerprint(
+  tx: SqliteTransaction,
+  key: MemorySummaryKey,
+  throughSequence: number,
+): Promise<string | null> {
+  const result = await tx.execute({
+    sql: `SELECT g.world_state_json, g.story_state_json
+          FROM current_game c JOIN game_records g ON g.game_id = c.game_id
+          WHERE c.slot = 1 AND g.game_id = ?`,
+    args: [String(key.gameId)],
+  });
+  const row = result.rows[0];
+  if (row === undefined || typeof row.world_state_json !== "string" || typeof row.story_state_json !== "string") return null;
+  let rawWorld: unknown;
+  let rawStory: unknown;
+  try {
+    rawWorld = JSON.parse(row.world_state_json);
+    rawStory = JSON.parse(row.story_state_json);
+  } catch {
+    return null;
+  }
+  const world = validatePersistableWorldState(rawWorld);
+  if (!world.ok) return null;
+  if (String(world.value.generation.generationId) !== String(key.generationId)) return null;
+  const story = parsePersistableStoryState(rawStory, world.value.eventLedger, world.value.entityStore);
+  if (!story.ok) return null;
+  return narrativeMemorySourceFingerprint({
+    worldState: world.value,
+    storyState: story.value,
+    observerId: key.observerId as EntityId,
+    throughSequence,
+  });
+}
+
 export function createSqliteNarrativeMemorySummaryRepository(options: Readonly<{
   readonly clientFactory: SqliteClientFactory;
   readonly gameRepository?: GameRepository;
@@ -98,31 +136,46 @@ export function createSqliteNarrativeMemorySummaryRepository(options: Readonly<{
     await getClient().batch([TABLE_SQL, ATTEMPT_TABLE_SQL]);
     ready = true;
   }
-  async function guardIsCurrent(input: MemoryAttemptGuard): Promise<boolean> {
+  async function guardMatchesTransaction(tx: SqliteTransaction, input: MemoryAttemptGuard): Promise<boolean> {
     if (options.gameRepository === undefined) return true;
-    const current = await options.gameRepository.getCurrentGame();
-    if (!current.ok || current.status !== "active") return false;
-    const narrative = current.record.storyState.narrative;
-    if (current.record.gameId !== input.key.gameId || current.record.revision !== input.expectedRevision
-      || narrative.status !== "provider_pending") return false;
-    const attempt = narrative.job.attempt;
+    const result = await tx.execute({
+      sql: `SELECT g.revision,
+                   json_extract(g.story_state_json, '$.narrative.status') AS narrative_status,
+                   json_extract(g.story_state_json, '$.narrative.job.jobId') AS job_id,
+                   json_extract(g.story_state_json, '$.narrative.job.attempt.epoch') AS attempt_epoch,
+                   json_extract(g.story_state_json, '$.narrative.job.attempt.leaseId') AS lease_id,
+                   json_extract(g.story_state_json, '$.narrative.job.attempt.candidateVersion') AS candidate_version,
+                   json_extract(g.story_state_json, '$.narrative.job.attempt.candidateHash') AS candidate_hash,
+                   json_extract(g.story_state_json, '$.narrative.job.attempt.leaseExpiresAt') AS lease_expires_at
+            FROM current_game c JOIN game_records g ON g.game_id = c.game_id
+            WHERE c.slot = 1 AND g.game_id = ?`,
+      args: [String(input.key.gameId)],
+    });
+    const row = result.rows[0];
+    if (row === undefined) return false;
     const expected = input.expectedNarrativeJob;
     const now = Date.parse(input.now);
-    return String(narrative.job.jobId) === expected.jobId
-      && attempt.epoch === expected.epoch
-      && attempt.leaseId === expected.leaseId
-      && attempt.candidateVersion === expected.candidateVersion
-      && attempt.candidateHash === expected.candidateHash
-      && attempt.leaseExpiresAt !== null
+    const leaseExpiresAt = typeof row.lease_expires_at === "string" ? Date.parse(row.lease_expires_at) : Number.NaN;
+    return Number(row.revision) === input.expectedRevision
+      && row.narrative_status === expected.status
+      && String(row.job_id) === expected.jobId
+      && Number(row.attempt_epoch) === expected.epoch
+      && (row.lease_id === null ? null : String(row.lease_id)) === expected.leaseId
+      && Number(row.candidate_version) === expected.candidateVersion
+      && (row.candidate_hash === null ? null : String(row.candidate_hash)) === expected.candidateHash
       && !Number.isNaN(now)
-      && Date.parse(attempt.leaseExpiresAt) > now;
+      && !Number.isNaN(leaseExpiresAt)
+      && leaseExpiresAt > now;
   }
   async function reserveAttempt(input: MemoryAttemptGuard, column: "batch_updates" | "http_attempts", limit: number) {
-    if (!(await guardIsCurrent(input))) return { ok: false as const, code: "STALE_ATTEMPT" as const };
     try {
       await initializeSchema();
       const tx = await getClient().transaction("write");
       try {
+        if (!(await guardMatchesTransaction(tx, input))) {
+          await tx.rollback();
+          return { ok: false as const, code: "STALE_ATTEMPT" as const };
+        }
         const args = attemptArgs(input.key);
         const current = await tx.execute({ sql: `SELECT ${column}, prepared_json FROM narrative_memory_attempts WHERE game_id = ? AND generation_id = ? AND job_id = ? AND epoch = ?`, args });
         const row = current.rows[0];
@@ -170,10 +223,25 @@ export function createSqliteNarrativeMemorySummaryRepository(options: Readonly<{
             await tx.rollback();
             return { ok: false, code: "STALE_SUMMARY" };
           }
+          if (row !== undefined && Number(row.covered_through_sequence) > input.next.coveredThroughSequence) {
+            await tx.rollback();
+            return { ok: false, code: "SOURCE_CHANGED" };
+          }
           if (row !== undefined && Number(row.covered_through_sequence) === input.next.coveredThroughSequence
             && String(row.source_fingerprint) !== input.next.coveredSourceFingerprint) {
             await tx.rollback();
             return { ok: false, code: "SOURCE_CHANGED" };
+          }
+          if (options.gameRepository !== undefined) {
+            const sourceFingerprint = await currentObserverSourceFingerprint(
+              tx,
+              input.key,
+              input.next.coveredThroughSequence,
+            );
+            if (sourceFingerprint === null || sourceFingerprint !== input.next.coveredSourceFingerprint) {
+              await tx.rollback();
+              return { ok: false, code: "SOURCE_CHANGED" };
+            }
           }
           const stateJson = JSON.stringify(input.next);
           const result = row === undefined
@@ -206,11 +274,14 @@ export function createSqliteNarrativeMemorySummaryRepository(options: Readonly<{
     },
     async freezePrepared(input) {
       if (!isPrepared(input.next)) return { ok: false, code: "MEMORY_PREPARATION_INVALID" };
-      if (!(await guardIsCurrent(input))) return { ok: false, code: "STALE_ATTEMPT" };
       try {
         await initializeSchema();
         const tx = await getClient().transaction("write");
         try {
+          if (!(await guardMatchesTransaction(tx, input))) {
+            await tx.rollback();
+            return { ok: false, code: "STALE_ATTEMPT" };
+          }
           const args = attemptArgs(input.key);
           const current = await tx.execute({ sql: `SELECT prepared_json, prepared_hash FROM narrative_memory_attempts WHERE game_id = ? AND generation_id = ? AND job_id = ? AND epoch = ?`, args });
           const row = current.rows[0];

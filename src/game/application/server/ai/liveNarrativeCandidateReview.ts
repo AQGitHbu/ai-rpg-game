@@ -205,6 +205,7 @@ function publicReviewContext(input: NarrativeCandidateReviewInput): unknown {
     job: input.context.job,
     ...(input.context.npcOutward === undefined ? {} : { npcOutward: input.context.npcOutward }),
     ...(input.context.memoryContext === undefined ? {} : { memoryContext: input.context.memoryContext }),
+    ...(input.context.maxEstimatedTokens === undefined ? {} : { maxEstimatedTokens: input.context.maxEstimatedTokens }),
   });
   return {
     kind: "decision",
@@ -222,6 +223,18 @@ export function createLiveNarrativeCandidateReview(
     async reviewNarrativeCandidate(input): Promise<CandidateReviewResult> {
       if (deps.aiClient === undefined) return resultFailure(input, "PROVIDER_FAILURE");
       try {
+        if (input.context.kind === "decision") {
+          const compilation = compileDecisionNarrativeContext({
+            consumer: "reviewer",
+            worldState: input.context.worldState,
+            storyState: input.context.storyState,
+            job: input.context.job,
+            ...(input.context.npcOutward === undefined ? {} : { npcOutward: input.context.npcOutward }),
+            ...(input.context.memoryContext === undefined ? {} : { memoryContext: input.context.memoryContext }),
+            ...(input.context.maxEstimatedTokens === undefined ? {} : { maxEstimatedTokens: input.context.maxEstimatedTokens }),
+          });
+          if (compilation.context.overflowEstimatedTokens > 0) return resultFailure(input, "UNCERTAIN");
+        }
         const metadata = reviewJobMetadata(input);
         const messages: readonly AiMessage[] = [
           {

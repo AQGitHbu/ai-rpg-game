@@ -56,7 +56,8 @@ it("replays raw opening, NPC and reviewer responses through production parsing a
         const current = await entry.getCurrentGame("current");
         expect(current.ok).toBe(true);
         expect(await entry.performTurn({ actionId: "verification", expectedRevision: current.revision!, interaction: { kind: "free_text", targetNpcId: asNpcId("npc_0"), text: "我想核实接应人的身份。" } }, "turn")).toMatchObject({ ok: true });
-        await entry.ensureNarrativeScene({}, "ensure");
+        const ensured = await entry.ensureNarrativeScene({}, "ensure");
+        expect(ensured).toMatchObject({ ok: true, result: "queued" });
         await entry.close();
         const readClient = createSqliteClient(join(directory, `${mode}.sqlite`));
         const reopened = createSqliteGameRepository({ clientFactory: () => readClient });

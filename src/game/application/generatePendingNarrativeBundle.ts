@@ -217,15 +217,19 @@ export async function generatePendingNarrativeBundle(
   let effectiveContext: NarrativeBundleSourceContext | undefined;
   let fixedMemoryContext: NarrativeMemoryContext | null = null;
   let fixedNpcMemoryContext: NarrativeMemoryContext | undefined;
+  let fixedPromptMaxEstimatedTokens: number | undefined;
   // This closure belongs to one worker and its immutable gameplay snapshot.
   // Cache only authorized outward data, never request controls or failures.
   let authorizedOutward: Extract<NarrativeBundleSourceContext, { kind: "decision" }>["npcOutward"];
   const generateCandidate: NarrativeBundleSource["generate"] = async (context) => {
     if (context.signal?.aborted) return { ok: false, failure: { kind: "AI_CALL_FAILED", phase: "scene" }, repairReason: "provider_failure", repairDetail: "aborted" };
-    const prepared = context.kind === "decision" && authorizedOutward !== undefined
-      ? { ok: true as const, context: { ...context, npcOutward: authorizedOutward } }
-      : deps.npcDeliberationSource === undefined ? { ok: true as const, context }
-        : await prepareNpcNarrativeContext(context, deps.npcDeliberationSource, fixedNpcMemoryContext);
+    const budgetedContext = context.kind === "decision" && fixedPromptMaxEstimatedTokens !== undefined
+      ? { ...context, maxEstimatedTokens: fixedPromptMaxEstimatedTokens }
+      : context;
+    const prepared = budgetedContext.kind === "decision" && authorizedOutward !== undefined
+      ? { ok: true as const, context: { ...budgetedContext, npcOutward: authorizedOutward } }
+      : deps.npcDeliberationSource === undefined ? { ok: true as const, context: budgetedContext }
+        : await prepareNpcNarrativeContext(budgetedContext, deps.npcDeliberationSource, fixedNpcMemoryContext);
     if (!prepared.ok) return prepared;
     if (prepared.context.kind === "decision") authorizedOutward = prepared.context.npcOutward;
     effectiveContext = prepared.context;
@@ -332,6 +336,14 @@ export async function generatePendingNarrativeBundle(
     } else if (loaded.prepared !== null) {
       fixedMemoryContext = loaded.prepared.player;
       fixedNpcMemoryContext = loaded.prepared.npc;
+      fixedPromptMaxEstimatedTokens = loaded.prepared.policy.promptMaxEstimatedTokens;
+    } else if (job.attempt.candidateVersion > 0) {
+      // A later candidate belongs to the same frozen generation attempt. It
+      // must never be regenerated with a different memory package after a
+      // crash or cache loss.
+      memoryPreparationFailure = true;
+      lastFailureKind = "AI_CALL_FAILED";
+      lastRepair = { attempt: 1, reason: "provider_failure", detail: "memory_preparation_missing" };
     } else if (deps.prepareMemoryPackage !== undefined && deps.memorySummaryRepository.freezePrepared !== undefined) {
       try {
         const next = await deps.prepareMemoryPackage({ record: durableRecord, job, signal: requestSignal });
@@ -344,6 +356,7 @@ export async function generatePendingNarrativeBundle(
           } else {
             fixedMemoryContext = frozen.prepared.player;
             fixedNpcMemoryContext = frozen.prepared.npc;
+            fixedPromptMaxEstimatedTokens = frozen.prepared.policy.promptMaxEstimatedTokens;
           }
         }
       } catch {

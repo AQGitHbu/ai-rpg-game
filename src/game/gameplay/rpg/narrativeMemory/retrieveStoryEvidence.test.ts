@@ -278,6 +278,39 @@ describe("retrieveStoryEvidence", () => {
     expect(selection.historyIds).not.toContain("choice:unselected");
   });
 
+  it("does not use an unknown entity's core name even when its public alias is known", () => {
+    const world = makeWorld();
+    const source = world.entityStore.records.find((record) => String(record.core.id) === String(HELPER_B));
+    if (source === undefined) throw new Error("fixture NPC missing");
+    const unknownId = asNpcId("npc:unknown-with-alias");
+    const unknownWorld = {
+      ...world,
+      entityStore: createEntityStore([
+        ...world.entityStore.records,
+        {
+          ...source,
+          core: {
+            ...source.core,
+            id: unknownId,
+            name: "隐秘真名",
+            aliases: [{ text: "公开外号", observerIds: [], evidenceEventIds: [] }],
+          },
+        } as EntityRecord,
+      ]),
+    };
+
+    const selection = retrieveStoryEvidence({
+      worldState: unknownWorld,
+      storyState: makeStoryState(unknownWorld),
+      observerId: PLAYER,
+      text: "隐秘真名",
+      actionEntityIds: [],
+      focusEntityIds: [],
+    });
+
+    expect(selection.entityIds).not.toContain(unknownId);
+  });
+
   it("keeps same-name entities distinct and does not let the current focus erase an old person", () => {
     const world = makeWorld();
     const sameNameWorld = {

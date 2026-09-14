@@ -42,6 +42,7 @@ import { DEFAULT_NARRATIVE_MEMORY_POLICY, resolveNarrativeMemoryPolicy } from ".
 import { prepareNarrativeMemory } from "../prepareNarrativeMemory";
 import type { NarrativeMemoryPolicy } from "@/game/domain/narrativeMemoryContext";
 import type { MemoryAttemptGuard, PreparedNarrativeMemory } from "../narrativeMemorySummaryRepository";
+import { narrativeMemorySourceFingerprint } from "../narrativeMemorySourceFingerprint";
 
 export type { RequestLogContext };
 
@@ -275,7 +276,11 @@ export function createServerGameEntryPoints(
   });
   const memorySummaryRepository = createSqliteNarrativeMemorySummaryRepository({
     clientFactory: createServerSqliteClientFactory(env),
-    gameRepository: repository,
+    // An injected repository may use a different SQLite connection/path (the
+    // acceptance harness does this deliberately). The summary repository can
+    // only perform its transactional game guard when both repositories share
+    // the composition-owned database client.
+    gameRepository: externalRepository === undefined ? repository : undefined,
   });
   const now = () => new Date().toISOString();
   const aiConfig = parseAiRuntimeConfig(env);
@@ -337,10 +342,29 @@ export function createServerGameEntryPoints(
             ? job.focusNpcId
             : undefined;
         const npc = focusedNpc === undefined ? undefined : await prepareObserver(focusedNpc);
+        const playerSourceFingerprint = narrativeMemorySourceFingerprint({
+          worldState: record.worldState,
+          storyState: record.storyState,
+          observerId: PLAYER_ENTITY_ID,
+        });
+        const npcSourceFingerprint = focusedNpc === undefined ? null : narrativeMemorySourceFingerprint({
+          worldState: record.worldState,
+          storyState: record.storyState,
+          observerId: focusedNpc,
+        });
         const sourceFingerprint = narrativeMemorySourceHash({
-          history: record.storyState.history.entries.map((entry) => [entry.id, entry.sequence, entry.text, entry.audienceIds]),
-          events: record.worldState.eventLedger.map((event) => [event.eventId, event.sequence]),
-          memory: player.manifest.map((entry) => entry.ref),
+          version: 1,
+          job: {
+            jobId: String(job.jobId),
+            actionId: job.actionId,
+            turnId: String(job.turnId),
+            turnNumber: job.turnNumber,
+            actionSummary: job.actionSummary,
+            domainEventIds: job.domainEventIds.map(String),
+            objectiveTransition: job.objectiveTransition,
+            mandatoryBeats: job.mandatoryBeats,
+          },
+          observers: { player: playerSourceFingerprint, npc: npcSourceFingerprint },
         });
         return {
           formatVersion: 1,

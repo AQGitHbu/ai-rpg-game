@@ -973,6 +973,22 @@ describe("createNarrativeBundleSource", () => {
     expect(JSON.stringify(auditContext.narrativeContext)).toContain("bundle:source-linked-memory");
   });
 
+  it("rejects a complete decision context over the frozen prompt budget before transport", async () => {
+    const complete = vi.fn().mockResolvedValue({ ok: true, content: JSON.stringify(validBundleResponse) });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete), allowLegacyDecisionDto: true });
+
+    const result = await source.generate({
+      kind: "decision",
+      worldState: makeWorldState(),
+      storyState: makeStoryState(),
+      job: makeJob(),
+      maxEstimatedTokens: 1,
+    });
+
+    expect(result).toMatchObject({ ok: false, repairReason: "context_budget_exceeded" });
+    expect(complete).not.toHaveBeenCalled();
+  });
+
   it("reports an unknown worldDelta field at its exact path and preserves the raw author draft", async () => {
     const rawDraft = {
       ...validBundleResponse,

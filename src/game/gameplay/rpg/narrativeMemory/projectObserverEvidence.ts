@@ -25,11 +25,11 @@ function observerKnowsFact(worldState: WorldState, observerId: EntityId, factId:
   const record = worldState.entityStore.records.find((candidate) => String(candidate.core.id) === String(observerId));
   if (record?.core.kind === "player_character") {
     const player = record as PlayerEntityRecord;
-    return player.knowledge.knownFactIds.some((knownId) => String(knownId) === factId);
+    return player.knowledge?.knownFactIds?.some((knownId) => String(knownId) === factId) ?? false;
   }
   if (record?.core.kind === "npc") {
     const npc = record as NpcEntityRecord;
-    return npc.knowledge.entries.some((entry) => String(entry.factId) === factId);
+    return npc.knowledge?.entries?.some((entry) => String(entry.factId) === factId) ?? false;
   }
   return false;
 }
@@ -40,7 +40,10 @@ function eventMayBeObserved(
   observerId: EntityId,
   visibleHistoryEventIds: ReadonlySet<string>,
 ): boolean {
-  if (visibleHistoryEventIds.has(String(event.eventId))) return true;
+  if (visibleHistoryEventIds.has(String(event.eventId))) {
+    return (event.factIds ?? []).every((factId) =>
+      observerKnowsFact(worldState, observerId, String(factId)));
+  }
   const actorIds = event.actorIds ?? [];
   const targetIds = event.targetIds ?? [];
   const isParticipant = actorIds.some((id) => String(id) === String(observerId))

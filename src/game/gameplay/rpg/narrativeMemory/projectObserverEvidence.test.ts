@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { asEventId } from "@/game/domain/events";
+import { asEventId, asTurnId } from "@/game/domain/events";
+import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
+import { asFactId } from "@/game/domain/worldEntity";
 import { asNpcId, asPlayerEntityId } from "@/game/domain/worldEntity";
 import type { StoryState } from "@/game/domain/storyState";
 import type { WorldState } from "@/game/domain/worldState";
@@ -96,5 +98,27 @@ describe("projectObserverEvidence", () => {
     expect(result.events.map((event) => event.eventId)).toEqual([]);
     expect(result.knownEntityIds).toEqual(expect.arrayContaining([PLAYER, KNOWN_NPC]));
     expect(result.knownEntityIds).not.toContain(UNKNOWN_NPC);
+  });
+
+  it("does not let a visible history reference authorize an event's unknown facts", () => {
+    const { worldState, storyState } = makeState();
+    const secretEvent = makeCommittedEvent({
+      type: "fact_discovered",
+      factId: asFactId("fact:secret"),
+    }, {
+      eventId: VISIBLE_EVENT,
+      turnId: asTurnId("turn:secret"),
+      actorIds: [KNOWN_NPC],
+      targetIds: [PLAYER],
+      factIds: [asFactId("fact:secret")],
+    });
+    const result = projectObserverEvidence({
+      worldState: { ...worldState, eventLedger: [secretEvent] },
+      storyState,
+      observerId: PLAYER,
+    });
+
+    expect(result.history.map((entry) => entry.id)).toEqual(["history:visible"]);
+    expect(result.events).toEqual([]);
   });
 });

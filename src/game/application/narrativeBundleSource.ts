@@ -92,6 +92,8 @@ export type NarrativeBundleSourceContext =
   | {
     readonly kind: "decision";
     readonly memoryContext?: NarrativeMemoryContext;
+    /** Frozen per-attempt full prompt budget; absent keeps legacy fixture behavior. */
+    readonly maxEstimatedTokens?: number;
     readonly npcOutward?: readonly import("./npcSpeechAuthority").NpcDeliberationOutwardProjection[];
     /** 1-based server-owned content version for this complete candidate. */
     readonly candidateVersion?: number;

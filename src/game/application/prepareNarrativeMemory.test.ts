@@ -102,4 +102,25 @@ describe("prepareNarrativeMemory", () => {
     expect(calls).toEqual(["batch", "overview"]);
     expect(repository.publish).toHaveBeenCalledTimes(1);
   });
+
+  it("forces summary maintenance when the raw source exceeds the soft token budget", async () => {
+    const source: NarrativeMemorySummarySource = { select: vi.fn(async (input: Parameters<NarrativeMemorySummarySource["select"]>[0]) => ({
+      ok: true as const,
+      selection: { historyIds: input.history.slice(0, 1).map((entry) => entry.id), eventIds: [] },
+    })) };
+    const repository: NarrativeMemorySummaryRepository = {
+      load: vi.fn(async () => ({ state: null, summaryRevision: 0 })),
+      publish: vi.fn(async () => ({ ok: true as const })),
+    };
+    const result = await prepareNarrativeMemory({
+      record: longRecord(10), observerId: PLAYER, job: {} as never, source, repository,
+      policy: { ...policy, rawSoftEstimatedTokens: 1 }, summaries: "enabled",
+      signal: new AbortController().signal,
+      reserveBatchUpdate: vi.fn(async () => true), reserveSummaryHttpAttempt: vi.fn(async () => true),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(source.select).toHaveBeenCalledTimes(2);
+    expect(source.select).toHaveBeenNthCalledWith(1, expect.objectContaining({ kind: "batch" }));
+  });
 });

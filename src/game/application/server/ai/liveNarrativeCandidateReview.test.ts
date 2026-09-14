@@ -313,6 +313,23 @@ describe("live narrative candidate reviewer", () => {
       expect(compiled.worldState.worldFacts.find((fact) => fact.factId === binding.factId)?.discovered).toBe(false);
     }
   });
+
+  it("does not send a reviewer request when the frozen full prompt budget is exceeded", async () => {
+    const complete = vi.fn().mockResolvedValue({ ok: true, content: '{"verdict":"pass"}' });
+    const context = {
+      kind: "decision" as const,
+      worldState: makeWorldState(),
+      storyState: makeStoryState(),
+      job: makeJob(),
+      maxEstimatedTokens: 1,
+    };
+    const result = await createLiveNarrativeCandidateReview({ aiClient: client(complete) }).reviewNarrativeCandidate({
+      context, proposal: candidate, candidateVersion: 1, candidateHash: hashNarrativeCandidate(candidate),
+    });
+
+    expect(result).toMatchObject({ ok: false, failure: "UNCERTAIN" });
+    expect(complete).not.toHaveBeenCalled();
+  });
   it("gives the reviewer the same opening compiler contract that constrained the author", async () => {
     const complete = vi.fn().mockResolvedValue({ ok: true, content: '{"verdict":"pass"}' });
     await createLiveNarrativeCandidateReview({ aiClient: client(complete) }).reviewNarrativeCandidate({

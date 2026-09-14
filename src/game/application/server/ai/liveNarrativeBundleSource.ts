@@ -403,8 +403,16 @@ export function createNarrativeBundleSource(
     ...(context.authorDraftRevision === undefined ? {} : { authorDraftRevision: context.authorDraftRevision }),
     ...(context.npcOutward === undefined ? {} : { npcOutward: context.npcOutward }),
     ...(context.memoryContext === undefined ? {} : { memoryContext: context.memoryContext }),
+    ...(context.maxEstimatedTokens === undefined ? {} : { maxEstimatedTokens: context.maxEstimatedTokens }),
             })
           : undefined;
+        if (decisionCompilation !== undefined && decisionCompilation.context.overflowEstimatedTokens > 0) {
+          logger?.warn("narrative_bundle_context_budget_exceeded", {
+            estimatedTokens: decisionCompilation.context.selectedEstimatedTokens,
+            maxEstimatedTokens: decisionCompilation.context.manifest.maxEstimatedTokens,
+          });
+          return failBundle("invalid_schema", "context_budget_exceeded", "context_budget_exceeded");
+        }
         const prompt = decisionCompilation?.prompt ?? buildOpeningNarrativePrompt(
           context as Extract<NarrativeBundleSourceContext, { readonly kind: "opening" }>,
         );

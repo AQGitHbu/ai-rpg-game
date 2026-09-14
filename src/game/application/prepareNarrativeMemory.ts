@@ -6,13 +6,7 @@ import { buildNarrativeMemoryContext, planMemorySummary, projectObserverEvidence
 import type { GameRecord } from "./server/persistence/gameRepository";
 import type { NarrativeMemorySummaryRepository } from "./narrativeMemorySummaryRepository";
 import type { NarrativeMemorySummarySource } from "./narrativeMemorySummarySource";
-
-function sourceFingerprint(evidence: ReturnType<typeof projectObserverEvidence>, throughSequence = Number.POSITIVE_INFINITY): string {
-  return JSON.stringify({
-    history: evidence.history.filter((entry) => entry.sequence <= throughSequence).map((entry) => [entry.id, entry.sequence, entry.text, entry.speakerId, entry.audienceIds]),
-    events: evidence.events.filter((event) => event.sequence <= throughSequence).map((event) => [event.eventId, event.sequence, event.kind, event.actorIds, event.targetIds]),
-  });
-}
+import { narrativeMemorySourceFingerprint } from "./narrativeMemorySourceFingerprint";
 
 function estimateMemoryTokens(text: string): number {
   let total = 0;
@@ -77,7 +71,12 @@ export async function prepareNarrativeMemory(input: Readonly<{
   if (input.summaries === "enabled") {
     const loaded = await input.repository.load({ gameId: input.record.gameId, generationId: input.record.worldState.generation.generationId, observerId: input.observerId });
     previous = loaded.state;
-    const plan = planMemorySummary({ evidence, previous, forceForLength: false });
+    const rawEstimatedTokens = estimateMemoryTokens(JSON.stringify({ history: evidence.history, events: evidence.events }));
+    const plan = planMemorySummary({
+      evidence,
+      previous,
+      forceForLength: rawEstimatedTokens > input.policy.rawSoftEstimatedTokens,
+    });
     if (plan.kind === "batch" && await input.reserveBatchUpdate()) {
       if (input.signal.aborted) return { ok: false, code: "CANCELLED" };
       const batchHistory = evidence.history.filter((entry) => plan.sourceHistoryIds.includes(entry.id));
@@ -92,7 +91,7 @@ export async function prepareNarrativeMemory(input: Readonly<{
           fromSequence: batchHistory[0]?.sequence ?? plan.throughSequence,
           throughSequence: plan.throughSequence,
           sourceHistoryIds: plan.sourceHistoryIds,
-          sourceFingerprint: sourceFingerprint(evidence, plan.throughSequence),
+          sourceFingerprint: narrativeMemorySourceFingerprint({ worldState: input.record.worldState, storyState: input.record.storyState, observerId: input.observerId, throughSequence: plan.throughSequence }),
           selection: batchResult.selection,
         }];
         const leafHistoryIds = [...new Set(leafBatches.flatMap((batch) => batch.selection.historyIds))];
@@ -107,7 +106,7 @@ export async function prepareNarrativeMemory(input: Readonly<{
             formatVersion: 1, observerId: input.observerId, policyVersion: "memory-p2/1",
             summaryRevision: (previous?.summaryRevision ?? loaded.summaryRevision) + 1,
             coveredThroughSequence: plan.throughSequence,
-            coveredSourceFingerprint: sourceFingerprint(evidence, plan.throughSequence),
+            coveredSourceFingerprint: narrativeMemorySourceFingerprint({ worldState: input.record.worldState, storyState: input.record.storyState, observerId: input.observerId, throughSequence: plan.throughSequence }),
             batches: leafBatches,
             overview: overviewResult.selection,
           };

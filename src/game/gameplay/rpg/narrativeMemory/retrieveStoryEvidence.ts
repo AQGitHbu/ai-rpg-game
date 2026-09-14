@@ -73,9 +73,10 @@ function visibleAlias(
 function entityTerms(
   record: EntityRecord,
   observerId: EntityId,
+  includeCoreName: boolean,
 ): readonly string[] {
   return [
-    record.core.name,
+    ...(includeCoreName ? [record.core.name] : []),
     ...(record.core.aliases ?? [])
       .filter((alias) => visibleAlias(alias, observerId))
       .map((alias) => alias.text),
@@ -236,7 +237,11 @@ export function retrieveStoryEvidence(query: EvidenceQuery): EvidenceSelection {
     if (!knownEntityIds.has(String(record.core.id))
       && !explicitIds.has(String(record.core.id))
       && !hasPublicAlias) continue;
-    const terms = entityTerms(record, query.observerId);
+    const terms = entityTerms(
+      record,
+      query.observerId,
+      knownEntityIds.has(String(record.core.id)) || explicitIds.has(String(record.core.id)),
+    );
     for (const term of terms) {
       if (term.length === 0 || !queryText.includes(term)) continue;
       const isAlias = term !== normalized(record.core.name);

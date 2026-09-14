@@ -51,6 +51,7 @@ type DecisionNarrativeContextInput = Readonly<{
   authorDraftRevision?: NarrativeAuthorDraftRevision;
   npcOutward?: readonly import("../../../npcSpeechAuthority").NpcDeliberationOutwardProjection[];
   memoryContext?: NarrativeMemoryContext;
+  maxEstimatedTokens?: number;
 }>;
 
 function block(input: NarrativeContextBlock): NarrativeContextBlock {
@@ -593,7 +594,7 @@ export function compileDecisionNarrativeContext(
   input: DecisionNarrativeContextInput,
 ): NarrativePromptCompilation {
   return createNarrativePromptCompilation(compileNarrativeContext({
-    maxEstimatedTokens: NARRATIVE_BUNDLE_CONTEXT_MAX_ESTIMATED_TOKENS,
+    maxEstimatedTokens: input.maxEstimatedTokens ?? NARRATIVE_BUNDLE_CONTEXT_MAX_ESTIMATED_TOKENS,
     blocks: [...buildDecisionNarrativeContextBlocks(input), ...(input.npcOutward === undefined ? [] : [block({
       id: "bundle:npc_outward", slot: "current_resolution", title: "角色获准对外回应",
       authority: "state", retention: "mandatory", priority: 950,

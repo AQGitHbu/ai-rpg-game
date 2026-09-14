@@ -150,6 +150,57 @@ function createInMemoryRepo(record: GameRecord | null): { repo: GameRepository; 
 }
 
 describe("generatePendingNarrativeBundle", () => {
+  it("fails recovery when an existing candidate has no frozen memory package", async () => {
+    const baseJob = {
+      ...createPendingJob(),
+      attempt: {
+        epoch: 1, candidateVersion: 1, candidateHash: null, httpAttempts: 0,
+        leaseId: "lease-recovery", leaseExpiresAt: "2026-01-02T00:00:00.000Z", status: "running" as const,
+      },
+    } as PendingNarrativeJob;
+    const record: GameRecord = {
+      gameId: asGameId("missing-prepared-memory"), worldState: createMinimalWorldState(),
+      storyState: createMinimalStoryState({ status: "provider_pending", mode: "ai", job: baseJob, lastPresentedScene: null }),
+      revision: 0, createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    const base = createInMemoryRepo(record);
+    const leased = {
+      ...record,
+      storyState: {
+        ...record.storyState,
+        narrative: { ...record.storyState.narrative, job: baseJob },
+      },
+    } as GameRecord;
+    const repo: GameRepository = {
+      ...base.repo,
+      async claimNarrativeJob() { return { ok: true as const, record: leased }; },
+      async reserveNarrativeCandidate() { throw new Error("candidate reservation must not run"); },
+      async recordNarrativeCandidateHash() { throw new Error("candidate hash must not run"); },
+      async reserveNarrativeHttpAttempt() { throw new Error("HTTP reservation must not run"); },
+    };
+    const prepareMemoryPackage = vi.fn(async () => ({}) as never);
+    const generate = vi.fn<NarrativeBundleSource["generate"]>();
+    const memorySummaryRepository = {
+      load: vi.fn(async () => ({ state: null, summaryRevision: 0 })),
+      publish: vi.fn(async () => ({ ok: true as const })),
+      loadPrepared: vi.fn(async () => ({ ok: true as const, prepared: null, preparedHash: null })),
+      freezePrepared: vi.fn(),
+    };
+
+    const result = await generatePendingNarrativeBundle({
+      repository: repo,
+      source: { generate },
+      now: () => "2026-01-01T00:00:00.000Z",
+      prepareMemoryPackage,
+      memorySummaryRepository,
+    });
+
+    expect(result).toMatchObject({ ok: false, code: "AI_CALL_FAILED" });
+    expect(prepareMemoryPackage).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(memorySummaryRepository.freezePrepared).not.toHaveBeenCalled();
+  });
+
   it("carries only the immediately rejected raw draft through actual author requests", async () => {
     const job = createPendingJob();
     const { repo, getRecord } = createInMemoryRepo({
