@@ -18,7 +18,14 @@ export function createNarrativeP2SegmentRuntime({ mode, directory, sourceDirecto
   binding, manifest, checkpoint, routeAttemptId, resolveAttempt, auditFiles = () => [] }) {
   if (!["live", "replay"].includes(mode) || !["A", "B"].includes(stage) || !Number.isSafeInteger(segment) || segment < 0
     || binding?.protocolVersion !== "narrative-p2/v2" || (mode === "replay" && !routeAttemptId)) fail("CONFIGURATION");
-  routeAttemptId ??= manifest.read().routeAttemptId;
+  if (mode === "live") {
+    const registered = manifest.read();
+    if (stage !== registered.stage || canonical(binding) !== canonical(registered.binding)
+      || (routeAttemptId !== undefined && routeAttemptId !== registered.routeAttemptId)) fail("BINDING");
+    // Persist the manifest's value, never retain a mutable caller-owned identity.
+    binding = clone(registered.binding);
+    routeAttemptId = registered.routeAttemptId;
+  }
   const filename = index => `${stage}.segment-${index}.json`;
   const root = mode === "replay" ? sourceDirectory : directory;
   const read = index => {

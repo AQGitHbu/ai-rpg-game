@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createP2RouteManifest, openP2RouteManifest, p2ManifestGuard } from "./narrativeP2Manifest.mjs";
@@ -190,4 +190,44 @@ test("logical budget rejection is sticky and blocks completion before another se
   assert.equal(manifest.read().counters.logical, 1);
   assert.equal(manifest.read().counters.transport, 0);
   assert.throws(() => runtime.finish(p2ManifestGuard(manifest.read())), /P2_TAPE_CLOSED/);
+});
+
+
+test("live segment rejects every manifest identity mismatch before artifacts or reservations", () => {
+  const directory = mkdtempSync(join(tmpdir(), "p2-binding-"));
+  const manifest = createP2RouteManifest({ directory, stage: "A", binding, budget });
+  manifest.advance(p2ManifestGuard(manifest.read()), { type: "start" });
+  const before = manifest.read();
+  const variants = [
+    { stage: "B" },
+    { routeAttemptId: "different-route-attempt" },
+    { routeAttemptId: null },
+    ...["protocolHash", "inputHash", "sourceHash"].map(key => ({ binding: { ...binding, [key]: "b".repeat(64) } })),
+    { binding: { ...binding, codeFingerprint: `other-commit:${hash}` } },
+    { binding: { ...binding, codeFingerprint: `fixture:${"b".repeat(64)}` } },
+    { binding: { ...binding, inputHash: undefined } },
+    { binding: { ...binding, extraIdentity: "unexpected" } },
+  ];
+  for (const [index, variant] of variants.entries()) {
+    const output = join(directory, `rejected-${index}`);
+    assert.throws(() => createNarrativeP2SegmentRuntime({ mode: "live", directory: output, stage: "A", segment: 0,
+      binding, manifest, checkpoint: p2ManifestGuard(before), ...variant }), /P2_TAPE_BINDING/, JSON.stringify(variant));
+    assert.equal(existsSync(output), false, "identity must be checked before creating artifacts");
+    assert.deepEqual(manifest.read(), before, "identity rejection must not reserve or register anything");
+  }
+});
+
+test("live segment preserves the authoritative binding after caller object mutation", () => {
+  const directory = mkdtempSync(join(tmpdir(), "p2-binding-copy-"));
+  const manifest = createP2RouteManifest({ directory, stage: "A", binding, budget });
+  manifest.advance(p2ManifestGuard(manifest.read()), { type: "start" });
+  const supplied = { ...binding };
+  const runtime = createNarrativeP2SegmentRuntime({ mode: "live", directory, stage: "A", segment: 0,
+    binding: supplied, manifest, checkpoint: p2ManifestGuard(manifest.read()), routeAttemptId: manifest.read().routeAttemptId });
+  supplied.inputHash = "b".repeat(64);
+  runtime.finish(p2ManifestGuard(manifest.read()));
+  const envelope = JSON.parse(readFileSync(join(directory, "A.segment-0.json"), "utf8"));
+  assert.deepEqual(envelope.tape.binding, manifest.read().binding);
+  assert.equal(envelope.tape.routeAttemptId, manifest.read().routeAttemptId);
+  assert.equal(envelope.tape.stage, manifest.read().stage);
 });
