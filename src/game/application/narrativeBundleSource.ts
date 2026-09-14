@@ -60,6 +60,13 @@ export type NarrativeCandidateRevision = Readonly<{
   findings: readonly NarrativeBundleRepair[];
 }>;
 
+/** Ephemeral author transport draft rejected before compilation/approval. */
+export type NarrativeAuthorDraftRevision = Readonly<{
+  candidateVersion: number;
+  draft: unknown;
+  findings: readonly NarrativeBundleRepair[];
+}>;
+
 export type OpeningNarrativeBundleProposal = {
   readonly opening: OpeningGenerationCandidate;
   readonly interactionProposals?: readonly import("@/game/domain/storyInteraction").StoryInteractionProposal[];
@@ -96,6 +103,7 @@ export type NarrativeBundleSourceContext =
     readonly auditLink?: AiTextAuditLink;
     readonly contentRepair?: NarrativeBundleRepair;
     readonly candidateRevision?: NarrativeCandidateRevision;
+    readonly authorDraftRevision?: NarrativeAuthorDraftRevision;
     readonly signal?: AbortSignal;
     readonly reserveHttpAttempt?: () => Promise<boolean> | boolean;
   };
@@ -103,7 +111,7 @@ export type NarrativeBundleSourceContext =
 export type NarrativeBundleSourceResult =
   | { readonly ok: true; readonly kind: "opening"; readonly proposal: OpeningNarrativeBundleProposal }
   | { readonly ok: true; readonly kind: "decision"; readonly proposal: NarrativeBundleProposal }
-  | AiSourceFailure<NarrativeBundleRepairReason>;
+  | (AiSourceFailure<NarrativeBundleRepairReason> & { readonly rejectedDraft?: unknown });
 
 export type NarrativeBundleSource = {
   generate(context: NarrativeBundleSourceContext): Promise<NarrativeBundleSourceResult>;

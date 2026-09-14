@@ -42,6 +42,14 @@ Task 13 终幕结果闭环已冻结为 `2f6b2dd7`，离线回归与独立复审�
 
 独立核对三版候选：第一版明确声明 `existingFactIds=[fact_0,fact_1,fact_4]`，但附带非法顶层字段 `worldDelta.newFact2=null`，结构解析拒绝且反馈只给出 `world_delta_invalid`。第二版修订漏掉 `existingFactIds`，台词仍引用停航损失与会首主张；第三版删除部分相关句子，却保留“茶棚里说要搭手的游侠”，需要未获授权的 fact_3。后两版的逐说话人权限均正确为空，未见已声明知识被投影丢失或旧焦点 NPC 权限误套。当前最小阻断位于候选结构错误反馈与修订时合法知识声明的保留，不应靠自动授知、放宽披露或新终幕设计解决。详细审计在 `failure-review.md`。
 
+## Task 14：结构反馈与修订保真
+
+仅修复 short-closure-01 已定位的结构反馈与同 job/epoch 修订材料传递：worldDelta 未知顶层字段由同一严格 parser 返回准确路径及类型，`newFact2` 反馈为 `$.worldDelta.newFact2: unknown field`。结构失败的作者 draft 作为未批准材料交给下一次作者请求，与已编译候选互斥；缺少替代原稿的失败清除旧材料，不写入存档或普通日志，不自动跨候选继承知识。终幕架构及知识权限规则未变，未增加剧情提示或真实调用。
+
+独立初审指出手工注入第二次请求不足以证明真实编排，已补 generatePending → live source → 注入 client 的完整调用链回归并通过限定复审。122 项定向测试、typecheck、131 boundaries、check:docs 通过；完整 2837 tests passed、1 skipped，lint 0 errors、50 项既有 warning。旧 runtime/audit/SQLite 哈希未变。
+
+只读原 HTTP 9 响应，内存中仅移除 `newFact2` 即可由原严格 parser 接受，`existingFactIds=[fact_0,fact_1,fact_4]` 保留；第二次实际请求携带首稿，下一版主动删除声明不被回填，provider 无原稿失败后第三次请求不再带旧材料。此证据验证结构错误与修订输入，不证明模型必然正确修订，也不改变 short-closure-01 未通关或 P1 未通过的结论。
+
 ## 已完成的离线证据
 
 - P1-A 的五路线、泄密后 reload 与交付、普通离场和中性自由输入共八条正式规则旅程见 [P1-A 验收报告](2026-09-13-narrative-architecture-p1-a.md)。

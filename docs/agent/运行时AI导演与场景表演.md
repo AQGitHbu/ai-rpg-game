@@ -59,6 +59,8 @@ Prompt 只接收编译后的公开事实、当前位置、焦点 NPC 的有限�
 
 内容修复使用 `AiContentRepair`（attempt、reason、可选 rejectionCode/detail）；prompt 由 `renderAiRepairFeedback` 渲染公共反馈段，业务可以追加针对性说明。同一运行中的下一版同时接收上一完整候选及累计缺陷，二者仅是待修订材料，不进入实际 History，也不能改写已提交的玩家行动与状态。反馈留在上下文必选块中；`aiRepairAuditContext` 统一投影审计原因和来源，自动修复序号逐次递增。各用例仍负责各自的次数上限及哪些业务拒绝允许修复。
 
+决策作者的 JSON 已成为对象、但在严格结构解析或编译中失败时，同一 job/epoch 的下一版还接收该次作者原始 draft 和结构诊断；未知 `worldDelta` 顶层字段会给出精确路径。原稿只用于修订输入，未经编译、审批或授权；其中合法的 `existingFactIds` 等显式字段逐字保留，但服务端不替下一版自动回填。raw draft 与已编译候选修订材料互斥，provider/transport 异常、source 抛错、未知 source kind 或缺少原稿时立即清除；不进入普通诊断日志、审计 metadata、存档、失败 reason 或跨 job 缓存，AI 文本审计仍按既有契约保存实际请求 messages。下一版仍须完整通过同一严格 parser、规则审批和语义审阅。
+
 `RpgAiClient` 在每次预留请求后独立限制整个 transport 等待（含排队和响应体），不只依赖底层遵守 AbortSignal；外部取消和硬超时都隔离迟到结果，禁止其进入正文审批或写回。取消是本地等待及写回边界，不代表 provider 已停止计费。批次取消信号经 composition 传入开局与 pending 生成。
 
 传输层只重发网络、超时、限流和服务错误请求，沿用相同 messages，在审计中记录上一 transport 失败码；它不理解 JSON schema、实体引用或审批。后续叙事失败保留实际 `AI_CALL_FAILED`/`AI_RESPONSE_INVALID` 分类，并通过已有 failure.reason 保存有界稳定原因码；手动重试消费同 job 的 retryContext。实体名称等自由文本细节只用于当次自动修复，不写入持久化 reason。

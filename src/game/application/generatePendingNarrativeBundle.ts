@@ -3,7 +3,7 @@ import type { NpcDeliberationSource } from "./npcDeliberationSource";
 import type { NarrativeBundleSourceContext } from "./narrativeBundleSource";
 import { repairFromCandidateReview, repairFromSourceFailure, aiRepairAuditContext, persistedAiRepairReason } from "./aiGenerationRetry";
 import type { GameRepository } from "./server/persistence/gameRepository";
-import type { NarrativeBundleSource, NarrativeBundleRepair, NarrativeCandidateRevision } from "./narrativeBundleSource";
+import type { NarrativeBundleSource, NarrativeBundleRepair, NarrativeCandidateRevision, NarrativeAuthorDraftRevision } from "./narrativeBundleSource";
 import { approveNarrativeBundle, type ApprovedNarrativeBundle } from "./approveNarrativeBundle";
 import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
 import type { GameLogger } from "@/game/logging";
@@ -294,6 +294,7 @@ export async function generatePendingNarrativeBundle(
   let lastFailureKind: AiFailureKind = "AI_RESPONSE_INVALID";
   let lastRepair: NarrativeBundleRepair | undefined;
   let candidateRevision: NarrativeCandidateRevision | undefined;
+  let authorDraftRevision: NarrativeAuthorDraftRevision | undefined;
   const revisionFindings: NarrativeBundleRepair[] = [];
   const bounded = await runBoundedAttempts<ApprovedNarrativeBundle, NarrativeBundleRepair>({
     maxAttempts: durableRecovery
@@ -312,6 +313,7 @@ export async function generatePendingNarrativeBundle(
         sourceResult = await source.generate({
           kind: "decision",
           ...(candidateRevision === undefined ? {} : { candidateRevision: { ...candidateRevision, findings: [...revisionFindings] } }),
+          ...(authorDraftRevision === undefined ? {} : { authorDraftRevision: { ...authorDraftRevision, findings: [...revisionFindings] } }),
           candidateVersion: durableRecovery ? job.attempt.candidateVersion : attempt,
           signal: requestSignal,
           worldState,
@@ -329,6 +331,8 @@ export async function generatePendingNarrativeBundle(
           ...(repairHint === undefined ? {} : { contentRepair: repairHint }),
         });
       } catch {
+        candidateRevision = undefined;
+        authorDraftRevision = undefined;
         lastFailureKind = "AI_CALL_FAILED";
         lastRepair = { attempt, reason: "provider_failure", detail: "source_exception" };
         return { ok: false, retryable: true, reason: lastRepair };
@@ -337,6 +341,17 @@ export async function generatePendingNarrativeBundle(
       if (!sourceResult.ok) {
         lastFailureKind = sourceResult.failure.kind;
         lastRepair = repairFromSourceFailure(sourceResult, attempt);
+        if (sourceResult.repairReason === "invalid_schema" && sourceResult.rejectedDraft !== undefined) {
+          candidateRevision = undefined;
+          authorDraftRevision = {
+            candidateVersion: durableRecovery ? job.attempt.candidateVersion : attempt,
+            draft: sourceResult.rejectedDraft,
+            findings: [...revisionFindings, lastRepair],
+          };
+        } else {
+          candidateRevision = undefined;
+          authorDraftRevision = undefined;
+        }
         return {
           ok: false,
           retryable: durableMutationFailure === undefined,
@@ -346,11 +361,14 @@ export async function generatePendingNarrativeBundle(
 
       lastFailureKind = "AI_RESPONSE_INVALID";
       if (sourceResult.kind !== "decision") {
+        candidateRevision = undefined;
+        authorDraftRevision = undefined;
         lastRepair = { attempt, reason: "invalid_schema", detail: "unexpected_source_kind" };
         return { ok: false, retryable: true, reason: lastRepair };
       }
       const candidateVersion = durableRecovery ? job.attempt.candidateVersion : attempt;
       const candidateHash = hashNarrativeCandidate(sourceResult.proposal);
+      authorDraftRevision = undefined;
       candidateRevision = { candidateVersion, candidateHash, proposal: sourceResult.proposal, findings: [...revisionFindings] };
       const approvalInput = {
         proposal: sourceResult.proposal,

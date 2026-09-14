@@ -225,6 +225,25 @@ expect(newEndingEvents).toHaveLength(1);
 - [x] 完成独立范围审核及限定复审；受影响回归、typecheck、131 项 boundaries、完整 2834 tests（1 skipped）与 check:docs 通过，lint 无错误（50 项既有 warning）。中篇选择后保留旧正文的失败形态由实际结果消费回归覆盖，不修改旧存档/审计或补写旧正文。
 - [ ] 冻结实现后只登记一局普通短篇，正式 createGame → 实际选择 → 成功 ending/ready → 严格零网络 replay，阅读全文核对起因、阻碍、选择、后果与收束。已冻结 2f6b2dd7 执行 short-closure-01：2 行动、13 HTTP 后换幕审批失败，无 ending；严格零网络重放 13 响应、5 状态一致。尚未到中途重载及终幕，不能勾选通关或终幕 live 验证。失败证据保留，不连续抽样或追加剧情提示批次。本任务不执行交付/退出扩展、实机 UI 全流程专项或 main 对照；结局正文实际可见的最小 UI 接入属于本任务。
 
+### Task 14：结构错误定位与同次修订材料保真
+
+**范围：** 只修 short-closure-01 的结构错误反馈及失败候选在同一 job/epoch 内的修订传递。保持终幕、NPC 知识审批、三候选预算和唯一生产链；不添加剧情提示、自动授知、跨候选静默合并或新样本。
+
+**Files:** `src/game/application/server/ai/liveWorldEvolutionSource.ts`、`liveNarrativeBundleSource.ts` 与测试；`src/game/application/narrativeBundleSource.ts`、`generatePendingNarrativeBundle.ts` 与必要的既有修订上下文类型/投影、同目录测试；系统文档 `docs/agent/运行时AI导演与场景表演.md`。
+
+**契约：** 未知 worldDelta 字段必须给出准确路径与错误种类（本例 `$.worldDelta.newFact2`），共享严格解析逻辑，不复制一套宽松 schema；保留现有合法值与其他错误的拒绝语义。结构失败后下一版获得上一份作者原始 draft（包括合法 existingFactIds）与结构错误依据，明确是未批准的修订材料；不把它伪装为 compiled proposal 或已授权事实。保留合法内容是修订输入的保真，不保证模型输出自动继承；任何新版本仍完整解析、审批和审阅。仅同次调用链内传递，不放入日志、存档或跨 job 缓存；失败没有原始材料时不得复用无关旧稿。
+
+- [x] 失败回归与最小实现完成：unknown `newFact2` 精确定位；真实 generatePending/live source/client 链把首版含 existingFactIds 的原稿传入第二次请求；后续删除声明不回填，无原稿的 provider 失败清除修订材料。已保存 HTTP 9 候选仅移除未知字段即可通过原严格 parser 并完整保留声明；原审批显式/空声明知识回归通过。
+
+```ts
+expect(failure.repairDetail).toContain('$.worldDelta.newFact2');
+// 用注入 source/client 检查实际第二次请求，而不是仅测字符串辅助函数。
+expect(secondAuthorRequest).toContain('existingFactIds');
+expect(secondAuthorRequest).toContain('newFact2');
+```
+
+- [x] 独立限定审核及复审通过；122 项定向测试、typecheck、131 boundaries、check:docs 通过，完整 npm test 为 2837 passed、1 skipped，lint 0 errors（50 项既有 warning）。原 tape/audit/数据库哈希未变，未新增 live 调用；本项不代表故事通关。
+
 ## 后续 P1 验收边界
 
 普通生产短篇通过后执行交付/退出专项、同条件 main 共同玩法对照及实际 UI 创建→中途重载→终局；这部分仍属于 P1，未完成前不合并 main、不进入 P2。六路线保密/公开/核验综合矩阵保留为扩展验收，非首个故事前置。

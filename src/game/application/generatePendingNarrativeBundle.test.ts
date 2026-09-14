@@ -18,6 +18,8 @@ import { projectGameSessionView } from "./gameSessionView";
 import { rebuildEpisodicMemory } from "@/game/domain/episodicMemory";
 import { retryNarrativeGeneration } from "./retryNarrativeGeneration";
 import type { NarrativeCandidateReviewer } from "./narrativeCandidateReview";
+import { createNarrativeBundleSource } from "./server/ai/liveNarrativeBundleSource";
+import type { RpgAiClient } from "./server/ai/rpgAiClient";
 
 const GENERATION: GenerationMetadata = {
   generationId: "gen_test" as never,
@@ -146,6 +148,71 @@ function createInMemoryRepo(record: GameRecord | null): { repo: GameRepository; 
 }
 
 describe("generatePendingNarrativeBundle", () => {
+  it("carries only the immediately rejected raw draft through actual author requests", async () => {
+    const job = createPendingJob();
+    const { repo, getRecord } = createInMemoryRepo({
+      gameId: asGameId("raw-revision-chain"), worldState: createMinimalWorldState(),
+      storyState: createMinimalStoryState({ status: "provider_pending", mode: "ai", job, lastPresentedScene: null }),
+      revision: 0, createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    const baseDelta = {
+      beatSummary: "船坞出现新的争执。", newLocation: null, newItem: null, newEnemy: null,
+      newFact: null, nextMainQuest: null, endingPair: null,
+    };
+    const newNpc = {
+      name: "郑大桅", role: "船工", description: "熟悉渡口旧事的船工。",
+      locationRef: { kind: "existing", id: "loc_0" },
+      anchors: { selfConcept: "守船的老船工", values: ["守信"], speechStyle: "直白", capabilityBoundaries: ["只说亲历"], taboos: [] },
+      goals: [{ horizon: "short", description: "修好货渡", priority: 3, reason: "维持生计" }],
+      relationshipSeeds: [], existingFactIds: ["fact_keep_sentinel"],
+    };
+    const responses = [
+      { worldDelta: { ...baseDelta, newNpc, newFact2: null } },
+      { worldDelta: { ...baseDelta, newNpc: { ...newNpc, existingFactIds: undefined }, newFact3: null } },
+      { worldDelta: { ...baseDelta, newNpc: null, newFact4: null } },
+    ];
+    const complete = vi.fn(async () => ({ ok: true as const, content: JSON.stringify(responses.shift()) }));
+    const liveSource = createNarrativeBundleSource({
+      aiClient: { complete } as unknown as RpgAiClient,
+      allowLegacyDecisionDto: true,
+    });
+
+    await generatePendingNarrativeBundle({ repository: repo, source: liveSource, now: () => "2026-01-01T00:00:00.000Z" });
+
+    expect(complete).toHaveBeenCalledTimes(3);
+    const secondAuthorRequest = ((complete.mock.calls[1] as unknown as readonly [unknown, readonly { content: string }[]])[1])[0]!.content;
+    const thirdAuthorRequest = ((complete.mock.calls[2] as unknown as readonly [unknown, readonly { content: string }[]])[1])[0]!.content;
+    expect(secondAuthorRequest).toContain("$.worldDelta.newFact2");
+    expect(secondAuthorRequest).toContain("fact_keep_sentinel");
+    expect(secondAuthorRequest).toContain('"newFact2":null');
+    expect(thirdAuthorRequest).toContain("$.worldDelta.newFact3");
+    expect(thirdAuthorRequest).not.toContain("fact_keep_sentinel");
+    expect(getRecord()?.storyState.narrative).toMatchObject({ status: "provider_failed" });
+    expect(JSON.stringify(getRecord())).not.toContain("郑大桅");
+  });
+
+  it("clears rejected raw material after a provider failure with no replacement draft", async () => {
+    const job = createPendingJob();
+    const { repo } = createInMemoryRepo({
+      gameId: asGameId("raw-revision-clear"), worldState: createMinimalWorldState(),
+      storyState: createMinimalStoryState({ status: "provider_pending", mode: "ai", job, lastPresentedScene: null }),
+      revision: 0, createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    const generate = vi.fn<NarrativeBundleSource["generate"]>()
+      .mockResolvedValueOnce({ ok: false, failure: { kind: "AI_RESPONSE_INVALID", phase: "scene" },
+        repairReason: "invalid_schema", repairDetail: "unknown_field", rejectedDraft: { sentinel: "raw_must_clear" } })
+      .mockResolvedValueOnce({ ok: false, failure: { kind: "AI_CALL_FAILED", phase: "scene" },
+        repairReason: "provider_failure", repairDetail: "timeout" })
+      .mockResolvedValueOnce({ ok: false, failure: { kind: "AI_CALL_FAILED", phase: "scene" },
+        repairReason: "provider_failure", repairDetail: "timeout" });
+
+    await generatePendingNarrativeBundle({ repository: repo, source: { generate }, now: () => "2026-01-01T00:00:00.000Z" });
+
+    expect(generate.mock.calls[1]![0]).toMatchObject({ authorDraftRevision: { draft: { sentinel: "raw_must_clear" } } });
+    expect(generate.mock.calls[2]![0]).not.toHaveProperty("authorDraftRevision");
+    expect(generate.mock.calls[2]![0]).not.toHaveProperty("candidateRevision");
+  });
+
   it("persists the final cause and delivers it to the same job on manual retry", async () => {
     const job = { ...createPendingJob(), generationKind: "npc_fixed_choice" as const, sceneRequestKind: "npc_response" as const };
     const { repo, getRecord } = createInMemoryRepo({

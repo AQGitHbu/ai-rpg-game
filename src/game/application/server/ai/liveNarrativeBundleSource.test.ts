@@ -951,6 +951,57 @@ describe("createNarrativeBundleSource", () => {
     expect(result.proposal.worldDelta).toMatchObject({ endingPair: [{ themeKey: "trust" }, { themeKey: "doubt" }] });
   });
 
+  it("reports an unknown worldDelta field at its exact path and preserves the raw author draft", async () => {
+    const rawDraft = {
+      ...validBundleResponse,
+      worldDelta: {
+        beatSummary: "船坞出现新的争执。",
+        newLocation: null,
+        newNpc: { existingFactIds: ["fact_0", "fact_1"] },
+        newItem: null,
+        newEnemy: null,
+        newFact: null,
+        nextMainQuest: null,
+        endingPair: null,
+        newFact2: null,
+      },
+    };
+    const complete = vi.fn().mockResolvedValue({ ok: true, content: JSON.stringify(rawDraft) });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete), allowLegacyDecisionDto: true });
+
+    const result = await source.generate({
+      kind: "decision",
+      worldState: makeWorldState(),
+      storyState: makeStoryState(),
+      job: makeJob(),
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      repairReason: "invalid_schema",
+      repairDetail: "world_delta_invalid at $.worldDelta.newFact2: unknown field",
+      rejectedDraft: rawDraft,
+    });
+
+    complete.mockResolvedValueOnce({ ok: true, content: JSON.stringify(validBundleResponse) });
+    await source.generate({
+      kind: "decision",
+      worldState: makeWorldState(),
+      storyState: makeStoryState(),
+      job: makeJob(),
+      contentRepair: { attempt: 1, reason: "invalid_schema", detail: "world_delta_invalid at $.worldDelta.newFact2: unknown field" },
+      authorDraftRevision: {
+        candidateVersion: 1,
+        draft: rawDraft,
+        findings: [],
+      },
+    });
+    const secondAuthorRequest = (complete.mock.calls[1]![1] as readonly AiMessage[])[0]!.content as string;
+    expect(secondAuthorRequest).toContain("existingFactIds");
+    expect(secondAuthorRequest).toContain("newFact2");
+    expect(secondAuthorRequest).toContain("未经编译、审批或授权");
+  });
+
   it("authors a choice-free ending handoff without regenerating an existing ending pair", async () => {
     const complete = vi.fn().mockResolvedValue({ ok: true, content: JSON.stringify({
       worldDelta: null,

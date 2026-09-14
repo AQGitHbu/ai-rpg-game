@@ -14,6 +14,7 @@ import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 
 import type {
   NarrativeBundleRepair,
+  NarrativeAuthorDraftRevision,
   NarrativeCandidateRevision,
 } from "@/game/application/narrativeBundleSource";
 import { compileNarrativeContext } from "./compileNarrativeContext";
@@ -45,6 +46,7 @@ type DecisionNarrativeContextInput = Readonly<{
   job: PendingNarrativeJob;
   contentRepair?: NarrativeBundleRepair;
   candidateRevision?: NarrativeCandidateRevision;
+  authorDraftRevision?: NarrativeAuthorDraftRevision;
   npcOutward?: readonly import("../../../npcSpeechAuthority").NpcDeliberationOutwardProjection[];
 }>;
 
@@ -541,11 +543,13 @@ export function compileDecisionNarrativeContext(
       authority: "state", retention: "mandatory", priority: 950,
       source: { kind: "npc_outward", refs: input.npcOutward.map((entry) => String(entry.npcId)) },
       content: `以下仅是通过权限审查的 NPC 对外方案，不含私下推理。回应须符合 response；discloseFactIds 只引用已提供正文的事实，不得凭 ID 补写秘密。方案本身不是已经发生的行动或知识转移。interactionProposals 中 factIds、condition 和 confidentiality.protectedFactIds 的正式 ID 已通过服务端存在性与引用许可检查；未列在公开事实正文中不表示 ID 不存在。获准引用和当前披露正文是独立权限，严禁因提案包含 ID 就补写秘密正文。\n角色提出的条件必须成为玩家能执行的行动：response=offer_condition 且有 interactionProposals 时，终点的两个 choices 中至少一个 candidateId 必须使用所提供的 interaction:proposalKey，label 写玩家作出该行动的真实表达，另一项可保留合法的追问或拒绝。不能让“我答应保密”仍绑定普通 talk，也不能只在台词中提出无法选择的条件。将对应原提案逐字段并入顶层 interactionProposals；服务端也会按选项引用携带原提案，不允许改写条款。未获选择的条件不算成立，不得提前给出承诺后才允许提供的引荐、秘密或成功后果。其他 response 的提案按实际回应选用，仍需规则批准。\n${JSON.stringify(input.npcOutward)}`,
-    })]), ...(input.candidateRevision === undefined || input.consumer === "reviewer" ? [] : [block({
+    })]), ...((input.candidateRevision === undefined && input.authorDraftRevision === undefined) || input.consumer === "reviewer" ? [] : [block({
       id: "bundle:candidate_revision", slot: "current_resolution", title: "未提交候选修订",
       authority: "state", retention: "mandatory", priority: 950,
       source: { kind: "narrative_bundle_repair", refs: [String(input.job.jobId)] },
-      content: renderNarrativeCandidateRevision(input.candidateRevision),
+      content: input.authorDraftRevision === undefined
+        ? renderNarrativeCandidateRevision(input.candidateRevision)
+        : `\n# 同一次作者原稿的结构修订\n下面是同一 job/epoch 中刚被严格结构校验拒绝的作者原始 draft 与累计反馈。它未经编译、审批或授权，不是事实、History 或 compiled proposal。逐项修复结构错误并返回完整 draft；保留无冲突的显式声明与正文，但不得假定服务端会自动继承任何字段。\n${JSON.stringify(input.authorDraftRevision)}`,
     })])],
   }));
 }

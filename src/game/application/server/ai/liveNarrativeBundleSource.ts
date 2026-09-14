@@ -400,6 +400,7 @@ export function createNarrativeBundleSource(
               job: context.job,
               ...(context.contentRepair === undefined ? {} : { contentRepair: context.contentRepair }),
     ...(context.candidateRevision === undefined ? {} : { candidateRevision: context.candidateRevision }),
+    ...(context.authorDraftRevision === undefined ? {} : { authorDraftRevision: context.authorDraftRevision }),
     ...(context.npcOutward === undefined ? {} : { npcOutward: context.npcOutward }),
             })
           : undefined;
@@ -460,7 +461,7 @@ export function createNarrativeBundleSource(
         if (context.kind === "decision") {
           const isDraft = !deps.allowLegacyDecisionDto || asRecord(parsed.value)?.sceneDrafts !== undefined;
           const compiled = isDraft ? compileNarrativeDraft(parsed.value, context) : null;
-          if (compiled !== null && !compiled.ok) return failBundle("invalid_schema", "invalid_schema", `${compiled.code} at ${compiled.path}`);
+          if (compiled !== null && !compiled.ok) return { ...failBundle("invalid_schema", "invalid_schema", `${compiled.code} at ${compiled.path}`), rejectedDraft: parsed.value };
           const normalizedBundle = compiled?.ok ? compiled.value : normalizeDecisionBundleShape(
             parsed.value,
             context.worldState,
@@ -503,9 +504,13 @@ export function createNarrativeBundleSource(
             const deltaRecord = asRecord(rawWorldDelta);
             const invalidSummary = deltaRecord !== null
               && (typeof deltaRecord.beatSummary !== "string" || deltaRecord.beatSummary.trim().length === 0);
-            return failBundle("invalid_schema", "invalid_schema", invalidSummary
+            let structuralDetail: string | undefined;
+            parseWorldDeltaProposal(rawWorldDelta, context.worldState.generation.gameType, (issue) => {
+              structuralDetail ??= `world_delta_invalid at $.worldDelta${issue.path}: ${issue.kind}`;
+            });
+            return { ...failBundle("invalid_schema", "invalid_schema", invalidSummary
               ? "world_delta_invalid at $.worldDelta.beatSummary: expected non-empty string"
-              : "world_delta_invalid");
+              : structuralDetail ?? "world_delta_invalid"), rejectedDraft: parsed.value };
           }
           const proposalResult = parseNarrativeBundleProposal(normalizedRecord === null
             ? normalizedBundle
@@ -519,7 +524,7 @@ export function createNarrativeBundleSource(
               reason: proposalResult.reason,
               ...(proposalResult.stepKey === undefined ? {} : { stepKey: proposalResult.stepKey }),
             });
-            return failBundle("invalid_schema", "invalid_schema", detail);
+            return { ...failBundle("invalid_schema", "invalid_schema", detail), rejectedDraft: parsed.value };
           }
           return { ok: true, kind: "decision", proposal: proposalResult.proposal };
         }

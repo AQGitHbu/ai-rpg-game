@@ -147,13 +147,19 @@ export function parseFactInvestigationApproaches(
 export function parseWorldDeltaProposal(
   raw: unknown,
   _gameType?: GameTypeId,
+  onStructuralIssue?: (issue: { readonly path: string; readonly kind: "unknown field" }) => void,
 ): { readonly proposal: WorldDeltaProposal; readonly logCategories: readonly string[] } | null {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
   const rec = raw as Record<string, unknown>;
-  if (!hasNoUnknownKeys(rec, [
+  const knownRootKeys = [
     "beatSummary", "newLocation", "newNpc", "newItem", "newEnemy", "newFact",
     "nextMainQuest", "endingPair",
-  ])) return null;
+  ] as const;
+  if (!hasNoUnknownKeys(rec, knownRootKeys)) {
+    const unknownKey = Object.keys(rec).find((key) => !knownRootKeys.includes(key as typeof knownRootKeys[number]));
+    if (unknownKey !== undefined) onStructuralIssue?.({ path: `.${unknownKey}`, kind: "unknown field" });
+    return null;
+  }
   const beatSummary = isStr(rec.beatSummary) ? rec.beatSummary.trim().slice(0, MAX_TEXT) : "";
   if (beatSummary === "") return null;
 
