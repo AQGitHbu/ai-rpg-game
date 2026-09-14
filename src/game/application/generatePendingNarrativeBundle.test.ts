@@ -20,6 +20,7 @@ import { retryNarrativeGeneration } from "./retryNarrativeGeneration";
 import type { NarrativeCandidateReviewer } from "./narrativeCandidateReview";
 import { createNarrativeBundleSource } from "./server/ai/liveNarrativeBundleSource";
 import type { RpgAiClient } from "./server/ai/rpgAiClient";
+import { createLiveNarrativeCandidateReview } from "./server/ai/liveNarrativeCandidateReview";
 
 const GENERATION: GenerationMetadata = {
   generationId: "gen_test" as never,
@@ -512,6 +513,57 @@ describe("generatePendingNarrativeBundle", () => {
     expect(saved.storyState.memory).toEqual(rebuildEpisodicMemory(saved.worldState.eventLedger));
     expect(saved.storyState.history?.entries.some((entry) => entry.text === "老酒鬼放下酒坛，等你开口。")).toBe(true);
     expect(saved.storyState.history?.entries.at(-1)?.kind).toBe("shown_choice");
+  });
+
+  it("repairs ending action overreach through the real author, approval, reviewer and revision loop", async () => {
+    const npcId = asNpcId("npc_0");
+    const worldState = updateWorldStateFixture(createMinimalWorldState(), {
+      npcs: [{ id: npcId, name: "掌柜", role: "掌柜", description: "在场", locationId: LOC_0, isCompanion: false, met: true, tags: [],
+        memory: { npcId, knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] } }],
+      endings: [
+        { id: "ending_trust" as never, name: "合作", description: "合作", requirements: [{ kind: "npc_affinity_at_least", npcId, value: 10 }] },
+        { id: "ending_doubt" as never, name: "分歧", description: "分歧", requirements: [{ kind: "npc_affinity_at_most", npcId, value: 9 }] },
+      ],
+    });
+    const job = createPendingJob();
+    const base = createMinimalStoryState({ status: "provider_pending", mode: "ai", job, lastPresentedScene: null });
+    const { repo, getRecord } = createInMemoryRepo({ gameId: asGameId("ending-repair"), worldState,
+      storyState: { ...base, endingAllowed: true, currentAct: 3, storyProgress: 100, turnNumber: 1 }, revision: 0, createdAt: "2026-01-01" });
+    const draft = (repaired: boolean) => ({ worldDelta: null,
+      sceneDrafts: [{ slotKey: "current", scene: { segments: [{ beatId: "atmosphere", text: "掌柜等着你表明立场。" }], npcLine: null, objectiveLink: null, choices: [] } }],
+      endingOutcomes: ["trust", "doubt"].map(themeKey => ({ themeKey,
+        choiceLabel: repaired ? (themeKey === "trust" ? "认可你的回应" : "我仍然存疑") : "回去核清账目再回应",
+        scene: { segments: [{ beatId: "atmosphere", text: repaired
+          ? (themeKey === "trust" ? "你当面表明支持，先前针锋相对的争执终于停下。" : "你当面保留疑虑，双方坦然承认这次分歧。")
+          : "你回到远处核清账目，所有欠款都已偿还。" }], npcLine: null, objectiveLink: null, choices: [] },
+      })),
+    });
+    const defects = ["choiceLabel", "scene.segments[0].text"].map(field => ({
+      scope: "scene", code: "ACTION_MISMATCH", path: `endingOutcomes[0].${field}`, reason: "实际支持行动未执行返回与核验。",
+      evidence: { basisKey: "ending:trust", impact: "action_binding", detail: "预览的当前位置不变，不能将返回核验或财物结清写成已执行的因果依据。" },
+    }));
+    const responses = [draft(false), { verdict: "revise", defects }, draft(true), { verdict: "pass" }];
+    const requests: (readonly { content: string }[])[] = [];
+    const complete = vi.fn(async (_role: unknown, messages: readonly { content: string }[]) => {
+      requests.push(messages);
+      return { ok: true as const, content: JSON.stringify(responses.shift()) };
+    });
+    const aiClient = { complete } as unknown as RpgAiClient;
+    const generated = await generatePendingNarrativeBundle({ repository: repo, source: createNarrativeBundleSource({ aiClient }),
+      reviewer: createLiveNarrativeCandidateReview({ aiClient }), now: () => "2026-01-01T00:00:00.000Z" });
+    expect(generated.ok).toBe(true);
+    expect(complete).toHaveBeenCalledTimes(4);
+    expect(requests[2]!.map(message => message.content).join("\n")).toContain("endingOutcomes[0].choiceLabel");
+    expect(requests[2]!.map(message => message.content).join("\n")).toContain("ending:trust");
+    const firstReview = JSON.parse(requests[1]![1]!.content);
+    expect(firstReview.context.ruleBasis).toEqual(expect.arrayContaining([expect.objectContaining({ key: "ending:trust" }), expect.objectContaining({ key: "ending:doubt" })]));
+    const saved = getRecord()!;
+    expect(saved.storyState.narrative.status).toBe("ready");
+    if (saved.storyState.narrative.status !== "ready") throw new Error("ending not approved");
+    expect(saved.storyState.narrative.narrativeBundle?.endingOutcomes?.[0]?.choiceLabel).toBe("认可你的回应");
+    expect(JSON.stringify(saved.storyState.history)).not.toContain("所有欠款");
+    expect(JSON.stringify(saved.storyState.history)).not.toContain("针锋相对");
+    expect(saved.worldState.ending).toBeNull();
   });
 
   it.each([false, true])("retains cumulative revisions and rejects a late reviewed result when cancelled=%s", async (cancel) => {

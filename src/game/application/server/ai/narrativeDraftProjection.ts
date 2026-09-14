@@ -5,6 +5,7 @@ import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { StoryState } from "@/game/domain/storyState";
 import type { WorldState } from "@/game/domain/worldState";
 import { buildNarrativeBundleDescriptors } from "@/game/gameplay/rpg/narrativeBundle";
+import { projectEndingResolutions } from "./endingResolutionProjection";
 
 export type NarrativeDraftContext = Readonly<{
   worldState: WorldState;
@@ -48,6 +49,8 @@ export function projectNarrativeDraft(input: NarrativeDraftContext) {
     ? descriptorGraph.terminal
     : { kind: "next_decision", target: { kind: "continuation_step", stepKey: stepKeys[0]! } };
   return { descriptorGraph, nextActProjection, stepKeys, terminal,
+    endingResolutions: ending && input.job.actionSummary.kind !== "abandon_quest"
+      ? projectEndingResolutions(worldState, input.storyState) : [],
     slots: ["current", ...stepKeys].map(slotKey => ({
       slotKey,
       resolution: slotKey === "current" ? null : narrativeSlotResolution(nextActProjection !== null

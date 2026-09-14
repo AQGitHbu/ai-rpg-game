@@ -40,6 +40,9 @@ export function buildNarrativeReviewRules(input: NarrativeCandidateReviewInput):
   add(`input:${job.actionId}`, "input", ["input_response"], { utterance: job.utterance, selectedDialogue: job.selectedDialogue });
   add(`action:${job.actionId}`, "action", ["action_binding", "interaction_effect"], { action: job.actionSummary, result: job.resolvedEvent });
   const projection = projectNarrativeDraft({ worldState, storyState, job });
+  for (const ending of projection.endingResolutions) {
+    add(ending.basisKey, "action", ["action_binding", "interaction_effect", "step_order", "fact_claim"], ending);
+  }
   const alternatives = [projection, projectNarrativeDraft({ worldState, storyState, job, includeDeliveryReturn: true })];
   for (const graph of alternatives) {
     for (const candidate of graph.descriptorGraph.currentChoiceCandidates) {

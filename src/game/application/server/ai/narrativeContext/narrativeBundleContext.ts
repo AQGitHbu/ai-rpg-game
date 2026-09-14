@@ -218,7 +218,7 @@ function expectedBundleProjection(worldState: WorldState, storyState: StoryState
     && currentTalkNpcIds[0] === currentTalkNpcIds[1]
     ? worldState.npcs.find((npc) => String(npc.id) === currentTalkNpcIds[0])
     : undefined;
-  return { descriptorGraph, nextActProjection, expectedChoices, expectedSteps, expectedTerminal, dialogueFocusNpc, slots: draft.slots };
+  return { descriptorGraph, nextActProjection, expectedChoices, expectedSteps, expectedTerminal, dialogueFocusNpc, slots: draft.slots, endingResolutions: draft.endingResolutions };
 }
 
 export function buildDecisionNarrativeContextBlocks(
@@ -430,6 +430,12 @@ export function buildDecisionNarrativeContextBlocks(
         ? `合法编译图：currentScene 对应当前已结算回应；continuationScenes 的 stepKey 与场景必须逐一对应下列步骤。终点与 choice 数量由服务端确定，新增互动只能绑定同包 interaction:proposalKey。${choiceActionContract}\n- terminal=${JSON.stringify(projection.expectedTerminal)}\n- currentScene choices: ${projection.expectedChoices}\n- continuationScenes:\n${projection.expectedSteps}${optionalReturnGraph}`
         : `符号引用白名单：@current.location、@current.focus_npc、@new.location、@new.npc、@new.item、@new.enemy、@new.fact、@new.quest、@ending.trust、@ending.doubt。\nsceneDrafts 必须与本节槽位投影完全一致，不得投影之外自行规划未来步骤。${choiceActionContract}\n以下是服务端重建的默认合法图，步骤 key 就是 sceneDrafts 的 slotKey；candidateId 使用已列图 ID 或同包 interaction:proposalKey，禁止其他自造 ID、遗漏、重复或继续规划未来：\n- 默认场景槽（choiceCount 是必须的选择数）：${JSON.stringify(projection.slots)}\n- 服务端终点（只读，不输出）：${JSON.stringify(projection.expectedTerminal)}\n- currentScene choices: ${projection.expectedChoices}\n- continuationScenes:\n${projection.expectedSteps}${optionalReturnGraph}`,
     }),
+    ...(projection.endingResolutions.length === 0 ? [] : [block({
+      id: "bundle:ending-resolution", slot: "legal_actions", title: "条件结局行动与后果依据",
+      authority: "rule", retention: "mandatory", priority: 925,
+      source: { kind: "narrative_bundle_descriptors", refs: [String(job.jobId)] },
+      content: `服务端条件槽依据（choiceLabel 与 scene 共用）：${JSON.stringify(projection.endingResolutions)}。审阅发现超出真实行动的因果后果时，按实际 endingOutcomes 数组索引定位 choiceLabel 或 scene 正文字段，并引用对应主题的 ending:trust 或 ending:doubt ruleBasis，不按数组顺序猜主题。`,
+    })]),
     block({
       id: "bundle:world-evolution", slot: "director_guidance", title: "世界演化要求",
       authority: "state", retention: "mandatory", priority: 900,

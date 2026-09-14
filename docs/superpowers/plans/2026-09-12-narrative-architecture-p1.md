@@ -244,6 +244,19 @@ expect(secondAuthorRequest).toContain('newFact2');
 
 - [x] 独立限定审核及复审通过；122 项定向测试、typecheck、131 boundaries、check:docs 通过，完整 npm test 为 2837 passed、1 skipped，lint 0 errors（50 项既有 warning）。原 tape/audit/数据库哈希未变，未新增 live 调用；本项不代表故事通关。
 
+### Task 15：终局发布回合与条件后果规则依据
+
+**目标与范围：** 仅修 short-closure-02 暴露的两项：结果场景实际发布回合错误，以及结局标签/正文越过实际 Action 补写关键行动。沿用 Task 13 两槽结果、现有 support/challenge、唯一 author/reviewer、审批和结算链。不得新增动作/实体/记忆/终幕架构，不为渡船案例追加剧情提示，不降低正文验收。
+
+**Files:** `src/game/application/performTurn.ts` 与测试；`src/game/application/server/ai/narrativeDraftProjection.ts`、`narrativeReviewRules.ts`、`narrativeContext/narrativeBundleContext.ts` 与测试，必要时抽取同目录有界 ending resolution helper；可按真实接口修正 `generatePendingNarrativeBundle.ts` 的审阅输入。系统事实维护 `docs/agent/运行时AI导演与场景表演.md`。不修改旧 tape、数据库、验收比较器或 shared foundation。
+
+**契约：** 预批准结果保留生成时元数据，正式 ending 消费时只将发布场景 turn 设为实际提交回合，其余已批准正文、ID 和表达保持一致，History/事件/场景回合一致。回归必须使用真实 approval 生产的结果再执行后续 Action，禁止用手填未来 turn 的 fixture 掩盖故障。
+
+**条件结局依据：** 在既有投影中为 trust/doubt 结果和对应 choiceLabel 提供服务端生成的条件 Action/结算权限依据，作者与审阅共用。以当前真实目标 NPC、地点、已授权事实和既有规则效果为边界；支持/质疑及 ending 事件不隐式执行移动、交付、支付、核验或尚未兑现的承诺。审阅可通过精确 endingOutcomes 路径及 ruleBasis key 将越权后果反馈给原候选修订，仍遵守既有审阅有效性校验。不要仅复制警告文字或用关键词封禁替代实际槽与规则绑定；不得将未选结果当同时发生，不得提前授知。
+
+- [x] 先写并运行失败回归：真实审批→下一回合发布；两条件槽 action/target/location 与既有规则一致、标签和正文均可引用审阅依据；非终局不增加依据；未执行返程/核验等因果缺口有可验证结构证据和修订反馈路径。
+- [x] 完成最小实现及独立 Spec/Quality 审核；真实 generatePending→author→reviewer→同次修订链通过。190 项定向 tests、typecheck、131 boundaries、完整 2840 tests（1 skipped）、check:docs 通过，lint 0 errors（50 项既有 warning）。冻结后执行下项，不以离线测试代替正文验收。
+- [ ] 冻结后登记一局普通短篇，原有 createGame→实际选择→中途关闭重载→终局协议不变；严格零网络 replay 并阅读全文。必须同时满足实际成功 ending/ready、发布回合/内容一致、中心冲突有已发生的结果且无未执行关键行动，才勾选 Task 13 普通短篇验收。失败保留且定位，不连续重采或补写正文；后续 P1 验收边界保持。
 ## 后续 P1 验收边界
 
 普通生产短篇通过后执行交付/退出专项、同条件 main 共同玩法对照及实际 UI 创建→中途重载→终局；这部分仍属于 P1，未完成前不合并 main、不进入 P2。六路线保密/公开/核验综合矩阵保留为扩展验收，非首个故事前置。

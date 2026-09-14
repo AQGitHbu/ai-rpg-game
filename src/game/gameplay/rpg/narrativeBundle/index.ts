@@ -16,6 +16,7 @@ export {
 
 export {
   endingDecisionStances,
+  endingStanceNpc,
   isEndingDecisionDue,
   type EndingDecisionStance,
 } from "./endingDecision";

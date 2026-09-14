@@ -8,7 +8,7 @@
 
 ## 当前契约
 
-- 正式 trust/doubt 终幕候选在同一 bundle 中携带两条有界 `endingOutcomes`；每条只有主题、玩家选择标签和完整结果场景。两条结果与当前决策场景一同做结构、引用、听众权限和语义审阅，审批后由服务端绑定真实 ending ID，选择前不会发布或写入 History。实际规则结局按 ending ID 消费唯一结果，缺失、重复或错绑时零写入；显式 offline fixture 可继续使用旧终幕内容。
+- 正式 trust/doubt 终幕候选在同一 bundle 中携带两条有界 `endingOutcomes`；每条只有主题、玩家选择标签和完整结果场景。两条结果与当前决策场景一同做结构、引用、听众权限和语义审阅，审批后由服务端绑定真实 ending ID，选择前不会发布或写入 History。实际规则结局按 ending ID 消费唯一结果，发布副本的 `turn` 使用实际 Action 提交回合，与 History 和场景事件一致；已审批结果保留生成回合、ID 和原文。缺失、重复或错绑时零写入；显式 offline fixture 可继续使用旧终幕内容。
 
 - 生产 provider 只有 `initialization`、`narrative_choice`、`npc_free_text` 三类触发。开局由 opening source 直接编译为 ready；正式选择和焦点 NPC 自定义输入进入 pending job。
 - 初始化由唯一的 `buildOpeningNarrativePrompt` 传入完整 `GameSetup`、叙事风格策略和最多三条近期 novelty 摘要；玩家设定优先于 novelty。开局 source 与后续叙事共用生产 `RpgAiClient`、transport 策略和 application 审批；结构预检通过后调用统一候选语义审阅。作者与审阅器共享开局字段语义、事实 key→正式 ID 映射及披露边界，事实目录中存有秘密不等于玩家已获知。递送型开局还须建立具体身份核验依据及知情来源，单纯持有物品或接受委托不构成接应资格证明；允许保密条件暂缓告知，不预写未来核验成功。
@@ -23,6 +23,7 @@
 - 决策 prompt 为每个已有 `candidateId` 同时投影服务端 Action；对话候选包含目标 NPC、dialogueAct 和结构化 topic。新增互动须提交封闭的 `interactionProposals` 并经预览审批，才能绑定相应候选；不能按选项数组位置把一个 label 改绑到另一种 Action，也不能根据裸 candidateId 猜测行动语义或改写 registry。
 - NPC 的 `offer_condition` 带有已授权互动提案时，作者须在终点提供对应 `interaction:proposalKey` 的真实行动选择，并保留原条款；不得把答应条件写成普通交谈。应用层按候选引用携带原提案并拒绝冲突修改，语义审阅核对台词与行动及条件先后；提案获准不等于条件已经成立。
 - 续接槽按正式 trigger 投影 `resolution`，正文展示于触发成功之后：move 已抵达、take_item 已归玩家、give_item 已交付、战斗开始与胜利分别承接对应结果。作者与 reviewer 共用这一时序；生成时旧背包/地点快照仅是起点，不能覆盖该槽展示时的已结算结果，current 槽仍只承接本回合已提交行动。
+- 条件终局槽的标签和正文共用 `endingResolutions`：目标 NPC 复用正式终幕选择逻辑，support/challenge 分别通过现有纯规则 `resolveTurn` 预览，提供真实 Action、当前/结果地点、规则事件种类、物品归属变化及新发现事实 ID。预览不写入、不提供事件引用 ID 或秘密正文；新结局对尚未具象化时不伪造定义，`resolvedEndingId=null` 只是该快照的预览。实际结局 ID 决定发布，不能把 trust/doubt 主题反推为已经执行某种立场，两结果不同时发生。中心冲突必须在既有已发生依据与真实行动能力内收束，结局标签/名称不授予额外行动，未履行条件不能靠结果正文兑现。审阅可引用 `ending:trust|doubt` 的 `ruleBasis`，缺陷路径指向对应主题实际数组项的 `choiceLabel` 或 `scene`；这类新增依据与主题错绑时整次审阅仍为 uncertain，其余依据校验保持原契约。
 - 生产移动、探索、取物、给予、战斗开始与胜利交接必须消费匹配的 bundle 步骤；缺失或失效零写入。活跃战斗、战败恢复和终幕立场由规则直接处理，不增加 provider 调用。`PreparedContinuationState` 及其消费函数只供显式离线 fixture；不能据此描述生产续接。
 - `mode="ai"` 只投影已审批的 `generated` 场景。缺少正式 NPC focus 台词时投影单一权威 `ask`；失败仍进入同 job 的 failed 状态，不合成 deterministic/default 文案。
 - 内容审批同时检查强制节拍、当前地点和焦点 NPC、`objectiveLink`、下一步抵达 NPC、实体引用、题材限制和 NPC speech authority。审批失败不部分写入。

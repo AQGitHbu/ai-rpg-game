@@ -386,7 +386,7 @@ describe("performTurn 单次 CAS 提交", () => {
       worldFacts: [{ factId: asFactId("fact_secret"), text: "保密事实", discovered: true, source: "generated", locationId: asLocationId("loc_1") }],
     });
     const boundThread = { ...base.threads[0]!, questIds: [questId], status: "advanced" as const };
-    const endingStory: StoryState = {
+    let endingStory: StoryState = {
       ...base,
       currentAct: 3,
       targetActs: 3,
@@ -407,19 +407,33 @@ describe("performTurn 单次 CAS 提交", () => {
           source: "generated",
         },
         choiceRegistry: [],
-        narrativeBundle: {
-          contractVersion: 2,
-          originJobId: asNarrativeJobId("job_ending_pair"),
-          steps: [],
-          activeStepIds: [],
-          endingOutcomes: [
-            { themeKey: "trust", endingId: "ending_trust", choiceLabel: "共同承担", scene: { sceneId: "scene-ending-trust", turn: 1, narration: "两人共同平息渡口纠纷。", usedFactIds: [], npcLine: null, choices: [], source: "generated" } },
-            { themeKey: "doubt", endingId: "ending_doubt", choiceLabel: "保持疑虑", scene: { sceneId: "scene-ending-doubt", turn: 1, narration: "你独自承担后果，渡口争议暂时平息。", usedFactIds: [], npcLine: null, choices: [], source: "generated" } },
-          ],
-          terminal: { kind: "ending" },
-        },
       },
     };
+    // Produce the conditional scenes through the real approval producer at turn 0.
+    const approved = approveNarrativeBundle({
+      proposal: {
+        worldDelta: null,
+        currentScene: { segments: [{ beatId: "atmosphere", text: "两条路都摆在面前，他必须做出选择。" }], npcLine: null, objectiveLink: null, choices: [] },
+        continuationScenes: [], terminal: { kind: "ending" },
+        endingOutcomes: [
+          { themeKey: "trust", choiceLabel: "共同承担", scene: { segments: [{ beatId: "atmosphere", text: "两人共同平息渡口纠纷。" }], npcLine: null, objectiveLink: null, choices: [] } },
+          { themeKey: "doubt", choiceLabel: "保持疑虑", scene: { segments: [{ beatId: "atmosphere", text: "你独自承担后果，渡口争议暂时平息。" }], npcLine: null, objectiveLink: null, choices: [] } },
+        ],
+      },
+      worldState: finalWorld, storyState: endingStory,
+      transition: { before: null, completed: [], after: null, mode: "unchanged" },
+      evolutionNeed: { kind: "none" }, jobId: asNarrativeJobId("job_ending_pair"), basedOnRevision: 0, mandatoryBeats: [],
+      eventContext: { turnId: asTurnId("generation"), actionId: "generation", turnNumber: 0, domainEventIds: [], episodeKey: "generation" },
+      now: () => "2026-01-01",
+    });
+    expect(approved.ok).toBe(true);
+    if (!approved.ok) throw new Error(`${approved.code}:${approved.detail}`);
+    const approvedOutcomes = approved.approved.bundle.endingOutcomes!;
+    expect(approvedOutcomes.map(outcome => outcome.scene.turn)).toEqual([0, 0]);
+    endingStory = { ...approved.approved.nextStoryStatePreview, narrative: {
+      status: "ready", mode: "ai", currentScene: approved.approved.currentScene,
+      choiceRegistry: approved.approved.choiceRegistry, narrativeBundle: approved.approved.bundle,
+    } };
     const choiceMap = buildChoiceMap(finalWorld, endingStory, 0);
     const supportToken = [...choiceMap.entries()].find(([, action]) =>
       action.type === "talk" && action.dialogueAct === "support")?.[0];
@@ -453,10 +467,15 @@ describe("performTurn 单次 CAS 提交", () => {
     expect(record()?.worldState.ending?.endingId).toBe(asEndingId("ending_trust"));
     expect(record()?.storyState.narrative.status).toBe("ready");
     const savedNarrative = record()?.storyState.narrative;
-    expect(savedNarrative?.status === "ready" && savedNarrative.currentScene.sceneId).toBe("scene-ending-trust");
+    expect(savedNarrative?.status === "ready" && savedNarrative.currentScene).toEqual({ ...approvedOutcomes[0]!.scene, turn: 1 });
+    expect(approvedOutcomes[0]!.scene.turn).toBe(0);
+    expect(savedNarrative?.status === "ready" && savedNarrative.narrativeBundle?.endingOutcomes).toEqual(approvedOutcomes);
     expect(record()?.worldState.eventLedger.some(event => event.kind === "ending_reached")).toBe(true);
     expect(record()?.worldState.eventLedger.filter(event => event.kind === "narrative_scene_presented")).toHaveLength(1);
     expect(savedNarrative?.status === "ready" && savedNarrative.currentScene.turn).toBe(1);
+    expect(record()?.storyState.turnNumber).toBe(1);
+    expect(record()?.worldState.eventLedger.filter(event => event.kind === "ending_reached" || event.kind === "narrative_scene_presented").map(event => event.turnNumber)).toEqual([1, 1]);
+    expect(record()?.storyState.history?.entries.filter(entry => entry.actionId === "act_ending_stance").map(entry => entry.turnNumber)).toEqual([1, 1]);
 
     const forcedEntityStore = {
         ...finalWorldWithSecret.entityStore,
@@ -486,7 +505,7 @@ describe("performTurn 单次 CAS 提交", () => {
     expect(forced.ok).toBe(true);
     expect(forcedRepo.record()?.worldState.ending?.endingId).toBe(asEndingId("ending_doubt"));
     const forcedNarrative = forcedRepo.record()?.storyState.narrative;
-    expect(forcedNarrative?.status === "ready" && forcedNarrative.currentScene.sceneId).toBe("scene-ending-doubt");
+    expect(forcedNarrative?.status === "ready" && forcedNarrative.currentScene).toEqual({ ...approvedOutcomes[1]!.scene, turn: 1 });
     expect(forcedNarrative?.status === "ready" && forcedNarrative.currentScene.turn).toBe(1);
     expect(JSON.stringify(forcedRepo.record()?.storyState.history)).toContain("共同承担");
     expect(JSON.stringify(forcedRepo.record()?.storyState.history)).toContain("你独自承担后果");

@@ -543,7 +543,8 @@ type CommitResolutionInput = {
 async function commitResolution(input: CommitResolutionInput): Promise<PerformTurnResult> {
   if (input.generationKind === null || input.sceneRequestKind === null) {
     const history = input.nextStoryState.history ?? { entries: [] };
-    const endingScene = input.endingOutcomeScene;
+    const endingScene = input.endingOutcomeScene === undefined ? undefined
+      : { ...input.endingOutcomeScene, turn: input.nextStoryState.turnNumber };
     const playerEntry = playerActionHistoryEntry({
       history,
       action: input.action,

@@ -26,7 +26,7 @@ export function isEndingDecisionDue(
  * array 末尾的 NPC，只有他不在场时才退到场内最后一名 NPC，保证立场仍是一次
  * 通过 NPC_NOT_PRESENT 校验的合法交谈。
  */
-function endingStanceNpc(worldState: WorldState): WorldState["npcs"][number] | undefined {
+export function endingStanceNpc(worldState: WorldState): WorldState["npcs"][number] | undefined {
   const last = worldState.npcs.at(-1);
   if (last !== undefined && String(last.locationId) === String(worldState.currentLocationId)) {
     return last;

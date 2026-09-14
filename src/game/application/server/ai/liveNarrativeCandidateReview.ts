@@ -100,6 +100,12 @@ function parseDefects(
     const evidence = parseRuleEvidence(entry.evidence, buildNarrativeReviewRules(input));
     const path = canonicalCandidatePath(input.proposal, entry.path);
     if (evidence === null || path === null) return null;
+    if (evidence.basisKey.startsWith("ending:")) {
+      const slot = /^endingOutcomes\[(\d+)\]\.(?:choiceLabel$|scene(?:\.|\[|$))/.exec(path);
+      const outcome = "endingOutcomes" in input.proposal && slot !== null
+        ? input.proposal.endingOutcomes?.[Number(slot[1])] : undefined;
+      if (outcome === undefined || evidence.basisKey !== `ending:${outcome.themeKey}`) return null;
+    }
     defects.push({
       evidence,
       candidateVersion: input.candidateVersion,

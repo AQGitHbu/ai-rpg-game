@@ -120,6 +120,67 @@ function makeJob(): PendingNarrativeJob {
 
 
 describe("live narrative candidate reviewer", () => {
+  it.each([false, true])("projects conditional ending action authority before/after pair materialization: %s", async (hasPair) => {
+    const initial = makeWorldState();
+    const npcId = asNpcId("npc_final");
+    const worldState = createWorldStateFixtureWith({ generation: initial.generation, base: projectEntityStore(initial.entityStore) }, {
+      npcs: [{ id: npcId, name: "掌柜", role: "掌柜", description: "在场", locationId: initial.currentLocationId, isCompanion: false, met: true, tags: [],
+        memory: { npcId, knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] } }],
+      locations: initial.locations.map(location => ({ ...location, npcIds: [npcId] })),
+      ...(hasPair ? { endings: [
+        { id: "ending_trust" as never, name: "合作", description: "合作", requirements: [{ kind: "npc_affinity_at_least" as const, npcId, value: 10 }] },
+        { id: "ending_doubt" as never, name: "分歧", description: "分歧", requirements: [{ kind: "npc_affinity_at_most" as const, npcId, value: 9 }] },
+      ] } : {}),
+    });
+    const baseStory = makeStoryState();
+    const context = { kind: "decision" as const, worldState, storyState: { ...baseStory, endingAllowed: true,
+      evolution: { ...baseStory.evolution, status: "needs_ending_pair" as const } }, job: { ...makeJob(), focusNpcId: npcId } };
+    const original = JSON.stringify(context);
+    const projection = projectNarrativeDraft(context);
+    expect(projection.endingResolutions).toHaveLength(2);
+    for (const [index, themeKey] of ["trust", "doubt"].entries()) {
+      expect(projection.endingResolutions[index]).toMatchObject({
+        themeKey, basisKey: `ending:${themeKey}`, generationLocationId: initial.currentLocationId,
+        choiceAction: { type: "talk", npcId, dialogueAct: index === 0 ? "support" : "challenge" },
+        displayCondition: { kind: "matching_rule_ending", themeKey },
+        actionPreviews: expect.arrayContaining([expect.objectContaining({
+          action: { type: "talk", npcId, dialogueAct: "support" },
+          resultingLocationId: initial.currentLocationId, itemOwnershipChanges: [], newlyDiscoveredFactIds: [],
+          events: expect.arrayContaining([expect.objectContaining({ kind: "npc_interaction_recorded" })]),
+        })]),
+      });
+    }
+    expect(JSON.stringify(context)).toBe(original);
+    const proposal: NarrativeBundleProposal = { ...(candidate as NarrativeBundleProposal), endingOutcomes: [
+      { themeKey: "doubt", choiceLabel: "核清账目后表示异议", scene: { segments: [{ beatId: "atmosphere", text: "你回到远处核清账目，所有欠款都已偿还。" }], npcLine: null, objectiveLink: null, choices: [] } },
+      { themeKey: "trust", choiceLabel: "核清账目后表示支持", scene: { segments: [{ beatId: "atmosphere", text: "你回到远处核清账目，所有欠款都已偿还。" }], npcLine: null, objectiveLink: null, choices: [] } },
+    ] };
+    const rules = buildNarrativeReviewRules({ context, proposal, candidateVersion: 1, candidateHash: hashNarrativeCandidate(proposal) });
+    for (const entry of projection.endingResolutions) expect(rules.find(rule => rule.key === entry.basisKey)?.value).toEqual(entry);
+    for (const consumer of ["author", "reviewer"] as const) {
+      const prompt = buildDecisionNarrativeContextBlocks({ ...context, consumer }).map(block => block.content).join("\n");
+      expect(prompt).toContain(JSON.stringify(projection.endingResolutions));
+    }
+    const defects = [0, 1].flatMap(index => ["choiceLabel", "scene.segments[0].text"].map(field => ({
+      scope: "scene", code: "BROKEN_CAUSALITY", path: `endingOutcomes[${index}].${field}`,
+      reason: "支持或质疑没有执行返回与账目核验。",
+      evidence: { basisKey: `ending:${index === 0 ? "doubt" : "trust"}`, impact: "action_binding", detail: "真实交谈目标在当前地点；预览没有移动、核验或财物交付，不能将这些行动写成已发生的收束依据。" },
+    })));
+    const complete = vi.fn().mockResolvedValue({ ok: true, content: JSON.stringify({ verdict: "revise", defects }) });
+    const reviewed = await createLiveNarrativeCandidateReview({ aiClient: client(complete) }).reviewNarrativeCandidate({
+      context, proposal, candidateVersion: 1, candidateHash: hashNarrativeCandidate(proposal),
+    });
+    expect(reviewed).toMatchObject({ ok: false, defects });
+    complete.mockResolvedValueOnce({ ok: true, content: JSON.stringify({ verdict: "revise", defects: [{
+      ...defects[0], evidence: { ...defects[0]!.evidence, basisKey: "ending:trust" },
+    }] }) });
+    expect(await createLiveNarrativeCandidateReview({ aiClient: client(complete) }).reviewNarrativeCandidate({
+      context, proposal, candidateVersion: 1, candidateHash: hashNarrativeCandidate(proposal),
+    })).toMatchObject({ ok: false, failure: "UNCERTAIN" });
+    const ordinary = { ...context, storyState: baseStory };
+    expect(projectNarrativeDraft(ordinary).endingResolutions).toEqual([]);
+    expect(buildNarrativeReviewRules({ context: ordinary, proposal: candidate, candidateVersion: 1, candidateHash: "ordinary" }).some(rule => rule.key.startsWith("ending:"))).toBe(false);
+  });
   it("grounds a take-item continuation in the post-pickup rule result for both author and reviewer", async () => {
     const initial = makeWorldState();
     const itemId = asItemId("item_letter");
