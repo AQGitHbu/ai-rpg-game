@@ -15,6 +15,7 @@ describe("P2 frozen experiment orchestration", () => {
     expect(runner).not.toHaveBeenCalled();
     const protocol = JSON.parse(readFileSync(input.protocolPath, "utf8"));
     expect(protocol.protocolVersion).toBe(NARRATIVE_P2_PROTOCOL_VERSION);
+    expect(protocol.stages.focusSelection).toBe("first freeInputEnabled NPC in current public view order");
     expect(protocol.routes).toEqual(NARRATIVE_P2_ROUTES);
     expect(protocol.input).toEqual(NARRATIVE_P2_INPUT);
     expect(protocol.transport).toMatchObject({ narrativeHttpPerEpoch: 24, summaryHttpPerEpoch: 8 });

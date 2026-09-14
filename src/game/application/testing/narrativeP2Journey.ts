@@ -32,6 +32,7 @@ export const NARRATIVE_P2_STAGE_PLAN = Object.freeze({
   order: ["A", "B"], routeByStage: { A: "S-short", B: "M-medium" },
   admission: "B requires sealed A review and recomputed strict replay",
   initialization: "once per stage; absolute deadline includes all waits and restarts",
+  focusSelection: "first freeInputEnabled NPC in current public view order",
   topicPolicy: "three ordered topics per act before first formal response; stop act on human quality failure; no replacements",
   oracle: "first opening npc_line audible to player, fixed before any later action",
   ui: "B pauses before recall; same database, UUID action identity, remaining absolute route budget; UI recall then legal delivery and ending",

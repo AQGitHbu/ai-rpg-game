@@ -36,9 +36,9 @@ export function selectNarrativeP2Topic(view: P2TopicView, state: P2TopicState) {
   const topic = NARRATIVE_P2_TOPICS.filter(item => item.act === view.currentAct)[state.committed.filter(item => item.act === view.currentAct).length];
   if (!topic || state.stoppedActs.includes(view.currentAct)) return { kind: "formal" as const };
   if (view.formalResponseCount > 0) return { kind: "failure" as const, code: "P2_TOPIC_WINDOW_MISSED" };
-  const focus = view.focus.filter(npc => npc.freeInputEnabled);
-  if (focus.length !== 1 || !focus[0].npcId) return { kind: "failure" as const, code: "P2_TOPIC_FOCUS_MISSING" };
-  return { kind: "topic" as const, topic, npcId: focus[0].npcId };
+  const focus = view.focus.find(npc => npc.freeInputEnabled);
+  if (!focus?.npcId) return { kind: "failure" as const, code: "P2_TOPIC_FOCUS_MISSING" };
+  return { kind: "topic" as const, topic, npcId: focus.npcId };
 }
 /** Caller owns durable action reservation and successful production performTurn evidence. */
 export function commitNarrativeP2Topic(state: P2TopicState, step: P2TopicCommit, succeeded: boolean): P2TopicState {
@@ -61,6 +61,7 @@ export function stopNarrativeP2Topics(state: P2TopicState, review: P2TopicReview
   validateState(state);
   const step = state.committed.find(item => item.topicId === review.topicId && item.actionId === review.actionId);
   if (!step || !review.reviewer.trim() || !review.reason.trim() || !Number.isFinite(Date.parse(review.reviewedAt))
+    || !review.candidateIds.length || review.candidateIds.some(id => !id.trim())
     || !review.historyQuotes.length || review.historyQuotes.some(item => !item.historyId || !item.quote.trim())
     || !["grounded", "repeated", "ungrounded", "not_applicable"].includes(review.verdict)) throw new Error("P2_TOPIC_REVIEW_INVALID");
   if (review.verdict === "grounded" || state.stoppedActs.includes(step.act)) return state;

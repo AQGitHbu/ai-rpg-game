@@ -5,6 +5,12 @@ const view = { currentAct: 1, formalResponseCount: 0, focus: [{ npcId: "public-n
 describe("bounded P2 topics", () => {
   it("uses only a current enabled focus and fixed ordered text", () => {
     const first = selectNarrativeP2Topic(view, empty());
+    expect(selectNarrativeP2Topic({ ...view, focus: [
+      { npcId: "disabled", freeInputEnabled: false },
+      { npcId: "first-enabled", freeInputEnabled: true },
+      { npcId: "second-enabled", freeInputEnabled: true },
+    ] }, empty())).toEqual({ kind: "topic", topic: NARRATIVE_P2_TOPICS[0], npcId: "first-enabled" });
+    expect(selectNarrativeP2Topic({ ...view, focus: [] }, empty())).toEqual({ kind: "failure", code: "P2_TOPIC_FOCUS_MISSING" });
     expect(first).toEqual({ kind: "topic", topic: NARRATIVE_P2_TOPICS[0], npcId: "public-npc" });
     expect(selectNarrativeP2Topic({ ...view, focus: [{ npcId: "private", freeInputEnabled: false }] }, empty())).toEqual({ kind: "failure", code: "P2_TOPIC_FOCUS_MISSING" });
   });
@@ -31,6 +37,9 @@ describe("bounded P2 topics", () => {
   it("requires grounded review evidence for an early stop, without replacing questions", () => {
     const state = commitNarrativeP2Topic(empty(), { act: 1, topicId: "1-reason", actionId: "a", npcId: "public-npc" }, true);
     const review = { topicId: "1-reason", actionId: "a", reviewer: "human", reviewedAt: "2026-09-14T10:00:00Z", historyQuotes: [{ historyId: "h1", quote: "原话" }], candidateIds: ["c1"], reason: "same content as opening", verdict: "repeated" as const };
+    expect(() => stopNarrativeP2Topics(state, { ...review, candidateIds: [] })).toThrow("P2_TOPIC_REVIEW_INVALID");
+    expect(() => stopNarrativeP2Topics(state, { ...review, candidateIds: ["   "] })).toThrow("P2_TOPIC_REVIEW_INVALID");
+    expect(() => stopNarrativeP2Topics(state, { ...review, candidateIds: ["c1", ""] })).toThrow("P2_TOPIC_REVIEW_INVALID");
     const stopped = stopNarrativeP2Topics(state, review);
     expect(selectNarrativeP2Topic(view, stopped)).toEqual({ kind: "formal" });
     expect(() => stopNarrativeP2Topics(state, { ...review, historyQuotes: [] })).toThrow("P2_TOPIC_REVIEW_INVALID");
