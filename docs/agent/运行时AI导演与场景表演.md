@@ -23,7 +23,7 @@
 - bundle step 必须由服务端 descriptor 投影；stepKey 唯一、无环、最多 12 步。非终点没有 choices，`next_decision` 终点恰好两个选项，`ending` 终点没有 choices 且没有 continuation scenes。
 - 决策 prompt 为每个已有 `candidateId` 同时投影服务端 Action；对话候选包含目标 NPC、dialogueAct 和结构化 topic。新增互动须提交封闭的 `interactionProposals` 并经预览审批，才能绑定相应候选；不能按选项数组位置把一个 label 改绑到另一种 Action，也不能根据裸 candidateId 猜测行动语义或改写 registry。
 - NPC 的 `offer_condition` 带有已授权互动提案时，作者须在终点提供对应 `interaction:proposalKey` 的真实行动选择，并保留原条款；不得把答应条件写成普通交谈。应用层按候选引用携带原提案并拒绝冲突修改，语义审阅核对台词与行动及条件先后；提案获准不等于条件已经成立。
-- 续接槽按正式 trigger 投影 `resolution`，正文展示于触发成功之后：move 已抵达、take_item 已归玩家、give_item 已交付、战斗开始与胜利分别承接对应结果。作者与 reviewer 共用这一时序；生成时旧背包/地点快照仅是起点，不能覆盖该槽展示时的已结算结果，current 槽仍只承接本回合已提交行动。
+- 所有决策共用必选的生效时点上下文：`currentScene` 与 `worldDelta.beatSummary` 绑定当前已提交 Action 和玩家地点，摘要只概括当前行动及回应。换幕编号与新实体/任务的创建不代表玩家已抵达、会面或完成任务。续接槽按正式 trigger 投影 `resolution`，正文展示于触发成功之后：move 已抵达、take_item 已归玩家、give_item 已交付、战斗开始与胜利分别承接对应结果。作者、修订与 reviewer 共用这一范围；生成时旧背包/地点快照只是续接起点，未来槽的结果也不能倒灌进当前摘要。条件结局按对应立场行动生效。
 - 条件终局槽的标签、正文与 worldDelta.endingPair 共用 endingResolutions：support/challenge 经真实 resolveTurn 预览，投影 Action、玩家与已见/同场 active NPC 的前后地点、规则事件、物品变化及新发现事实 ID。未见异地 NPC、秘密正文与伪造事件 ID 不进入预览。未变的位置不能写成异地到场；待执行前提不能由其他人代办或靠结果正文兑现。同场无关键状态效果的表现仍可创作。新结局对尚未具象化时 resolvedEndingId=null；实际 endingId 决定发布，不能由主题反推玩家已执行的立场，两结果不同时发生。结局依据 ending:trust|doubt 必须匹配候选对应主题的实际数组项；错绑为 uncertain。worldDelta.beatSummary 与 currentScene 属于选择前回应，只能使用已提交依据，不能提前引用条件终局结果。
 - 生产移动、探索、取物、给予、战斗开始与胜利交接必须消费匹配的 bundle 步骤；缺失或失效零写入。活跃战斗、战败恢复和终幕立场由规则直接处理，不增加 provider 调用。`PreparedContinuationState` 及其消费函数只供显式离线 fixture；不能据此描述生产续接。
 - `mode="ai"` 只投影已审批的 `generated` 场景。缺少正式 NPC focus 台词时投影单一权威 `ask`；失败仍进入同 job 的 failed 状态，不合成 deterministic/default 文案。

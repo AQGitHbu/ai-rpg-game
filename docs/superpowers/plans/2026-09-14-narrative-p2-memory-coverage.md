@@ -94,6 +94,16 @@ A 未通过时保留短篇失败与中篇“计划但未执行”，整批不通
 
 **Files:** 新批次的协议/磁带/报告，原 P2 Plan 的验收 gate。
 
+执行证据见 [p2-02 短篇实跑](../reports/2026-09-14-narrative-p2-short-story.md)：A 在第二次行动后的生成失败，未形成完整故事、未完成严格回放；B 未执行。下列完整验收项保持未完成。当前先处理真实文本暴露的当前事实与未来续接边界，Task 2/3 暂缓。
+
+### 当前聚焦修正：同包内容的生效时点
+
+只修改 `narrativeContext/narrativeBundleContext.ts` 的共享上下文与 `narrativeExecutionChecks.test.ts`，在运行时 AI 系统文档维护契约。已有 `compileDecisionNarrativeContext` 为 author/reviewer 提供同一 mandatory 时序块：当前 Action/地点约束 currentScene 和 beatSummary；续接正文仅在对应 trigger 成功后成立；条件结局仅在对应立场行动后成立。不改 DTO、存档、候选预算或校验门禁。
+
+- [x] 回归普通换幕（没有 endingResolutions）也向 author/reviewer 提供相同的当前行动与摘要范围；同一未来抵达抽取在续接槽通过、在摘要处被拒绝。
+- [x] 实现上述共享时序块，并删除条件结局块中重复的摘要规则；运行相关测试、typecheck、boundaries 和 docs 检查。
+- [ ] 冻结新批次，执行一次 A，读取实际全文；失败保留原始证据，不推进 B。只有完整故事成立才恢复记忆任务。
+
 - [ ] 固定同一代码、模型/配置、A/B输入及议题、oracle规则、预算、route manifest schema、绝对 deadline 和 UI 接续口径，优先运行A并严格回放、按固定 hash-bound schema 独立阅读全文；A 不等待完整中篇、两臂或 UI 接续实现；不通过则封存，B保持未执行且尚未启动 deadline。
 - [ ] A通过后按登记执行B、两臂与UI，不修改配置或追加议题；按完整History核查明确利害、具体分歧、选择回应与有限收束。游戏通关与未解决的社会问题分别记录。
 - [ ] 报告分别给出运行正确性、故事质量、记忆覆盖/准确性、UI完成性：每条质量均分≥4、单维≥3且无确认硬错误；摘要臂保留必需来源、无新增事实/权限错误，不能用省token抵消损害。

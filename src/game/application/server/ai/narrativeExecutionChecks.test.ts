@@ -16,6 +16,7 @@ import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory"
 import { projectEntityStore } from "@/game/domain/entity";
 import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import { projectNarrativeDraft } from "./narrativeDraftProjection";
+import { compileDecisionNarrativeContext } from "./narrativeContext/narrativeBundleContext";
 
 function input(ending = true): NarrativeCandidateReviewInput {
   const locationId = asLocationId("inner_hall");
@@ -119,6 +120,29 @@ describe("server-bound narrative execution extraction", () => {
     expect(checks.find(check => check.path === "currentScene.segments[0].text")!.states[0]!.locationId).toBe("inner_hall");
     expect(checks.find(check => check.path === "continuationScenes[0].scene.segments[0].text")!.states[0]!.locationId).toBe("loc_dyn_1");
     expect(checks.find(check => check.path === "worldDelta.beatSummary")!.prerequisiteBasisKeys).not.toContain("step:move:loc_dyn_1");
+    const verdict = response(value);
+    expect(validate(value, verdict)).toEqual([]);
+    const summary = verdict.executionChecks!.find(check => check.path === "worldDelta.beatSummary")!;
+    Object.assign(summary, { playerLocation: { kind: "at", locationId: "loc_dyn_1" }, completedPrerequisites: [{ quote: summary.quote, claim: "玩家已抵达下一处地点", basisKey: null }] });
+    expect(validate(value, verdict)).toContainEqual(expect.objectContaining({ code: "ACTION_MISMATCH", path: "worldDelta.beatSummary" }));
+  });
+  it("shares current fact timing with author and reviewer even without conditional endings", () => {
+    const original = input(false);
+    if (original.context.kind !== "decision") throw new Error("decision expected");
+    const context = { ...original.context, storyState: { ...original.context.storyState, evolution: { ...original.context.storyState.evolution, status: "needs_next_act" as const, nextLocationOrdinal: 1 } } };
+    const before = JSON.stringify(context);
+    const author = compileDecisionNarrativeContext({ ...context, consumer: "author" });
+    const reviewer = compileDecisionNarrativeContext({ ...context, consumer: "reviewer" });
+    const timing = author.context.selected.find(block => block.id === "bundle:temporal-scope");
+    expect(timing).toBeDefined();
+    expect(timing).toEqual(reviewer.context.selected.find(block => block.id === "bundle:temporal-scope"));
+    expect(timing).toMatchObject({ retention: "mandatory", authority: "rule" });
+    expect(timing!.content).toContain('"basisKey":"action:talk"');
+    expect(timing!.content).toContain('"playerLocationId":"inner_hall"');
+    expect(timing!.content).toContain('"fields":["currentScene","worldDelta.beatSummary"]');
+    expect(timing!.content).toContain('"basisKey":"step:move:loc_dyn_1"');
+    expect(author.context.selected.some(block => block.id === "bundle:ending-resolution")).toBe(false);
+    expect(JSON.stringify(context)).toBe(before);
   });
   it.each([false, true])("admits only the descriptor's unmet arrival NPC after visit→discover→talk (delivery=%s)", delivery => {
     const original = input(false);

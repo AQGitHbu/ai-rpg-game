@@ -487,11 +487,21 @@ export function buildDecisionNarrativeContextBlocks(
         ? `合法编译图：currentScene 对应当前已结算回应；continuationScenes 的 stepKey 与场景必须逐一对应下列步骤。终点与 choice 数量由服务端确定，新增互动只能绑定同包 interaction:proposalKey。${choiceActionContract}\n- terminal=${JSON.stringify(projection.expectedTerminal)}\n- currentScene choices: ${projection.expectedChoices}\n- continuationScenes:\n${projection.expectedSteps}${optionalReturnGraph}`
         : `符号引用白名单：@current.location、@current.focus_npc、@new.location、@new.npc、@new.item、@new.enemy、@new.fact、@new.quest、@ending.trust、@ending.doubt。\nsceneDrafts 必须与本节槽位投影完全一致，不得投影之外自行规划未来步骤。${choiceActionContract}\n以下是服务端重建的默认合法图，步骤 key 就是 sceneDrafts 的 slotKey；candidateId 使用已列图 ID 或同包 interaction:proposalKey，禁止其他自造 ID、遗漏、重复或继续规划未来：\n- 默认场景槽（choiceCount 是必须的选择数）：${JSON.stringify(projection.slots)}\n- 服务端终点（只读，不输出）：${JSON.stringify(projection.expectedTerminal)}\n- currentScene choices: ${projection.expectedChoices}\n- continuationScenes:\n${projection.expectedSteps}${optionalReturnGraph}`,
     }),
+    block({
+      id: "bundle:temporal-scope", slot: "legal_actions", title: "同包内容的生效时点",
+      authority: "rule", retention: "mandatory", priority: 925,
+      source: { kind: "narrative_bundle_descriptors", refs: [String(job.actionId)] },
+      content: `以下范围对作者、修订和审阅共同生效：${JSON.stringify({
+        current: { fields: ["currentScene", "worldDelta.beatSummary"], authorSlotKey: "current", basisKey: `action:${job.actionId}`, action: job.actionSummary, playerLocationId: String(worldState.currentLocationId) },
+        conditionalContinuations: projection.slots.filter(slot => slot.slotKey !== "current").map(slot => ({ basisKey: `step:${slot.slotKey}`, slotKey: slot.slotKey, resolution: slot.resolution })),
+        conditionalEndings: projection.endingResolutions.map(resolution => resolution.basisKey),
+      })}。\nworldDelta.beatSummary 只概括当前已提交行动及 current 场景中的回应，不概括整个生成包或下一幕剧情。当前幕编号变化、创建新地点/NPC/任务或预写续接正文，都不表示玩家已经移动、会面、交付或完成新任务。新地点和人物可作为下一步去向介绍，不能把那里的遭遇写进当前经历。\n续接场景仅在各自成功 trigger 之后展示，其 settledOutcome 只在该槽及后续已触发的槽成立；条件结局只在对应立场行动后成立，两个结果不同时发生。不能将这些条件结果回填到 currentScene 或 beatSummary。修订任一未来场景后仍按本范围核对摘要，不能沿用上一版越界摘要。`,
+    }),
     ...(projection.endingResolutions.length === 0 ? [] : [block({
       id: "bundle:ending-resolution", slot: "legal_actions", title: "条件结局行动与后果依据",
       authority: "rule", retention: "mandatory", priority: 925,
       source: { kind: "narrative_bundle_descriptors", refs: [String(job.jobId)] },
-      content: `服务端条件槽依据（choiceLabel、scene 与 endingPair 的 name/description 共用）：${JSON.stringify(projection.endingResolutions)}。审阅发现超出真实行动的因果后果时，按实际 endingOutcomes 或 worldDelta.endingPair 数组索引定位 choiceLabel、scene 正文字段或 name/description，并引用对应主题的 ending:trust 或 ending:doubt ruleBasis，不按数组顺序猜主题。worldDelta.beatSummary 是选择前本次已提交回应的摘要，与 currentScene 同一时点；引用已有 action:${job.actionId} 依据核对，不得将任何条件结局或尚待执行前提写成已经发生。`,
+      content: `服务端条件槽依据（choiceLabel、scene 与 endingPair 的 name/description 共用）：${JSON.stringify(projection.endingResolutions)}。审阅发现超出真实行动的因果后果时，按实际 endingOutcomes 或 worldDelta.endingPair 数组索引定位 choiceLabel、scene 正文字段或 name/description，并引用对应主题的 ending:trust 或 ending:doubt ruleBasis，不按数组顺序猜主题。`,
     })]),
     block({
       id: "bundle:world-evolution", slot: "director_guidance", title: "世界演化要求",
