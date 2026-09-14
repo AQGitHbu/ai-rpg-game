@@ -14,7 +14,7 @@ import type { ResolvedEvent } from "@/game/domain/resolvedEvent";
 import { createEntityStore } from "@/game/domain/entity";
 import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
-import { prepareNpcNarrativeContext } from "./prepareNpcNarrativeContext";
+import { prepareNpcNarrativeContext, selectNpcDeliberationTarget } from "./prepareNpcNarrativeContext";
 import type { NarrativeBundleSourceContext } from "./narrativeBundleSource";
 import type { NpcDeliberationProposal } from "./npcDeliberationSource";
 
@@ -29,6 +29,13 @@ function proposal(): NpcDeliberationProposal {
 }
 
 describe("prepareNpcNarrativeContext", () => {
+  it("selects only the focused NPC that is present, active, and needs judgment", () => {
+    const context = { ...decisionContext(), job: { ...decisionContext().job, utterance: "我请求引荐" } };
+    expect(selectNpcDeliberationTarget(context)).toBe(BOSS);
+    expect(selectNpcDeliberationTarget({ ...context, job: { ...context.job, focusNpcId: undefined } })).toBeUndefined();
+    expect(selectNpcDeliberationTarget({ ...context, job: { ...context.job, utterance: "你好！" } })).toBeUndefined();
+  });
+
   it("skips opening and uses conditional knowledge as a state-based call trigger", async () => {
     const opening: NarrativeBundleSourceContext = {
       kind: "opening", jobId: JOB_ID, input: { gameType: "wuxia", gameLength: "short", seed: "test" },

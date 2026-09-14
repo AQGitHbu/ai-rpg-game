@@ -4,6 +4,7 @@ import { dialogueTopicKey, type Action } from "@/game/domain/action";
 import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
 import type { NarrativeSceneState } from "@/game/domain/narrative";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
+import type { NarrativeMemoryContext } from "@/game/domain/narrativeMemoryContext";
 import type { StoryState } from "@/game/domain/storyState";
 import type { WorldState } from "@/game/domain/worldState";
 import { entitiesOfKind, projectEntityStore, type EntityId } from "@/game/domain/entity";
@@ -49,6 +50,7 @@ type DecisionNarrativeContextInput = Readonly<{
   candidateRevision?: NarrativeCandidateRevision;
   authorDraftRevision?: NarrativeAuthorDraftRevision;
   npcOutward?: readonly import("../../../npcSpeechAuthority").NpcDeliberationOutwardProjection[];
+  memoryContext?: NarrativeMemoryContext;
 }>;
 
 function block(input: NarrativeContextBlock): NarrativeContextBlock {
@@ -95,6 +97,23 @@ function itemStateSection(context: EntityContextProjection): string {
   return items.length === 0
     ? "（当前闭包无相关物品）"
     : items.map((item) => `- ${item.name}（${item.id}）：${item.summary}`).join("\n");
+}
+
+function sourceLinkedMemoryText(memory: NarrativeMemoryContext): string {
+  const renderEntry = (entry: NarrativeMemoryContext["uncovered"][number]): string =>
+    `historyId=${entry.id}; sequence=${entry.sequence}; turn=${entry.turnNumber}; kind=${entry.kind}; speaker=${entry.speakerId === null ? "旁白" : entry.speakerId}; audience=[${entry.audienceIds.join(", ")}]; text=${entry.text}`;
+  const entries = [...memory.uncovered, ...memory.recalled]
+    .sort((left, right) => left.sequence - right.sequence || left.id.localeCompare(right.id))
+    .map(renderEntry);
+  const events = memory.requiredEvents.map((event) =>
+    `eventId=${event.eventId}; sequence=${event.sequence}; turn=${event.turnNumber}; kind=${event.kind}; actors=[${event.actorIds.join(", ")}]; targets=[${event.targetIds.join(", ")}]`);
+  return [
+    "以下内容是同一 observer 的来源可追溯长期记忆包；原话只能按 speaker/audience 理解，不能把玩家选项当成 NPC 亲口说过的话。",
+    `observer=${memory.observerId}; coveredThroughSequence=${memory.coveredThroughSequence}`,
+    `必需事件：\n${events.join("\n") || "（无）"}`,
+    `来源原文：\n${entries.map((entry) => `- ${entry}`).join("\n") || "（无）"}`,
+    `概览来源引用（正文必须由原始来源重建）：history=${memory.overviewHistoryIds.join(", ") || "无"}; events=${memory.overviewEventIds.join(", ") || "无"}`,
+  ].join("\n");
 }
 
 function repairInstruction(repair: NarrativeBundleRepair): string {
@@ -231,7 +250,12 @@ export function buildDecisionNarrativeContextBlocks(
   // legacy arrays are a compatibility read model and may never repair a
   // missing/inconsistent store projection here.
   const worldState = { ...input.worldState, ...projectEntityStore(input.worldState.entityStore) };
-  const entityContext = buildEntityContextProjection({ worldState, storyState, job });
+  const entityContext = buildEntityContextProjection({
+    worldState,
+    storyState,
+    job,
+    memoryEntityIds: input.memoryContext?.referencedEntityIds,
+  });
   const projection = expectedBundleProjection(worldState, storyState, job);
   const returnProjection = storyState.evolution.status === "needs_next_act"
     ? null : expectedBundleProjection(worldState, storyState, job, true);
@@ -503,6 +527,14 @@ export function buildDecisionNarrativeContextBlocks(
       authority: "event", retention: "mandatory", priority: 980,
       source: { kind: "committed_event", refs: narrativeMemory.manifestRefs.eventIds.map(String).filter((eventId) => !openingHandoffEventIds.has(eventId)) },
       content: currentRequiredEventsText,
+    }));
+  }
+  if (input.memoryContext !== undefined) {
+    blocks.push(block({
+      id: "bundle:source-linked-memory", slot: "relevant_events", title: "来源可追溯长期记忆",
+      authority: "event", retention: "mandatory", priority: 975,
+      source: { kind: "narrative_memory_context", refs: input.memoryContext.manifest.map((entry) => entry.ref) },
+      content: sourceLinkedMemoryText(input.memoryContext),
     }));
   }
   if (narrativeMemory.relevantEpisodesText !== "") {

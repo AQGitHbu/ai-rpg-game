@@ -204,6 +204,7 @@ function publicReviewContext(input: NarrativeCandidateReviewInput): unknown {
     storyState: input.context.storyState,
     job: input.context.job,
     ...(input.context.npcOutward === undefined ? {} : { npcOutward: input.context.npcOutward }),
+    ...(input.context.memoryContext === undefined ? {} : { memoryContext: input.context.memoryContext }),
   });
   return {
     kind: "decision",

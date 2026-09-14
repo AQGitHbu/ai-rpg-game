@@ -25,6 +25,7 @@ import { rebuildEpisodicMemory } from "@/game/domain/episodicMemory";
 import { createFixtureOpeningCandidateSource } from "../../createGame";
 import { createWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 import { NARRATIVE_BUNDLE_CONTEXT_MAX_ESTIMATED_TOKENS } from "./narrativeContext/narrativeBundleContext";
+import type { NarrativeMemoryContext } from "@/game/domain/narrativeMemoryContext";
 
 function mockAiClient(complete: ReturnType<typeof vi.fn>): RpgAiClient {
   return {
@@ -949,6 +950,27 @@ describe("createNarrativeBundleSource", () => {
     expect(result.proposal.currentScene.choices).toEqual([]);
     expect(result.proposal.continuationScenes).toEqual([]);
     expect(result.proposal.worldDelta).toMatchObject({ endingPair: [{ themeKey: "trust" }, { themeKey: "doubt" }] });
+  });
+
+  it("puts source-linked player memory into the actual author prompt and manifest", async () => {
+    const complete = vi.fn().mockResolvedValue({ ok: true, content: JSON.stringify(validBundleResponse) });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete), allowLegacyDecisionDto: true });
+    const memoryContext: NarrativeMemoryContext = {
+      observerId: PLAYER_ENTITY_ID,
+      coveredThroughSequence: 49,
+      overviewHistoryIds: [],
+      overviewEventIds: [],
+      uncovered: [{ id: "history:old", segmentId: "segment:old", sequence: 50, actionId: "old", jobId: null, sceneId: "old", revision: 50, turnNumber: 50, kind: "narration", text: "委托人说过：先核对封口，再把信交给渡口的人。", speakerId: PLAYER_ENTITY_ID, audienceIds: [PLAYER_ENTITY_ID], entityIds: [PLAYER_ENTITY_ID], factIds: [], eventIds: [], choiceToken: null }],
+      recalled: [],
+      requiredEvents: [],
+      referencedEntityIds: [PLAYER_ENTITY_ID],
+      ambiguousEntityIds: [],
+      manifest: [{ ref: "history:old", reason: "uncovered", mandatory: true }],
+    };
+    await source.generate({ kind: "decision", worldState: makeWorldState(), storyState: makeStoryState(), job: makeJob(), memoryContext });
+    const [, messages, auditContext] = complete.mock.calls[0]! as [string, readonly AiMessage[], { readonly narrativeContext?: unknown }];
+    expect(messages[0]!.content).toContain("委托人说过：先核对封口，再把信交给渡口的人。");
+    expect(JSON.stringify(auditContext.narrativeContext)).toContain("bundle:source-linked-memory");
   });
 
   it("reports an unknown worldDelta field at its exact path and preserves the raw author draft", async () => {

@@ -402,6 +402,7 @@ export function createNarrativeBundleSource(
     ...(context.candidateRevision === undefined ? {} : { candidateRevision: context.candidateRevision }),
     ...(context.authorDraftRevision === undefined ? {} : { authorDraftRevision: context.authorDraftRevision }),
     ...(context.npcOutward === undefined ? {} : { npcOutward: context.npcOutward }),
+    ...(context.memoryContext === undefined ? {} : { memoryContext: context.memoryContext }),
             })
           : undefined;
         const prompt = decisionCompilation?.prompt ?? buildOpeningNarrativePrompt(

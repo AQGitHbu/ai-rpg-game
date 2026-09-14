@@ -15,6 +15,7 @@ import { createEntityStore, entitiesOfKind, type NpcEntityRecord, type Relations
 import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
 import { playerActionHistoryEntry } from "@/game/domain/narrativeHistory";
+import type { NarrativeMemoryContext } from "@/game/domain/narrativeMemoryContext";
 import { projectNpcDeliberation } from "./projectNpcDeliberation";
 
 const LOCATION = asLocationId("loc:old_bridge");
@@ -250,4 +251,45 @@ it("recovers only the current focused player expression without turning labels i
   expect(project(BOSS).currentJob.utterance).toBeUndefined();
   expect(JSON.stringify(project(BOSS))).not.toContain("unrelated private words");
   expect(project(RECIPIENT).currentJob.selectedExpression).toBeUndefined();
+});
+
+it("adds only the matching NPC's source-linked private memory and rejects a mismatched observer", () => {
+  const memory: NarrativeMemoryContext = {
+    observerId: BOSS,
+    coveredThroughSequence: -1,
+    overviewHistoryIds: [],
+    overviewEventIds: [],
+    uncovered: [{
+      id: "history:boss-private",
+      segmentId: "segment:boss-private",
+      sequence: 0,
+      actionId: "action:boss-private",
+      jobId: null,
+      sceneId: "scene:boss-private",
+      revision: 1,
+      turnNumber: 1,
+      kind: "npc_line",
+      text: "我只对自己说过的暗路仍记得清楚。",
+      speakerId: BOSS,
+      audienceIds: [BOSS],
+      entityIds: [BOSS],
+      factIds: [],
+      eventIds: [],
+      choiceToken: null,
+    }],
+    recalled: [],
+    requiredEvents: [],
+    referencedEntityIds: [BOSS],
+    ambiguousEntityIds: [],
+    manifest: [{ ref: "history:boss-private", reason: "private_history", mandatory: true }],
+  };
+  const input = projectNpcDeliberation({
+    worldState: worldState(), storyState: pendingStoryState(), npcId: BOSS,
+    jobId: JOB_ID, candidateVersion: 1, memoryContext: memory,
+  });
+  expect(input.privateContext).toContain("我只对自己说过的暗路仍记得清楚");
+  expect(() => projectNpcDeliberation({
+    worldState: worldState(), storyState: pendingStoryState(), npcId: RECIPIENT,
+    jobId: JOB_ID, candidateVersion: 1, memoryContext: memory,
+  })).toThrow("NPC_MEMORY_OBSERVER_MISMATCH");
 });

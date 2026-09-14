@@ -5,6 +5,7 @@ import type { StoryState } from "@/game/domain/storyState";
 import type { WorldState } from "@/game/domain/worldState";
 import { PLAYER_ENTITY_ID, type NpcId } from "@/game/domain/worldEntity";
 import type { NpcKnowledgeEntry, NpcKnowledgeSource, RelationshipCommitment } from "@/game/domain/entity";
+import type { NarrativeMemoryContext } from "@/game/domain/narrativeMemoryContext";
 import { buildNpcSpeechAuthority } from "./npcSpeechAuthority";
 import type { NpcDeliberationInput } from "./npcDeliberationSource";
 
@@ -192,6 +193,33 @@ function evidenceContext(
   return result.sort((left, right) => compareId(left.eventId, right.eventId));
 }
 
+function historicalMemoryContext(memory: NarrativeMemoryContext | undefined, npcId: NpcId): Readonly<{
+  readonly uncovered: readonly unknown[];
+  readonly recalled: readonly unknown[];
+  readonly requiredEvents: readonly unknown[];
+}> | undefined {
+  if (memory === undefined) return undefined;
+  if (String(memory.observerId) !== String(npcId)) throw new Error("NPC_MEMORY_OBSERVER_MISMATCH");
+  const renderEntry = (entry: NarrativeMemoryContext["uncovered"][number]) => ({
+    historyId: entry.id,
+    sequence: entry.sequence,
+    turnNumber: entry.turnNumber,
+    kind: entry.kind,
+    speakerId: entry.speakerId === null ? null : String(entry.speakerId),
+    audienceIds: entry.audienceIds.map(String),
+    text: entry.text,
+    eventIds: entry.eventIds.map(String),
+  });
+  return {
+    uncovered: memory.uncovered.map(renderEntry),
+    recalled: memory.recalled.map(renderEntry),
+    requiredEvents: memory.requiredEvents.map((event) => ({
+      eventId: String(event.eventId), kind: event.kind, sequence: event.sequence,
+      turnNumber: event.turnNumber, actorIds: event.actorIds.map(String), targetIds: event.targetIds.map(String),
+    })),
+  };
+}
+
 /** The selected action expression is distinct from a claimed spoken utterance. */
 export function currentNpcPlayerExpressions(storyState: StoryState, job: PendingNarrativeJob, npcId: NpcId) {
   if (job.focusNpcId !== npcId) return [];
@@ -212,9 +240,11 @@ export function projectNpcDeliberation(input: {
   readonly npcId: NpcId;
   readonly jobId: NarrativeJobId;
   readonly candidateVersion: number;
+  readonly memoryContext?: NarrativeMemoryContext;
 }): NpcDeliberationInput {
   const npc = npcOf(input.worldState.entityStore, input.npcId);
   const job = currentJobOf(input.storyState, input.jobId);
+  const historicalMemory = historicalMemoryContext(input.memoryContext, input.npcId);
   const authority = outwardAuthority(input.worldState, npc, job);
   const privateContext = JSON.stringify({
     schema: "npc_deliberation.v1",
@@ -232,6 +262,7 @@ export function projectNpcDeliberation(input: {
     relationships: relationshipContext(input.worldState.entityStore, npc),
     recentInteractions: interactionContext(npc),
     currentEvidence: evidenceContext(input.worldState, npc, job),
+    ...(historicalMemory === undefined ? {} : { historicalMemory }),
     outwardAuthority: {
       allowedDiscloseFactIds: authority?.allowedFactIds ?? [],
       allowedEvidenceEventIds: authority?.allowedEventIds ?? [],

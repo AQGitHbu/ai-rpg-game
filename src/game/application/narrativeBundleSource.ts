@@ -16,6 +16,7 @@ import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
 import type { NarrativeSceneState } from "@/game/domain/narrative";
 import type { PreparedSceneSeedState } from "@/game/domain/preparedContinuation";
+import type { NarrativeMemoryContext } from "@/game/domain/narrativeMemoryContext";
 
 // ---------------------------------------------------------------------------
 // Task 4：统一叙事生成包源端口。一次 generate 调用返回完整原子包提案。
@@ -90,6 +91,7 @@ export type NarrativeBundleSourceContext =
   }
   | {
     readonly kind: "decision";
+    readonly memoryContext?: NarrativeMemoryContext;
     readonly npcOutward?: readonly import("./npcSpeechAuthority").NpcDeliberationOutwardProjection[];
     /** 1-based server-owned content version for this complete candidate. */
     readonly candidateVersion?: number;
