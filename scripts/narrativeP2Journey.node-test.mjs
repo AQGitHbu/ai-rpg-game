@@ -18,8 +18,11 @@ test("P2 CLI uses the single full protocol, register is zero transport and immut
   const root = mkdtempSync(join(tmpdir(), "p2-script-"));
   try {
     const protocolPath = join(root, "protocol.json");
-    assert.deepEqual(parseNarrativeP2Args(["--mode=register", "--run-id=p2", `--protocol=${protocolPath}`, `--output=${root}`]), { mode: "register", runId: "p2", protocol: protocolPath, output: root, replaySource: "" });
+    assert.deepEqual(parseNarrativeP2Args(["--mode=register", "--run-id=p2", `--protocol=${protocolPath}`, `--output=${root}`]), { mode: "register", runId: "p2", protocol: protocolPath, output: root, replaySource: "", stage: "" });
     assert.equal(validateNarrativeP2Args({ mode: "other", runId: "p2", protocol: protocolPath, output: root }), "INVALID_MODE");
+    assert.equal(validateNarrativeP2Args({ mode: "live", runId: "p2", protocol: protocolPath, output: root }), "P2_STAGE_REQUIRED");
+    assert.equal(validateNarrativeP2Args({ mode: "register", stage: "A", runId: "p2", protocol: protocolPath, output: root }), "P2_REGISTER_HAS_NO_STAGE");
+    assert.equal(parseNarrativeP2Args(["--stage=B"]).stage, "B");
     assert.throws(() => parseNarrativeP2Args(["--unknown=true"]), /UNKNOWN_ARGUMENT/);
     assert.deepEqual(await runNarrativeP2Journey({ mode: "register", runId: "p2", protocolPath, outputDirectory: root }, options), { plannedRoutes: 2, completedRoutes: 0, passed: true });
     const protocol = JSON.parse(readFileSync(protocolPath, "utf8"));
@@ -36,9 +39,7 @@ test("fake completed artifacts cannot pass strict zero-network production replay
     const protocolPath = join(root, "protocol.json");
     await runNarrativeP2Journey({ mode: "register", runId: "p2", protocolPath, outputDirectory: root }, options);
     writeFileSync(join(root, "S-short.json"), '{"completed":true}'); writeFileSync(join(root, "M-medium.json"), '{"completed":true}');
-    const result = await runNarrativeP2Journey({ mode: "replay", runId: "p2", protocolPath, outputDirectory: join(root, "replay"), replaySource: root }, options);
-    assert.deepEqual(result, { plannedRoutes: 2, completedRoutes: 0, passed: false });
-    assert.equal(JSON.parse(readFileSync(join(root, "replay", "S-short.json"), "utf8")).failureCode, "REPLAY_IDENTITY_TAPE_MISSING");
+    await assert.rejects(runNarrativeP2Journey({ mode: "replay", stage: "A", runId: "p2", protocolPath, outputDirectory: join(root, "replay"), replaySource: root }, options), /P2_STAGE_RUNTIME_NOT_IMPLEMENTED/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

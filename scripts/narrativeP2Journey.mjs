@@ -7,10 +7,10 @@ import { installTsHooks, freezeCurrentCodeIdentity } from "./narrativeP1Journey.
 import { projectRoot, readAiEnv } from "./aiEnv.mjs";
 
 // Protocol construction and validation live only in the TypeScript module.
-export const NARRATIVE_P2_PROTOCOL_VERSION = "narrative-p2/v1";
+export const NARRATIVE_P2_PROTOCOL_VERSION = "narrative-p2/v2";
 export function parseNarrativeP2Args(argv) {
-  const result = { mode: "replay", runId: "", protocol: "", output: "", replaySource: "" };
-  const keys = { mode: "mode", "run-id": "runId", protocol: "protocol", output: "output", "replay-source": "replaySource" };
+  const result = { mode: "replay", runId: "", protocol: "", output: "", replaySource: "", stage: "" };
+  const keys = { stage: "stage", mode: "mode", "run-id": "runId", protocol: "protocol", output: "output", "replay-source": "replaySource" };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (!argument?.startsWith("--")) throw new Error("INVALID_ARGUMENT");
@@ -26,6 +26,8 @@ export function validateNarrativeP2Args(args) {
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(args?.runId ?? "")) return "INVALID_RUN_ID";
   if (!args?.protocol?.trim()) return "MISSING_PROTOCOL";
   if (!args?.output?.trim()) return "MISSING_OUTPUT";
+  if (args.mode !== "register" && !["A", "B"].includes(args.stage)) return "P2_STAGE_REQUIRED";
+  if (args.mode === "register" && args.stage) return "P2_REGISTER_HAS_NO_STAGE";
   return null;
 }
 export function freezeP2CodeIdentity() {
@@ -53,7 +55,7 @@ function configuredEnvironment(mode, protocolPath) {
   return env;
 }
 export async function runNarrativeP2Journey(input, options = {}) {
-  const issue = validateNarrativeP2Args({ mode: input.mode, runId: input.runId, protocol: input.protocolPath, output: input.outputDirectory });
+  const issue = validateNarrativeP2Args({ mode: input.mode, runId: input.runId, protocol: input.protocolPath, output: input.outputDirectory, stage: input.stage });
   if (issue) throw new Error(issue);
   if (input.mode === "live" && process.env.RUN_REAL_AI_JOURNEY !== "1") throw new Error("P2_LIVE_REQUIRES_RUN_REAL_AI_JOURNEY");
   if (input.mode === "replay" && resolve(input.outputDirectory) === resolve(input.replaySource || dirname(input.protocolPath))) throw new Error("P2_REPLAY_OUTPUT_MUST_BE_SEPARATE");
@@ -70,7 +72,7 @@ export async function runNarrativeP2Journey(input, options = {}) {
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   try {
     const args = parseNarrativeP2Args(process.argv.slice(2));
-    const result = await runNarrativeP2Journey({ mode: args.mode, runId: args.runId, protocolPath: args.protocol, outputDirectory: args.output, replaySource: args.replaySource });
+    const result = await runNarrativeP2Journey({ mode: args.mode, runId: args.runId, protocolPath: args.protocol, outputDirectory: args.output, replaySource: args.replaySource, stage: args.stage || undefined });
     console.log(`[narrative-p2] ${JSON.stringify(result)}`); process.exitCode = result.passed ? 0 : 1;
   } catch (error) { console.error(`[narrative-p2] ${error.message}`); process.exitCode = 1; }
 }

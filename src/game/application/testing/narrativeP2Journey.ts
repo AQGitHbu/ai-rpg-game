@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { NARRATIVE_P2_TOPICS } from "./narrativeP2Topics";
 import type { NarrativeMemoryPolicy } from "@/game/domain/narrativeMemoryContext";
 
 
-export const NARRATIVE_P2_PROTOCOL_VERSION = "narrative-p2/v1" as const;
+export const NARRATIVE_P2_PROTOCOL_VERSION = "narrative-p2/v2" as const;
 export const NARRATIVE_P2_PLANNED_ROUTES = 2 as const;
 export const NARRATIVE_P2_ROUTES = Object.freeze([
   { routeId: "S-short", gameLength: "short" as const, acts: 3, budget: { actions: 24, http: 200, wallClockMs: 5_400_000 } },
@@ -19,7 +20,7 @@ export const NARRATIVE_P2_INPUT = Object.freeze({
 });
 export const NARRATIVE_P2_RECALL = "最初委托人对这封信说过什么？我想先回想原话，再决定是否交付。";
 export type NarrativeP2JourneyInput = Readonly<{
-  mode: "register" | "live" | "replay"; runId: string; protocolPath: string; outputDirectory: string; replaySource?: string;
+  mode: "register" | "live" | "replay"; stage?: "A" | "B"; runId: string; protocolPath: string; outputDirectory: string; replaySource?: string;
 }>;
 export type NarrativeP2JourneyResult = Readonly<{ plannedRoutes: 2; completedRoutes: number; passed: boolean }>;
 export type NarrativeP2RouteResult = Readonly<{
@@ -27,8 +28,21 @@ export type NarrativeP2RouteResult = Readonly<{
   logicalAttempts: number; actionCount: number; failureCode?: string;
 }>;
 export type NarrativeP2Environment = Readonly<{ model: string; apiBaseUrl: string; inputMaxEstimatedTokens: number }>;
+export const NARRATIVE_P2_STAGE_PLAN = Object.freeze({
+  order: ["A", "B"], routeByStage: { A: "S-short", B: "M-medium" },
+  admission: "B requires sealed A review and recomputed strict replay",
+  initialization: "once per stage; absolute deadline includes all waits and restarts",
+  topicPolicy: "three ordered topics per act before first formal response; stop act on human quality failure; no replacements",
+  oracle: "first opening npc_line audible to player, fixed before any later action",
+  ui: "B pauses before recall; same database, UUID action identity, remaining absolute route budget; UI recall then legal delivery and ending",
+  qualityThreshold: { average: 4, minimum: 3, maximum: 5, hardErrors: 0 },
+  totalRouteBudget: { actions: 72, http: 700, wallClockMs: 16_200_000 },
+  branchCount: 2, branchBudgetScope: "per arm, diagnostics excluded from complete-route denominator",
+  qualityDimensions: ["localContinuity", "motivation", "causalityAndSuspense", "visibleChoiceConsequences", "endingClosure"],
+});
 export type NarrativeP2Protocol = Readonly<{
   protocolVersion: typeof NARRATIVE_P2_PROTOCOL_VERSION; runId: string; plannedRoutes: 2;
+  stages: typeof NARRATIVE_P2_STAGE_PLAN; topics: typeof NARRATIVE_P2_TOPICS;
   routes: typeof NARRATIVE_P2_ROUTES; input: typeof NARRATIVE_P2_INPUT; inputHash: string;
   policy: NarrativeMemoryPolicy; transport: Readonly<Record<string, unknown>>;
   recall: string; ablationBudget: Readonly<{ jobs: 1; http: 50; wallClockMs: 2_700_000 }>;
@@ -59,7 +73,7 @@ export function createNarrativeP2Protocol(runId: string, deps: NarrativeP2Journe
   if (!deps.codeFingerprint.trim() || !environment.model.trim() || !/^https?:\/\//.test(environment.apiBaseUrl)
     || !Number.isSafeInteger(environment.inputMaxEstimatedTokens) || environment.inputMaxEstimatedTokens <= 0) throw new Error("P2_CONFIGURATION_REQUIRED");
   const protocol = {
-    protocolVersion: NARRATIVE_P2_PROTOCOL_VERSION, runId, plannedRoutes: 2 as const, routes: NARRATIVE_P2_ROUTES,
+    protocolVersion: NARRATIVE_P2_PROTOCOL_VERSION, stages: NARRATIVE_P2_STAGE_PLAN, topics: NARRATIVE_P2_TOPICS, runId, plannedRoutes: 2 as const, routes: NARRATIVE_P2_ROUTES,
     input: NARRATIVE_P2_INPUT, inputHash: hashP2(NARRATIVE_P2_INPUT),
     policy: { threshold: 50, batchSize: 10, rawSoftEstimatedTokens: 24_000, summarySourceMaxEstimatedTokens: 24_000, overviewMaxEstimatedTokens: 6_000, promptMaxEstimatedTokens: environment.inputMaxEstimatedTokens },
     transport: { jsonMode: "prompt_only", thinking: "on", reasoningEffort: "low", temperature: null, maxTokens: null,
@@ -72,11 +86,13 @@ export function createNarrativeP2Protocol(runId: string, deps: NarrativeP2Journe
 export function readNarrativeP2Protocol(path: string): NarrativeP2Protocol {
   const protocol = JSON.parse(readFileSync(path, "utf8")) as NarrativeP2Protocol;
   const { protocolHash, ...body } = protocol;
-  if (protocol.protocolVersion !== NARRATIVE_P2_PROTOCOL_VERSION || protocolHash !== hashP2(body)) throw new Error("P2_PROTOCOL_HASH_MISMATCH");
+  if (protocol.protocolVersion !== NARRATIVE_P2_PROTOCOL_VERSION) throw new Error("P2_PROTOCOL_VERSION_UNSUPPORTED_USE_FROZEN_IMPLEMENTATION");
+  if (protocolHash !== hashP2(body)) throw new Error("P2_PROTOCOL_HASH_MISMATCH");
   return protocol;
 }
 export async function runNarrativeP2Journey(input: NarrativeP2JourneyInput, deps: NarrativeP2JourneyDeps): Promise<NarrativeP2JourneyResult> {
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(input.runId)) throw new Error("INVALID_RUN_ID");
+  if (input.mode === "register" && input.stage) throw new Error("P2_REGISTER_HAS_NO_STAGE");
   const expected = createNarrativeP2Protocol(input.runId, deps);
   mkdirSync(resolve(input.outputDirectory), { recursive: true });
   if (input.mode === "register") {
@@ -86,18 +102,7 @@ export async function runNarrativeP2Journey(input: NarrativeP2JourneyInput, deps
   }
   const protocol = readNarrativeP2Protocol(resolve(input.protocolPath));
   if (canonicalP2(expected) !== canonicalP2(protocol)) throw new Error("P2_FROZEN_CONFIGURATION_MISMATCH");
-  if (!deps.routeRunner) throw new Error("P2_PRODUCTION_ADAPTER_REQUIRED");
-  if (input.mode === "replay" && resolve(input.outputDirectory) === resolve(input.replaySource || dirname(input.protocolPath))) throw new Error("P2_REPLAY_OUTPUT_MUST_BE_SEPARATE");
-  const reserved = ["result.json", ...protocol.routes.flatMap(route => [".json", ".runtime.json", ".sqlite", ".steps.json"].map(suffix => `${route.routeId}${suffix}`))];
-  if (reserved.some(name => existsSync(resolve(input.outputDirectory, name)))) throw new Error("P2_OUTPUT_ALREADY_USED");
-  const results: NarrativeP2RouteResult[] = [];
-  for (const route of protocol.routes) {
-    const result = await deps.routeRunner({ mode: input.mode, route, protocol, outputDirectory: resolve(input.outputDirectory), replaySource: resolve(input.replaySource || dirname(input.protocolPath)) });
-    results.push(result);
-    writeFileSync(resolve(input.outputDirectory, `${route.routeId}.json`), `${JSON.stringify(result, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
-  }
-  const result = { plannedRoutes: 2 as const, completedRoutes: results.filter(route => route.completed).length,
-    passed: results.every(route => route.completed && route.coveragePassed && (input.mode !== "replay" || route.strictReplayPassed)) };
-  writeFileSync(resolve(input.outputDirectory, "result.json"), `${JSON.stringify(result, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
-  return result;
+  if (input.stage !== "A" && input.stage !== "B") throw new Error("P2_STAGE_REQUIRED");
+  // Admission remains closed until durable runtime and review gate are connected.
+  throw new Error("P2_STAGE_RUNTIME_NOT_IMPLEMENTED");
 }

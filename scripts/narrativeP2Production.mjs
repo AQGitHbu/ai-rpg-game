@@ -48,6 +48,10 @@ export async function createNarrativeP2ProductionRunner(runtimeEnv, options = {}
   const runtimeFactory = options.runtimeFactory ?? createNarrativeP1ReplayRuntime;
   return async input => {
     const { route, mode, protocol, outputDirectory, replaySource } = input;
+    if (protocol.protocolVersion !== "narrative-p2/v2") throw new Error("P2_PROTOCOL_VERSION_UNSUPPORTED_USE_FROZEN_IMPLEMENTATION");
+    // Internal offline control-policy fixtures remain executable during the v2 migration.
+    // Public stage admission is separately closed by narrativeP2Journey.
+    if (mode === "live" && !options.runtimeFactory) throw new Error("P2_STAGE_RUNTIME_NOT_IMPLEMENTED");
     if (mode === "live" && !options.runtimeFactory && process.env.RUN_REAL_AI_JOURNEY !== "1") throw new Error("P2_LIVE_REQUIRES_RUN_REAL_AI_JOURNEY");
     mkdirSync(outputDirectory, { recursive: true });
     const path = resolve(outputDirectory, `${route.routeId}.sqlite`);

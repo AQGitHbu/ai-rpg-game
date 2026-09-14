@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { NARRATIVE_P2_INPUT, NARRATIVE_P2_PROTOCOL_VERSION, NARRATIVE_P2_ROUTES, runNarrativeP2Journey, type NarrativeP2JourneyDeps } from "./narrativeP2Journey";
+import { NARRATIVE_P2_INPUT, NARRATIVE_P2_PROTOCOL_VERSION, NARRATIVE_P2_ROUTES, hashP2, readNarrativeP2Protocol, runNarrativeP2Journey, type NarrativeP2JourneyDeps } from "./narrativeP2Journey";
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 const deps: NarrativeP2JourneyDeps = { environment: { model: "fixture-model", apiBaseUrl: "https://fixture.invalid", inputMaxEstimatedTokens: 64000 }, codeFingerprint: "fixture-code" };
@@ -32,13 +32,24 @@ describe("P2 frozen experiment orchestration", () => {
     await runNarrativeP2Journey({ ...input, mode: "register" }, deps);
     writeFileSync(join(input.outputDirectory, "S-short.json"), '{"completed":true}');
     writeFileSync(join(input.outputDirectory, "M-medium.json"), '{"completed":true}');
-    await expect(runNarrativeP2Journey({ ...input, mode: "replay" }, deps)).rejects.toThrow("P2_PRODUCTION_ADAPTER_REQUIRED");
+    await expect(runNarrativeP2Journey({ ...input, mode: "replay" }, deps)).rejects.toThrow("P2_STAGE_REQUIRED");
   });
-  it("both routes stay in the denominator and coverage plus strict replay are required", async () => {
+  it("fails closed for both stages even with an injected optimistic runner", async () => {
     const input = setup();
     await runNarrativeP2Journey({ ...input, mode: "register" }, deps);
-    const runner = vi.fn(async () => ({ completed: true, coveragePassed: true, strictReplayPassed: false, httpAttempts: 0, logicalAttempts: 2, actionCount: 1 }));
-    expect(await runNarrativeP2Journey({ ...input, mode: "replay", outputDirectory: join(input.outputDirectory, "replay") }, { ...deps, routeRunner: runner })).toEqual({ plannedRoutes: 2, completedRoutes: 2, passed: false });
-    expect(runner.mock.calls).toHaveLength(2);
+    const runner = vi.fn();
+    for (const stage of ["A", "B"] as const) {
+      await expect(runNarrativeP2Journey({ ...input, mode: "replay", stage, outputDirectory: join(input.outputDirectory, stage) }, { ...deps, routeRunner: runner })).rejects.toThrow("P2_STAGE_RUNTIME_NOT_IMPLEMENTED");
+    }
+    expect(runner).not.toHaveBeenCalled();
+  });
+  it("rejects correctly rehashed v1 protocols without replaying them", async () => {
+    const input = setup();
+    await runNarrativeP2Journey({ ...input, mode: "register" }, deps);
+    const { protocolHash: ignored, ...body } = JSON.parse(readFileSync(input.protocolPath, "utf8"));
+    expect(ignored).toBeTruthy();
+    body.protocolVersion = "narrative-p2/v1";
+    writeFileSync(input.protocolPath, JSON.stringify({ ...body, protocolHash: hashP2(body) }));
+    expect(() => readNarrativeP2Protocol(input.protocolPath)).toThrow("P2_PROTOCOL_VERSION_UNSUPPORTED_USE_FROZEN_IMPLEMENTATION");
   });
 });
