@@ -100,7 +100,10 @@ function transition(state, operation, now, owner) {
       if (reservation.kind === "summary_batch" && operation.evidence.published === true) {
         if (operation.evidence.observerId !== reservation.observerId || !digest(operation.evidence.sourceFingerprint)
           || !integer(operation.evidence.summaryRevision) || !integer(operation.evidence.coveredThroughSequence)) fail("PUBLICATION_EVIDENCE");
-        state.publications.push({ ...clone(reservation), ...clone(operation.evidence), status: "published" });
+        // Settlement data may describe a publication, never replace its reserved identity.
+        const { artifactHash, sourceFingerprint, summaryRevision, coveredThroughSequence } = operation.evidence;
+        state.publications.push({ ...clone(reservation), artifactHash, sourceFingerprint, summaryRevision,
+          coveredThroughSequence, published: true, status: "published" });
       }
       reservation.status = "settled"; reservation.evidence = clone(operation.evidence); reservation.settledAt = now;
       break;

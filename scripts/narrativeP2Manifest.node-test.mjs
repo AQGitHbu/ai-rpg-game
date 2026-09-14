@@ -166,3 +166,28 @@ test("actual frozen commit:digest code identity is preserved verbatim", () => {
   const changed = openP2RouteManifest({ ...input, binding: { ...input.binding, codeFingerprint: `different:${hash}` } });
   assert.throws(() => changed.read(), /P2_MANIFEST_CORRUPT/);
 });
+
+test("publication evidence cannot turn two batches from one real job into distinct preparation jobs", () => {
+  const f = fixture(); f.mutate({ type: "start" });
+  const action = f.mutate({ type: "reserve_action", interaction: { kind: "fixed_choice", choiceToken: "choice" } }).pendingAction;
+  f.mutate({ type: "begin_action", actionId: action.actionId });
+  for (let index = 0; index < 2; index++) {
+    const reservationId = `batch:${index}`;
+    f.mutate({ type: "reserve", kind: "summary_batch", reservationId, purpose: "memory_summary", jobId: "real-job", epoch: 0, observerId: "player" });
+    const reservation = f.store.read().reservations.find(item => item.reservationId === reservationId);
+    f.mutate({ type: "settle", reservationId, evidence: {
+      published: true, artifactHash: hash, sourceFingerprint: hash, observerId: "player", summaryRevision: index + 1, coveredThroughSequence: index * 10 + 9,
+      jobId: `forged-job:${index}`, epoch: 99, actionId: "forged-action", reservationId: `forged-reservation:${index}`,
+      kind: "transport", purpose: "scene_author", reservedAt: 0, status: "forged-status",
+    } });
+    const publication = f.reopen().read().publications[index];
+    for (const key of ["jobId", "epoch", "actionId", "reservationId", "kind", "purpose", "reservedAt", "observerId"]) {
+      assert.equal(publication[key], reservation[key], `authoritative ${key} must survive settlement`);
+    }
+    assert.equal(publication.status, "published");
+    assert.equal(publication.summaryRevision, index + 1);
+    assert.equal(publication.coveredThroughSequence, index * 10 + 9);
+  }
+  assert.equal(new Set(f.reopen().read().publications.map(item => item.jobId)).size, 1);
+  assert.equal(f.store.read().counters.batchUpdates, 2);
+});
