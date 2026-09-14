@@ -217,4 +217,87 @@ describe("retrieveStoryEvidence", () => {
     expect(generic.ambiguousEntityIds).toHaveLength(2);
     expect(negated.entityIds).toEqual(expect.arrayContaining([HELPER_A, HELPER_B]));
   });
+
+  it("does not use an unselected choice or an unobserved NPC name as knowledge", () => {
+    const world = makeWorld();
+    const unobservedId = asNpcId("npc:unobserved");
+    const source = world.entityStore.records.find((record) => String(record.core.id) === String(HELPER_B));
+    if (source === undefined) throw new Error("fixture NPC missing");
+    const unobservedWorld = {
+      ...world,
+      entityStore: createEntityStore([
+        ...world.entityStore.records,
+        {
+          ...source,
+          core: {
+            ...source.core,
+            id: unobservedId,
+            name: "未选中的人",
+            aliases: [{ text: "私密称呼", observerIds: [HELPER_B], evidenceEventIds: [] }],
+          },
+        } as EntityRecord,
+      ]),
+    };
+    const story = {
+      ...makeStoryState(unobservedWorld),
+      history: {
+        entries: [
+          ...makeStoryState(unobservedWorld).history.entries,
+          {
+            id: "choice:unselected",
+            segmentId: "segment:choice",
+            sequence: 1,
+            actionId: null,
+            jobId: null,
+            sceneId: "scene:choice",
+            revision: 1,
+            turnNumber: 1,
+            kind: "shown_choice" as const,
+            text: "未选中的人会在之后出现",
+            speakerId: null,
+            audienceIds: [PLAYER],
+            entityIds: [PLAYER, unobservedId],
+            factIds: [],
+            eventIds: [],
+            choiceToken: "choice:unselected",
+          },
+        ],
+      },
+    };
+
+    const selection = retrieveStoryEvidence({
+      worldState: unobservedWorld,
+      storyState: story,
+      observerId: PLAYER,
+      text: "未选中的人 私密称呼",
+      actionEntityIds: [],
+      focusEntityIds: [],
+    });
+
+    expect(selection.entityIds).not.toContain(unobservedId);
+    expect(selection.historyIds).not.toContain("choice:unselected");
+  });
+
+  it("keeps same-name entities distinct and does not let the current focus erase an old person", () => {
+    const world = makeWorld();
+    const sameNameWorld = {
+      ...world,
+      entityStore: createEntityStore(world.entityStore.records.map((record) =>
+        String(record.core.id) === String(HELPER_B)
+          ? { ...record, core: { ...record.core, name: "顾砚" } }
+          : record,
+      ) as EntityRecord[]),
+    };
+    const selection = retrieveStoryEvidence({
+      worldState: sameNameWorld,
+      storyState: makeStoryState(sameNameWorld, HELPER_B),
+      observerId: PLAYER,
+      text: "顾砚之前替我挡过一刀的人是谁？",
+      actionEntityIds: [],
+      focusEntityIds: [HELPER_B],
+    });
+
+    expect(selection.entityIds).toEqual(expect.arrayContaining([HELPER_A, HELPER_B]));
+    expect(new Set(selection.entityIds.map(String)).size).toBe(selection.entityIds.length);
+  });
 });

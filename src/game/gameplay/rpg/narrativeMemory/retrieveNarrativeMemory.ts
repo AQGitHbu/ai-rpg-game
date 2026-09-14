@@ -106,8 +106,17 @@ export function retrieveNarrativeMemory(
   query: NarrativeMemoryQuery,
 ): RetrievedNarrativeMemory {
   const evidenceEventIds = query.storyEvidence?.eventIds ?? [];
-  const requiredEventIds = stringSet(query.requiredEventIds?.map(String));
-  const requiredEvents = stableRequiredEvents(query.ledger, query.requiredEventIds);
+  const mandatoryRefs = new Set(
+    (query.storyEvidence?.manifest ?? [])
+      .filter((ref) => ref.mandatory)
+      .map((ref) => ref.ref),
+  );
+  const evidenceRequiredEventIds = evidenceEventIds.filter((eventId) => mandatoryRefs.has(String(eventId)));
+  const requiredEventIds = stringSet([
+    ...(query.requiredEventIds ?? []).map(String),
+    ...evidenceRequiredEventIds.map(String),
+  ]);
+  const requiredEvents = stableRequiredEvents(query.ledger, [...requiredEventIds].map((id) => id as EventId));
   const memory = query.beforeSequenceExclusive === undefined
     ? query.memory
     : rebuildEpisodicMemory(query.ledger.filter((event) => event.sequence < query.beforeSequenceExclusive!));
@@ -187,7 +196,8 @@ export function retrieveNarrativeMemory(
     historyEntries: query.history === undefined || query.storyEvidence === undefined
       ? []
       : query.history.entries
-        .filter((entry) => query.storyEvidence!.historyIds.includes(entry.id))
+        .filter((entry) => entry.kind !== "shown_choice"
+          && query.storyEvidence!.historyIds.includes(entry.id))
         .sort((left, right) => left.sequence - right.sequence),
   };
 }

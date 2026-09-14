@@ -14,6 +14,7 @@ import {
 } from "@/game/domain/worldEntity";
 import { rebuildEpisodicMemory } from "@/game/domain/episodicMemory";
 import { retrieveNarrativeMemory } from "./retrieveNarrativeMemory";
+import type { EvidenceSelection } from "./retrieveStoryEvidence";
 
 const OLD_LOCATION = asLocationId("location:old");
 const OTHER_LOCATION = asLocationId("location:other");
@@ -163,5 +164,50 @@ describe("retrieveNarrativeMemory", () => {
     expect(result.recentScenes.map((scene) => scene.sceneId)).toEqual([
       "scene:1", "scene:2", "scene:3", "scene:4",
     ]);
+  });
+
+  it("keeps mandatory evidence events when episode cards are fully budgeted out", () => {
+    const ledger = Array.from({ length: 13 }, (_, sequence) => event(sequence, {
+      type: "npc_dialogue_completed",
+      npcId: FOCUS_NPC,
+    }));
+    const oldEvent = ledger[0]!;
+    const evidence: EvidenceSelection = {
+      entityIds: [FOCUS_NPC],
+      eventIds: [oldEvent.eventId],
+      historyIds: ["history:old-line"],
+      ambiguousEntityIds: [],
+      manifest: [{ ref: String(oldEvent.eventId), reason: "explicit_question", mandatory: true }],
+    };
+
+    const result = retrieveNarrativeMemory({
+      memory: rebuildEpisodicMemory(ledger),
+      ledger,
+      storyEvidence: evidence,
+      history: {
+        entries: [{
+          id: "history:old-line",
+          segmentId: "segment:old",
+          sequence: 0,
+          actionId: "action:old",
+          jobId: null,
+          sceneId: "scene:old",
+          revision: 1,
+          turnNumber: 1,
+          kind: "npc_line",
+          text: "旧人说过的原话。",
+          speakerId: FOCUS_NPC,
+          audienceIds: ["player_0" as never],
+          entityIds: [FOCUS_NPC],
+          factIds: [],
+          eventIds: [oldEvent.eventId],
+          choiceToken: null,
+        }],
+      },
+      maxEpisodes: 0,
+    });
+
+    expect(result.requiredEvents.map((entry) => entry.eventId)).toEqual([oldEvent.eventId]);
+    expect(result.historyEntries.map((entry) => entry.id)).toEqual(["history:old-line"]);
   });
 });

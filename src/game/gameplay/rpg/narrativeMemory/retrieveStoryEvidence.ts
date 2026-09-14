@@ -4,6 +4,10 @@ import { entitiesOfKind, type EntityRecord } from "@/game/domain/entity";
 import type { HistoryEntry } from "@/game/domain/narrativeHistory";
 import type { StoryState } from "@/game/domain/storyState";
 import type { WorldState } from "@/game/domain/worldState";
+import {
+  projectObserverEvidence,
+  type ObserverEvidence,
+} from "./projectObserverEvidence";
 
 export type EvidenceQuery = Readonly<{
   readonly worldState: WorldState;
@@ -12,6 +16,12 @@ export type EvidenceQuery = Readonly<{
   readonly text: string;
   readonly actionEntityIds: readonly EntityId[];
   readonly focusEntityIds: readonly EntityId[];
+  /** Reuse one permission projection across retrieval and rendering. */
+  readonly visibleEvidence?: ObserverEvidence;
+  /** Context references are optional candidates, not current-rule hard refs. */
+  readonly contextEntityIds?: readonly EntityId[];
+  readonly contextEventIds?: readonly EventId[];
+  readonly presentHistoryIds?: readonly string[];
 }>;
 
 export type EvidenceManifestEntry = Readonly<{
@@ -50,13 +60,6 @@ function unique<T>(values: readonly T[], key: (value: T) => string): T[] {
     seen.add(id);
     return true;
   });
-}
-
-function visibleHistoryEntries(query: EvidenceQuery): readonly HistoryEntry[] {
-  return query.storyState.history.entries.filter((entry) =>
-    entry.audienceIds.some((id) => String(id) === String(query.observerId))
-      || String(entry.speakerId) === String(query.observerId),
-  );
 }
 
 function visibleAlias(
@@ -139,17 +142,9 @@ function addCandidate(
 
 function eventVisibleToObserver(
   eventId: EventId,
-  historyByEventId: ReadonlyMap<string, readonly HistoryEntry[]>,
-  observerId: EntityId,
-  event: WorldState["eventLedger"][number],
+  visibleEventIds: ReadonlySet<string>,
 ): boolean {
-  const entries = historyByEventId.get(String(eventId));
-  if (entries === undefined || entries.length === 0) {
-    return event.actorIds.some((id) => String(id) === String(observerId))
-      || event.targetIds.some((id) => String(id) === String(observerId));
-  }
-  return entries.some((entry) => entry.audienceIds.some((id) => String(id) === String(observerId))
-    || String(entry.speakerId) === String(observerId));
+  return visibleEventIds.has(String(eventId));
 }
 
 function addManifest(
@@ -203,19 +198,18 @@ function activePromiseRefs(query: EvidenceQuery, selected: ReadonlySet<string>):
  * how much authorized source text to render.
  */
 export function retrieveStoryEvidence(query: EvidenceQuery): EvidenceSelection {
+  const visibleEvidence = query.visibleEvidence ?? projectObserverEvidence({
+    worldState: query.worldState,
+    storyState: query.storyState,
+    observerId: query.observerId,
+  });
   const dialogueFocus = query.storyState.dialogueFocus ?? null;
   const records = query.worldState.entityStore.records;
   const recordById = new Map(records.map((record) => [String(record.core.id), record] as const));
   const eventById = new Map(query.worldState.eventLedger.map((event) => [String(event.eventId), event] as const));
-  const visibleHistory = visibleHistoryEntries(query);
-  const historyByEventId = new Map<string, HistoryEntry[]>();
-  for (const entry of visibleHistory) {
-    for (const eventId of entry.eventIds) {
-      const entries = historyByEventId.get(String(eventId)) ?? [];
-      entries.push(entry);
-      historyByEventId.set(String(eventId), entries);
-    }
-  }
+  const visibleHistory = visibleEvidence.history;
+  const visibleEventIds = new Set(visibleEvidence.events.map((event) => String(event.eventId)));
+  const knownEntityIds = new Set(visibleEvidence.knownEntityIds.map(String));
   const candidates = new Map<string, Candidate>();
   const explicitIds = new Set([
     ...query.actionEntityIds.map(String),
@@ -237,6 +231,11 @@ export function retrieveStoryEvidence(query: EvidenceQuery): EvidenceSelection {
     if (focus !== undefined) addCandidate(candidates, focus.core.id, 900, "dialogue_focus", true, true);
   }
   for (const record of records) {
+    const hasPublicAlias = (record.core.aliases ?? [])
+      .some((alias) => alias.observerIds.length === 0);
+    if (!knownEntityIds.has(String(record.core.id))
+      && !explicitIds.has(String(record.core.id))
+      && !hasPublicAlias) continue;
     const terms = entityTerms(record, query.observerId);
     for (const term of terms) {
       if (term.length === 0 || !queryText.includes(term)) continue;
@@ -266,7 +265,7 @@ export function retrieveStoryEvidence(query: EvidenceQuery): EvidenceSelection {
       candidate.historyIds.add(entry.id);
       for (const eventId of eventIds) {
         const event = eventById.get(String(eventId));
-        if (event !== undefined && eventVisibleToObserver(eventId, historyByEventId, query.observerId, event)) candidate.eventIds.add(String(eventId));
+        if (event !== undefined && eventVisibleToObserver(eventId, visibleEventIds)) candidate.eventIds.add(String(eventId));
       }
     }
   }
@@ -279,13 +278,25 @@ export function retrieveStoryEvidence(query: EvidenceQuery): EvidenceSelection {
     const relatedEvents = query.worldState.eventLedger
       .filter((event) => [...event.actorIds, ...event.targetIds]
         .some((id) => String(id) === String(candidate.id)))
-      .filter((event) => eventVisibleToObserver(event.eventId, historyByEventId, query.observerId, event))
+      .filter((event) => eventVisibleToObserver(event.eventId, visibleEventIds))
       .slice(-8);
     for (const event of relatedEvents) candidate.eventIds.add(String(event.eventId));
   }
 
+  for (const entityId of query.contextEntityIds ?? []) {
+    if (!knownEntityIds.has(String(entityId)) || !recordById.has(String(entityId))) continue;
+    addCandidate(candidates, entityId, 100, "context_reference", false, false);
+  }
+  for (const eventId of query.contextEventIds ?? []) {
+    const event = eventById.get(String(eventId));
+    if (event === undefined || !visibleEventIds.has(String(event.eventId))) continue;
+    const candidate = addCandidate(candidates, event.actorIds[0] ?? query.observerId, 80, "context_event", false, false);
+    candidate.eventIds.add(String(event.eventId));
+  }
+
   const selectedCandidates = [...candidates.values()]
-    .filter((candidate) => candidate.explicit || candidate.exact || candidate.reasons.has("experience"))
+    .filter((candidate) => candidate.explicit || candidate.exact || candidate.reasons.has("experience")
+      || candidate.reasons.has("context_reference") || candidate.reasons.has("context_event"))
     .sort((left, right) => right.score - left.score || String(left.id).localeCompare(String(right.id)));
   const selectedIds = selectedCandidates.map((candidate) => candidate.id);
   const selectedIdSet = new Set(selectedIds.map(String));
@@ -302,7 +313,7 @@ export function retrieveStoryEvidence(query: EvidenceQuery): EvidenceSelection {
   for (const candidate of selectedCandidates) {
     for (const eventId of candidate.eventIds) {
       const event = eventById.get(eventId);
-      if (event === undefined || !eventVisibleToObserver(event.eventId, historyByEventId, query.observerId, event)) continue;
+      if (event === undefined || !eventVisibleToObserver(event.eventId, visibleEventIds)) continue;
       eventIds.add(eventId);
       addManifest(manifest, eventId, [...candidate.reasons].join("+"), candidate.explicit || candidate.reasons.has("experience"));
     }
@@ -315,7 +326,7 @@ export function retrieveStoryEvidence(query: EvidenceQuery): EvidenceSelection {
   if (dialogueFocus !== null && (usesPronoun || focusMatches)) {
     for (const eventId of dialogueFocus.eventIds) {
       const event = eventById.get(String(eventId));
-      if (event !== undefined && eventVisibleToObserver(event.eventId, historyByEventId, query.observerId, event)) {
+      if (event !== undefined && eventVisibleToObserver(event.eventId, visibleEventIds)) {
         eventIds.add(String(eventId));
         addManifest(manifest, String(eventId), "dialogue_focus", true);
       }
@@ -332,7 +343,7 @@ export function retrieveStoryEvidence(query: EvidenceQuery): EvidenceSelection {
     addManifest(manifest, reference.ref, "active_thread_or_promise", true);
     for (const eventId of reference.eventIds) {
       const event = eventById.get(String(eventId));
-      if (event !== undefined && eventVisibleToObserver(event.eventId, historyByEventId, query.observerId, event)) {
+      if (event !== undefined && eventVisibleToObserver(event.eventId, visibleEventIds)) {
         eventIds.add(String(eventId));
         addManifest(manifest, String(eventId), "active_thread_or_promise", true);
       }
@@ -348,7 +359,7 @@ export function retrieveStoryEvidence(query: EvidenceQuery): EvidenceSelection {
       .map((event) => event.eventId),
     historyIds: [...historyIds]
       .map((id) => visibleHistory.find((entry) => entry.id === id))
-      .filter((entry): entry is HistoryEntry => entry !== undefined)
+      .filter((entry): entry is HistoryEntry => entry !== undefined && entry.kind !== "shown_choice")
       .sort((left, right) => left.sequence - right.sequence)
       .map((entry) => entry.id),
     ambiguousEntityIds,

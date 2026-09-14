@@ -157,4 +157,16 @@ describe("buildEntityContextProjection", () => {
     expect(result.declarableExistingFactIds).toEqual(["fact_public"]);
     expect(result.declarableExistingFactIds).not.toContain("fact_private");
   });
+
+  it("adds only the already-authorized memory entity references to the current cards", () => {
+    const result = buildEntityContextProjection({
+      worldState,
+      storyState: baseStory,
+      job: job(),
+      memoryEntityIds: [remoteNpc],
+    });
+
+    expect(result.mandatory.map((entry) => entry.id)).toContain(String(remoteNpc));
+    expect(result.mandatory.map((entry) => entry.id)).not.toContain("npc_remote_unknown");
+  });
 });

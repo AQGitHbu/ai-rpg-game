@@ -161,6 +161,8 @@ export function buildEntityContextProjection(input: {
   readonly storyState: StoryState;
   readonly job: PendingNarrativeJob;
   readonly optionalLimit?: number;
+  /** Entity references already authorized by the memory projection. */
+  readonly memoryEntityIds?: readonly EntityId[];
 }): EntityContextProjection {
   const { entityStore } = input.worldState;
   const hiddenFactIds = new Set(
@@ -197,6 +199,7 @@ export function buildEntityContextProjection(input: {
     ...(input.job.focusNpcId === undefined ? [] : [String(input.job.focusNpcId)]),
     ...(quest === undefined ? [] : [String(quest.core.id)]),
     ...(objectiveId === undefined ? [] : [objectiveId]),
+    ...(input.memoryEntityIds ?? []).map(String),
     ...storyEvidence.entityIds.map(String),
     ...entitiesOfKind(entityStore, "item")
       .filter((record) => record.possession.owner.kind === "player")

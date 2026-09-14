@@ -97,4 +97,42 @@ describe("renderNarrativeMemory", () => {
     expect(rendered.manifestRefs.eventIds).toEqual([asEventId("event:secret")]);
     expect(rendered.manifestRefs.episodeIds).toEqual([asEpisodeId("episode:old")]);
   });
+
+  it("does not leave shown choices in the rendered manifest", () => {
+    const retrieved = retrieveNarrativeMemory({
+      memory: rebuildEpisodicMemory([]),
+      ledger: [],
+      history: {
+        entries: [{
+          id: "choice:shown",
+          segmentId: "segment:choice",
+          sequence: 0,
+          actionId: null,
+          jobId: null,
+          sceneId: "scene:choice",
+          revision: 1,
+          turnNumber: 1,
+          kind: "shown_choice",
+          text: "未选择的路径",
+          speakerId: null,
+          audienceIds: ["player_0" as never],
+          entityIds: [],
+          factIds: [],
+          eventIds: [],
+          choiceToken: "choice:shown",
+        }],
+      },
+      storyEvidence: {
+        entityIds: [],
+        eventIds: [],
+        historyIds: ["choice:shown"],
+        ambiguousEntityIds: [],
+        manifest: [{ ref: "choice:shown", reason: "experience", mandatory: false }],
+      },
+    });
+
+    const rendered = renderNarrativeMemory({ retrieved, entityStore });
+    expect(rendered.historyText).toBe("");
+    expect(rendered.manifestRefs.historyIds).toEqual([]);
+  });
 });

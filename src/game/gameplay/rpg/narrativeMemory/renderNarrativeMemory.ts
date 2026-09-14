@@ -169,8 +169,9 @@ export function renderNarrativeMemory(input: Readonly<{
     ...match.relatedItemEvents.map((event) => eventCard(event, input.entityStore, safeFactIds)),
   ]);
   const sceneCards = input.retrieved.recentScenes.map((scene) => sceneCard(scene, input.entityStore, safeFactIds));
-  const historyText = input.retrieved.historyEntries
-    .filter((entry) => entry.kind !== "shown_choice")
+  const renderedHistoryEntries = input.retrieved.historyEntries
+    .filter((entry) => entry.kind !== "shown_choice");
+  const historyText = renderedHistoryEntries
     .map((entry) => historyLine(entry, input.entityStore))
     .join("\n");
   return {
@@ -183,10 +184,11 @@ export function renderNarrativeMemory(input: Readonly<{
       eventIds: [...new Set([
         ...input.retrieved.requiredEvents.map((event) => event.eventId),
         ...input.retrieved.relevantEpisodes.flatMap((match) => match.relatedItemEvents.map((event) => event.eventId)),
+        ...renderedHistoryEntries.flatMap((entry) => entry.eventIds),
       ])],
       episodeIds: input.retrieved.relevantEpisodes.map((match) => match.episode.episodeId),
       sceneEventIds: input.retrieved.recentScenes.map((scene) => scene.sceneEventId),
-      historyIds: input.retrieved.historyEntries.map((entry) => entry.id),
+      historyIds: renderedHistoryEntries.map((entry) => entry.id),
     },
   };
 }
