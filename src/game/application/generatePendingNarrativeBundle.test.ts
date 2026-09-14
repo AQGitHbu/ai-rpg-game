@@ -8,7 +8,7 @@ import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { GenerationMetadata } from "@/game/domain/worldEntity";
 import { createWorldStateFixture, updateWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
-import { asNpcId, asLocationId, asQuestId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
+import { asNpcId, asLocationId, asQuestId, asFactId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import { asEpisodeId, asEventId, asNarrativeJobId, asTurnId, CommittedNarrativeEvent } from "@/game/domain/events";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
@@ -21,6 +21,7 @@ import type { NarrativeCandidateReviewer } from "./narrativeCandidateReview";
 import { createNarrativeBundleSource } from "./server/ai/liveNarrativeBundleSource";
 import type { RpgAiClient } from "./server/ai/rpgAiClient";
 import { createLiveNarrativeCandidateReview } from "./server/ai/liveNarrativeCandidateReview";
+import observedEnding from "./server/ai/testing/p1-short-closure-03-ending-candidate.json";
 
 const GENERATION: GenerationMetadata = {
   generationId: "gen_test" as never,
@@ -563,6 +564,70 @@ describe("generatePendingNarrativeBundle", () => {
     expect(saved.storyState.narrative.narrativeBundle?.endingOutcomes?.[0]?.choiceLabel).toBe("认可你的回应");
     expect(JSON.stringify(saved.storyState.history)).not.toContain("所有欠款");
     expect(JSON.stringify(saved.storyState.history)).not.toContain("针锋相对");
+    expect(saved.worldState.ending).toBeNull();
+  });
+
+  it("repairs the observed NPC-arrival ending and its captions through one production revision loop", async () => {
+    // Exact author response from short-closure-03 reload audit sequence 18.
+    // The world here is a bounded rule fixture, not a replay or a new live pass.
+    const npcIds = [asNpcId("npc_0"), asNpcId("npc_dyn_1"), asNpcId("npc_dyn_2")];
+    const locationIds = [LOC_0, asLocationId("loc_dyn_1"), asLocationId("loc_dyn_2")];
+    const factId = asFactId("fact_2");
+    const initial = createMinimalWorldState();
+    const worldState = updateWorldStateFixture(initial, {
+      currentLocationId: locationIds[2]!, unlockedLocationIds: locationIds, visitedLocationIds: locationIds,
+      locations: locationIds.map((id, index) => ({ ...initial.locations[0]!, id, name: ["茶棚", "船寮", "粮栈"][index]!, npcIds: [npcIds[index]!] })),
+      npcs: npcIds.map((id, index) => ({ id, name: ["乔三石", "何老大", "朱万堂"][index]!, role: "商人", description: "已经交谈过的人", locationId: locationIds[index]!, isCompanion: false, met: true, tags: [],
+        memory: { npcId: id, knownFactIds: [factId], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] } })),
+      worldFacts: [{ factId, text: "两家的账目仍待共同核对。", discovered: true, source: "generated", locationId: locationIds[2]! }],
+    });
+    const job = { ...createPendingJob(), focusNpcId: npcIds[2]!, actionSummary: { kind: "talk" as const, npcId: npcIds[2]! } };
+    const base = createMinimalStoryState({ status: "provider_pending", mode: "ai", job, lastPresentedScene: null });
+    const { repo, getRecord } = createInMemoryRepo({ gameId: asGameId("observed-ending-repair"), worldState,
+      storyState: { ...base, endingAllowed: true, currentAct: 3, storyProgress: 100, turnNumber: 1,
+        evolution: { ...base.evolution, status: "needs_ending_pair" } }, revision: 0, createdAt: "2026-01-01" });
+    const repaired = structuredClone(observedEnding);
+    repaired.worldDelta.beatSummary = "朱万堂向眼前的沈行回应，说明仍须双方共同核对的条件。";
+    repaired.worldDelta.endingPair.forEach(ending => { ending.description = "当面回应已获确认；共同核对仍未发生，条件尚待履行。"; });
+    repaired.endingOutcomes.forEach(outcome => {
+      outcome.choiceLabel = outcome.themeKey === "trust" ? "认可你刚才的回应" : "对你的回应保留疑虑";
+      outcome.scene.segments = [{ beatId: "atmosphere", text: "你当面表明了立场，朱万堂听完点了点头。双方核验的条件仍未履行。" }];
+      outcome.scene.npcLine.text = "你的意思我听清楚了，那些条件仍要照刚才说的去办。";
+    });
+    const defects = [
+      { scope: "scene", code: "BROKEN_CAUSALITY", path: "endingOutcomes[0].scene.segments[1].text", reason: "不在场的人被写成到场并共同核验。",
+        evidence: { basisKey: "ending:trust", impact: "step_order", detail: "npc_0 前后均在 loc_0，npc_dyn_1 前后均在 loc_dyn_1；没有进入 loc_dyn_2 或共同核验的规则效果，不能用 NPC 自行到场代替待执行前提。" } },
+      { scope: "proposal", code: "UNSUPPORTED_FACT", path: "worldDelta.endingPair[0].description", reason: "概要把未履行条件写成确定后果。",
+        evidence: { basisKey: "ending:trust", impact: "fact_claim", detail: "既无 NPC 到場核验也无开工结果，概要不能宣称条件履行和恢复航运。" } },
+      { scope: "proposal", code: "BROKEN_CAUSALITY", path: "worldDelta.beatSummary", reason: "摘要早于选择却宣称双方已经对齐账目。",
+        evidence: { basisKey: `action:${job.actionId}`, impact: "interaction_effect", detail: "本次已提交的交谈回应没有双方核验的结果；摘要不能把条件结局提前写为已发生。" } },
+    ];
+    const responses = [observedEnding, { verdict: "revise", defects }, repaired, { verdict: "pass" }];
+    const requests: (readonly { content: string }[])[] = [];
+    const complete = vi.fn(async (_role: unknown, messages: readonly { content: string }[]) => {
+      requests.push(messages);
+      return { ok: true as const, content: JSON.stringify(responses.shift()) };
+    });
+    const aiClient = { complete } as unknown as RpgAiClient;
+    const generated = await generatePendingNarrativeBundle({ repository: repo, source: createNarrativeBundleSource({ aiClient }),
+      reviewer: createLiveNarrativeCandidateReview({ aiClient }), now: () => "2026-01-01T00:00:00.000Z" });
+    expect(generated.ok).toBe(true);
+    expect(complete).toHaveBeenCalledTimes(4);
+    const firstReview = JSON.parse(requests[1]![1]!.content);
+    expect(firstReview.proposal.worldDelta).toEqual(observedEnding.worldDelta);
+    expect(firstReview.proposal.endingOutcomes).toEqual(observedEnding.endingOutcomes);
+    const expectedLocations = npcIds.map((npcId, index) => ({ npcId, beforeLocationId: locationIds[index], afterLocationId: locationIds[index] }));
+    expect(firstReview.context.ruleBasis.find((basis: { key: string }) => basis.key === "ending:trust").value.actionPreviews[0].npcLocations).toEqual(expectedLocations);
+    const revisionPrompt = requests[2]!.map(message => message.content).join("\n");
+    for (const defect of defects) expect(revisionPrompt).toContain(defect.path);
+    expect(revisionPrompt).toContain(JSON.stringify(expectedLocations));
+    const saved = getRecord()!;
+    expect(saved.storyState.narrative.status).toBe("ready");
+    if (saved.storyState.narrative.status !== "ready") throw new Error("ending not approved");
+    expect(saved.storyState.narrative.currentScene.npcLine?.text).toBe(observedEnding.sceneDrafts[0]!.scene.npcLine.text);
+    expect(saved.worldState.endings[0]!.description).toBe(repaired.worldDelta.endingPair[0]!.description);
+    expect(saved.worldState.npcs.map(npc => npc.locationId)).toEqual(locationIds);
+    expect(JSON.stringify(saved.storyState.history)).not.toContain("何老大从上游船寮下来");
     expect(saved.worldState.ending).toBeNull();
   });
 

@@ -434,7 +434,7 @@ export function buildDecisionNarrativeContextBlocks(
       id: "bundle:ending-resolution", slot: "legal_actions", title: "条件结局行动与后果依据",
       authority: "rule", retention: "mandatory", priority: 925,
       source: { kind: "narrative_bundle_descriptors", refs: [String(job.jobId)] },
-      content: `服务端条件槽依据（choiceLabel 与 scene 共用）：${JSON.stringify(projection.endingResolutions)}。审阅发现超出真实行动的因果后果时，按实际 endingOutcomes 数组索引定位 choiceLabel 或 scene 正文字段，并引用对应主题的 ending:trust 或 ending:doubt ruleBasis，不按数组顺序猜主题。`,
+      content: `服务端条件槽依据（choiceLabel、scene 与 endingPair 的 name/description 共用）：${JSON.stringify(projection.endingResolutions)}。审阅发现超出真实行动的因果后果时，按实际 endingOutcomes 或 worldDelta.endingPair 数组索引定位 choiceLabel、scene 正文字段或 name/description，并引用对应主题的 ending:trust 或 ending:doubt ruleBasis，不按数组顺序猜主题。worldDelta.beatSummary 是选择前本次已提交回应的摘要，与 currentScene 同一时点；引用已有 action:${job.actionId} 依据核对，不得将任何条件结局或尚待执行前提写成已经发生。`,
     })]),
     block({
       id: "bundle:world-evolution", slot: "director_guidance", title: "世界演化要求",

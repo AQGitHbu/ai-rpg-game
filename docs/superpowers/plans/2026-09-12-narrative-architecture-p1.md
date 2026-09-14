@@ -252,11 +252,11 @@ expect(secondAuthorRequest).toContain('newFact2');
 
 **契约：** 预批准结果保留生成时元数据，正式 ending 消费时只将发布场景 turn 设为实际提交回合，其余已批准正文、ID 和表达保持一致，History/事件/场景回合一致。回归必须使用真实 approval 生产的结果再执行后续 Action，禁止用手填未来 turn 的 fixture 掩盖故障。
 
-**条件结局依据：** 在既有投影中为 trust/doubt 结果和对应 choiceLabel 提供服务端生成的条件 Action/结算权限依据，作者与审阅共用。以当前真实目标 NPC、地点、已授权事实和既有规则效果为边界；支持/质疑及 ending 事件不隐式执行移动、交付、支付、核验或尚未兑现的承诺。审阅可通过精确 endingOutcomes 路径及 ruleBasis key 将越权后果反馈给原候选修订，仍遵守既有审阅有效性校验。不要仅复制警告文字或用关键词封禁替代实际槽与规则绑定；不得将未选结果当同时发生，不得提前授知。
+**条件结局依据：** 在既有投影中为 trust/doubt 结果和对应 choiceLabel 提供服务端生成的条件 Action/结算权限依据，作者与审阅共用。以当前真实目标 NPC、地点、已授权事实和既有规则效果为边界；NPC 自行赶来或代办关键事项也必须有既有规则依据，投影须显式保留相关 NPC 的前后地点，不能仅列玩家地点。结局概要 description 与两条结果正文使用同一边界，不得以概要补造未结算后果；worldDelta.beatSummary 属于选择前本回合摘要，必须按当前已结算 Action 依据审阅，不能把任一未来条件结果当事实；支持/质疑及 ending 事件不隐式执行移动、交付、支付、核验或尚未兑现的承诺。审阅可通过精确 endingOutcomes 路径及 ruleBasis key 将越权后果反馈给原候选修订，仍遵守既有审阅有效性校验。不要仅复制警告文字或用关键词封禁替代实际槽与规则绑定；不得将未选结果当同时发生，不得提前授知。
 
 - [x] 先写并运行失败回归：真实审批→下一回合发布；两条件槽 action/target/location 与既有规则一致、标签和正文均可引用审阅依据；非终局不增加依据；未执行返程/核验等因果缺口有可验证结构证据和修订反馈路径。
-- [x] 完成最小实现及独立 Spec/Quality 审核；真实 generatePending→author→reviewer→同次修订链通过。190 项定向 tests、typecheck、131 boundaries、完整 2840 tests（1 skipped）、check:docs 通过，lint 0 errors（50 项既有 warning）。冻结后执行下项，不以离线测试代替正文验收。
-- [ ] 冻结后登记一局普通短篇，原有 createGame→实际选择→中途关闭重载→终局协议不变；严格零网络 replay 并阅读全文。必须同时满足实际成功 ending/ready、发布回合/内容一致、中心冲突有已发生的结果且无未执行关键行动，才勾选 Task 13 普通短篇验收。失败保留且定位，不连续重采或补写正文；后续 P1 验收边界保持。
+- [x] 完成最小实现及独立 Spec/Quality 审核；34e48e92 已通过真实修订链、190 定向 tests、typecheck、131 boundaries、完整 2840 tests（1 skipped）、check:docs 和 lint（0 errors、50 既有 warning）。short-closure-03 实际回合发布及机械通关通过，但修订结局仍替未到场 NPC 完成关键对账，概要仍含未经结算的复航后果。同一 Task 的限定修复已补 NPC 前后地点、结局概要主题依据和选择前摘要边界；独立复审通过，191 定向 tests、typecheck、131 boundaries、完整 2841 tests（1 skipped）、check:docs 通过，lint 0 errors（50 既有 warning）。不以离线审核代替正文验收。
+- [ ] 首轮 short-closure-03 已机械通过、正文失败；限定修复冻结后只登记一局 short-closure-04 完整复验，不连续重采。原有 createGame→实际选择→中途关闭重载→终局协议不变；严格零网络 replay 并阅读全文。必须同时满足实际成功 ending/ready、发布回合/内容一致、中心冲突有已发生的结果且无未执行关键行动，才勾选 Task 13 普通短篇验收。失败保留且定位，不连续重采或补写正文；后续 P1 验收边界保持。
 ## 后续 P1 验收边界
 
 普通生产短篇通过后执行交付/退出专项、同条件 main 共同玩法对照及实际 UI 创建→中途重载→终局；这部分仍属于 P1，未完成前不合并 main、不进入 P2。六路线保密/公开/核验综合矩阵保留为扩展验收，非首个故事前置。

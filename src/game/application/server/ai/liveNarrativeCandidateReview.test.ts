@@ -123,10 +123,12 @@ describe("live narrative candidate reviewer", () => {
   it.each([false, true])("projects conditional ending action authority before/after pair materialization: %s", async (hasPair) => {
     const initial = makeWorldState();
     const npcId = asNpcId("npc_final");
+    const remoteId = asNpcId("npc_remote");
+    const remoteLocationId = asLocationId("loc_remote");
     const worldState = createWorldStateFixtureWith({ generation: initial.generation, base: projectEntityStore(initial.entityStore) }, {
-      npcs: [{ id: npcId, name: "掌柜", role: "掌柜", description: "在场", locationId: initial.currentLocationId, isCompanion: false, met: true, tags: [],
-        memory: { npcId, knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] } }],
-      locations: initial.locations.map(location => ({ ...location, npcIds: [npcId] })),
+      npcs: [remoteId, asNpcId("npc_unseen"), npcId].map(id => ({ id, name: String(id), role: "掌柜", description: "商人", locationId: id === npcId ? initial.currentLocationId : remoteLocationId, isCompanion: false, met: id !== "npc_unseen", tags: [],
+        memory: { npcId: id, knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] } })),
+      locations: [...initial.locations.map(location => ({ ...location, npcIds: [npcId] })), { ...initial.locations[0]!, id: remoteLocationId, name: "远处", npcIds: [remoteId, asNpcId("npc_unseen")] }],
       ...(hasPair ? { endings: [
         { id: "ending_trust" as never, name: "合作", description: "合作", requirements: [{ kind: "npc_affinity_at_least" as const, npcId, value: 10 }] },
         { id: "ending_doubt" as never, name: "分歧", description: "分歧", requirements: [{ kind: "npc_affinity_at_most" as const, npcId, value: 9 }] },
@@ -146,12 +148,25 @@ describe("live narrative candidate reviewer", () => {
         actionPreviews: expect.arrayContaining([expect.objectContaining({
           action: { type: "talk", npcId, dialogueAct: "support" },
           resultingLocationId: initial.currentLocationId, itemOwnershipChanges: [], newlyDiscoveredFactIds: [],
+          npcLocations: [
+            { npcId: remoteId, beforeLocationId: remoteLocationId, afterLocationId: remoteLocationId },
+            { npcId, beforeLocationId: initial.currentLocationId, afterLocationId: initial.currentLocationId },
+          ],
           events: expect.arrayContaining([expect.objectContaining({ kind: "npc_interaction_recorded" })]),
         })]),
       });
+      for (const preview of projection.endingResolutions[index]!.actionPreviews) {
+        expect("npcLocations" in preview && preview.npcLocations).toEqual([
+          { npcId: remoteId, beforeLocationId: remoteLocationId, afterLocationId: remoteLocationId },
+          { npcId, beforeLocationId: initial.currentLocationId, afterLocationId: initial.currentLocationId },
+        ]);
+      }
     }
     expect(JSON.stringify(context)).toBe(original);
-    const proposal: NarrativeBundleProposal = { ...(candidate as NarrativeBundleProposal), endingOutcomes: [
+    const proposal: NarrativeBundleProposal = { ...(candidate as NarrativeBundleProposal), worldDelta: {
+      beatSummary: "双方已经到场共同核验。", newLocation: null, newNpc: null, newItem: null, newEnemy: null, newFact: null, nextMainQuest: null,
+      endingPair: [{ themeKey: "doubt", name: "分歧", description: "远处商人已经到场核验。" }, { themeKey: "trust", name: "合作", description: "远处商人已经到场核验。" }],
+    }, endingOutcomes: [
       { themeKey: "doubt", choiceLabel: "核清账目后表示异议", scene: { segments: [{ beatId: "atmosphere", text: "你回到远处核清账目，所有欠款都已偿还。" }], npcLine: null, objectiveLink: null, choices: [] } },
       { themeKey: "trust", choiceLabel: "核清账目后表示支持", scene: { segments: [{ beatId: "atmosphere", text: "你回到远处核清账目，所有欠款都已偿还。" }], npcLine: null, objectiveLink: null, choices: [] } },
     ] };
@@ -165,7 +180,13 @@ describe("live narrative candidate reviewer", () => {
       scope: "scene", code: "BROKEN_CAUSALITY", path: `endingOutcomes[${index}].${field}`,
       reason: "支持或质疑没有执行返回与账目核验。",
       evidence: { basisKey: `ending:${index === 0 ? "doubt" : "trust"}`, impact: "action_binding", detail: "真实交谈目标在当前地点；预览没有移动、核验或财物交付，不能将这些行动写成已发生的收束依据。" },
-    })));
+    }))).concat([0, 1].map(index => ({
+      scope: "proposal", code: "BROKEN_CAUSALITY", path: `worldDelta.endingPair[${index}].description`, reason: "远处人物未到场。",
+      evidence: { basisKey: `ending:${index === 0 ? "doubt" : "trust"}`, impact: "step_order", detail: "已见 NPC 的前后地点相同，不能以自行到场代替未执行的共同核验。" },
+    })), [{
+      scope: "proposal", code: "BROKEN_CAUSALITY", path: "worldDelta.beatSummary", reason: "选择前摘要提前写入条件结果。",
+      evidence: { basisKey: `action:${context.job.actionId}`, impact: "interaction_effect", detail: "本次已提交回应没有双方到场与核验事件。" },
+    }]);
     const complete = vi.fn().mockResolvedValue({ ok: true, content: JSON.stringify({ verdict: "revise", defects }) });
     const reviewed = await createLiveNarrativeCandidateReview({ aiClient: client(complete) }).reviewNarrativeCandidate({
       context, proposal, candidateVersion: 1, candidateHash: hashNarrativeCandidate(proposal),
@@ -177,6 +198,14 @@ describe("live narrative candidate reviewer", () => {
     expect(await createLiveNarrativeCandidateReview({ aiClient: client(complete) }).reviewNarrativeCandidate({
       context, proposal, candidateVersion: 1, candidateHash: hashNarrativeCandidate(proposal),
     })).toMatchObject({ ok: false, failure: "UNCERTAIN" });
+    for (const path of ["worldDelta.endingPair[0].description", "worldDelta.beatSummary"]) {
+      complete.mockResolvedValueOnce({ ok: true, content: JSON.stringify({ verdict: "revise", defects: [{
+        ...defects[0], path, evidence: { ...defects[0]!.evidence, basisKey: "ending:trust" },
+      }] }) });
+      expect(await createLiveNarrativeCandidateReview({ aiClient: client(complete) }).reviewNarrativeCandidate({
+        context, proposal, candidateVersion: 1, candidateHash: hashNarrativeCandidate(proposal),
+      })).toMatchObject({ ok: false, failure: "UNCERTAIN" });
+    }
     const ordinary = { ...context, storyState: baseStory };
     expect(projectNarrativeDraft(ordinary).endingResolutions).toEqual([]);
     expect(buildNarrativeReviewRules({ context: ordinary, proposal: candidate, candidateVersion: 1, candidateHash: "ordinary" }).some(rule => rule.key.startsWith("ending:"))).toBe(false);

@@ -102,8 +102,13 @@ function parseDefects(
     if (evidence === null || path === null) return null;
     if (evidence.basisKey.startsWith("ending:")) {
       const slot = /^endingOutcomes\[(\d+)\]\.(?:choiceLabel$|scene(?:\.|\[|$))/.exec(path);
+      const summary = /^worldDelta\.endingPair\[(\d+)\]\.(?:name|description)$/.exec(path);
+      const delta = "worldDelta" in input.proposal && isRecord(input.proposal.worldDelta) ? input.proposal.worldDelta : null;
+      const caption = delta !== null && Array.isArray(delta.endingPair) && summary !== null
+        ? delta.endingPair[Number(summary[1])] : undefined;
       const outcome = "endingOutcomes" in input.proposal && slot !== null
-        ? input.proposal.endingOutcomes?.[Number(slot[1])] : undefined;
+        ? input.proposal.endingOutcomes?.[Number(slot[1])]
+        : isRecord(caption) ? caption : undefined;
       if (outcome === undefined || evidence.basisKey !== `ending:${outcome.themeKey}`) return null;
     }
     defects.push({

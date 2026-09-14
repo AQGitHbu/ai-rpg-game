@@ -19,6 +19,15 @@ export function projectEndingResolutions(worldState: WorldState, storyState: Sto
     if (!preview.ok) return { action, status: "rejected" as const, code: preview.code };
     const { resolution } = preview;
     const next = resolution.nextWorldState;
+    const nextNpcs = new Map(entitiesOfKind(next.entityStore, "npc").map(record => [record.core.id, record]));
+    const npcLocations = entitiesOfKind(worldState.entityStore, "npc")
+      .filter(record => record.core.lifecycle === "active"
+        && (record.dynamicState.met || record.position.locationId === worldState.currentLocationId))
+      .map(record => ({
+        npcId: record.core.id,
+        beforeLocationId: record.position.locationId,
+        afterLocationId: nextNpcs.get(record.core.id)?.position.locationId ?? null,
+      }));
     const previousItems = entitiesOfKind(worldState.entityStore, "item");
     const itemOwnershipChanges = entitiesOfKind(next.entityStore, "item").flatMap(item => {
       const before = previousItems.find(previous => previous.core.id === item.core.id)?.possession.owner;
@@ -28,6 +37,7 @@ export function projectEndingResolutions(worldState: WorldState, storyState: Sto
     return {
       action, status: resolution.primaryResult.status,
       resultingLocationId: next.currentLocationId,
+      npcLocations,
       // Exhaustive effects from this actual Action; missing actions cannot be supplied by prose.
       events: resolution.domainEvents.map(event => ({ kind: event.kind, targetIds: event.targetIds, locationId: event.locationId })),
       itemOwnershipChanges,
@@ -42,6 +52,6 @@ export function projectEndingResolutions(worldState: WorldState, storyState: Sto
     generationLocationId: worldState.currentLocationId,
     displayCondition: { kind: "matching_rule_ending" as const, themeKey },
     actionPreviews,
-    authority: "choiceLabel 只表达 choiceAction；scene 只在实际 endingId 匹配本主题时发布，两结果不同时发生。actionPreviews 是同一生成状态下分别执行真实立场 Action 的条件预览，不是已提交事件，不可用作事件引用或提前授知。结局对尚未生成时 resolvedEndingId=null，不代表结局不可能；结局名称和正文不提供额外行动权限。实际规则可将 support 导向 doubt，结果正文不得据主题反推玩家一定执行了哪种立场。中心冲突必须在既有事实与这些真实后果内得到具体结果；无预览效果与既有已发生依据的关键行动不得写成完成，也不得把尚待履行的条件或承诺改写为兑现。",
+    authority: "choiceLabel 只表达 choiceAction；scene 及同主题 endingPair 的 name/description 共用此条件权限，只在实际 endingId 匹配本主题时发布，两结果不同时发生。actionPreviews 是同一生成状态下分别执行真实立场 Action 的条件预览，不是已提交事件，不可用作事件引用或提前授知。npcLocations 列出已见或当前同场 active NPC 的真实前后地点；前后不变不授权该 NPC 在异地到场、听见或参与关键事项。将待执行前提改由其他 NPC 自行完成，同样需要已发生依据或真实预览效果，不能靠换行动者或时间跳跃消除因果缺口。同场人物的合法回应、情绪和无关键状态效果的表现仍可创作。结局对尚未生成时 resolvedEndingId=null，不代表结局不可能；结局名称和正文不提供额外行动权限。实际规则可将 support 导向 doubt，结果正文不得据主题反推玩家一定执行了哪种立场。中心冲突必须在既有事实与这些真实后果内得到具体结果；无预览效果与既有已发生依据的关键行动不得写成完成，也不得把尚待履行的条件或承诺改写为兑现。",
   }));
 }

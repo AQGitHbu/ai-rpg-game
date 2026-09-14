@@ -2,7 +2,7 @@
 
 ## 结论
 
-最新普通短篇 `short-closure-02` 在 `5101ec42` 下全程无中断达到成功 ending 且 narrative ready，18 次行动、32 HTTP，中途真实关闭重载通过；完整严格零网络 replay 匹配 32 次响应、23 个状态。规则通关与结果正文发布成立，但整体验收仍未通过：结果场景保留生成时 turn=14，而最终世界/History/展示事件已为 turn=15；另结果正文把尚未执行的返程对账、复航与债务结清写成事实，不满足 Task 13 的规则后果边界。未改源码、未重采、未修改失败判定。
+最新普通短篇 `short-closure-03` 在 `34e48e92` 下完成 22 次行动、36 HTTP，成功 ending/ready，中途关闭重载通过；严格零网络 replay 匹配 36 响应、27 状态，两个数据库完整性正常。Task 15 发布回合项已实证修复：获批结果 turn=15，正式场景、History、结局与展示事件均为 turn=16，完整正文仅发布回合发生变化。但全文因果仍未通过：修订版虽然删去付款与修船，仍补写未到场 NPC 赶来完成双方对账，结局概要与本回合摘要也含未结算后果。第二项限定修复已通过独立复审及完整门禁，待冻结后的完整复验，不把机械通过写成 P1 通过。
 
 首个真实 AI 短篇已在正式规则下完成，但 P1 整体仍未通过。`b6cc0e5b` 的 `p1-core-02` 创建“青石渡”故事，完成九次行动后 Node 原生进程中断；保留原库，在独立副本通过正式 ensure 恢复同一游戏，续至第十八次行动与成功结局“一盏直烟”。实际移动、两次取物、四轮战斗、三项主线任务完成和成功结局事件均已核实。
 
@@ -23,6 +23,25 @@ Task 13 终幕结果闭环已冻结为 `2f6b2dd7`，离线回归与独立复审�
 
 历史 `p1-07` 的 `S1-private` 已持久化到第 5 个有效行动，随后因 `approval_rejected` 结束；其他路线在开局或审阅阶段结束。审阅耗尽背后存在作者/reviewer 契约冲突、缺少上一稿的修订，以及互动未接入作者等本地根因，不能仅归因于模型质量。`p1-08` 使用 DeepSeek `reasoning_effort=low` 与 240 秒审阅超时，长时间等待后中止且没有 summary；现存完成请求审计不足以判断中断时卡在哪一层。这些历史批次没有完整 live 轨迹，不填写其人工质量分。
 
+## Task 15：结果回合与条件后果依据
+
+34e48e92 复用现有纯规则预览，为 author/reviewer 提供固定两槽 Action、地点与效果依据；正式发布只更新获批结果副本 turn。190 项定向测试、完整 2840 tests（1 skipped）、typecheck、131 boundaries、check:docs 通过，lint 无错误、50 项既有 warning；独立实现审核通过。
+
+| 项目 | short-closure-03 |
+| --- | --- |
+| 冻结代码 | `34e48e92` |
+| 协议哈希 | `71cb216b671a8549f224f6736e9edd01970e7199773e1a2857e4087fd3a203df` |
+| 游戏 ID | `593b6b2b-e79f-4a7f-a946-3e619bfa6cda` |
+| 正式流程 | 22 行动、16 回合、3 主线完成；ending_dyn_0 / success / ready，revision 30 |
+| 发布 | 预批准 turn 15，正式 scene/History/ending/event turn 16；获批结果全文一致；结局及结果展示各一次 |
+| 中途重载 | 第四个完整行动后真实关闭重开，语义状态相同 |
+| 严格 replay | HTTP 0，36 响应、27 状态一致；live/replay 数据库 integrity_check 均 ok |
+| 机械协议 | completed=true；保留原成功判定，与正文审核分开 |
+| 正文规则 | 不通过；NPC 代办关键前提与概要越权仍存在 |
+
+真实结局审阅首轮引用 ending:trust/doubt 拒绝未执行的对账、付款和修船。修订稿删掉付款、材料消耗与已复航，却仍安排乔三石到场、何老大从船寮赶来并逐笔核对账目。实际终局 Action 只有对朱万堂的支持，NPC 地点未改变，回合 11/12/15 仍将双方核对列为待办条件。worldDelta.beatSummary 提前称账目已对上，endingPair.description 继续宣称船家先动手、往后恢复航运。第二轮模型 pass 不足以认可这些因果跳步。
+
+证据目录：`artifacts/narrative-p1/short-closure-03/`，包含固定协议、完整 live/replay tape/audit/SQLite、`complete-story.md`、`verification.json` 与独立 `acceptance-review.md`。原 short-closure-02 证据哈希未变。此局不能勾选 Task 13 的完整正文验收。Task 15 第二项已补 NPC 前后地点、结局 name/description 的主题依据及选择前 beatSummary 的实际 Action 依据，不新增 Action/Entity/记忆或终幕架构。实际 seq18 原稿进入生产修订链回归；独立复审、191 项定向 tests、typecheck、131 boundaries、完整 2841 tests（1 skipped）、check:docs 通过，lint 0 errors（50 既有 warning）。待冻结后一次完整复验。
 ## Task 13：终幕结果闭环与唯一普通短篇
 
 实现保留既有作者、审阅、规则与存储链，在生成包中增加固定 trust/doubt 两条获批结果场景。实际 endingId 决定消费哪条；保密违约仍可将 support 判为 doubt，玩家 History 保留真实选择。结果正文、场景展示事件、记忆与 ending 同次 CAS，未选结果不入 History，结局后不新增生成调用。最终幕承担中心冲突处理，纯主线 concern 由实际 ending 事件闭合；结局页面按玩家受众展示完整有序正文。独立首轮审核发现的受众/兼容正文与线程绑定范围问题已修复并复审通过。
