@@ -2,6 +2,60 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { ContentAssetBindingView, GameSessionView, NpcDialogueView } from "@/game/application";
 import { LocationSceneScreen } from "./LocationSceneScreen";
+import { projectGameSessionView } from "@/game/application/gameSessionView";
+import { buildChoiceMap } from "@/game/application/buildChoiceMap";
+import { questExitFixture } from "@/game/application/testing/questExitView.testutil";
+import { asEndingId } from "@/game/domain/worldEntity";
+
+describe("projected quest exit button", () => {
+  it("submits only the current opaque token through the existing scene path and respects busy", () => {
+    const { world, story, revision, npcId, questId } = questExitFixture();
+    const view = projectGameSessionView(world, story, revision, "session");
+    const exit = view.currentLocation.actions.find(action => action.presentation === "exit");
+    expect(exit).toBeDefined();
+    const onSubmit = vi.fn();
+    const props = { view, onSubmit, onReturnMap: vi.fn(), initialFocusNpcId: npcId };
+    const { rerender } = render(<LocationSceneScreen {...props} busy={false} />);
+    fireEvent.click(screen.getByRole("button", { name: exit!.label }));
+    expect(onSubmit).toHaveBeenCalledExactlyOnceWith({ kind: "fixed_choice", choiceToken: exit!.choiceToken });
+    expect(buildChoiceMap(world, story, revision).get(onSubmit.mock.calls[0][0].choiceToken)).toEqual({ type: "abandon_quest", questId });
+    rerender(<LocationSceneScreen {...props} busy />);
+    expect(screen.getByRole("button", { name: exit!.label })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: exit!.label }));
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not interpret a dialogue label as an exit action", () => {
+    const view = viewWithInvestigationApproaches();
+    render(<LocationSceneScreen view={{ ...view, currentLocation: { ...view.currentLocation,
+      actions: [{ choiceToken: "opaque", label: "放弃任务", presentation: "dialogue" }] } }} busy={false} onSubmit={vi.fn()} onReturnMap={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "放弃任务" })).not.toBeInTheDocument();
+  });
+
+  it.each(["pending", "failed", "delivered", "ended"] as const)("has no exit button when %s", (state) => {
+    const { world, story, revision, npcId } = questExitFixture(state === "delivered");
+    const view = projectGameSessionView(state === "ended"
+      ? { ...world, ending: { endingId: asEndingId("ending"), outcome: "failure" } }
+      : world, story, revision, "session");
+    const displayedView: GameSessionView = state === "pending" || state === "failed"
+      ? { ...view, narrativeGeneration: { status: state, jobKey: "job" } }
+      : view;
+    render(<LocationSceneScreen view={displayedView} initialFocusNpcId={npcId} busy={false} onSubmit={vi.fn()} onReturnMap={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "放弃任务「递送信件」" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the two NPC answers in the overlay and reveals exit after closing it", () => {
+    const { world, story, revision } = questExitFixture();
+    const view = projectGameSessionView(world, story, revision, "session");
+    render(<LocationSceneScreen view={view} busy={false} onSubmit={vi.fn()} onReturnMap={vi.fn()} />);
+    for (const choice of view.narrative.npcDialogues[0].choices) {
+      expect(screen.getByRole("button", { name: choice.label })).toBeInTheDocument();
+    }
+    expect(screen.queryByRole("button", { name: "放弃任务「递送信件」" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "关闭对话" }));
+    expect(screen.getByRole("button", { name: "放弃任务「递送信件」" })).toBeInTheDocument();
+  });
+});
 
 /** 回归夹具：历史 view 仍可能带 investigate presentation，但地点页不再渲染它。 */
 function viewWithInvestigationApproaches(): GameSessionView {

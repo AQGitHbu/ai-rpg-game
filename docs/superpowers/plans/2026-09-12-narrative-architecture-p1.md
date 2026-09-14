@@ -21,7 +21,7 @@
 
 ## 已有基础与当前边界
 
-已实现 History、Thread、双向召回、角色判断、条件披露、交付/退出规则、有限修订和严格响应重放；不重新建设。工程门禁不代表 live 成功。Task 16 已完成一条正式创建的三幕递送核心故事，规则、正文、持久化均通过；多路线及实机 UI 等仍未验收。详细数字只在验收报告维护。历史失败批次保留原结论，不再作为重跑入口；后续只进入尚未完成的交付/退出专项，不重开已完成建设任务。
+已实现 History、Thread、双向召回、角色判断、条件披露、交付/退出规则、有限修订和严格响应重放；不重新建设。工程门禁不代表 live 成功。Task 16 已完成一条正式创建的三幕递送核心故事，规则、正文、持久化均通过；实机 UI 链路已完成，交付/退出同初态对照仍未验收。详细数字只在验收报告维护。历史失败批次保留原结论，不再作为重跑入口；后续只进入尚未完成的交付/退出专项，不重开已完成建设任务。
 
 ## Task C1：固定初态与两路最小正式旅程
 
@@ -91,8 +91,8 @@ $env:RUN_REAL_AI_JOURNEY='1'
 node scripts/narrativeP1Journey.mjs --mode=live --profile=focused --run-id=p1-focused-01 --protocol=artifacts/narrative-p1/p1-focused-01/protocol.json --output=artifacts/narrative-p1/p1-focused-01
 ```
 
-- [ ] deliver 先完成才执行 withdraw；两路都从同一获批初态独立开始。若第一路失败，保存第二路未执行及失败层；只对明确根因允许一个新冻结修复批次，不连续重采。
-- [ ] 严格 replay 新流，逐步比较状态并保存原始响应/调用计数；失败重放一致不算故事成功。
+- [ ] deliver 先完成才执行 withdraw；两路都从同一获批初态独立开始。若第一路失败，保存第二路未执行及失败层；只对明确根因允许一个新冻结修复批次，不连续重采。`p1-focused-03` 已按该规则封存：deliver 第 8 个动作后 `AI_GENERATION_FAILED`，withdraw 保留未执行分母。
+- [ ] 严格 replay 新流，逐步比较状态并保存原始响应/调用计数；失败重放一致不算故事成功。`p1-focused-03` 已完成零网络 replay，27 次传输尝试与 live 失败状态一致，但不算故事成功。
 - [ ] 人工完整读两路：起因、阻碍、输入回应、NPC 动机、真实后果和结局；按 Spec 五维门槛评分。未完成不评分。
 - [ ] 分开写核心诊断结果、生产自由开局结果、UI结果、main 对照；后四者未执行就明确未执行，不借缩小范围宣布整个 P1 通过。
 - [ ] check:docs、相对链接与事实归属复核、git diff --check，提交证据。
@@ -265,9 +265,10 @@ expect(secondAuthorRequest).toContain('newFact2');
 
 - C1：实现与独立复审通过；17 个脚本测试通过，退出任务失败事件与交付前分叉均已验证。
 - C2：实现与独立复审通过；相关 87 tests、typecheck、130 项边界通过。
-- C3：focused01 与唯一修复批 focused02 均失败，各五行动后结束，退出路线未执行；两批全部 55 次真实响应均严格重放一致。格式契约已修复，剩余审阅判定和修订依赖边界见上节。完整故事仍未完成，不执行第三批连续重采。
+- C3：focused01、focused02、focused03 均未完成，退出路线均按 deliver-first 规则未执行；focused03 完成 8 个 deliver 动作、27 次 HTTP，零网络 replay 保持同一失败状态。格式契约已修复，focused03 的剩余阻断是候选内容连续触发 `ACTION_MISMATCH`、`UNSUPPORTED_FACT`、`DISCLOSURE` 等正确审阅拒绝，不放宽审阅或补写剧情。
 - D1/D2：规则审阅与入口收集完成；b6cc0e5b 的真实短篇经进程中断恢复后完成 18 次行动和成功终局。恢复段 9 次响应、12 状态严格重放，原中断流无完整封存，不算全程无中断通过。
-- P1 总结论：未通过；首个恢复后的完整故事已取得，数据库替换与验证已完成。NPC 创建与权限契约修复已完成；原故事重试仍失败；独立中篇经 Task 12 结束契约修复后同局恢复通关，新增 3 响应/4 状态严格重放通过。short-closure-03 已实际验证回合号修复及机械通关，但 NPC 代办关键前提与概要越权使正文失败。限定补漏已在 1d635bfa 审核冻结，short-closure-04 于第二幕普通 NPC 事实/听众审批失败，未到终局；补漏后的完整故事证据仍缺。交付/退出、UI 与 main 对照分别记证据。
+- [x] 完成一次实机 UI 创建→游玩→刷新重载→结局：`ui-live-01` 在独立 SQLite 中创建 `60d6aaf9-1d4d-4b84-a24d-c8dd32c0ebbe`，刷新后继续 8 回合，显式重试一次生成失败，最终显示“胜利 / 先信一步，渡口有望”；终态 revision 16、turn 9、`ending_dyn_0/success`、`narrative=ready`。详见验收报告；本项未做界面打磨。
+- P1 总结论：仍未通过。核心交付故事与一次实机 UI 闭环已取得；focused 同初态交付/退出对照尚未取得两路成功，退出路按安全规则未执行；main 对照和六路线矩阵仍不在本次范围。
 
 ### Task 16：围绕可执行中心结果收敛三幕主线
 
@@ -279,6 +280,22 @@ expect(secondAuthorRequest).toContain('newFact2');
 
 **最小验证：** 先用现有正式管线测试证明跨幕前瞻、抵达与 talk 不会吞掉 give；从真实 read model 选择经 performTurn，交付前不通关，交付后唯一归属和事件一致，结束后重载一致。可用测试 provider，但不得手造绕过实际投影的 bundle，且不称为真实 AI 通过。只修复被这条流程证实的断点。
 
-- [x] 完成上述最小生产契约与旅程回归；独立审核 Spec/Quality 通过。131 项定向测试、typecheck、131 项 boundaries、check:docs 通过，完整测试以 2 workers 运行 2842 passed、1 skipped；默认并行两轮仅文件扫描超时，保留记录。lint 0 errors、50 项既有 warning。正式 AI 验收仍待执行。
+- [x] 完成上述最小生产契约与旅程回归；独立审核 Spec/Quality 通过。131 项定向测试、typecheck、131 项 boundaries、check:docs 通过，完整测试以 2 workers 运行 2842 passed、1 skipped；默认并行两轮仅文件扫描超时，保留记录。lint 0 errors、50 项既有 warning。正式 AI 核心验收已完成，见本任务后两项及验收报告。
 - [x] 冻结 f95883a8 并完成 delivery-core-01 全新 production_core_story 协议：三幕公开递送短篇、S1-complete、正式 createGame、24 动作/200 HTTP/90 分钟上限；必须产生 delivery 合同和实际交付，缺失即失败。沿实际选项推进，中途重载，成功 ending/ready 后严格零网络 replay。
 - [x] 根任务阅读与独立正文审计完成，规则、正文、持久化三项通过本条核心范围，证据见验收报告 Task 16。未付款、未更新双边关系，不把情感收束措辞当额外世界结算。停止本项修复和抽样；后续仅按已有专项验收，不扩展 UI、main 对照或后续 P 阶段，也不据单条核心宣布整个 P1 通过。
+
+### Task 17：公开递送的最小主动退出对照
+
+**目标：** 仅补当前最小 P1 缺项。以 delivery-core-01 已通过的公开递送为交付基准，在完全一致的开局与四行动前缀后改选正式 abandon_quest；证明退出有真实、不同的世界后果和完整结尾。旧保密核验样本保持失败，不重采。
+
+**已确认断点：** 第四行动后 buildChoiceMap 已生成合法 abandon_quest，但 gameSessionView 和实机没有显示它。禁止用隐藏 token 或直接 Action 代替真实选项。
+
+**Files / 范围：** 最小修改 `src/game/application/gameSessionView.ts`、`src/components/LocationSceneScreen.tsx` 及必要既有消费类型/对应测试，使已有合法放弃动作通过明确的安全展示语义进入场景入口；不按文案识别，不新增 Action/Entity/记忆或退出规则，不挤掉 NPC 原有两个选择。沿既有提交/禁用/错误处理链，pending、战斗、已交付、已结束时不显示不可执行入口。系统事实原位维护 `docs/agent/地图与地点冒险.md`。根任务负责 artifacts 下的恢复/退出驱动与 Spec/Plan/验收报告，生产实现交子智能体审核。
+
+**同初态与原证据：** 使用原始 27 响应磁带，经正式 createGame/performTurn 完整零网络 replay，必须匹配全部 15 个语义状态；在 ready 的创建点和第四行动重载点备份新生成 SQLite，原库只读不变。只允许数据库备份/复制，不把 JSON 状态灌入仓储、不截掉磁带余项假称严格 replay。恢复证明包括代码版本、源文件哈希、初态/分叉点完整状态哈希、原交付完成证据。新增入口不得改变原基准的已录制请求与状态；匹配失败时停止，不放宽比较器。
+
+**退出协议：** claimScope=fixed_opening_story，明确基准交付为已发生的 delivery-core-01，恢复与四行动前缀为旧响应重放，新增 live 仅退出分支，不计作两条新 live。备份分叉库复制到独立 live/replay 库，校验状态一致；从真实 read model 选择 abandon_quest，检查任务放弃/失败事件、仍未交付、物品真实归属、退出结局及 ready 正文。新流严格重放并重载核对。最多 24 总行动、200 新 HTTP、90 分钟；原三候选预算、失败策略不变，不自动手动 retry。
+
+- [x] 最小入口修复与独立审核通过；真实 projector→实际按钮→opaque token 提交及状态抑制回归通过。98 项定向、typecheck、131 项 boundaries、完整 2855 passed/1 skipped、lint 0 errors/50 既有 warning、docs 检查通过。
+- [ ] 冻结并严格恢复公开递送基准，校验同初态/四行动前缀与真实可见退出入口；审核新协议后只执行一条退出 live。
+- [ ] 退出新流严格零网络 replay，核对两路任务、物品、事件和结局差异，阅读全文并独立审核。通过后记录最小 P1 收尾完成及 P2 准入；广泛矩阵、main 对照和 UI 打磨后移，不开展 P2 代码。

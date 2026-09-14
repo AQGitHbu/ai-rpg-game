@@ -302,11 +302,14 @@ export function LocationSceneScreen({
     : null;
   // 敌人没有 NPC 卡片或物品热点可承载入口；必须在场景内显式投影唯一的
   // 规则开战动作。进入战斗后每一回合仍由 BattleScene 的规则按钮控制，
-  // 此处不触发 AI。
+  // 开战不触发 AI。主动退出也沿此栏提交服务器下发的独立展示选项，
+  // 后续退出正文由既有叙事生成链承接。
   const sceneActionRail = [
     ...view.currentLocation.actions.filter((action) =>
-      action.presentation === "battle"
-      && action.choiceToken === view.story.currentObjectiveChoiceToken,
+      (action.presentation === "battle"
+        && action.choiceToken === view.story.currentObjectiveChoiceToken)
+      || (action.presentation === "exit"
+        && view.narrativeGeneration.status === "idle" && view.ending === null),
     ),
   ];
   // 统一构建所有 NPC 的 Dialogue 数据（读模型已为在场全部 NPC 投影对话，

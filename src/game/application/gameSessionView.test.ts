@@ -17,6 +17,34 @@ import type { Action } from "@/game/domain/action";
 import type { ApprovedChoice } from "@/game/domain/approvedChoice";
 import { createTownRuntime, bindNpcToTownSlot } from "@/game/gameplay/rpg/town";
 import { asEventId } from "@/game/domain/events";
+import { questExitFixture } from "./testing/questExitView.testutil";
+
+describe("existing quest exit projection", () => {
+  it("offers a current legal opaque exit alongside both approved NPC answers", () => {
+    const { world, story, revision, questId, npcId } = questExitFixture();
+    const map = buildChoiceMap(world, story, revision);
+    expect([...map.values()]).toContainEqual({ type: "abandon_quest", questId });
+    const view = projectGameSessionView(world, story, revision, "session");
+    const exit = view.currentLocation.actions.find(action => action.presentation === "exit");
+    expect(exit).toBeDefined();
+    expect(map.get(exit!.choiceToken)).toEqual({ type: "abandon_quest", questId });
+    expect(exit).not.toHaveProperty("questId");
+    expect(view.narrative.npcDialogues.find(npc => npc.npcId === npcId)?.choices).toHaveLength(2);
+    expect([...buildChoiceMap(world, story, revision + 1).keys()]).not.toContain(exit!.choiceToken);
+  });
+
+  it.each(["provider_pending", "provider_failed", "battle", "delivered", "ended"] as const)("suppresses the exit when %s", (state) => {
+    const fixture = questExitFixture(state === "delivered");
+    let { world, story } = fixture;
+    if (state === "provider_pending" || state === "provider_failed") {
+      story = { ...story, narrative: { status: state, mode: "ai", job: { jobId: "job" }, failure: { kind: "AI_RESPONSE_INVALID" }, lastPresentedScene: story.narrative.status === "ready" ? story.narrative.currentScene : null } as never };
+    }
+    if (state === "battle") world = { ...world, battle: { status: "active", enemyId: asEnemyId("enemy"), playerHp: 100, enemyHp: 10, round: 1 } };
+    if (state === "ended") world = { ...world, ending: { endingId: asEndingId("ending"), outcome: "failure" } };
+    const view = projectGameSessionView(world, story, fixture.revision, "session");
+    expect(view.currentLocation.actions.filter(action => action.presentation === "exit")).toEqual([]);
+  });
+});
 
 describe("projectGameSessionView", () => {
   const loc1: LocationEntry = {

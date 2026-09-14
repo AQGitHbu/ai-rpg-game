@@ -36,7 +36,7 @@ export type PlayerChoiceView = {
   readonly choiceToken: string;
   readonly label: string;
   readonly hint?: string;
-  readonly presentation: "dialogue" | "travel" | "explore" | "item" | "battle" | "investigate";
+  readonly presentation: "dialogue" | "travel" | "explore" | "item" | "battle" | "investigate" | "exit";
 };
 
 export type NpcDialogueView = {
@@ -199,7 +199,7 @@ function presentationForAction(action: Action): PlayerChoiceView["presentation"]
     case "give_item":
       return "item";
     case "abandon_quest":
-      return "dialogue";
+      return "exit";
     case "attack":
     case "battle_action":
       return "battle";
@@ -632,6 +632,16 @@ export function projectGameSessionView(
     ? currentObjectiveNpcId
     : null;
   const legalChoiceMap = buildChoiceMap(worldState, storyState, revision);
+  // 主动退出复用现有合法行动，不占用焦点 NPC 的两个回答。
+  if (storyState.narrative.status === "ready" && activeBattle === null && worldState.ending === null) {
+    for (const [choiceToken, action] of legalChoiceMap) {
+      if (action.type !== "abandon_quest") continue;
+      const quest = worldState.quests.find(entry => entry.id === action.questId);
+      if (quest !== undefined) {
+        locationActions.push({ choiceToken, label: `放弃任务「${quest.name}」`, presentation: "exit" });
+      }
+    }
+  }
   // 终幕（或一次战斗/移动后的追问）有时已没有未完成 objective，却仍由同
   // 一名在场 NPC 给出两个已批准的 TalkAction。这是该 NPC 的回答分支，不是
   // 地点层的两个普通行动；将它识别为焦点对话，避免把终局决定散落到行动栏。

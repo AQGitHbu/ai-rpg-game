@@ -2,7 +2,7 @@
 
 ## 结论
 
-P1 的首要目标“正式新游戏到完整小故事”已在 f95883a8 的 delivery-core-01 通过：三幕公开递送，10 次行动、27 HTTP，唯一信件实际交给绑定接收人，成功 ending/ready；中途关闭重开一致，严格零网络 replay 匹配 27 响应、15 状态，两个数据库完整性正常。完整正文经根任务阅读和独立审计，规则、正文、持久化三项均通过本条核心范围。此结论不等于整个 P1 的多路线、实机 UI 或 main 对照验收通过；不再重开普通渡口纠纷样本或追加润色补丁。
+P1 的首要目标“正式新游戏到完整小故事”已在 f95883a8 的 delivery-core-01 通过：三幕公开递送，10 次行动、27 HTTP，唯一信件实际交给绑定接收人，成功 ending/ready；中途关闭重开一致，严格零网络 replay 匹配 27 响应、15 状态，两个数据库完整性正常。完整正文经根任务阅读和独立审计，规则、正文、持久化三项均通过本条核心范围。新增 ui-live-01 已完成实机创建、游玩、刷新重载和成功结局，终态由只读 SQLite 核对。当前未关闭的是同初态交付/退出对照：p1-focused-03 交付路失败、退出路未执行，不能标为 P1 全部完成。main 对照和六路线矩阵按收敛约定后移，不因这些扩展项继续阻塞最小收尾。
 
 此前真实 AI 短篇取得过正式规则下恢复后通关证据，未达到完整协议：`b6cc0e5b` 的 `p1-core-02` 创建“青石渡”故事，完成九次行动后 Node 原生进程中断；保留原库，在独立副本通过正式 ensure 恢复同一游戏，续至第十八次行动与成功结局“一盏直烟”。实际移动、两次取物、四轮战斗、三项主线任务完成和成功结局事件均已核实。
 
@@ -336,3 +336,35 @@ Task 12 只闭合有正式任务绑定、完成/失败事件且无额外 closure
 - p1-diag-03（cc0fecbe）：独立隐藏后台进程正常结束，0/1，8 HTTP，1 个行动，418962 ms。开局给出了暗语与半枚铜钱短痕的核验方法；首个实际选择是私下请求引荐，尚非正式承诺。NPC 第 1 版因把 secret 放入普通 factIds 被拒，第 2 版因听众自指被拒，第 3 版通过；作者未把保密条件绑定成可执行 interaction，且提前透露部分线索，审阅正确要求修订，但候选额度已耗尽。该未完成路线不评分。
 - diag03 同时定位到条件披露的权限缺口：privateFactKeys 编成 secret，而既有规则没有“真实保密承诺后可引荐告知”的路径。另有正常失败退出未封存 replay 审计清单的问题；原始响应仍完整保留，但该失败磁带不可声称已严格重放。修复已随 ebf4a85b 冻结，使用新样本验证，没有修改旧审计补造通过。
 - p1-diag-04（ebf4a85b）：0/1，4 HTTP，289699 ms，零行动。前两版分别把 item 及整组 location/npc/quest/situation/item 放错嵌套层；生产 source 复现均为 opening_unknown_keys，反馈没有给出具体 JSON 路径。第三版通过结构校验，但把私密 courier_pursuers 中客栈追查者线索写进公开正文，被 reviewer 以 DISCLOSURE 拒绝。`replay/S1-opening.comparison.json` 确认最终状态匹配，replay summary 为 HTTP 0、replayedTransportAttempts 4、同一 AI_GENERATION_FAILED；无行动、无终局，不评分。
+
+## P1 收尾专项：同初态两路线与实机 UI
+
+### `p1-focused-03`：交付/退出对照未通过
+
+本批仍绑定获批开局 `artifacts/narrative-p1/p1-diag-03`，`claimScope=fixed_opening_story`，两路从同一零回合初态独立复制；执行代码指纹为 `0e541bf3`。按 deliver-first 安全顺序，只有交付路成功才会启动退出路。
+
+- `S1-deliver`：完成 8 个真实 Action，包含第 4 个动作后的真实重载；第 8 个动作进入新地点/接收人和实际 `give_item` 续接候选，但最终三版候选均被正式审阅拒绝，结果为 `AI_GENERATION_FAILED`。审计中依次保留 `ACTION_MISMATCH`、`UNSUPPORTED_FACT`、`DISCLOSURE`，另有一版因未验证的交付前提触发 `BROKEN_CAUSALITY`；没有放宽审阅、授予物品或补写交付结局。
+- `S1-withdraw`：`DELIVER_FAILED_WITHDRAW_NOT_RUN`。这是协议要求的未执行分母，不是把退出路线改成短路成功。
+- live 总计 27 次 HTTP；严格零网络 replay 位于 `artifacts/narrative-p1/p1-focused-03/replay/replay/`，重放 27 次传输尝试并保持同一 8 动作失败状态。失败重放证明可复现，不计故事成功。
+
+本批未发现需要修改的确定性流程阻断：正式 read model、真实 opaque choice、SQLite 提交和换幕/接收人图均已推进；阻断来自生成候选的事实、行动与披露边界不满足审阅契约。继续重采或放宽 reviewer 会掩盖本次验证目的，因此不追加第三路样本，也不执行未获准的 withdraw。
+
+### `ui-live-01`：创建→游玩→刷新重载→结局通过
+
+使用本地 Next 实机页面和独立数据库 `artifacts/narrative-p1/ui-live-01/ui.sqlite`，没有注入 seed、开发状态或替代 Action。玩家实际创建“沈行”后推进渡口故事，在第 1 回合后刷新页面恢复存档，继续通过地图、建筑、NPC 和 opaque choice 游玩到第 8 回合；一次生成失败只按 UI 提供的“重试生成回应”显式重试，随后选择获批的 trust 结果。
+
+| 项目 | 实机证据 |
+| --- | --- |
+| 游戏 ID | `60d6aaf9-1d4d-4b84-a24d-c8dd32c0ebbe` |
+| 创建 | `/api/game` 200，审计序列 4，耗时 166029 ms；SQLite `created_at=2026-09-14T04:36:52.258Z` |
+| 游玩/重载 | 真实地图与 NPC 选择；第 1 回合后刷新恢复，继续到第 8 回合；生成失败后显式重试一次 |
+| 结局 | UI 显示“胜利 / 先信一步，渡口有望”；请求序列 1390 写入 `ending_dyn_0`、`outcome=success` |
+| 终态 | revision 16、turn 9、`endingAllowed=true`、`narrative.status=ready`、SQLite 持久化完整 |
+
+这次实机只验证流程可达与刷新后的状态连续性，不替代 focused 两路对照，也不评价界面视觉质量。创建阶段的长耗时最终正常返回 200，刷新读取的是已提交存档；没有因此修改界面或生成失败策略。
+
+### 本次收口结论
+
+核心生产交付故事和实机 UI 单路闭环均有证据；只读复核 ui.sqlite 为 revision 16、turn 9、ready、一个成功 ending 事件且 integrity_check=ok。focused 交付库为 turn 8、provider_failed、无 ending，重放保持同一失败。按当前最小验收约定，P1 尚缺同初态的继续交付/主动退出对照，不能直接标为完成。
+
+后续建议使用已通过的公开递送故事初态核验最小退出后果，并与对应交付路径比较；具体初态恢复和可比性须先确认，不能把不同开局拼作同初态对照。p1-focused-03 的旧保密/核验场景保留失败证据，不再作为最小 P1 必须修通的场景。无需重跑已通过的 UI，也不新增机制、开启六路线矩阵或 main 对照。
