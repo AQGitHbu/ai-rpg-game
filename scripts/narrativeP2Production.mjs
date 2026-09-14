@@ -270,3 +270,6 @@ async function runAblation({ input, checkpointPath, baseline, targetNpcId, oracl
   }
   return { sourceHash: hashP2Snapshot(baseline), arms, passed: arms.every(arm => arm.ready && arm.quoteInAuthor), narrativeQualityReviewed: false };
 }
+
+// Stage orchestration is a bounded internal seam until public admission is complete.
+export { createNarrativeP2StageRunner } from "./narrativeP2Stage.mjs";

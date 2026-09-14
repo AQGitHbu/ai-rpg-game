@@ -55,7 +55,7 @@
     "journey:narrative:p1": "node scripts/narrativeP1Journey.mjs",
     "journey:narrative:p2": "node scripts/narrativeP2Journey.mjs",
     "test:narrative-p1-script": "node --test scripts/narrativeP1Journey.node-test.mjs scripts/narrativeP1Seed.node-test.mjs",
-    "test:narrative-p2-script": "node --test scripts/narrativeP2Journey.node-test.mjs scripts/narrativeP2Manifest.node-test.mjs scripts/narrativeP2SegmentRuntime.node-test.mjs",
+    "test:narrative-p2-script": "node --test scripts/narrativeP2Journey.node-test.mjs scripts/narrativeP2Manifest.node-test.mjs scripts/narrativeP2SegmentRuntime.node-test.mjs scripts/narrativeP2Stage.node-test.mjs",
     "logs:query": "node --preserve-symlinks scripts/logs.mjs query",
     "logs:retention": "node --preserve-symlinks scripts/logs.mjs retention",
     "logs:health": "node --preserve-symlinks scripts/logs.mjs health",
