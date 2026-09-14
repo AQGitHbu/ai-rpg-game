@@ -145,9 +145,29 @@ export async function admitP2StageB(protocol, directory) {
   return { routeAttemptId: initial.head.routeAttemptId, reviewHash: hashReplayValue(review), identity: initial.identity };
 }
 
-export function p2BatchStatus(directory) {
-  const stages = Object.fromEntries(['A', 'B'].map(stage => [stage, existsSync(resolve(directory, `${stage}.route-manifest.json`))
-    ? read(resolve(directory, `${stage}.route-manifest.json`)).state.status : 'not_executed']));
+export async function p2BatchStatus(protocol, directory) {
+  const stages = {};
+  for (const stage of ['A', 'B']) {
+    if (!['json', 'init.json', 'audit.jsonl', 'lock', 'pending.json'].some(suffix => existsSync(resolve(directory, `${stage}.route-manifest.${suffix}`)))) {
+      stages[stage] = 'not_executed'; continue;
+    }
+    try {
+      const manifest = p2StageManifest(protocol, stage, directory), head = manifest.read();
+      if (manifest.interrupted) fail('INTERRUPTED');
+      if (head.status === 'sealed_pass') {
+        const inspection = await inspectP2Quality(protocol, stage, directory);
+        const review = read(resolve(directory, `${stage}.quality-review.json`)), result = read(resolve(directory, `${stage}.quality-result.json`));
+        if (hashReplayValue(review) !== head.artifacts['terminal-review'] || hashReplayValue(result) !== head.artifacts['terminal-quality']
+          || canonical(result.identity) !== canonical(inspection.identity) || result.reviewHash !== hashReplayValue(review)
+          || !validateP2TerminalReview(review, inspection, protocol).qualityPassed || !inspection.machinePassed
+          || head.lastMutationAt >= head.deadline || result.passed !== true || result.machinePassed !== true
+          || result.qualityPassed !== true || result.strictReplayPassed !== true
+          || !Array.isArray(result.segments) || result.segments.length !== inspection.artifacts.segment
+          || result.segments.some((segment, index) => segment.segment !== index)) fail('SEALED_ARTIFACT_CHANGED');
+      }
+      stages[stage] = head.status;
+    } catch { stages[stage] = 'invalid'; }
+  }
   return { plannedRoutes: 2, stages, sealedPassRoutes: Object.values(stages).filter(s => s === 'sealed_pass').length,
     passed: stages.A === 'sealed_pass' && stages.B === 'sealed_pass' };
 }

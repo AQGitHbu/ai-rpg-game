@@ -86,22 +86,22 @@ export async function runNarrativeP2Journey(input, options = {}) {
   if (input.mode === 'replay') {
     const source = resolve(input.replaySource || dirname(input.protocolPath));
     const result = await replayP2Stage(protocol, input.stage, source, directory);
-    return { ...p2BatchStatus(source), machineCompleted: result.inspection.completed, strictReplayPassed: result.strictReplayPassed, replaySegments: result.segments };
+    return { ...await p2BatchStatus(protocol, source), machineCompleted: result.inspection.completed, strictReplayPassed: result.strictReplayPassed, replaySegments: result.segments };
   }
   if (input.mode === 'review') {
     const result = await reviewP2Stage(protocol, input.stage, directory, JSON.parse(readFileSync(input.reviewPath, 'utf8')));
-    return { ...p2BatchStatus(directory), stageResult: result };
+    return { ...await p2BatchStatus(protocol, directory), stageResult: result };
   }
   const stageRunner = await (await import('./narrativeP2Stage.mjs')).createNarrativeP2StageRunner(env);
   try {
     const result = await stageRunner({ protocol, stage: input.stage, directory, resume: input.mode === 'resume',
       ...(input.reviewPath ? { review: JSON.parse(readFileSync(input.reviewPath, 'utf8')) } : {}) });
     const inspection = await inspectP2Quality(protocol, input.stage, directory);
-    return { ...p2BatchStatus(directory), machineCompleted: result.completed, pauseReason: result.pauseReason,
+    return { ...await p2BatchStatus(protocol, directory), machineCompleted: result.completed, pauseReason: result.pauseReason,
       identity: result.pauseReason === 'terminal_quality' ? inspection.identity : result.identity,
       history: inspection.history, candidates: inspection.candidates, steps: result.steps, counters: result.counters };
   } catch (error) {
-    return { ...p2BatchStatus(directory), failureCode: error.message };
+    return { ...await p2BatchStatus(protocol, directory), passed: false, failureCode: error.message };
   }
 }
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
