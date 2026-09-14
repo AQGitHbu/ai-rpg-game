@@ -21,7 +21,7 @@
 
 ## 已有基础与当前边界
 
-已实现 History、Thread、双向召回、角色判断、条件披露、交付/退出规则、有限修订和严格响应重放；不重新建设。工程门禁不代表 live 成功。Task 16 已完成一条正式创建的三幕递送核心故事，规则、正文、持久化均通过；实机 UI 链路已完成，交付/退出同初态对照仍未验收。详细数字只在验收报告维护。历史失败批次保留原结论，不再作为重跑入口；后续只进入尚未完成的交付/退出专项，不重开已完成建设任务。
+已实现 History、Thread、双向召回、角色判断、条件披露、交付/退出规则、有限修订和严格响应重放；不重新建设。Task 16 的正式创建三幕递送、实机 UI 闭环及 Task 17 的同初态退出对照已满足最小 P1 收尾。退出发布回合的最后修复使用同一真实响应离线验证，没有新增 live。详细证据见验收报告。历史任务中未勾选的失败批次保留原结论，不作为继续执行入口；后续可编写 P2 Plan，不重开旧样本或已完成建设任务。
 
 ## Task C1：固定初态与两路最小正式旅程
 
@@ -77,6 +77,8 @@ expect(compileNarrativeDraft({worldDelta:null,sceneDrafts:[]}, context))
 - [x] 相关 source/approval 测试、typecheck、boundaries 通过；独立复审，提交。
 
 ## Task C3：冻结后执行核心诊断并据证据收束
+
+此节保留旧保密初态诊断的失败与未执行项；最小收尾改由 Task 16、Task 17 和 Gates 中的实机 UI 证据承担，不重跑这些历史批次。
 
 **Files:**
 - Artifacts: `artifacts/narrative-p1/p1-focused-01/`（被忽略）；后续 replay 写独立子目录。
@@ -259,7 +261,7 @@ expect(secondAuthorRequest).toContain('newFact2');
 - [ ] 首轮 short-closure-03 已机械通过、正文失败；限定修复冻结 1d635bfa 后仅执行 short-closure-04：4 行动、20 HTTP 后第二幕普通 NPC 事实/听众审批失败；严格零网络 20 响应、6 状态一致，数据库正常，未到终局。保留失败，不连续重采或扩展本任务修复范围。原有 createGame→实际选择→中途关闭重载→终局协议不变；严格零网络 replay 并阅读全文。必须同时满足实际成功 ending/ready、发布回合/内容一致、中心冲突有已发生的结果且无未执行关键行动，才勾选 Task 13 普通短篇验收。失败保留且定位，不连续重采或补写正文；后续 P1 验收边界保持。
 ## 后续 P1 验收边界
 
-普通生产短篇通过后执行交付/退出专项、同条件 main 共同玩法对照及实际 UI 创建→中途重载→终局；这部分仍属于 P1，未完成前不合并 main、不进入 P2。六路线保密/公开/核验综合矩阵保留为扩展验收，非首个故事前置。
+最小 P1 准入依据为完整生产递送故事、同初态交付/退出后果对照及一次实际 UI 创建→中途重载→终局。main 同条件对照、六路线矩阵与综合 UI 验收按总 Spec 后移至相关 P2/P3 能力稳定后；这些项目仍未通过，不作为当前 P2 准入门槛。P2 准入不等于允许合并 main，也不证明本分支优于 main。
 
 ## Gates
 
@@ -268,7 +270,7 @@ expect(secondAuthorRequest).toContain('newFact2');
 - C3：focused01、focused02、focused03 均未完成，退出路线均按 deliver-first 规则未执行；focused03 完成 8 个 deliver 动作、27 次 HTTP，零网络 replay 保持同一失败状态。格式契约已修复，focused03 的剩余阻断是候选内容连续触发 `ACTION_MISMATCH`、`UNSUPPORTED_FACT`、`DISCLOSURE` 等正确审阅拒绝，不放宽审阅或补写剧情。
 - D1/D2：规则审阅与入口收集完成；b6cc0e5b 的真实短篇经进程中断恢复后完成 18 次行动和成功终局。恢复段 9 次响应、12 状态严格重放，原中断流无完整封存，不算全程无中断通过。
 - [x] 完成一次实机 UI 创建→游玩→刷新重载→结局：`ui-live-01` 在独立 SQLite 中创建 `60d6aaf9-1d4d-4b84-a24d-c8dd32c0ebbe`，刷新后继续 8 回合，显式重试一次生成失败，最终显示“胜利 / 先信一步，渡口有望”；终态 revision 16、turn 9、`ending_dyn_0/success`、`narrative=ready`。详见验收报告；本项未做界面打磨。
-- P1 总结论：仍未通过。核心交付故事与一次实机 UI 闭环已取得；focused 同初态交付/退出对照尚未取得两路成功，退出路按安全规则未执行；main 对照和六路线矩阵仍不在本次范围。
+- P1 最小收尾：通过。Task 16 核心交付、一次实机 UI 和 Task 17 公开初态退出对照均有证据；最后的退出回合修复已用原真实响应完成离线验证与重载。旧 focused 保密样本仍失败，main 对照和六路线矩阵未执行。本次允许进入 P2 规划，不开展 P2 代码或合并。
 
 ### Task 16：围绕可执行中心结果收敛三幕主线
 
@@ -297,7 +299,7 @@ expect(secondAuthorRequest).toContain('newFact2');
 **退出协议：** claimScope=fixed_opening_story，明确基准交付为已发生的 delivery-core-01，恢复与四行动前缀为旧响应重放，新增 live 仅退出分支，不计作两条新 live。备份分叉库复制到独立 live/replay 库，校验状态一致；从真实 read model 选择 abandon_quest，检查任务放弃/失败事件、仍未交付、物品真实归属、退出结局及 ready 正文。新流严格重放并重载核对。最多 24 总行动、200 新 HTTP、90 分钟；原三候选预算、失败策略不变，不自动手动 retry。
 
 - [x] 最小入口修复与独立审核通过；真实 projector→实际按钮→opaque token 提交及状态抑制回归通过。98 项定向、typecheck、131 项 boundaries、完整 2855 passed/1 skipped、lint 0 errors/50 既有 warning、docs 检查通过。
-- [ ] 冻结并严格恢复公开递送基准，校验同初态/四行动前缀与真实可见退出入口；审核新协议后只执行一条退出 live。
-- [ ] 退出新流严格零网络 replay，核对两路任务、物品、事件和结局差异，阅读全文并独立审核。通过后记录最小 P1 收尾完成及 P2 准入；广泛矩阵、main 对照和 UI 打磨后移，不开展 P2 代码。
+- [x] 冻结 840ec6ee 并完整严格恢复公开递送基准，27 响应、15 状态一致；核对同初态/四行动前缀与可见退出入口。只提交一次退出动作；零 HTTP 验证器误判停止后，仅续跑同一 pending job，新增两次真实响应。
+- [x] 原退出生成流严格零网络 replay 保留同一回合元数据失败；d36ce803 修复后以同一 pending DB 和原两响应完成离线验证，完整状态唯一差异是退出场景 turn 9→5，再次完整状态重放与关闭重载通过。两路规则后果和完整正文独立审核通过，满足最小 P1 与 P2 准入；不称修复后新 live，不开展 P2 代码。
 
 **本次退出发布断点的限定修复：** 原可见退出已结算；验证脚本误将规则 `closed` 当失败，零 HTTP 停止后从独立副本续跑原 pending job。两次真实响应生成退出 ending/ready，但退出 currentScene.turn 使用提交 revision 9，与实际 Action/History/ending 的 turn 5 不一致。仅修 `generatePendingNarrativeBundle.ts` 的退出结果发布回合及对应真实审批→提交回归，使其与同一 job 的实际回合一致，保持正文、选择 token、审批与幂等契约。不得扩展终幕架构或提示。原失败严格重放保留；修复后用同一 pending DB 和已录制的两份真实响应做明确标注的离线修复验证，不称新 live 或修改旧磁带使之通过。

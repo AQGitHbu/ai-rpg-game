@@ -2,7 +2,9 @@
 
 ## 结论
 
-P1 的首要目标“正式新游戏到完整小故事”已在 f95883a8 的 delivery-core-01 通过：三幕公开递送，10 次行动、27 HTTP，唯一信件实际交给绑定接收人，成功 ending/ready；中途关闭重开一致，严格零网络 replay 匹配 27 响应、15 状态，两个数据库完整性正常。完整正文经根任务阅读和独立审计，规则、正文、持久化三项均通过本条核心范围。新增 ui-live-01 已完成实机创建、游玩、刷新重载和成功结局，终态由只读 SQLite 核对。当前未关闭的是同初态交付/退出对照：p1-focused-03 交付路失败、退出路未执行，不能标为 P1 全部完成。main 对照和六路线矩阵按收敛约定后移，不因这些扩展项继续阻塞最小收尾。
+P1 最小收尾通过，可以进入 P2 规划。证据由三部分组成：delivery-core-01 正式创建并完成三幕公开递送；ui-live-01 完成实机创建、游玩、刷新重载和成功结局；exit-comparison-01 从同一开局与四行动前缀真实主动退出，形成未交付、物品仍归玩家及失败结局的不同后果。最后的退出场景回合修复在 d36ce803 使用同一 pending SQLite 和两份原真实响应完成离线验证，正文完全保留，重载一致；这不是修复后新增 live，也不改写原失败记录。
+
+此结论只覆盖用户收敛后的最小 P1 目标。旧保密/核验 focused03 仍失败，main 同条件对照、六路线矩阵及综合 UI 打磨未完成，按总 Spec 后移。当前不开展 P2 代码、不合并 main，也不声称整体剧情质量已经优于 main。
 
 此前真实 AI 短篇取得过正式规则下恢复后通关证据，未达到完整协议：`b6cc0e5b` 的 `p1-core-02` 创建“青石渡”故事，完成九次行动后 Node 原生进程中断；保留原库，在独立副本通过正式 ensure 恢复同一游戏，续至第十八次行动与成功结局“一盏直烟”。实际移动、两次取物、四轮战斗、三项主线任务完成和成功结局事件均已核实。
 
@@ -325,7 +327,7 @@ Task 12 只闭合有正式任务绑定、完成/失败事件且无额外 closure
 - `85ca21af`：移除叙事包本地 8,000 estimated-token 拒绝闸门，并更新 TDD 覆盖；provider 失败仍走既有失败协议。
 - `4970e11e`：审阅单次超时调整为 240 秒，并按 DeepSeek 官方字段显式发送 `thinking.type=enabled` 与 `reasoning_effort=low`；参数透传和协议冻结均有 TDD 覆盖。
 
-具体保密条件、真实引荐、真实归还及送达后禁止弃约的规则闭环已补齐；真实响应重放机制与独立诊断也已执行，正式矩阵尚未执行。修复后的离线门禁见 [失败分析](2026-09-13-narrative-p1-failure-analysis.md)；本报告门禁数字为本次修复后的工程检查，输出见本地 artifacts/p1-diag04-accept.log；不代表已完成 live 验收。响应 replay 已实现：新 SQLite 重走原始响应解析、NPC 判断、审阅、审批和规则写入，严格比对请求与逻辑存档；协议绑定、原始审计哈希和零网络集成测试通过。实际重放范围见本报告结论；没有完整故事或六矩阵的重放证据。
+具体保密条件、真实引荐、真实归还及送达后禁止弃约的规则闭环已补齐；真实响应重放机制与独立诊断也已执行，正式矩阵尚未执行。修复后的离线门禁见 [失败分析](2026-09-13-narrative-p1-failure-analysis.md)；本报告门禁数字为本次修复后的工程检查，输出见本地 artifacts/p1-diag04-accept.log；不代表已完成 live 验收。响应 replay 已实现：新 SQLite 重走原始响应解析、NPC 判断、审阅、审批和规则写入，严格比对请求与逻辑存档；协议绑定、原始审计哈希和零网络集成测试通过。这些早期诊断批次没有完整故事或六矩阵的重放证据；后续完整故事与最小退出对照的重放范围见本报告结论。
 
 
 ## 当前诊断样本
@@ -363,8 +365,25 @@ Task 12 只闭合有正式任务绑定、完成/失败事件且无额外 closure
 
 这次实机只验证流程可达与刷新后的状态连续性，不替代 focused 两路对照，也不评价界面视觉质量。创建阶段的长耗时最终正常返回 200，刷新读取的是已提交存档；没有因此修改界面或生成失败策略。
 
+### `exit-comparison-01`：同前缀主动退出对照通过
+
+以 delivery-core-01 原真实交付为基准，冻结 840ec6ee 后用原 27 响应经正式 createGame/performTurn 完整严格重放，15 个语义状态匹配。在创建点和第四行动后的 ready 状态备份 SQLite，两路同开局、同四行动前缀；不向数据库灌入 JSON。新增代码只把 buildChoiceMap 中已有合法 abandon_quest 投影至真实场景按钮，沿原 opaque token 提交链执行。
+
+| 项目 | 继续交付 | 主动退出 |
+| --- | --- | --- |
+| 来源 | delivery-core-01 原历史 live，完整恢复验证 | 相同第四行动后选择可见放弃入口 |
+| 行动 | 10 个 | 共同前缀 4 个，加 1 个真实放弃 |
+| 新 HTTP | 本次 0，历史为 27 | 2；无重复放弃或手动重试 |
+| 委托/物品 | 实际 item_given，信件归接收人 npc_dyn_2 | quest_dyn_1 closed、quest_abandoned/failure；信件仍归 player_0，没有 item_given |
+| 终局 | ending_dyn_0 / success，turn 10 | ending_exit:job_p1-public-exit-action-4 / failure，turn 5 |
+| 正文 | 当面交付与接收人的情感回应 | 在渡口停止送信、持信转身，未伪造返乡完成或交付 |
+
+原退出驱动在真实 Action 结算后误要求 quest.status=failed；正式规则按 onFailure.kind=closed 收束为 closed，因此它在零 HTTP 时停止。该失败原样保留。续跑只复制已经放弃后的 pending 数据库、执行同一 job，两个真实响应得到 failure ending/ready；随后校验发现 currentScene.turn=9 使用了 revision，而 Action、History 与 ending 事件均为 turn 5。原生成流和严格零网络 replay 都保留 EXIT_COMPLETION_CONTRACT_FAILED，重放 2 响应、3 状态一致，未重写成通过。
+
+限定修复 d36ce803 仅令退出结果发布使用 job.turnNumber，普通场景/token、正文、审批和幂等保持不变。离线修复验证复制同一 pending SQLite，逐条精确匹配两份原请求并消费原响应，经正式生成、审批、CAS 和 SQLite 落盘；完整状态只允许 currentScene.turn 从 9 改为 5。第二次验证又匹配修复后的全部 3 个状态，关闭重开一致，两个库 integrity_check 均为 ok。没有新网络请求、状态注入或重采正文。
+
+根任务阅读全文并由独立审核复核同初态、真实分化与正文五维；交付文本均分 4.2/5、退出文本均分 4.0/5，无确认正文硬错误，最后的回合断点通过独立修复复核。工程门禁为 2855 passed、1 skipped，typecheck 和 131 项 boundaries 通过，lint 0 errors、50 项既有 warning。主要原始证据在 `artifacts/narrative-p1/exit-comparison-01/`：`restore/manifest.json`、`comparison.json`、`continuation/live/summary.json`、`continuation/replay/summary.json`、`turn-fix/verify/proof.json`、`turn-fix/replay/proof.json`、`withdrawal-story.md` 和 `acceptance-review.md`。
+
 ### 本次收口结论
 
-核心生产交付故事和实机 UI 单路闭环均有证据；只读复核 ui.sqlite 为 revision 16、turn 9、ready、一个成功 ending 事件且 integrity_check=ok。focused 交付库为 turn 8、provider_failed、无 ending，重放保持同一失败。按当前最小验收约定，P1 尚缺同初态的继续交付/主动退出对照，不能直接标为完成。
-
-后续建议使用已通过的公开递送故事初态核验最小退出后果，并与对应交付路径比较；具体初态恢复和可比性须先确认，不能把不同开局拼作同初态对照。p1-focused-03 的旧保密/核验场景保留失败证据，不再作为最小 P1 必须修通的场景。无需重跑已通过的 UI，也不新增机制、开启六路线矩阵或 main 对照。
+完整生产交付、一次实机 UI 和同初态退出对照已覆盖最小 P1 的“完整故事、规则后果、持久化、可玩流程”目标。最后的确定性回合修复由原真实响应离线复核闭环，不以再次抽样作为收尾条件。P1 可以收尾并进入 P2 Plan；旧失败样本与后移矩阵继续如实保留，不再在 P1 扩展修复范围。
