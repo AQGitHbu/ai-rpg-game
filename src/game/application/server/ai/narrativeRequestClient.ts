@@ -2,7 +2,7 @@ import type { AiCompletionResult, AiMessage } from "@ai-game/ai-transport";
 import type { AiTextAuditContext } from "./textAuditTypes";
 import type { RpgAiClient, RpgAiRolePolicy } from "./rpgAiClient";
 
-export const NARRATIVE_REQUEST_PURPOSES = ["author", "npc_deliberation", "review"] as const;
+export const NARRATIVE_REQUEST_PURPOSES = ["author", "npc_deliberation", "review", "memory_summary"] as const;
 export type NarrativeRequestPurpose = (typeof NARRATIVE_REQUEST_PURPOSES)[number];
 
 export type CompleteNarrativeRequestInput = Readonly<{

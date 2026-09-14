@@ -69,6 +69,7 @@ export type AiTextAuditContext = {
     | "narrative_bundle_generation"
     | "npc_deliberation"
     | "narrative_candidate_review"
+    | "narrative_memory_summary"
     | "final_story_text"
     | "game_api";
   readonly trigger: string;
