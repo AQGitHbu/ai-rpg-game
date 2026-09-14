@@ -57,8 +57,8 @@ export function inspectP2StageArtifacts(directory, state) {
   return { segment, tapeCursor: previous?.tape.endCursor ?? 0, evidence };
 }
 
-/** Internal stage composition. Until A admission and UI admission are implemented,
- * live is available only with explicit offline provider bytes; public CLI stays closed.
+/** Bounded stage composition. Real live requires frozen code/configuration and
+ * explicit process authorization, with independently replayed sealed A before B.
  * Each invocation creates or resumes exactly one ready-to-ready segment. */
 export async function createNarrativeP2StageRunner(runtimeEnv, options = {}) {
   const { createServerGameEntryPoints } = await import('../src/game/application/server/compositionRoot.ts');
@@ -71,7 +71,15 @@ export async function createNarrativeP2StageRunner(runtimeEnv, options = {}) {
   return async function run({ protocol, stage, directory, resume = false, review, mode = 'live', sourceDirectory = directory, replaySegment = 0 }) {
     if (protocol.protocolVersion !== 'narrative-p2/v2' || !['A', 'B'].includes(stage)) fail('CONFIGURATION');
     if (canonical(protocol) !== canonical(createNarrativeP2Protocol(protocol.runId, { environment: protocol.environment, codeFingerprint: protocol.codeFingerprint }))) fail('FROZEN_CONFIGURATION_MISMATCH');
-    if (mode === 'live' && !options.offlineTransport) fail('ADMISSION_NOT_IMPLEMENTED');
+    if (mode === 'live' && !options.offlineTransport) {
+      if (process.env.RUN_REAL_AI_JOURNEY !== '1') fail('LIVE_REQUIRES_RUN_REAL_AI_JOURNEY');
+      const { freezeP2CodeIdentity } = await import('./narrativeP2Journey.mjs');
+      if (protocol.codeFingerprint !== freezeP2CodeIdentity() || protocol.environment.model !== 'ai-slg-game-model'
+        || protocol.environment.inputMaxEstimatedTokens !== 64000 || runtimeEnv.AI_MODEL?.trim() !== protocol.environment.model
+        || runtimeEnv.AI_API_BASE_URL?.trim() !== protocol.environment.apiBaseUrl
+        || Number(runtimeEnv.AI_NARRATIVE_INPUT_MAX_ESTIMATED_TOKENS ?? '64000') !== 64000) fail('FROZEN_CONFIGURATION_MISMATCH');
+      if (stage === 'B') await (await import('./narrativeP2Quality.mjs')).admitP2StageB(protocol, directory);
+    }
     if (!['live', 'replay'].includes(mode)) fail('CONFIGURATION');
     const route = protocol.routes.find(r => r.routeId === protocol.stages.routeByStage[stage]);
     const binding = { protocolVersion: protocol.protocolVersion, protocolHash: protocol.protocolHash, codeFingerprint: protocol.codeFingerprint,
@@ -135,11 +143,11 @@ export async function createNarrativeP2StageRunner(runtimeEnv, options = {}) {
       const auditFd = openSync(resolve(directory, auditPath), 'wx'); closeSync(auditFd);
       runtime = (options.segmentRuntimeFactory ?? createNarrativeP2SegmentRuntime)({ mode, directory, sourceDirectory, stage, segment, binding, manifest: mode === 'live' ? manifest : undefined,
         routeAttemptId: head.routeAttemptId, checkpoint: mode === 'live' ? p2ManifestGuard(manifest.read()) : undefined, resolveAttempt, auditFiles: () => [auditPath] });
-      if (mode === 'live') {
+      if (mode === 'live' && options.offlineTransport) {
         const attempt = runtime.options.aiRuntime.attempt;
         runtime.options.aiRuntime = { ...runtime.options.aiRuntime, offline: true, attempt: request => attempt(request, () => options.offlineTransport(request, { reader, client, stage, protocol })) };
       }
-      entry = createServerGameEntryPoints({ ...runtimeEnv, NODE_ENV: 'test', GAME_DB_PATH: database, AI_TEXT_AUDIT: 'full', AI_TEXT_AUDIT_DIR: resolve(directory, 'audit'), AI_TEXT_AUDIT_RUN_ID: auditId }, undefined, undefined,
+      entry = createServerGameEntryPoints({ ...runtimeEnv, NODE_ENV: 'test', GAME_DB_PATH: database, AI_OUTPUT_FORMAT: 'prompt_only', AI_TEXT_AUDIT: 'full', AI_TEXT_AUDIT_DIR: resolve(directory, 'audit'), AI_TEXT_AUDIT_RUN_ID: auditId }, undefined, undefined,
         { ...runtime.options, memoryPolicy: protocol.policy, memorySummaries: 'enabled', narrativeAbortSignal: signal });
       if (segment === 0) {
         const created = await entry.createGame({ gameType: protocol.input.gameType, gameLength: route.gameLength, setup: projectNarrativeP1GameSetup(protocol.input) }, `${stage}-create`);

@@ -24,7 +24,7 @@ test("P2 CLI uses the single full protocol, register is zero transport and immut
     assert.equal(validateNarrativeP2Args({ mode: "register", stage: "A", runId: "p2", protocol: protocolPath, output: root }), "P2_REGISTER_HAS_NO_STAGE");
     assert.equal(parseNarrativeP2Args(["--stage=B"]).stage, "B");
     assert.throws(() => parseNarrativeP2Args(["--unknown=true"]), /UNKNOWN_ARGUMENT/);
-    assert.deepEqual(await runNarrativeP2Journey({ mode: "register", runId: "p2", protocolPath, outputDirectory: root }, options), { plannedRoutes: 2, completedRoutes: 0, passed: true });
+    assert.deepEqual(await runNarrativeP2Journey({ mode: "register", runId: "p2", protocolPath, outputDirectory: root }, options), { registered: true, plannedRoutes: 2, completedRoutes: 0, passed: false });
     const protocol = JSON.parse(readFileSync(protocolPath, "utf8"));
     assert.equal(protocol.protocolVersion, NARRATIVE_P2_PROTOCOL_VERSION);
     assert.deepEqual(protocol, createNarrativeP2Protocol("p2", deps));
@@ -39,7 +39,7 @@ test("fake completed artifacts cannot pass strict zero-network production replay
     const protocolPath = join(root, "protocol.json");
     await runNarrativeP2Journey({ mode: "register", runId: "p2", protocolPath, outputDirectory: root }, options);
     writeFileSync(join(root, "S-short.json"), '{"completed":true}'); writeFileSync(join(root, "M-medium.json"), '{"completed":true}');
-    await assert.rejects(runNarrativeP2Journey({ mode: "replay", stage: "A", runId: "p2", protocolPath, outputDirectory: join(root, "replay"), replaySource: root }, options), /P2_STAGE_RUNTIME_NOT_IMPLEMENTED/);
+    await assert.rejects(runNarrativeP2Journey({ mode: "replay", stage: "A", runId: "p2", protocolPath, outputDirectory: join(root, "replay"), replaySource: root }, options), /P2_MANIFEST_CORRUPT/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

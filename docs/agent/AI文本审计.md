@@ -31,6 +31,14 @@ AI 文本审计是独立的 append-only JSONL，服务于 prompt/模型正文/�
 
 审核结果和运行标识放验收报告，本文不保存历次分数或测试成绩。查询与完整性校验见 [日志运维](../operations/logging.md)。
 
+## P2 终局审阅
+
+`scripts/narrativeP2Quality.mjs` 接收固定 `narrative-p2-quality/v2` schema：顶层只能有 `schema`、`identity`、`reviewer`、`reviewedAt`、`dimensions`、`hardErrors`、`verdict`。identity 从终局 CLI 输出复制，绑定 routeAttemptId、完整协议/代码/输入/来源、实际终局状态、完整 History、全部磁带链与候选索引 hash。
+
+dimensions 只允许 `localContinuity`、`motivation`、`causalityAndSuspense`、`visibleChoiceConsequences`、`endingClosure`；每维含整数 `score`（1–5）、非空 `reason` 与非空 `historyQuotes`。每个引文必须含 `historyId`、逐字子串 `quote`、`candidateCallId`，并解析到当前路线 player 可见 History 和该 job 最后成功作者候选的实际原文。未经历的拒绝候选不能代替故事质量证据。hardErrors 为已确认错误数组，每项含 `kind`（fact/permission/action）、`reason`、同结构的 `historyQuotes`。verdict 为 pass/fail；通过要求无硬错误、五维均分至少 4 且单维至少 3，同时实际机器结果与全部 segment 严格回放通过。
+
+人工审阅不增加模型 judge 调用。审阅文件排他创建并绑定 manifest，失败或中断不能改写解锁 B；终局状态和产物在审阅及 B 准入时重新读取核验。操作入口见 [AI 环境](AI环境.md#运行与测试入口)。
+
 ## 代码与测试入口
 
 - 契约：`src/game/application/server/ai/textAuditTypes.ts`

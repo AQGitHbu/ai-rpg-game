@@ -151,6 +151,7 @@ function transition(state, operation, now, owner) {
       break;
     case "seal_fail":
       if (!nonempty(operation.reason)) fail("FAILURE_REASON_REQUIRED");
+      if (operation.artifacts) artifacts(state, operation.artifacts);
       state.failure = operation.reason; state.status = "sealed_fail";
       break;
     default: fail("MANIFEST_OPERATION_INVALID");
