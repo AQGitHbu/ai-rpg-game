@@ -31,11 +31,11 @@
 - 决策上下文以 `consumer=author|reviewer` 共用事实、权限、行动及演化依据；作者获得 sceneDrafts 传输契约，审阅器获得实际编译后 NarrativeBundleProposal 契约（含服务端附加的 npcOutwardProposals）。作者修复指令和抵达输出骨架不进入审阅上下文，candidateHash 仍绑定原内部候选；审阅不改写候选、不按作者传输字段误判内部表示。
 - 审阅缺陷路径相对内部候选；允许明确请求外壳的单层 `proposal.` 或 `$.proposal.` 前缀，校验实际字段后保存候选相对路径。未知字段、错误数组索引、重复包装仍拒绝，不过滤缺陷或转为通过。
 - 生产语义审阅的 `ruleBasis` 由服务端投影当前输入、真实 Action 与候选绑定、续接 step、正式物品及事实/权限。阻断缺陷必须带可存在性校验的候选 `path` 和 `evidence={basisKey,impact,detail}`；依据必须存在、影响种类须属于该依据，detail 说明具体规则后果。物品状态影响只能引用具体正式物品或绑定该物品的 take/give 步骤，普通无效果服饰、环境或风格写入 `qualityObservations`，不改变规则 verdict。无依据、空缺陷或混入非法缺陷的 revise 整体成为显式 uncertain，不过滤后冒充 pass。服务端校验依据与路径，不以此替代模型对语义冲突的判断。
-- decision 的 pass 必须完整返回 executionChecks 与 progressChecks。行动抽取绑定路径、引文和槽依据，核查位置、参与者、流转与已完成前提，覆盖当前/续接场景、终局标签/正文、名称/描述及 beatSummary。漏项、重复、错误引用或不明确为 uncertain；规则冲突走既有修订。结构核验不能证明语义完整，仍需实跑验收。
-- 作者与审阅共用 narrativeProgressContract：开场建立具体利害和有限委托，中间幕带来分歧、新依据或有根据的回应变化，终幕交代本次后果与未解决问题。同幕追问不强制新剧情，重复引路/核验不能冒充冲突推进。公开内容不证明某人曾托话；推进不扩大权限。违反有依据的因果要求走 BROKEN_CAUSALITY，风格仅作观察。
+- decision 的 pass 必须完整返回 executionChecks 与 progressChecks，按路径、引文、槽依据核查位置、参与者、流转和已完成前提。结构无效的 pass 允许一次同候选响应修复，沿用请求预算与取消控制，计入每 job 的 24 次 HTTP；不重写作者候选。二次仍无效为 uncertain；有效规则缺陷立即交回作者修订，不向审阅器重复求通过。无效 revise、网络失败不走该修复。结构正确不证明语义完整，仍需实跑。
+- 作者与审阅共用 narrativeProgressContract：首场说明谁受影响、委托人为何在意与完成/耽搁的后果；中幕主张给出自身利害、依据或能力边界，让玩家比较回应的理由与代价；终幕交代本次后果及未解决问题。同幕回应不强制新剧情，泛泛传言、重复引路/核验不算推进，选项不能承诺 Action 无法兑现的效果。推进不扩大权限，违反有依据的因果要求走 BROKEN_CAUSALITY。
 - 事实引用许可与披露正文分别投影：获准 NPC 互动提案里的事实 ID 存在且可用于对应提案，不要求出现在公开正文目录；该许可不授权当前台词说出秘密，也不代表行动已执行。秘密正文继续按 speaker authority 裁剪。
 - 动态 `newNpc` 可用 `existingFactIds` 显式声明当前上下文中具有公开初始化来源的既有事实，省略即为空；作者获得相同资格列表和准确 schema。预检物化后，审阅依据按每个候选场景的实际说话人和受众投影，不把当前 focus NPC 权限复用于续接 NPC；同场先前合法披露仍按实际听众顺序生效。
-- 每个完整 opening/decision 候选由服务端计算 `candidateVersion` 与 `candidateHash`，最多保留初稿加两次修订；结构/规则预检通过后只做一次语义审阅。审阅只能返回非空缺陷或明确 provider/uncertain 失败，不能修改候选、规则或知识；正文、受众、NPC outward 依据或 proposal 任一变化都会使旧 pass 失效。
+- 每个 opening/decision 候选由服务端计算 `candidateVersion` 与 `candidateHash`，最多初稿加两次修订；结构/规则预检通过后取得一次有效语义审阅结论，无效 pass 的有界响应修复见上。审阅不能修改候选、规则或知识；正文、受众、NPC outward 或 proposal 变化都会使旧 pass 失效。
 
 ## 关键流程
 

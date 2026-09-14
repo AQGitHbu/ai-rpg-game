@@ -93,6 +93,30 @@ describe("server-bound narrative execution extraction", () => {
     const complete = vi.fn().mockResolvedValue({ ok: true, content: '{"verdict":"pass"}' });
     const result = await createLiveNarrativeCandidateReview({ aiClient: { complete } as unknown as RpgAiClient }).reviewNarrativeCandidate(input());
     expect(result).toMatchObject({ ok: false, failure: "UNCERTAIN" });
+    expect(complete).toHaveBeenCalledTimes(2);
+  });
+  it("repairs cross-path review quotations once on the same candidate without bypassing execution checks", async () => {
+    const value = input(false);
+    const valid = response(value);
+    const malformed = structuredClone(valid);
+    Object.assign(malformed.executionChecks![0]!, { participants: [{ quote: "另一段的动作", npcId: "host", locationId: "inner_hall" }] });
+    const complete = vi.fn()
+      .mockResolvedValueOnce({ ok: true, content: JSON.stringify(malformed) })
+      .mockResolvedValueOnce({ ok: true, content: JSON.stringify(valid) });
+    const result = await createLiveNarrativeCandidateReview({ aiClient: { complete } as unknown as RpgAiClient }).reviewNarrativeCandidate(value);
+    expect(result).toMatchObject({ ok: true, candidateHash: value.candidateHash });
+    expect(complete).toHaveBeenCalledTimes(2);
+    expect(complete.mock.calls[1]![1].slice(0, 2)).toEqual(complete.mock.calls[0]![1]);
+    expect(complete.mock.calls[1]![2].retry).toMatchObject({ mechanism: "content_repair", attempt: 1, reason: "invalid_schema" });
+  });
+  it("returns an actual action violation immediately instead of asking the reviewer for a pass", async () => {
+    const value = input(false);
+    const invalid = response(value);
+    Object.assign(invalid.executionChecks![0]!.playerLocation, { kind: "at", locationId: "dock" });
+    const complete = vi.fn().mockResolvedValue({ ok: true, content: JSON.stringify(invalid) });
+    const result = await createLiveNarrativeCandidateReview({ aiClient: { complete } as unknown as RpgAiClient }).reviewNarrativeCandidate(value);
+    expect(result).toMatchObject({ ok: false, defects: [expect.objectContaining({ code: "ACTION_MISMATCH" })] });
+    expect(complete).toHaveBeenCalledTimes(1);
   });
   it("accepts an actual earlier delivery recap, but excludes unobserved transfers of the same visible item", () => {
     const original = input();

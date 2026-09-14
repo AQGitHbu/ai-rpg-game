@@ -12,6 +12,7 @@ import { OPENING_SEMANTIC_CONTRACT } from "./openingSemanticContract";
 import { buildOpeningNarrativePrompt } from "./openingNarrativePrompt";
 import { buildNarrativeExecutionChecks, NARRATIVE_EXECUTION_CHECK_CONTRACT, validateNarrativeExecutionChecks } from "./narrativeExecutionChecks";
 import { buildNarrativeProgressRequirements } from "./narrativeProgressContract";
+import { renderAiRepairFeedback } from "../../aiGenerationRetry";
 
 export type LiveNarrativeCandidateReviewDeps = Readonly<{
   readonly aiClient?: RpgAiClient;
@@ -278,32 +279,47 @@ export function createLiveNarrativeCandidateReview(
           revision: input.candidateVersion,
           ...metadata,
         } as const;
-        const result = deps.requestClient === undefined
-          ? await deps.aiClient.complete("narrative_bundle", messages, auditContext)
-          : await deps.requestClient.completeNarrativeRequest({
-              purpose: "review",
-              messages,
-              auditContext,
-              signal: input.context.signal ?? new AbortController().signal,
-              ...(input.context.kind !== "decision" || input.context.maxEstimatedTokens === undefined ? {} : { maxEstimatedTokens: input.context.maxEstimatedTokens }),
-              ...(input.context.reserveHttpAttempt === undefined ? {} : { reserveHttpAttempt: input.context.reserveHttpAttempt }),
-            });
-        if (!result.ok) return resultFailure(input, "PROVIDER_FAILURE");
-        const parsed = parseStructuredJsonObject(result.content);
-        if (!parsed.ok) return resultFailure(input, "UNCERTAIN");
-        const verdict = parseReviewVerdict(parsed.value, input);
-        if (verdict === null) return resultFailure(input, "UNCERTAIN");
-        if (verdict.pass) {
-          return { ok: true, candidateVersion: input.candidateVersion, candidateHash: input.candidateHash,
-            ...(verdict.qualityObservations.length === 0 ? {} : { qualityObservations: verdict.qualityObservations }) };
+        for (let responseAttempt = 0; responseAttempt < 2; responseAttempt += 1) {
+          const reviewMessages: readonly AiMessage[] = responseAttempt === 0 ? messages : [...messages, {
+            role: "user",
+            content: renderAiRepairFeedback({ attempt: responseAttempt, reason: "invalid_schema", detail: "上一份 pass 响应未能通过证据结构校验，尚未批准候选。仅重新审阅同一 candidateHash，不改写故事。逐项核对 context.executionChecks：完整 quote 与 path 对应；participants、itemTransfers、completedPrerequisites 的引文必须来自本条 quote，不能从其他段落复制；basisKey 只用本条允许且真正支持结论的依据。只提及人物不等于实际到场。返回完整有效审阅；发现剧情问题应返回有依据的 revise，不能为获得 pass 忽略冲突。" }),
+          }];
+          const responseAudit = responseAttempt === 0 ? auditContext : { ...auditContext,
+            retry: { origin: "normal" as const, mechanism: "content_repair" as const, attempt: responseAttempt, reason: "invalid_schema" as const } };
+          const result = deps.requestClient === undefined
+            ? await deps.aiClient.complete("narrative_bundle", reviewMessages, responseAudit)
+            : await deps.requestClient.completeNarrativeRequest({
+                purpose: "review",
+                messages: reviewMessages,
+                auditContext: responseAudit,
+                signal: input.context.signal ?? new AbortController().signal,
+                ...(input.context.kind !== "decision" || input.context.maxEstimatedTokens === undefined ? {} : { maxEstimatedTokens: input.context.maxEstimatedTokens }),
+                ...(input.context.reserveHttpAttempt === undefined ? {} : { reserveHttpAttempt: input.context.reserveHttpAttempt }),
+              });
+          if (!result.ok) return resultFailure(input, "PROVIDER_FAILURE");
+          const parsed = parseStructuredJsonObject(result.content);
+          if (!parsed.ok) return resultFailure(input, "UNCERTAIN");
+          const verdict = parseReviewVerdict(parsed.value, input);
+          if (verdict === null) {
+            // Repair only a malformed decision pass. A valid defect never retries
+            // the reviewer, and an ambiguous revise must not turn into a free pass.
+            const body = isRecord(parsed.value.review) ? parsed.value.review : parsed.value;
+            if (responseAttempt === 0 && input.context.kind === "decision" && body.verdict === "pass") continue;
+            return resultFailure(input, "UNCERTAIN");
+          }
+          if (verdict.pass) {
+            return { ok: true, candidateVersion: input.candidateVersion, candidateHash: input.candidateHash,
+              ...(verdict.qualityObservations.length === 0 ? {} : { qualityObservations: verdict.qualityObservations }) };
+          }
+          return {
+            ok: false,
+            candidateVersion: input.candidateVersion,
+            candidateHash: input.candidateHash,
+            defects: verdict.defects,
+            ...(verdict.qualityObservations.length === 0 ? {} : { qualityObservations: verdict.qualityObservations }),
+          };
         }
-        return {
-          ok: false,
-          candidateVersion: input.candidateVersion,
-          candidateHash: input.candidateHash,
-          defects: verdict.defects,
-          ...(verdict.qualityObservations.length === 0 ? {} : { qualityObservations: verdict.qualityObservations }),
-        };
+        return resultFailure(input, "UNCERTAIN");
       } catch (error) {
         deps.logger?.warn("narrative_candidate_review_failed", {
           error: error instanceof Error ? error.message : "unknown",
