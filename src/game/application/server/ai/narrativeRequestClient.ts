@@ -1,6 +1,7 @@
 import type { AiCompletionResult, AiMessage } from "@ai-game/ai-transport";
 import type { AiTextAuditContext } from "./textAuditTypes";
 import type { RpgAiClient, RpgAiRolePolicy } from "./rpgAiClient";
+import { estimateNarrativeTokens } from "./narrativeContext/estimateNarrativeTokens";
 
 export const NARRATIVE_REQUEST_PURPOSES = ["author", "npc_deliberation", "review", "memory_summary"] as const;
 export type NarrativeRequestPurpose = (typeof NARRATIVE_REQUEST_PURPOSES)[number];
@@ -12,10 +13,13 @@ export type CompleteNarrativeRequestInput = Readonly<{
   readonly signal: AbortSignal;
   /** Called immediately before every underlying transport attempt. */
   readonly reserveHttpAttempt?: () => Promise<boolean> | boolean;
+  readonly maxEstimatedTokens?: number;
 }>;
 
 export type NarrativeRequestClient = Readonly<{
-  completeNarrativeRequest(input: CompleteNarrativeRequestInput): Promise<AiCompletionResult>;
+  completeNarrativeRequest(input: CompleteNarrativeRequestInput): Promise<AiCompletionResult | {
+    readonly ok: false; readonly code: "context_budget_exceeded"; readonly retryable: false; readonly latencyMs: 0;
+  }>;
 }>;
 
 const AUTHOR_POLICY: Partial<RpgAiRolePolicy> = {
@@ -51,10 +55,15 @@ export function createNarrativeRequestClient(
     readonly aiClient?: RpgAiClient;
     /** Optional batch-wide guard, used by the P1 journey protocol. */
     readonly beforeTransportAttempt?: () => Promise<boolean> | boolean;
+    readonly maxEstimatedTokens?: number;
   }>,
 ): NarrativeRequestClient {
   return {
     async completeNarrativeRequest(input) {
+      const maxEstimatedTokens = Math.min(input.maxEstimatedTokens ?? Number.MAX_SAFE_INTEGER, deps.maxEstimatedTokens ?? Number.MAX_SAFE_INTEGER);
+      if (estimateNarrativeTokens(JSON.stringify(input.messages)) > maxEstimatedTokens) {
+        return { ok: false, code: "context_budget_exceeded", retryable: false, latencyMs: 0 };
+      }
       if (deps.aiClient === undefined) {
         return { ok: false, code: "invalid_config", retryable: false, latencyMs: 0 };
       }

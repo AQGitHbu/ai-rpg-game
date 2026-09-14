@@ -56,9 +56,18 @@ export async function prepareNpcNarrativeContext(
       ...input,
       ...(context.signal === undefined ? {} : { signal: context.signal }),
       ...(context.reserveHttpAttempt === undefined ? {} : { reserveHttpAttempt: context.reserveHttpAttempt }),
+      ...(context.maxEstimatedTokens === undefined ? {} : { maxEstimatedTokens: context.maxEstimatedTokens }),
+      ...(context.auditLink === undefined ? {} : { auditLink: { ...context.auditLink,
+        ...(privateMemory === undefined || context.auditLink.memory === undefined ? {} : { memory: {
+          ...context.auditLink.memory, observerId: String(privateMemory.observerId),
+          coveredThroughSequence: privateMemory.coveredThroughSequence,
+          historyIds: privateMemory.overviewHistoryIds, eventIds: privateMemory.overviewEventIds.map(String),
+          rawCount: privateMemory.uncovered.length, recallCount: privateMemory.recalled.length,
+        } }),
+      } }),
     });
     if (context.signal?.aborted) return fail("provider_failure", "aborted");
-    if (!result.ok) return fail(result.code === "PROVIDER_FAILURE" ? "provider_failure" : "invalid_reference", result.code);
+    if (!result.ok) return fail(result.code === "CONTEXT_OVERFLOW" ? "context_budget_exceeded" : result.code === "PROVIDER_FAILURE" ? "provider_failure" : "invalid_reference", result.code);
     if (result.proposal.npcId !== focus) return fail("invalid_reference", "npc_deliberation_speaker_mismatch");
     const player = entitiesOfKind(context.worldState.entityStore, "player_character").find(record => record.core.id === PLAYER_ENTITY_ID);
     const authorized = authorizeNpcDeliberationOutward({

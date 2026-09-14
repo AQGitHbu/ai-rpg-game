@@ -23,6 +23,8 @@ export type NarrativeMemoryContext = Readonly<{
   readonly coveredThroughSequence: number;
   readonly overviewHistoryIds: readonly string[];
   readonly overviewEventIds: readonly EventId[];
+  /** Observer-authorized original events selected for the historical overview. */
+  readonly overviewEvents?: readonly CommittedNarrativeEvent[];
   readonly uncovered: readonly HistoryEntry[];
   readonly recalled: readonly HistoryEntry[];
   readonly requiredEvents: readonly CommittedNarrativeEvent[];

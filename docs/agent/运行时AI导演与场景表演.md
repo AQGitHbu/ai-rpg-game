@@ -40,6 +40,8 @@
 ```
 玩家正式选择 / NPC 自定义输入
   → PendingNarrativeJob
+  → claim lease + prepare/recover fixed observer memory
+  → focused NPC judgement + authorized outward projection
   → compileDecisionNarrativeContext
   → NarrativeBundleSource
   → approveNarrativeBundle
@@ -47,13 +49,15 @@
   → ready scene + opaque choices + narrativeBundle
 ```
 
-Prompt 只接收编译后的公开事实、当前位置、焦点 NPC 的有限结构化交互、强制节拍、实体索引、持有状态、上一场景和有界 memory cards。完整 `GameRecord`、event ledger、其他 NPC 历史、secret fact 正文、玩家长期原文和隐藏 registry 不进入 prompt。审计中的 `narrativeContext` 只是 block 元数据与预算，不是 prompt 正文副本。
+作者与审阅器接收公开规则依据、获准 NPC 对外判断及固定 player 记忆包，包括未覆盖原文、来源概览与召回旧话；选择标签不能冒充口述。完整存档、未投影 ledger、其他 NPC 私密历史、秘密正文和隐藏 registry 不进入作者上下文。权限与来源契约见 [记忆系统](./剧情连续性与结构化记忆.md)；`narrativeContext` 审计只存 block 元数据与预算。
 
-第一次固定选择生成续接时，`selectedDialogue` 保留 act、topic 和 label。决策上下文通过所选公开 fact 或初始化 thread 找回因果事件，并加入一次性的“开局背景与本次回应”必选块；正文只含公开历史、公开问题和焦点 NPC 当前允许的目标与关系。叙事包生产路径不再以本地 8,000 estimated tokens 闸门拒绝请求；保留编译来源与权限裁剪，由 provider 报告实际上下文限制，失败走统一协议。首次调用以后不再强制注入该块，后续走记忆召回。
+首次固定选择由 `selectedDialogue` 保留 act/topic/label，并从公开 fact 或初始化 thread 找回因果依据，加入一次“开局背景与本次回应”必选块；后续走记忆召回。发送前统一检查完整 messages，包含系统指令、修订稿及 reviewer 候选；超限显式失败，不截断必需原文。默认值与估算口径见 [AI 环境](./AI环境.md)。
 
-需要条件披露、承诺或具体互动判断时，`prepareNpcNarrativeContext` 只为当前同场焦点 NPC 编译私密输入，调用独立判断 source 后再做 outward 授权；作者与审阅器只接收获准的对外投影。开局与普通问候不因此增加角色调用。角色判断使用该次生成的候选版本、取消信号和 HTTP 预算，不提前写入知识或互动效果。同一 worker 的固定规则快照内，成功且已授权的 outward 在作者候选修订中复用；仅复用 outward，作者与审阅仍使用当前 job、候选版本、修复反馈和预算回调。失败与取消不缓存，不跨 job、worker 或进程恢复复用，不新增持久化字段。
+需要条件披露、承诺或具体互动判断时，`prepareNpcNarrativeContext` 只为同场焦点 NPC 编译私密输入，判断后经 outward 授权，作者/审阅仅接收获准投影。开局与普通问候不增加角色调用。判断沿用当前候选版本、取消信号和 HTTP 额度，不提前写入知识或互动效果。成功 outward 可在同 worker、同规则快照的候选修订中复用；请求控制仍取当前值，失败不缓存，outward 不跨 job 或进程恢复复用。
 
-每个逻辑 pending job 的一个 epoch 最多执行三次完整的 source 生成加审批尝试；后续完整尝试携带稳定拒绝原因。每个 epoch 最多 24 次 HTTP（候选版本、作者/NPC 判断、审阅与各自最多两次 transport retry 的总预算），请求前预留且崩溃后不退回。每次完整尝试内部仍可由 `RpgAiClient` 执行 transport retry；顶层 `ai_call.attempt` 是 transport 序号，`context.retry.attempt` 是重试机制内序号，两者不能混用。空响应不重复发送同一请求。
+每个 job/epoch 最多三版候选，作者/NPC/审阅合计 24 次 HTTP，摘要另有跨 observer 共用的 8 次 HTTP、2 次批更新；均计入验收总预算并在请求前持久预留，崩溃不退回。每请求最多两次传输，空响应不重发。`ai_call.attempt` 是传输序号，`context.retry.attempt` 是对应重试机制内序号。
+
+记忆在租约内、首候选前准备并固定，修订与进程恢复复用同一 job/epoch 包。缺包或来源变化显式失败；每次预留/冻结核对当前时间和同库真实租约，外部仓储不能绕过。摘要额度耗尽可保留旧概览与完整未覆盖原文；租约失效或仓储不可用则取消准备。固定包与摘要细节见 [记忆系统](./剧情连续性与结构化记忆.md)。
 
 ## 统一重试反馈
 

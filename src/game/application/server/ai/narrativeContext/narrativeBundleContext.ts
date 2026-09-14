@@ -101,19 +101,23 @@ function itemStateSection(context: EntityContextProjection): string {
 }
 
 function sourceLinkedMemoryText(memory: NarrativeMemoryContext): string {
+  if (memory.observerId !== PLAYER_ENTITY_ID) throw new Error("AUTHOR_MEMORY_OBSERVER_MISMATCH");
   const renderEntry = (entry: NarrativeMemoryContext["uncovered"][number]): string =>
     `historyId=${entry.id}; sequence=${entry.sequence}; turn=${entry.turnNumber}; kind=${entry.kind}; speaker=${entry.speakerId === null ? "旁白" : entry.speakerId}; audience=[${entry.audienceIds.join(", ")}]; text=${entry.text}`;
   const entries = [...memory.uncovered, ...memory.recalled]
     .sort((left, right) => left.sequence - right.sequence || left.id.localeCompare(right.id))
     .map(renderEntry);
-  const events = memory.requiredEvents.map((event) =>
-    `eventId=${event.eventId}; sequence=${event.sequence}; turn=${event.turnNumber}; kind=${event.kind}; actors=[${event.actorIds.join(", ")}]; targets=[${event.targetIds.join(", ")}]`);
+  const renderEvent = (event: NarrativeMemoryContext["requiredEvents"][number]) =>
+    `eventId=${event.eventId}; sequence=${event.sequence}; turn=${event.turnNumber}; kind=${event.kind}; outcome=${event.outcome}; payload=${JSON.stringify(event.payload)}`;
+  const events = memory.requiredEvents.map(renderEvent);
+  const requiredIds = new Set(memory.requiredEvents.map(event => event.eventId));
+  const overviewEvents = (memory.overviewEvents ?? []).filter(event => !requiredIds.has(event.eventId)).map(renderEvent);
   return [
     "以下内容是同一 observer 的来源可追溯长期记忆包；原话只能按 speaker/audience 理解，不能把玩家选项当成 NPC 亲口说过的话。",
     `observer=${memory.observerId}; coveredThroughSequence=${memory.coveredThroughSequence}`,
     `必需事件：\n${events.join("\n") || "（无）"}`,
     `来源原文：\n${entries.map((entry) => `- ${entry}`).join("\n") || "（无）"}`,
-    `概览来源引用（正文必须由原始来源重建）：history=${memory.overviewHistoryIds.join(", ") || "无"}; events=${memory.overviewEventIds.join(", ") || "无"}`,
+    `概览中的当时事件（不是当前状态）：\n${overviewEvents.join("\n") || "（无额外事件）"}`,
   ].join("\n");
 }
 
@@ -279,7 +283,10 @@ export function buildDecisionNarrativeContextBlocks(
   );
   const activeQuest = worldState.quests.find((quest) => quest.status === "active" && quest.kind === "main");
   const openingHandoff = buildOpeningHandoffContext({ worldState, job });
-  const storyEvidence = retrieveStoryEvidence({
+  const storyEvidence = input.memoryContext !== undefined ? {
+    entityIds: input.memoryContext.referencedEntityIds, eventIds: [], historyIds: [],
+    ambiguousEntityIds: input.memoryContext.ambiguousEntityIds, manifest: [],
+  } : retrieveStoryEvidence({
     worldState,
     storyState,
     observerId: PLAYER_ENTITY_ID,
@@ -315,9 +322,10 @@ export function buildDecisionNarrativeContextBlocks(
     entityStore: worldState.entityStore,
   });
   const openingHandoffEventIds = new Set((openingHandoff?.requiredEventIds ?? []).map(String));
+  const packetEventIds = new Set([...(input.memoryContext?.requiredEvents ?? []), ...(input.memoryContext?.overviewEvents ?? [])].map(event => String(event.eventId)));
   const currentRequiredEventsText = narrativeMemory.requiredEventsText
     .split("\n")
-    .filter((line) => ![...openingHandoffEventIds].some((eventId) => line.startsWith(`eventId=${eventId};`)))
+    .filter((line) => ![...openingHandoffEventIds, ...packetEventIds].some((eventId) => line.startsWith(`eventId=${eventId};`)))
     .join("\n");
   const style = buildStylePolicy(worldState.generation.setup);
   const expectedObjectiveLink = job.objectiveTransition.after === null
@@ -531,11 +539,20 @@ export function buildDecisionNarrativeContextBlocks(
     }));
   }
   if (input.memoryContext !== undefined) {
+    const memory = input.memoryContext;
+    const mandatoryRefs = new Set(memory.manifest.filter(entry => entry.mandatory).map(entry => entry.ref));
+    const optionalRecalled = memory.recalled.filter(entry => !mandatoryRefs.has(entry.id));
     blocks.push(block({
       id: "bundle:source-linked-memory", slot: "relevant_events", title: "来源可追溯长期记忆",
       authority: "event", retention: "mandatory", priority: 975,
-      source: { kind: "narrative_memory_context", refs: input.memoryContext.manifest.map((entry) => entry.ref) },
-      content: sourceLinkedMemoryText(input.memoryContext),
+      source: { kind: "narrative_memory_context", refs: memory.manifest.filter(entry => entry.mandatory).map(entry => entry.ref) },
+      content: sourceLinkedMemoryText({ ...memory, recalled: memory.recalled.filter(entry => mandatoryRefs.has(entry.id)) }),
+    }));
+    for (const entry of optionalRecalled) blocks.push(block({
+      id: `bundle:memory-recall:${entry.id}`, slot: "relevant_events", title: "相关旧事原文",
+      authority: "event", retention: "optional", priority: 720,
+      source: { kind: "narrative_history", refs: [entry.id] },
+      content: `historyId=${entry.id}; turn=${entry.turnNumber}; kind=${entry.kind}; speaker=${entry.speakerId}; text=${entry.text}`,
     }));
   }
   if (narrativeMemory.relevantEpisodesText !== "") {

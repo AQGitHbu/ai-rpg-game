@@ -4,40 +4,62 @@ import type { StoryState } from "@/game/domain/storyState";
 import type { WorldState } from "@/game/domain/worldState";
 import { projectObserverEvidence } from "@/game/gameplay/rpg/narrativeMemory";
 
-/**
- * Hash the server-owned source used by one observer's memory package. The
- * payload deliberately contains structured source records, not rendered
- * prose, so a changed event payload, fact/entity state, thread, or permission
- * projection invalidates the derived summary.
- */
-export function narrativeMemorySourceFingerprint(input: Readonly<{
-  readonly worldState: WorldState;
-  readonly storyState: StoryState;
-  readonly observerId: EntityId;
-  readonly throughSequence?: number;
-}>): string {
-  const evidence = projectObserverEvidence({
-    worldState: input.worldState,
-    storyState: input.storyState,
-    observerId: input.observerId,
+type Source = Readonly<{ worldState: WorldState; storyState: StoryState }>;
+
+/** Object insertion order is not part of source identity. Array order is. */
+export function canonicalMemoryJson(value: unknown): string {
+  return JSON.stringify(value, (_key, entry: unknown) => {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return entry;
+    return Object.fromEntries(Object.entries(entry).sort(([left], [right]) => left.localeCompare(right)));
   });
-  const throughSequence = input.throughSequence ?? Number.POSITIVE_INFINITY;
-  const visible = <T extends { readonly sequence: number }>(entries: readonly T[]) =>
-    entries.filter((entry) => entry.sequence <= throughSequence);
-  const canonical = {
-    formatVersion: 1,
-    observerId: String(input.observerId),
-    throughSequence: Number.isFinite(throughSequence) ? throughSequence : null,
-    history: visible(evidence.history),
-    events: visible(evidence.events),
-    // The hash may contain private state because it never leaves the server;
-    // including the complete store ensures a permission/lifecycle change
-    // cannot leave an old derived summary looking current.
+}
+
+function fingerprint(value: unknown): string {
+  return createHash("sha256").update(canonicalMemoryJson(value)).digest("hex");
+}
+
+/** A summary covers a History prefix, never an Event sequence interval. */
+export function narrativeMemorySourceFingerprint(input: Source & Readonly<{
+  observerId: EntityId;
+  throughSequence?: number;
+}>): string {
+  const evidence = projectObserverEvidence(input);
+  const history = evidence.history.filter((entry) => entry.sequence <= (input.throughSequence ?? Infinity));
+  const eventIds = new Set(history.flatMap((entry) => entry.eventIds.map(String)));
+  return fingerprint({
+    formatVersion: 2,
+    policyVersion: "memory-p2/1",
+    observerId: input.observerId,
+    throughSequence: input.throughSequence ?? null,
+    history,
+    // Visibility is recomputed against current permissions. Unrelated future
+    // events, Entity changes and tail History do not invalidate this prefix.
+    events: evidence.events.filter((event) => eventIds.has(String(event.eventId))),
+  });
+}
+
+/** The fixed job input needs the current source, not just its summary prefix. */
+export function preparedNarrativeMemorySourceFingerprint(input: Source & Readonly<{
+  playerObserverId: EntityId;
+  npcObserverId?: EntityId;
+}>): string {
+  const narrative = input.storyState.narrative;
+  let job: unknown = null;
+  if (narrative.status === "provider_pending" || narrative.status === "provider_failed") {
+    const { attempt: _attempt, ...sourceJob } = narrative.job;
+    job = sourceJob;
+  }
+  return fingerprint({
+    formatVersion: 2,
+    policyVersion: "memory-p2/1",
+    generationId: input.worldState.generation.generationId,
+    player: projectObserverEvidence({ ...input, observerId: input.playerObserverId }),
+    npc: input.npcObserverId === undefined ? null : projectObserverEvidence({ ...input, observerId: input.npcObserverId }),
     entities: input.worldState.entityStore.records,
-    currentLocationId: String(input.worldState.currentLocationId),
+    currentLocationId: input.worldState.currentLocationId,
     activeThreads: input.storyState.threads,
     dialogueFocus: input.storyState.dialogueFocus,
     delivery: input.storyState.delivery ?? null,
-  };
-  return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+    job,
+  });
 }

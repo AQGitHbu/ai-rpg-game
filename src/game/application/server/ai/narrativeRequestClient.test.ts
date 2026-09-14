@@ -13,6 +13,20 @@ function fakeClient(complete: RpgAiClient["complete"]): RpgAiClient {
 }
 
 describe("narrative request client", () => {
+  it.each(["author", "review", "npc_deliberation", "memory_summary"] as const)("checks the complete %s input before reserving or sending", async (purpose) => {
+    const complete = vi.fn().mockResolvedValue({ ok: true, content: "{}", latencyMs: 1 });
+    const reserve = vi.fn(async () => true);
+    const client = createNarrativeRequestClient({ aiClient: fakeClient(complete), maxEstimatedTokens: 10 });
+    const result = await client.completeNarrativeRequest({ purpose,
+      messages: [{ role: "system", content: "规则".repeat(6) }, { role: "user", content: "原文".repeat(6) }],
+      auditContext: { purpose: "narrative_memory_summary", trigger: "budget-test" },
+      signal: new AbortController().signal, reserveHttpAttempt: reserve,
+    });
+    expect(result).toMatchObject({ ok: false, code: "context_budget_exceeded" });
+    expect(reserve).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
+  });
+
   it("maps each purpose to the narrative bundle role and purpose-specific policy", async () => {
     const complete = vi.fn().mockResolvedValue({ ok: true, content: "{}", latencyMs: 1 });
     const client = createNarrativeRequestClient({ aiClient: fakeClient(complete) });

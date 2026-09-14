@@ -305,7 +305,7 @@ export function createOpeningGenerationSource(
         throw failOpening("unavailable");
       }
 
-      let result: Awaited<ReturnType<typeof aiClient.complete>>;
+      let result: Awaited<ReturnType<NarrativeRequestClient["completeNarrativeRequest"]>>;
       try {
         const messages = [
           { role: "system", content: buildOpeningPrompt(input) },

@@ -26,6 +26,9 @@ import { createFixtureOpeningCandidateSource } from "../../createGame";
 import { createWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 import { NARRATIVE_BUNDLE_CONTEXT_MAX_ESTIMATED_TOKENS } from "./narrativeContext/narrativeBundleContext";
 import type { NarrativeMemoryContext } from "@/game/domain/narrativeMemoryContext";
+import { prepareNarrativeMemory } from "../../prepareNarrativeMemory";
+import { asGameId } from "../persistence/gameRepository";
+import type { HistoryEntry } from "@/game/domain/narrativeHistory";
 
 function mockAiClient(complete: ReturnType<typeof vi.fn>): RpgAiClient {
   return {
@@ -971,6 +974,48 @@ describe("createNarrativeBundleSource", () => {
     const [, messages, auditContext] = complete.mock.calls[0]! as [string, readonly AiMessage[], { readonly narrativeContext?: unknown }];
     expect(messages[0]!.content).toContain("委托人说过：先核对封口，再把信交给渡口的人。");
     expect(JSON.stringify(auditContext.narrativeContext)).toContain("bundle:source-linked-memory");
+  });
+
+  it("retrieves a quote omitted by the overview and carries distinct event payloads into the actual author request once", async () => {
+    const complete = vi.fn().mockResolvedValue({ ok: true, content: JSON.stringify(validBundleResponse) });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete), allowLegacyDecisionDto: true });
+    const base = makeWorldState();
+    const events = ["first", "second", "overview"].map((id, index) => makeCommittedEvent({ type: "npc_interaction_recorded", npcId: asNpcId("npc_1"), dialogueAct: "support" }, {
+      eventId: asEventId(`memory:${id}`), sequence: 100 + index, actorIds: [PLAYER_ENTITY_ID], targetIds: [], locationId: base.currentLocationId,
+    }));
+    const worldState = { ...base, eventLedger: events };
+    const quote = "封口完好才交付，破损就先回来找我。";
+    const entries: HistoryEntry[] = Array.from({ length: 20 }, (_, sequence) => ({
+      id: `recall:${sequence}`, segmentId: `segment:${sequence}`, sequence, actionId: null, jobId: null,
+      sceneId: `scene:${sequence}`, revision: 0, turnNumber: 1, kind: "narration", speakerId: null, audienceIds: [PLAYER_ENTITY_ID],
+      entityIds: sequence === 0 || sequence === 5 ? [base.currentLocationId] : [], factIds: [],
+      eventIds: sequence === 0 ? [events[2]!.eventId] : [], choiceToken: null,
+      text: sequence === 5 ? quote : `独立历史片段${sequence}`,
+    }));
+    const storyState = { ...makeStoryState(), history: { entries } };
+    const job = { ...makeJob(), utterance: "接下来怎么办", domainEventIds: events.slice(0, 2).map(event => event.eventId) };
+    const result = await prepareNarrativeMemory({
+      record: { gameId: asGameId("memory:actual-prompt"), createdAt: "2026-01-01", revision: 1, worldState, storyState },
+      observerId: PLAYER_ENTITY_ID, job,
+      source: { select: async () => { throw new Error("No new summary needed"); } },
+      repository: { load: async () => ({ summaryRevision: 1, state: {
+        formatVersion: 1, observerId: PLAYER_ENTITY_ID, policyVersion: "memory-p2/1", summaryRevision: 1,
+        coveredThroughSequence: 9, coveredSourceFingerprint: "validated-by-repository", batches: [],
+        overview: { historyIds: ["recall:0"], eventIds: [events[2]!.eventId] },
+      } }), publish: async () => ({ ok: true }) },
+      policy: { threshold: 50, batchSize: 10, rawSoftEstimatedTokens: 24_000, summarySourceMaxEstimatedTokens: 24_000, overviewMaxEstimatedTokens: 6_000, promptMaxEstimatedTokens: 64_000 },
+      summaries: "enabled", signal: new AbortController().signal, reserveBatchUpdate: async () => false, reserveSummaryHttpAttempt: async () => false,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.context.recalled.map(entry => entry.id)).toContain("recall:5");
+    expect(result.context.requiredEvents.map(event => event.eventId)).toEqual(events.slice(0, 2).map(event => event.eventId));
+    await source.generate({ kind: "decision", worldState, storyState, job, memoryContext: result.context });
+    const messages = complete.mock.calls[0]![1] as readonly AiMessage[];
+    const prompt = messages.map(message => message.content).join("\n");
+    expect(prompt.split(quote)).toHaveLength(2);
+    for (const event of events) expect(prompt).toContain(`eventId=${event.eventId}; sequence=${event.sequence}`);
+    expect(prompt).toContain(`payload=${JSON.stringify(events[2]!.payload)}`);
   });
 
   it("rejects a complete decision context over the frozen prompt budget before transport", async () => {

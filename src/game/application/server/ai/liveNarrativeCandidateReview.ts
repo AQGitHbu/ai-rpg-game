@@ -262,6 +262,7 @@ export function createLiveNarrativeCandidateReview(
           },
         ];
         const auditContext = {
+          ...(input.context.auditLink?.memory === undefined ? {} : { memory: input.context.auditLink.memory }),
           purpose: "narrative_candidate_review",
           trigger: "narrative_candidate_review",
           revision: input.candidateVersion,
@@ -274,6 +275,7 @@ export function createLiveNarrativeCandidateReview(
               messages,
               auditContext,
               signal: input.context.signal ?? new AbortController().signal,
+              ...(input.context.kind !== "decision" || input.context.maxEstimatedTokens === undefined ? {} : { maxEstimatedTokens: input.context.maxEstimatedTokens }),
               ...(input.context.reserveHttpAttempt === undefined ? {} : { reserveHttpAttempt: input.context.reserveHttpAttempt }),
             });
         if (!result.ok) return resultFailure(input, "PROVIDER_FAILURE");

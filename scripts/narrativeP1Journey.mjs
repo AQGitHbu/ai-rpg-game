@@ -134,7 +134,7 @@ export function installTsHooks() {
       }
       if ((specifier.startsWith("./") || specifier.startsWith("../"))
         && context.parentURL?.startsWith("file:")
-        && !/\.[a-z]+$/i.test(specifier)) {
+        && !/\.(?:ts|tsx|js|mjs|cjs|json|node)$/i.test(specifier)) {
         const found = tryFile(resolve(dirname(fileURLToPath(context.parentURL)), specifier));
         if (found) return { url: pathToFileURL(found).href, shortCircuit: true };
       }

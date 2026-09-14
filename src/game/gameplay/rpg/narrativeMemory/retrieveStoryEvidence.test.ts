@@ -146,6 +146,28 @@ function makeStoryState(world: WorldState, focusNpcId = HELPER_A): StoryState {
 }
 
 describe("retrieveStoryEvidence", () => {
+  it("round-robins optional history without charging already present or mandatory sources", () => {
+    const world = makeWorld();
+    const base = makeStoryState(world);
+    const entries = [HELPER_A, HELPER_B, LOCATION, PLAYER].flatMap((entityId, group) =>
+      Array.from({ length: 6 }, (_, index) => ({ ...base.history.entries[0]!,
+        id: `optional:${group}:${index}`, sequence: group * 6 + index, speakerId: null,
+        entityIds: [entityId], eventIds: [], text: `不同的经历片段${group}-${index}` })));
+    const storyState = { ...base, dialogueFocus: null, history: { entries } };
+    const result = retrieveStoryEvidence({ worldState: world, storyState, observerId: PLAYER,
+      text: "接下来怎么办", actionEntityIds: [], focusEntityIds: [], contextEntityIds: [HELPER_A, HELPER_B, LOCATION, PLAYER],
+      presentHistoryIds: ["optional:0:5"] });
+    expect(result.historyIds).toHaveLength(10);
+    expect(result.historyIds).not.toContain("optional:0:5");
+    for (let group = 0; group < 4; group += 1) {
+      const count = result.historyIds.filter(id => id.startsWith(`optional:${group}:`)).length;
+      expect(count).toBeGreaterThanOrEqual(2);
+      expect(count).toBeLessThanOrEqual(3);
+    }
+    const mandatory = retrieveStoryEvidence({ worldState: world, storyState: base, observerId: PLAYER,
+      text: "之前替我挡过一刀的人是谁", actionEntityIds: [], focusEntityIds: [], presentHistoryIds: [OLD_HISTORY_ID] });
+    expect(mandatory.manifest).toContainEqual(expect.objectContaining({ ref: OLD_HISTORY_ID, mandatory: true }));
+  });
   it("resolves a registered alias to the entity and its supporting event", () => {
     const world = makeWorld();
     const selection = retrieveStoryEvidence({

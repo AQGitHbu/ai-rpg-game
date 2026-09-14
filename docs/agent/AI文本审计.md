@@ -13,7 +13,9 @@ AI 文本审计是独立的 append-only JSONL，服务于 prompt/模型正文/�
 - `ai_call.role` 为 `intent`、`opening`、`scene`、`world` 或 `narrative_bundle`。生产 decision path 的 bundle manifest 只含 compiler version、预算、block 元数据和裁剪统计，不含 prompt 正文副本。
 - `context.retry` 区分 `normal`/`manual_failed_job` 与 `initial`/`transport`/`content_repair`；顶层 `ai_call.attempt` 是 transport 序号。历史 `repair` 只由 CLI 只读归一为 `legacy_unknown`，不改写原 JSONL。
 - provider 失败记录调用和稳定错误证据；`story_text.source` 只有审批后的 `generated` 才代表生产 AI 文本，`fixture` 只表示离线，`rule` 只表示规则反馈。
-- P2 摘要选择使用既有 `narrative_bundle` role，审计 purpose 为 `narrative_memory_summary`；请求只保存受权限投影的完整来源，selection 只能引用已有 History/Event ID。固定记忆包的 hash、覆盖水位和摘要维护失败原因属于专用审计元数据，不写普通日志，也不把摘要正文伪装成新的 Story text。
+- 摘要选择使用既有 `narrative_bundle` role，purpose 为 `narrative_memory_summary`，trigger 区分 `memory_summary_batch` 与 `memory_summary_overview`；selection 只能引用该次权限投影内的 History/Event ID。full 审计保存实际发送的来源原文与事件 payload，不能把选编结果伪装成新的 `story_text`。
+- `ai_call.context.memory` 保存 observerId、sourceFingerprint，以及按请求提供的 preparedHash、coveredThroughSequence、historyIds、eventIds、rawCount、recallCount。摘要请求记录自身 observer 和输入来源；作者与 reviewer 记录固定 player 包；NPC 判断记录对应 NPC 的水位与引用，并保留共同固定包 hash。元数据仅含标识和统计，私密原文仍只在该 NPC 请求的 full messages 内，不复制到作者 messages 或普通诊断日志。
+- 准备失败或输入超限可能在任何 HTTP 之前结束，此时没有对应 `ai_call` 不能解释为 provider 成功。结合正式 job 的稳定失败原因、固定包/预算状态和旅程执行产物判断；审计字段不代替真实 SQLite 来源校验。真实 API、离线 transport 和严格零网络 replay 的性质由各自登记协议与磁带区分，不能仅凭场景的 generated 标记宣称实机验收。
 
 ## 主要事件
 

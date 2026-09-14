@@ -16,7 +16,7 @@ function record(): GameRecord {
   return {
     gameId: asGameId("game:prepare"), revision: 3, createdAt: "2026-09-14T00:00:00.000Z",
     worldState: { generation: { generationId: asGenerationId("generation:prepare") }, entityStore: { records: [] }, eventLedger: [] } as never,
-    storyState: { history: { entries: [] }, narrative: { status: "ready" } } as never,
+    storyState: { history: { entries: [] }, threads: [], narrative: { status: "ready" } } as never,
   };
 }
 
@@ -42,11 +42,46 @@ function longRecord(length = 61): GameRecord {
   return {
     ...record(),
     worldState: { generation: { generationId: asGenerationId("generation:prepare") }, entityStore: { records: [] }, eventLedger: [] } as never,
-    storyState: { history: { entries }, narrative: { status: "ready" } } as never,
+    storyState: { history: { entries }, threads: [], narrative: { status: "ready" } } as never,
   };
 }
 
 describe("prepareNarrativeMemory", () => {
+  it("does not force another compression because of long source text already covered and omitted", async () => {
+    const base = longRecord();
+    const current = { ...base, storyState: { ...base.storyState, history: { entries: base.storyState.history.entries.map(entry =>
+      entry.sequence === 5 ? { ...entry, text: "旧".repeat(30_000) } : entry) } } };
+    const source: NarrativeMemorySummarySource = { select: vi.fn(async () => ({ ok: false as const, failure: { kind: "AI_CALL_FAILED" as const, phase: "scene" as const } })) };
+    await prepareNarrativeMemory({ record: current, observerId: PLAYER, job: {} as never, source,
+      repository: { load: async () => ({ summaryRevision: 1, state: { formatVersion: 1, observerId: PLAYER, policyVersion: "memory-p2/1",
+        summaryRevision: 1, coveredThroughSequence: 49, coveredSourceFingerprint: "valid", batches: [], overview: { historyIds: ["history:0"], eventIds: [] } } }), publish: async () => ({ ok: true }) },
+      policy, summaries: "enabled", signal: new AbortController().signal, reserveBatchUpdate: async () => true, reserveSummaryHttpAttempt: async () => true });
+    expect(source.select).not.toHaveBeenCalled();
+  });
+  it.each([false, true])("protects current job inputs for length forcing=%s", async (force) => {
+    const source: NarrativeMemorySummarySource = { select: vi.fn(async () => { throw new Error("current input must stay raw"); }) };
+    const repository: NarrativeMemorySummaryRepository = { load: async () => ({ state: null, summaryRevision: 0 }), publish: async () => ({ ok: true }) };
+    const length = force ? 10 : 50;
+    const result = await prepareNarrativeMemory({ record: longRecord(length), observerId: PLAYER,
+      job: { actionId: `action:${length - 1}`, jobId: asNarrativeJobId(`job:${length - 1}`) } as never,
+      source, repository, policy: { ...policy, rawSoftEstimatedTokens: force ? 1 : 24_000 }, summaries: "enabled",
+      signal: new AbortController().signal, reserveBatchUpdate: async () => true, reserveSummaryHttpAttempt: async () => true });
+    expect(source.select).not.toHaveBeenCalled();
+    expect(result.ok && result.context.uncovered.map(entry => entry.id)).toContain(`history:${length - 1}`);
+  });
+
+  it("does not finish or publish after cancellation during summary selection", async () => {
+    const controller = new AbortController();
+    const source: NarrativeMemorySummarySource = { select: vi.fn(async () => {
+      controller.abort();
+      return { ok: true as const, selection: { historyIds: ["history:0"], eventIds: [] } };
+    }) };
+    const repository: NarrativeMemorySummaryRepository = { load: async () => ({ state: null, summaryRevision: 0 }), publish: vi.fn(async () => ({ ok: true as const })) };
+    expect(await prepareNarrativeMemory({ record: longRecord(50), observerId: PLAYER, job: {} as never,
+      source, repository, policy, summaries: "enabled", signal: controller.signal,
+      reserveBatchUpdate: async () => true, reserveSummaryHttpAttempt: async () => true })).toEqual({ ok: false, code: "CANCELLED" });
+    expect(repository.publish).not.toHaveBeenCalled();
+  });
   it("keeps the original-source path available when summaries are disabled", async () => {
     const source: NarrativeMemorySummarySource = { select: vi.fn(async () => { throw new Error("must not call summary source"); }) };
     const repository: NarrativeMemorySummaryRepository = { load: vi.fn(async () => ({ state: null, summaryRevision: 0 })), publish: vi.fn(async () => ({ ok: true as const })) };

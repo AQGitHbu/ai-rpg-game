@@ -61,6 +61,19 @@ function selection(): EvidenceSelection {
 }
 
 describe("buildNarrativeMemoryContext", () => {
+  it("preserves distinct mandatory events and source payloads in overview events", () => {
+    const first = evidence().events[0]!;
+    const second = { ...first, eventId: asEventId("story:second"), sequence: 8 };
+    const result = buildNarrativeMemoryContext({
+      evidence: { ...evidence(), events: [first, second] },
+      selection: { ...selection(), eventIds: [first.eventId, second.eventId, first.eventId],
+        manifest: [first, second].map(event => ({ ref: String(event.eventId), reason: "active_promise", mandatory: true })) },
+      coveredThroughSequence: 1, overviewHistoryIds: ["history:old"], overviewEventIds: [second.eventId],
+    });
+    expect(result.requiredEvents).toEqual([first, second]);
+    expect(result).toMatchObject({ overviewEvents: [second] });
+    expect(result.manifest).toContainEqual({ ref: "history:later", reason: "uncovered_history", mandatory: true });
+  });
   it("keeps every visible source uncovered when there is no valid overview", () => {
     const result = buildNarrativeMemoryContext({
       evidence: evidence(), selection: selection(), coveredThroughSequence: -1,

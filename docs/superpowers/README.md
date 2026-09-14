@@ -14,3 +14,4 @@
 - [P1 完整小故事实施 Plan](plans/2026-09-12-narrative-architecture-p1.md)：保留首期建设、收敛与最小收尾的执行证据，旧失败批次不再作为继续实施入口。
 - [P2 较长经历召回与完整中篇 Plan](plans/2026-09-14-narrative-architecture-p2.md)：在现有代码上补齐旧事证据链、派生摘要和完整短/中篇验收；范围依据见 [P2 代码核查](reports/2026-09-14-narrative-p2-scope-review.md)。P3/P4 尚不展开实施任务。
 - [P2 Plan 独立审阅](reports/2026-09-14-narrative-p2-plan-review.md)：固定记忆恢复、租约隔离和 NPC 私密传递的规划问题及修订依据。
+- [P2 准入缺口修复 Plan](plans/2026-09-14-narrative-p2-readiness-fixes.md)：组织实现核查后的 R1–R6 修复；对应 [离线验收报告](reports/2026-09-14-narrative-p2-readiness-fixes.md) 与 [验证协议](reports/2026-09-14-narrative-p2-protocol.md)。

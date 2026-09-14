@@ -2,7 +2,7 @@ import type { EntityId } from "@/game/domain/entity/entityCore";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { NarrativeMemoryContext, NarrativeMemoryPolicy } from "@/game/domain/narrativeMemoryContext";
 import type { MemorySummaryState } from "@/game/domain/narrativeMemorySummary";
-import { buildNarrativeMemoryContext, planMemorySummary, projectObserverEvidence } from "@/game/gameplay/rpg/narrativeMemory";
+import { buildNarrativeMemoryContext, planMemorySummary, projectObserverEvidence, retrieveStoryEvidence } from "@/game/gameplay/rpg/narrativeMemory";
 import type { GameRecord } from "./server/persistence/gameRepository";
 import type { NarrativeMemorySummaryRepository } from "./narrativeMemorySummaryRepository";
 import type { NarrativeMemorySummarySource } from "./narrativeMemorySummarySource";
@@ -14,29 +14,33 @@ function estimateMemoryTokens(text: string): number {
   return Math.max(1, Math.ceil(total));
 }
 
-function selectionForContext(evidence: ReturnType<typeof projectObserverEvidence>, selectedHistoryIds: readonly string[], selectedEventIds: readonly string[]) {
-  const selected = new Set([...selectedHistoryIds, ...selectedEventIds]);
-  return {
-    entityIds: evidence.knownEntityIds,
-    eventIds: evidence.events.filter((event) => selected.has(String(event.eventId))).map((event) => event.eventId),
-    historyIds: [...selectedHistoryIds],
-    ambiguousEntityIds: [],
-    manifest: [...selectedHistoryIds.map((id) => ({ ref: id, reason: "visible_history", mandatory: true })),
-      ...evidence.events.filter((event) => selected.has(String(event.eventId))).map((event) => ({ ref: String(event.eventId), reason: "summary_source", mandatory: true }))],
-  };
-}
-
-function rawContext(input: Readonly<{ evidence: ReturnType<typeof projectObserverEvidence>; covered: number; selectedHistoryIds: readonly string[]; selectedEventIds: readonly string[] }>): NarrativeMemoryContext {
-  const overview = new Set(input.selectedHistoryIds);
-  const historyIds = input.evidence.history
-    .filter((entry) => entry.sequence > input.covered || overview.has(entry.id))
-    .map((entry) => entry.id);
+function rawContext(input: Readonly<{ record: GameRecord; job: PendingNarrativeJob; evidence: ReturnType<typeof projectObserverEvidence>; covered: number; selectedHistoryIds: readonly string[]; selectedEventIds: readonly string[] }>): NarrativeMemoryContext {
+  const presentHistory = input.evidence.history.filter(entry => entry.sequence > input.covered || input.selectedHistoryIds.includes(entry.id));
+  const contextEventIds = new Set([...input.selectedEventIds, ...presentHistory.flatMap(entry => entry.eventIds.map(String))]);
+  const contextEntities = [...presentHistory.flatMap(entry => entry.entityIds),
+    ...input.evidence.events.filter(event => contextEventIds.has(String(event.eventId)))
+      .flatMap(event => [...event.actorIds, ...event.targetIds, ...(event.locationId === null ? [] : [event.locationId])])];
+  const actionEntityIds = Object.entries(input.job.actionSummary ?? {})
+    .filter(([key]) => ["npcId", "locationId", "itemId", "factId", "questId", "enemyId"].includes(key))
+    .map(([, value]) => value as EntityId);
+  const selection = retrieveStoryEvidence({
+    worldState: input.record.worldState, storyState: input.record.storyState,
+    observerId: input.evidence.observerId, visibleEvidence: input.evidence,
+    text: input.job.utterance ?? input.job.selectedDialogue?.label ?? "",
+    actionEntityIds,
+    focusEntityIds: input.job.focusNpcId === undefined ? [] : [input.job.focusNpcId],
+    contextEntityIds: [...new Set([...contextEntities, input.record.worldState.currentLocationId].filter(id => id !== undefined))],
+    contextEventIds: input.evidence.events.filter(event => contextEventIds.has(String(event.eventId))).map(event => event.eventId),
+    presentHistoryIds: presentHistory.map(entry => entry.id),
+  });
+  const requiredEventIds = input.evidence.events.filter(event => input.job.domainEventIds?.includes(event.eventId)).map(event => event.eventId);
   return buildNarrativeMemoryContext({
     evidence: input.evidence,
-    selection: selectionForContext(input.evidence, historyIds, input.selectedEventIds),
+    selection: { ...selection, eventIds: [...selection.eventIds, ...requiredEventIds],
+      manifest: [...selection.manifest, ...requiredEventIds.map(id => ({ ref: String(id), reason: "current_job_event", mandatory: true }))] },
     coveredThroughSequence: input.covered,
     overviewHistoryIds: input.selectedHistoryIds,
-    overviewEventIds: input.selectedEventIds as never,
+    overviewEventIds: input.evidence.events.filter(event => input.selectedEventIds.includes(String(event.eventId))).map(event => event.eventId),
   });
 }
 
@@ -44,9 +48,10 @@ function sourceFitsBudget(input: Readonly<{ history: readonly unknown[]; events:
   return estimateMemoryTokens(JSON.stringify({ history: input.history, events: input.events })) <= input.maxTokens;
 }
 
-function finishWithContext(input: Readonly<{ policy: NarrativeMemoryPolicy }>, evidence: ReturnType<typeof projectObserverEvidence>, previous: MemorySummaryState | null) {
-  const context = rawContext({ evidence, covered: previous?.coveredThroughSequence ?? -1, selectedHistoryIds: previous?.overview.historyIds ?? [], selectedEventIds: previous?.overview.eventIds ?? [] });
-  const estimated = [...context.uncovered, ...context.recalled].reduce((total, entry) => total + estimateMemoryTokens(entry.text), 0);
+function finishWithContext(input: Readonly<{ record: GameRecord; job: PendingNarrativeJob; policy: NarrativeMemoryPolicy; signal: AbortSignal }>, evidence: ReturnType<typeof projectObserverEvidence>, previous: MemorySummaryState | null) {
+  if (input.signal.aborted) return { ok: false as const, code: "CANCELLED" as const };
+  const context = rawContext({ ...input, evidence, covered: previous?.coveredThroughSequence ?? -1, selectedHistoryIds: previous?.overview.historyIds ?? [], selectedEventIds: previous?.overview.eventIds ?? [] });
+  const estimated = estimateMemoryTokens(JSON.stringify(context));
   return estimated > input.policy.promptMaxEstimatedTokens
     ? { ok: false as const, code: "MEMORY_CONTEXT_OVERFLOW" as const }
     : { ok: true as const, context };
@@ -65,26 +70,35 @@ export async function prepareNarrativeMemory(input: Readonly<{
   readonly reserveSummaryHttpAttempt: () => Promise<boolean>;
 }>): Promise<{ readonly ok: true; readonly context: NarrativeMemoryContext } | { readonly ok: false; readonly code: "MEMORY_CONTEXT_OVERFLOW" | "CANCELLED" }> {
   if (input.signal.aborted) return { ok: false, code: "CANCELLED" };
-  void input.job;
   const evidence = projectObserverEvidence({ worldState: input.record.worldState, storyState: input.record.storyState, observerId: input.observerId });
   let previous: MemorySummaryState | null = null;
   if (input.summaries === "enabled") {
     const loaded = await input.repository.load({ gameId: input.record.gameId, generationId: input.record.worldState.generation.generationId, observerId: input.observerId });
     previous = loaded.state;
-    const rawEstimatedTokens = estimateMemoryTokens(JSON.stringify({ history: evidence.history, events: evidence.events }));
+    const remainingHistory = evidence.history.filter(entry => entry.sequence > (previous?.coveredThroughSequence ?? -1)
+      || previous?.overview.historyIds.includes(entry.id));
+    const remainingEventIds = new Set([...remainingHistory.flatMap(entry => entry.eventIds.map(String)), ...(previous?.overview.eventIds ?? []).map(String)]);
+    const rawEstimatedTokens = estimateMemoryTokens(JSON.stringify({ history: remainingHistory,
+      events: evidence.events.filter(event => remainingEventIds.has(String(event.eventId))) }));
     const plan = planMemorySummary({
       evidence,
       previous,
       forceForLength: rawEstimatedTokens > input.policy.rawSoftEstimatedTokens,
+      excludedHistoryIds: evidence.history.filter(entry =>
+        input.job.actionId !== undefined && entry.actionId === input.job.actionId
+        || input.job.jobId !== undefined && entry.jobId === input.job.jobId).map(entry => entry.id),
     });
     if (plan.kind === "batch" && await input.reserveBatchUpdate()) {
       if (input.signal.aborted) return { ok: false, code: "CANCELLED" };
       const batchHistory = evidence.history.filter((entry) => plan.sourceHistoryIds.includes(entry.id));
-      if (!sourceFitsBudget({ history: batchHistory, events: evidence.events, maxTokens: input.policy.summarySourceMaxEstimatedTokens })) {
+      const batchEventIds = new Set(batchHistory.flatMap(entry => entry.eventIds.map(String)));
+      const batchEvents = evidence.events.filter(event => batchEventIds.has(String(event.eventId)));
+      if (!sourceFitsBudget({ history: batchHistory, events: batchEvents, maxTokens: input.policy.summarySourceMaxEstimatedTokens })) {
         // Preserve the prior watermark and use the original source path below.
         return finishWithContext(input, evidence, previous);
       }
-      const batchResult = await input.source.select({ kind: "batch", observerId: input.observerId, history: batchHistory, events: evidence.events, signal: input.signal, reserveHttpAttempt: input.reserveSummaryHttpAttempt });
+      const batchResult = await input.source.select({ kind: "batch", observerId: input.observerId, history: batchHistory, events: batchEvents, signal: input.signal, reserveHttpAttempt: input.reserveSummaryHttpAttempt });
+      if (input.signal.aborted) return { ok: false, code: "CANCELLED" };
       if (batchResult.ok) {
         const leafBatches = [...(previous?.batches ?? []), {
           id: `batch:${plan.throughSequence}`,
@@ -102,6 +116,7 @@ export async function prepareNarrativeMemory(input: Readonly<{
           ? await input.source.select({ kind: "overview", observerId: input.observerId, history: overviewHistory, events: overviewEvents, signal: input.signal, reserveHttpAttempt: input.reserveSummaryHttpAttempt })
           : null;
         if (overviewResult?.ok === true) {
+          if (input.signal.aborted) return { ok: false, code: "CANCELLED" };
           const next: MemorySummaryState = {
             formatVersion: 1, observerId: input.observerId, policyVersion: "memory-p2/1",
             summaryRevision: (previous?.summaryRevision ?? loaded.summaryRevision) + 1,

@@ -1,92 +1,76 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { installTsHooks, freezeCurrentCodeIdentity } from "./narrativeP1Journey.mjs";
+import { projectRoot, readAiEnv } from "./aiEnv.mjs";
 
+// Protocol construction and validation live only in the TypeScript module.
 export const NARRATIVE_P2_PROTOCOL_VERSION = "narrative-p2/v1";
-export const NARRATIVE_P2_ROUTES = Object.freeze([
-  { routeId: "S-short", gameLength: "short", acts: 3 },
-  { routeId: "M-medium", gameLength: "medium", acts: 5 },
-]);
-
-function canonicalJson(value) {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
-}
-
-function hash(value) { return createHash("sha256").update(canonicalJson(value)).digest("hex"); }
-function protocolWithoutHash(value) { const rest = { ...value }; delete rest.protocolHash; return rest; }
-
 export function parseNarrativeP2Args(argv) {
   const result = { mode: "replay", runId: "", protocol: "", output: "", replaySource: "" };
+  const keys = { mode: "mode", "run-id": "runId", protocol: "protocol", output: "output", "replay-source": "replaySource" };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
-    if (!argument?.startsWith("--")) continue;
+    if (!argument?.startsWith("--")) throw new Error("INVALID_ARGUMENT");
     const equal = argument.indexOf("=");
     const key = equal >= 0 ? argument.slice(2, equal) : argument.slice(2);
-    const value = equal >= 0 ? argument.slice(equal + 1) : argv[++index];
-    if (key === "mode") result.mode = value ?? "";
-    if (key === "run-id") result.runId = value ?? "";
-    if (key === "protocol") result.protocol = value ?? "";
-    if (key === "output") result.output = value ?? "";
-    if (key === "replay-source") result.replaySource = value ?? "";
+    if (!(key in keys)) throw new Error("UNKNOWN_ARGUMENT");
+    result[keys[key]] = equal >= 0 ? argument.slice(equal + 1) : argv[++index] ?? "";
   }
   return result;
 }
-
 export function validateNarrativeP2Args(args) {
   if (!["register", "live", "replay"].includes(args?.mode)) return "INVALID_MODE";
-  if (!args?.runId?.trim()) return "MISSING_RUN_ID";
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(args?.runId ?? "")) return "INVALID_RUN_ID";
   if (!args?.protocol?.trim()) return "MISSING_PROTOCOL";
   if (!args?.output?.trim()) return "MISSING_OUTPUT";
   return null;
 }
-
-function makeProtocol(runId) {
-  const protocol = {
-    protocolVersion: NARRATIVE_P2_PROTOCOL_VERSION,
-    runId,
-    plannedRoutes: 2,
-    routes: NARRATIVE_P2_ROUTES,
-    input: {
-      gameType: "wuxia", gameLength: "medium", characterName: "沈行", characterIdentity: "受托递送书信的旅人",
-      characterProfile: "愿意听取不同意见并记住先前约定", personalityTags: ["谨慎", "守信"],
-      worldPremise: "沿途数个聚落之间往来书信，人物各有立场，委托可由实际交付完成。",
-      storyOpening: "我接受一封公开书信的递送委托。请明确委托人的理由与接收约定，沿途人物的不同意见应围绕这次递送；我会在后段回想早先的话，再决定完成交付。",
-      narrativeStyle: "novel", contentIntensity: "normal",
-    },
-    policy: { summaryThreshold: 50, summaryBatchSize: 10, summaryHttpPerEpoch: 8, summaryBatchUpdatesPerEpoch: 2, promptMaxEstimatedTokens: 64000 },
-    environment: { model: process.env.AI_MODEL?.trim() || "unconfigured-model", apiBaseUrl: process.env.AI_API_BASE_URL?.trim() || "https://unconfigured-provider.invalid" },
-  };
-  return { ...protocol, protocolHash: hash(protocol) };
+export function freezeP2CodeIdentity() {
+  freezeCurrentCodeIdentity();
+  const configFiles = ["package.json", "package-lock.json", "tsconfig.json", ".ai-game-foundation.json"];
+  const hash = createHash("sha256").update(process.env.NARRATIVE_P1_CODE_FINGERPRINT).update(process.version);
+  for (const file of configFiles) {
+    hash.update(file);
+    if (existsSync(resolve(projectRoot, file))) hash.update(readFileSync(resolve(projectRoot, file)));
+  }
+  return `${process.env.GIT_COMMIT}:${hash.digest("hex")}`;
 }
-
-export async function runNarrativeP2Journey(input) {
+function configuredEnvironment(mode, protocolPath) {
+  if (mode === "replay") {
+    const protocol = JSON.parse(readFileSync(protocolPath, "utf8"));
+    return { ...process.env, AI_MODEL: protocol.environment.model, AI_API_BASE_URL: protocol.environment.apiBaseUrl,
+      AI_NARRATIVE_INPUT_MAX_ESTIMATED_TOKENS: String(protocol.environment.inputMaxEstimatedTokens), AI_API_KEY: "offline-replay-no-network" };
+  }
+  const source = resolve(projectRoot, ".env.local");
+  const values = existsSync(source) ? readAiEnv(source) : new Map();
+  const env = { ...process.env };
+  for (const key of ["AI_MODEL", "AI_API_BASE_URL", "AI_NARRATIVE_INPUT_MAX_ESTIMATED_TOKENS", ...(mode === "live" ? ["AI_API_KEY"] : [])]) {
+    env[key] = process.env[key] ?? values.get(key)?.decoded;
+  }
+  return env;
+}
+export async function runNarrativeP2Journey(input, options = {}) {
   const issue = validateNarrativeP2Args({ mode: input.mode, runId: input.runId, protocol: input.protocolPath, output: input.outputDirectory });
   if (issue) throw new Error(issue);
   if (input.mode === "live" && process.env.RUN_REAL_AI_JOURNEY !== "1") throw new Error("P2_LIVE_REQUIRES_RUN_REAL_AI_JOURNEY");
-  mkdirSync(resolve(input.outputDirectory), { recursive: true });
-  if (input.mode === "register") {
-    const protocol = makeProtocol(input.runId);
-    mkdirSync(dirname(resolve(input.protocolPath)), { recursive: true });
-    writeFileSync(resolve(input.protocolPath), `${JSON.stringify(protocol, null, 2)}\n`);
-    return { plannedRoutes: 2, completedRoutes: 0, passed: true };
-  }
-  const protocol = JSON.parse(readFileSync(resolve(input.protocolPath), "utf8"));
-  if (protocol.protocolVersion !== NARRATIVE_P2_PROTOCOL_VERSION || protocol.protocolHash !== hash(protocolWithoutHash(protocol))) throw new Error("P2_PROTOCOL_HASH_MISMATCH");
-  const source = resolve(input.replaySource || input.outputDirectory);
-  const completedRoutes = NARRATIVE_P2_ROUTES.filter((route) => {
-    try { return JSON.parse(readFileSync(resolve(source, `${route.routeId}.json`), "utf8")).completed === true; } catch { return false; }
-  }).length;
-  if (input.mode === "live") throw new Error("P2_LIVE_DRIVER_NOT_CONFIGURED");
-  return { plannedRoutes: 2, completedRoutes, passed: completedRoutes === 2 };
+  if (input.mode === "replay" && resolve(input.outputDirectory) === resolve(input.replaySource || dirname(input.protocolPath))) throw new Error("P2_REPLAY_OUTPUT_MUST_BE_SEPARATE");
+  installTsHooks();
+  const codeFingerprint = freezeP2CodeIdentity();
+  const { runNarrativeP2Journey: run } = await import("../src/game/application/testing/narrativeP2Journey.ts");
+  const env = options.environment ?? configuredEnvironment(input.mode, input.protocolPath);
+  const environment = { model: env.AI_MODEL?.trim() ?? "", apiBaseUrl: env.AI_API_BASE_URL?.trim() ?? "",
+    inputMaxEstimatedTokens: Number(env.AI_NARRATIVE_INPUT_MAX_ESTIMATED_TOKENS ?? "64000") };
+  const routeRunner = input.mode === "register" ? undefined : options.routeRunner
+    ?? await (await import("./narrativeP2Production.mjs")).createNarrativeP2ProductionRunner(env);
+  return run(input, { environment, codeFingerprint: options.codeFingerprint ?? codeFingerprint, ...(routeRunner ? { routeRunner } : {}) });
 }
-
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-  const args = parseNarrativeP2Args(process.argv.slice(2));
-  runNarrativeP2Journey({ mode: args.mode, runId: args.runId, protocolPath: args.protocol, outputDirectory: args.output, replaySource: args.replaySource })
-    .then((result) => { console.log(`[narrative-p2] ${JSON.stringify(result)}`); process.exitCode = result.passed ? 0 : 1; })
-    .catch((error) => { console.error(`[narrative-p2] ${error.message}`); process.exitCode = 1; });
+  try {
+    const args = parseNarrativeP2Args(process.argv.slice(2));
+    const result = await runNarrativeP2Journey({ mode: args.mode, runId: args.runId, protocolPath: args.protocol, outputDirectory: args.output, replaySource: args.replaySource });
+    console.log(`[narrative-p2] ${JSON.stringify(result)}`); process.exitCode = result.passed ? 0 : 1;
+  } catch (error) { console.error(`[narrative-p2] ${error.message}`); process.exitCode = 1; }
 }

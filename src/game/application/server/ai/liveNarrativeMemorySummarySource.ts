@@ -5,13 +5,14 @@ import { parseMemorySummarySelection } from "@/game/domain/narrativeMemorySummar
 import type { NarrativeMemorySummarySource } from "@/game/application/narrativeMemorySummarySource";
 import type { NarrativeRequestClient } from "./narrativeRequestClient";
 import type { RpgAiClient } from "./rpgAiClient";
+import { estimateNarrativeTokens } from "./narrativeContext/estimateNarrativeTokens";
 
 function renderSources(input: Parameters<NarrativeMemorySummarySource["select"]>[0]): string {
   return JSON.stringify({
     kind: input.kind,
     observerId: String(input.observerId),
     history: input.history.map((entry) => ({ id: entry.id, sequence: entry.sequence, turnNumber: entry.turnNumber, kind: entry.kind, speakerId: entry.speakerId, audienceIds: entry.audienceIds, text: entry.text, eventIds: entry.eventIds })),
-    events: input.events.map((event) => ({ eventId: event.eventId, sequence: event.sequence, turnNumber: event.turnNumber, kind: event.kind, actorIds: event.actorIds, targetIds: event.targetIds })),
+    events: input.events.map((event) => ({ eventId: event.eventId, sequence: event.sequence, turnNumber: event.turnNumber, kind: event.kind, actorIds: event.actorIds, targetIds: event.targetIds, locationId: event.locationId, outcome: event.outcome, payload: event.payload })),
   });
 }
 
@@ -29,14 +30,18 @@ export function createLiveNarrativeMemorySummarySource(deps: Readonly<{
         { role: "user", content: renderSources(input) },
       ];
       const auditContext = {
+        ...(input.auditLink ?? {}),
         purpose: "narrative_memory_summary" as const,
         trigger: input.kind === "batch" ? "memory_summary_batch" : "memory_summary_overview",
         revision: input.history.length,
       };
+      if (input.maxEstimatedTokens !== undefined && estimateNarrativeTokens(JSON.stringify(messages)) > input.maxEstimatedTokens) {
+        return createAiSourceFailure("scene", "invalid_reference", "context_budget_exceeded", "context_budget_exceeded");
+      }
       try {
         const result = deps.requestClient === undefined
           ? await deps.aiClient!.complete("narrative_bundle", messages, auditContext, { signal: input.signal, beforeTransportAttempt: input.reserveHttpAttempt, policyOverride: { thinking: "on", reasoningEffort: "low", timeoutMs: 240_000, maxTokens: undefined, jsonMode: "prompt_only", maxAttempts: 2 } })
-          : await deps.requestClient.completeNarrativeRequest({ purpose: "memory_summary", messages, auditContext, signal: input.signal, reserveHttpAttempt: input.reserveHttpAttempt });
+          : await deps.requestClient.completeNarrativeRequest({ purpose: "memory_summary", messages, auditContext, signal: input.signal, reserveHttpAttempt: input.reserveHttpAttempt, ...(input.maxEstimatedTokens === undefined ? {} : { maxEstimatedTokens: input.maxEstimatedTokens }) });
         if (!result.ok) return createAiSourceFailure("scene", "transport", "provider_failure", result.code);
         const parsed = parseStructuredJsonObject(result.content);
         if (!parsed.ok) return createAiSourceFailure("scene", "invalid_reference", "invalid_json", "summary_selection_json");

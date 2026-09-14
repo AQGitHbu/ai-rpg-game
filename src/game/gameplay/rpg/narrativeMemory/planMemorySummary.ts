@@ -9,6 +9,7 @@ export function planMemorySummary(input: Readonly<{
   readonly evidence: ObserverEvidence;
   readonly previous: MemorySummaryState | null;
   readonly forceForLength: boolean;
+  readonly excludedHistoryIds?: readonly string[];
 }>): MemorySummaryPlan {
   const coveredThroughSequence = input.previous?.coveredThroughSequence ?? -1;
   const byId = new Map<string, ObserverEvidence["history"][number]>();
@@ -18,8 +19,11 @@ export function planMemorySummary(input: Readonly<{
     if (existing !== undefined && (existing.text !== entry.text || existing.sequence !== entry.sequence)) return { kind: "none" };
     byId.set(entry.id, entry);
   }
+  const excluded = new Set(input.excludedHistoryIds ?? []);
+  const protectedSequence = Math.min(Infinity, ...[...byId.values()]
+    .filter((entry) => excluded.has(entry.id)).map((entry) => entry.sequence));
   const uncovered = [...byId.values()]
-    .filter((entry) => entry.sequence > coveredThroughSequence)
+    .filter((entry) => entry.sequence > coveredThroughSequence && entry.sequence < protectedSequence)
     .sort((left, right) => left.sequence - right.sequence || left.id.localeCompare(right.id));
   if (uncovered.length < 50 && !(input.forceForLength && uncovered.length >= 10)) return { kind: "none" };
   const batch = uncovered.slice(0, 10);

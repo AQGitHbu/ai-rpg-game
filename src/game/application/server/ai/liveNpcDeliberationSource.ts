@@ -17,6 +17,7 @@ import {
 } from "./rpgAiClient";
 import { storyInteractionPrompt } from "./storyInteractionPrompt";
 import type { NarrativeRequestClient } from "./narrativeRequestClient";
+import { estimateNarrativeTokens } from "./narrativeContext/estimateNarrativeTokens";
 
 export type LiveNpcDeliberationSourceDeps = Readonly<{
   readonly aiClient?: RpgAiClient;
@@ -75,11 +76,15 @@ export function createLiveNpcDeliberationSource(deps: LiveNpcDeliberationSourceD
           },
         ];
         const auditContext = {
+          ...(input.auditLink ?? {}),
           purpose: RPG_AI_NPC_DELIBERATION_PURPOSE,
           trigger: "npc_deliberation",
           jobId: String(input.jobId),
           revision: input.candidateVersion,
         } as const;
+        if (input.maxEstimatedTokens !== undefined && estimateNarrativeTokens(JSON.stringify(messages)) > input.maxEstimatedTokens) {
+          return { ok: false, code: "CONTEXT_OVERFLOW" };
+        }
         const result = deps.requestClient === undefined
           ? await aiClient.complete(RPG_AI_NPC_DELIBERATION_ROLE, messages, auditContext)
           : await deps.requestClient.completeNarrativeRequest({
@@ -87,9 +92,11 @@ export function createLiveNpcDeliberationSource(deps: LiveNpcDeliberationSourceD
               messages,
               auditContext,
               signal: input.signal ?? new AbortController().signal,
+              ...(input.maxEstimatedTokens === undefined ? {} : { maxEstimatedTokens: input.maxEstimatedTokens }),
               ...(input.reserveHttpAttempt === undefined ? {} : { reserveHttpAttempt: input.reserveHttpAttempt }),
             });
         if (!result.ok) {
+          if (result.code === "context_budget_exceeded") return { ok: false, code: "CONTEXT_OVERFLOW" };
           deps.logger?.warn("npc_deliberation_provider_failed", { code: result.code });
           return { ok: false, code: "PROVIDER_FAILURE" };
         }

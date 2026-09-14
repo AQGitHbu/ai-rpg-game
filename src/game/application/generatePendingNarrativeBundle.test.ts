@@ -22,6 +22,7 @@ import { createNarrativeBundleSource } from "./server/ai/liveNarrativeBundleSour
 import type { RpgAiClient } from "./server/ai/rpgAiClient";
 import { createLiveNarrativeCandidateReview } from "./server/ai/liveNarrativeCandidateReview";
 import observedEnding from "./server/ai/testing/p1-short-closure-03-ending-candidate.json";
+import type { MemoryReservationResult, PreparedNarrativeMemory } from "./narrativeMemorySummaryRepository";
 
 const GENERATION: GenerationMetadata = {
   generationId: "gen_test" as never,
@@ -32,6 +33,69 @@ const GENERATION: GenerationMetadata = {
 };
 
 const LOC_0 = asLocationId("loc_0");
+
+function emptyPreparedMemory(): PreparedNarrativeMemory {
+  return {
+    formatVersion: 1, policyVersion: "memory-p2/1", sourceFingerprint: "fixture-source", summaries: "enabled",
+    policy: { threshold: 50, batchSize: 10, rawSoftEstimatedTokens: 24000, summarySourceMaxEstimatedTokens: 24000, overviewMaxEstimatedTokens: 6000, promptMaxEstimatedTokens: 64000 },
+    player: { observerId: PLAYER_ENTITY_ID, coveredThroughSequence: -1, overviewHistoryIds: [], overviewEventIds: [], uncovered: [], recalled: [], requiredEvents: [], referencedEntityIds: [], ambiguousEntityIds: [], manifest: [] },
+  };
+}
+
+describe("P2 preparation reservation fencing", () => {
+  function harness(result: MemoryReservationResult) {
+    const job = { ...createPendingJob(), attempt: { epoch: 1, candidateVersion: 0, candidateHash: null, httpAttempts: 0, leaseId: "lease:memory", leaseExpiresAt: "2026-01-01T00:10:00.000Z", status: "running" as const } };
+    const record: GameRecord = { gameId: asGameId("memory-fencing"), worldState: createMinimalWorldState(), storyState: createMinimalStoryState({ status: "provider_pending", mode: "ai", job, lastPresentedScene: null }), revision: 0, createdAt: "2026-01-01T00:00:00.000Z" };
+    const base = createInMemoryRepo(record);
+    const repository: GameRepository = { ...base.repo,
+      claimNarrativeJob: vi.fn(async () => ({ ok: true as const, record })),
+      reserveNarrativeCandidate: vi.fn(async () => ({ ok: true as const, record })),
+      recordNarrativeCandidateHash: vi.fn(async () => ({ ok: true as const, record })),
+      reserveNarrativeHttpAttempt: vi.fn(async () => ({ ok: true as const, record })),
+    };
+    const memorySummaryRepository = {
+      load: vi.fn(async () => ({ state: null, summaryRevision: 0 })), publish: vi.fn(async () => ({ ok: true as const })),
+      loadPrepared: vi.fn(async () => ({ ok: true as const, prepared: null, preparedHash: null })),
+      freezePrepared: vi.fn(async (input: { next: PreparedNarrativeMemory }) => ({ ok: true as const, prepared: input.next, preparedHash: "frozen" })),
+      reserveBatchUpdate: vi.fn(async () => result), reserveHttpAttempt: vi.fn(async () => result),
+    };
+    const source: NarrativeBundleSource = { generate: vi.fn(async () => ({ ok: false as const, failure: { kind: "AI_CALL_FAILED" as const, phase: "scene" as const }, repairReason: "provider_failure" as const })) };
+    return { repository, memorySummaryRepository, source };
+  }
+
+  it.each(["STALE_ATTEMPT", "UNAVAILABLE"] as const)("cancels %s instead of accepting a raw package", async (code) => {
+    const deps = harness({ ok: false, code });
+    let cancelled = false;
+    await generatePendingNarrativeBundle({ ...deps, now: () => "2026-01-01T00:00:00.000Z",
+      prepareMemoryPackage: async (input) => {
+        await input.reserveSummaryHttpAttempt();
+        cancelled = input.signal.aborted;
+        return emptyPreparedMemory();
+      },
+    });
+    expect(cancelled).toBe(true);
+    expect(deps.memorySummaryRepository.freezePrepared).not.toHaveBeenCalled();
+    expect(deps.source.generate).not.toHaveBeenCalled();
+  });
+
+  it("allows exhausted summary budget to use raw memory and refreshes the freeze clock", async () => {
+    const deps = harness({ ok: false, code: "BUDGET_EXHAUSTED" });
+    let clock = "2026-01-01T00:00:00.000Z";
+    let allowed: boolean | undefined;
+    await generatePendingNarrativeBundle({ ...deps, now: () => clock,
+      prepareMemoryPackage: async (input) => {
+        clock = "2026-01-01T00:02:00.000Z";
+        allowed = await input.reserveSummaryHttpAttempt();
+        expect(input.signal.aborted).toBe(false);
+        return emptyPreparedMemory();
+      },
+    });
+    expect(allowed).toBe(false);
+    expect(deps.memorySummaryRepository.reserveHttpAttempt).toHaveBeenCalledWith(expect.objectContaining({ now: clock }));
+    expect(deps.memorySummaryRepository.freezePrepared).toHaveBeenCalledWith(expect.objectContaining({ now: clock }));
+    expect(deps.source.generate).toHaveBeenCalled();
+  });
+});
 
 function createMinimalWorldState(): WorldState {
   return createWorldStateFixture({

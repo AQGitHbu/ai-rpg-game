@@ -17,6 +17,8 @@ import { createInitialStoryState, type StoryState } from "@/game/domain/storySta
 import { playerActionHistoryEntry } from "@/game/domain/narrativeHistory";
 import type { NarrativeMemoryContext } from "@/game/domain/narrativeMemoryContext";
 import { projectNpcDeliberation } from "./projectNpcDeliberation";
+import { prepareNarrativeMemory } from "./prepareNarrativeMemory";
+import { asGameId } from "./server/persistence/gameRepository";
 
 const LOCATION = asLocationId("loc:old_bridge");
 const BOSS = asNpcId("npc:night_watch");
@@ -176,6 +178,42 @@ function pendingStoryState(): StoryState {
 }
 
 describe("projectNpcDeliberation", () => {
+  it("uses observer preparation to recall private old words and preserves multiple event payloads", async () => {
+    const baseWorld = worldState();
+    const second = { ...baseWorld.eventLedger[0]!, eventId: asEventId("old:second"), sequence: 100 };
+    const world = { ...baseWorld, eventLedger: [...baseWorld.eventLedger, second] };
+    const baseStory = pendingStoryState();
+    if (baseStory.narrative.status !== "provider_pending") throw new Error("expected pending job");
+    const job = { ...baseStory.narrative.job, utterance: "接下来怎么办", domainEventIds: [EVENT_ID, second.eventId] };
+    const quote = "只有我记得桥底那枚暗记，接应人没有听见。";
+    const entries = Array.from({ length: 20 }, (_, sequence) => ({
+      id: `private:${sequence}`, segmentId: `segment:${sequence}`, sequence, actionId: null, jobId: null, sceneId: `scene:${sequence}`,
+      revision: 1, turnNumber: 1, kind: "npc_line" as const, speakerId: BOSS, audienceIds: [BOSS],
+      entityIds: sequence === 0 || sequence === 5 ? [LOCATION] : [], factIds: [], eventIds: [], choiceToken: null,
+      text: sequence === 5 ? quote : `本人的独立记忆${sequence}`,
+    }));
+    const story = { ...baseStory, history: { entries }, narrative: { ...baseStory.narrative, job } };
+    const prepare = (observerId: typeof BOSS) => prepareNarrativeMemory({
+      record: { gameId: asGameId("npc:prepared"), worldState: world, storyState: story, revision: 4, createdAt: "2026-01-01" },
+      observerId, job, source: { select: async () => { throw new Error("unexpected summary"); } },
+      repository: { load: async () => ({ summaryRevision: 1, state: {
+        formatVersion: 1, observerId, policyVersion: "memory-p2/1", summaryRevision: 1, coveredThroughSequence: 9,
+        coveredSourceFingerprint: "valid", batches: [], overview: { historyIds: ["private:0"], eventIds: [] },
+      } }), publish: async () => ({ ok: true }) },
+      summaries: "enabled", signal: new AbortController().signal, reserveBatchUpdate: async () => false, reserveSummaryHttpAttempt: async () => false,
+      policy: { threshold: 50, batchSize: 10, rawSoftEstimatedTokens: 24_000, summarySourceMaxEstimatedTokens: 24_000, overviewMaxEstimatedTokens: 6_000, promptMaxEstimatedTokens: 64_000 },
+    });
+    const result = await prepare(BOSS);
+    if (!result.ok) throw new Error(result.code);
+    const projected = projectNpcDeliberation({ worldState: world, storyState: story, npcId: BOSS, jobId: JOB_ID, candidateVersion: 1, memoryContext: result.context });
+    const envelope = JSON.parse(projected.privateContext);
+    expect(envelope.historicalMemory.recalled.some((entry: { text: string }) => entry.text === quote)).toBe(true);
+    expect(envelope.historicalMemory.requiredEvents.map((event: { eventId: string }) => event.eventId)).toEqual([EVENT_ID, second.eventId]);
+    expect(envelope.historicalMemory.requiredEvents[1].payload).toEqual(second.payload);
+    const other = await prepare(RECIPIENT);
+    if (!other.ok) throw new Error(other.code);
+    expect(JSON.stringify(other.context)).not.toContain(quote);
+  });
   it("projects one NPC's private knowledge and goals without importing another NPC's secret", () => {
     const input = projectNpcDeliberation({
       worldState: worldState(),

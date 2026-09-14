@@ -64,7 +64,7 @@ export function buildNarrativeMemoryContext(input: Readonly<{
     });
   const uncovered = sortedHistory(validHistory.filter((entry) =>
     entry.sequence > coveredThroughSequence && !overviewHistorySet.has(entry.id)));
-  const selectedHistory = selection.historyIds
+  const selectedHistory = [...selection.historyIds, ...overviewHistoryIds]
     .map((id) => historyById.get(id))
     .filter((entry): entry is HistoryEntry => entry !== undefined && entry.kind !== "shown_choice")
     .filter((entry) => entry.sequence <= coveredThroughSequence);
@@ -73,7 +73,7 @@ export function buildNarrativeMemoryContext(input: Readonly<{
   const requiredEvents = unique(selection.eventIds
     .map((id) => eventById.get(String(id)))
     .filter((event): event is ObserverEvidence["events"][number] => event !== undefined)
-    .filter((event) => mandatoryRefs.has(String(event.eventId))), String)
+    .filter((event) => mandatoryRefs.has(String(event.eventId))), (event) => String(event.eventId))
     .sort((left, right) => left.sequence - right.sequence || String(left.eventId).localeCompare(String(right.eventId)));
   const renderedHistory = [...uncovered, ...recalled];
   const usedEventIds = new Set([
@@ -91,17 +91,23 @@ export function buildNarrativeMemoryContext(input: Readonly<{
     if (event.locationId !== null) referenced.add(String(event.locationId));
   }
   const known = new Set(evidence.knownEntityIds.map(String));
-  const manifest = selection.manifest.filter((entry) => sourceIds(evidence).has(entry.ref));
+  const validSources = sourceIds(evidence);
+  const manifestByRef = new Map(selection.manifest.filter((entry) => validSources.has(entry.ref)).map(entry => [entry.ref, entry]));
+  for (const entry of uncovered) manifestByRef.set(entry.id, { ref: entry.id, reason: "uncovered_history", mandatory: true });
+  for (const ref of [...overviewHistoryIds, ...overviewEventIds.map(String)]) {
+    if (!manifestByRef.get(ref)?.mandatory) manifestByRef.set(ref, { ref, reason: "summary_source", mandatory: true });
+  }
   return {
     observerId: evidence.observerId,
     coveredThroughSequence,
     overviewHistoryIds,
     overviewEventIds,
+    overviewEvents: overviewEventIds.map(id => eventById.get(String(id))!),
     uncovered,
     recalled,
     requiredEvents,
     referencedEntityIds: [...referenced].filter((id) => known.has(id)) as EntityId[],
     ambiguousEntityIds: selection.ambiguousEntityIds.filter((id) => known.has(String(id))),
-    manifest: manifest.filter((entry) => usedHistoryIds.has(entry.ref) || usedEventIds.has(entry.ref)),
+    manifest: [...manifestByRef.values()].filter((entry) => usedHistoryIds.has(entry.ref) || usedEventIds.has(entry.ref)),
   };
 }

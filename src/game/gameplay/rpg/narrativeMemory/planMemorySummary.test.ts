@@ -21,6 +21,16 @@ function evidence(count: number): ObserverEvidence {
 }
 
 describe("planMemorySummary", () => {
+  it("never covers the current job input, including length-triggered compression", () => {
+    const source = evidence(10);
+    expect(planMemorySummary({ evidence: source, previous: null, forceForLength: true,
+      excludedHistoryIds: [source.history[9]!.id] })).toEqual({ kind: "none" });
+    expect(planMemorySummary({ evidence: evidence(50), previous: null, forceForLength: false,
+      excludedHistoryIds: ["history:49"] })).toEqual({ kind: "none" });
+    // A watermark must not skip a protected entry even if later entries exist.
+    expect(planMemorySummary({ evidence: evidence(60), previous: null, forceForLength: true,
+      excludedHistoryIds: ["history:5"] })).toEqual({ kind: "none" });
+  });
   it("uses valid visible History count and the earliest ten sequence values", () => {
     expect(planMemorySummary({ evidence: evidence(49), previous: null, forceForLength: false })).toEqual({ kind: "none" });
     expect(planMemorySummary({ evidence: evidence(50), previous: null, forceForLength: false })).toEqual({

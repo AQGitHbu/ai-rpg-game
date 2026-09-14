@@ -444,11 +444,13 @@ export function createNarrativeBundleSource(
               messages,
               auditContext,
               signal: context.signal ?? new AbortController().signal,
+              ...(context.kind !== "decision" || context.maxEstimatedTokens === undefined ? {} : { maxEstimatedTokens: context.maxEstimatedTokens }),
               ...(context.reserveHttpAttempt === undefined ? {} : { reserveHttpAttempt: context.reserveHttpAttempt }),
             });
 
         if (!result.ok) {
           logger?.warn("narrative_bundle_ai_failed", { code: result.code });
+          if (result.code === "context_budget_exceeded") return failBundle("invalid_schema", "context_budget_exceeded", "context_budget_exceeded");
           const category = transportFailureCodeToCategory(result.code);
           return result.code === "empty_response"
             ? failBundle(category, "empty_response")

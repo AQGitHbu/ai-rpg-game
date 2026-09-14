@@ -19,7 +19,8 @@ it("replays raw opening, NPC and reviewer responses through production parsing a
   const purposes: string[] = [];
   try {
     for (const mode of ["live", "replay"] as const) {
-      const client = createSqliteClient(join(directory, `${mode}.sqlite`));
+      const databasePath = join(directory, `${mode}.sqlite`);
+      const client = createSqliteClient(databasePath);
       const repo = createSqliteGameRepository({ clientFactory: () => client });
       const runtime = createNarrativeP1ReplayRuntime({ mode, directory, stream: "integration", binding: { protocolHash: "test-protocol", codeFingerprint: "test-code", inputHash: "test-input" }, auditFiles: ["audit/live/events.jsonl"] });
       const rawRuntime = runtime.options.aiRuntime as RpgAiRuntime;
@@ -49,7 +50,7 @@ it("replays raw opening, NPC and reviewer responses through production parsing a
           return { ok: true, content: JSON.stringify(payload), latencyMs: 1 };
         }),
       };
-      const entry = createServerGameEntryPoints({ NODE_ENV: "test", AI_API_BASE_URL: "https://offline.invalid", AI_API_KEY: "offline", AI_MODEL: "fixture", AI_TEXT_AUDIT: "full", AI_TEXT_AUDIT_DIR: join(directory, "audit"), AI_TEXT_AUDIT_RUN_ID: mode, GAME_LOG_LEVEL: "silent" }, undefined, repo, { ...runtime.options, aiRuntime });
+      const entry = createServerGameEntryPoints({ NODE_ENV: "test", GAME_DB_PATH: databasePath, AI_API_BASE_URL: "https://offline.invalid", AI_API_KEY: "offline", AI_MODEL: "fixture", AI_TEXT_AUDIT: "full", AI_TEXT_AUDIT_DIR: join(directory, "audit"), AI_TEXT_AUDIT_RUN_ID: mode, GAME_LOG_LEVEL: "silent" }, undefined, repo, { ...runtime.options, aiRuntime });
       try {
         expect(await entry.createGame({ gameType: "wuxia", gameLength: "short" }, "create")).toMatchObject({ ok: true });
         runtime.state("opening", await repo.getCurrentGame());

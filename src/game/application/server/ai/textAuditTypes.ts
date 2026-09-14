@@ -54,7 +54,7 @@ export type AiRetryContext = Readonly<{
  * 通过 link.retry.origin 判定来源，不再新增独立 retryOrigin 字段。
  */
 export type AiTextAuditLink = Readonly<
-  Pick<AiTextAuditContext, "traceId" | "gameId" | "jobId" | "turnNumber" | "retry">
+  Pick<AiTextAuditContext, "traceId" | "gameId" | "jobId" | "turnNumber" | "retry" | "memory">
 >;
 
 /**
@@ -84,6 +84,17 @@ export type AiTextAuditContext = {
    * 编译后的叙事上下文清单：只含 block 元数据、预算与裁剪结果，不含 Prompt 正文。
    */
   readonly narrativeContext?: NarrativeContextManifest;
+  /** Source identifiers and counts only; private source prose stays in messages. */
+  readonly memory?: Readonly<{
+    observerId: string;
+    sourceFingerprint: string;
+    preparedHash?: string;
+    coveredThroughSequence?: number;
+    historyIds?: readonly string[];
+    eventIds?: readonly string[];
+    rawCount?: number;
+    recallCount?: number;
+  }>;
   /**
    * 结构化重试元数据（来源 + 机制）。新事件统一使用 retry，
    * CLI 对 retry ?? repair 做只读归一。

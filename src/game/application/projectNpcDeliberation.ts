@@ -197,6 +197,7 @@ function historicalMemoryContext(memory: NarrativeMemoryContext | undefined, npc
   readonly uncovered: readonly unknown[];
   readonly recalled: readonly unknown[];
   readonly requiredEvents: readonly unknown[];
+  readonly overviewEvents: readonly unknown[];
 }> | undefined {
   if (memory === undefined) return undefined;
   if (String(memory.observerId) !== String(npcId)) throw new Error("NPC_MEMORY_OBSERVER_MISMATCH");
@@ -213,10 +214,8 @@ function historicalMemoryContext(memory: NarrativeMemoryContext | undefined, npc
   return {
     uncovered: memory.uncovered.map(renderEntry),
     recalled: memory.recalled.map(renderEntry),
-    requiredEvents: memory.requiredEvents.map((event) => ({
-      eventId: String(event.eventId), kind: event.kind, sequence: event.sequence,
-      turnNumber: event.turnNumber, actorIds: event.actorIds.map(String), targetIds: event.targetIds.map(String),
-    })),
+    requiredEvents: memory.requiredEvents,
+    overviewEvents: (memory.overviewEvents ?? []).filter(event => !memory.requiredEvents.some(required => required.eventId === event.eventId)),
   };
 }
 

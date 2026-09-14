@@ -355,6 +355,43 @@ export function retrieveStoryEvidence(query: EvidenceQuery): EvidenceSelection {
     }
   }
 
+  // Recover the actual authorized words behind mandatory events before applying
+  // optional limits. A recent-episode window must never erase a live promise.
+  for (const entry of visibleHistory) {
+    if (entry.eventIds.some(id => manifest.get(String(id))?.mandatory)) {
+      historyIds.add(entry.id);
+      addManifest(manifest, entry.id, "required_event_source", true);
+    }
+  }
+  const present = new Set(query.presentHistoryIds ?? []);
+  const relatedByEntity = selectedCandidates.map(candidate => visibleHistory
+    .filter(entry => !present.has(entry.id) && !historyIds.has(entry.id))
+    .filter(entry => entry.entityIds.some(id => String(id) === String(candidate.id))
+      || entry.speakerId === candidate.id
+      || entry.eventIds.some(id => {
+        const event = eventById.get(String(id));
+        return event !== undefined && visibleEventIds.has(String(id))
+          && (candidate.eventIds.has(String(id)) || [...event.actorIds, ...event.targetIds, event.locationId]
+            .some(entityId => entityId !== null && String(entityId) === String(candidate.id)));
+      }))
+    .sort((left, right) => experienceScore(query.text, right.text) - experienceScore(query.text, left.text)
+      || right.sequence - left.sequence));
+  let optionalCount = 0;
+  const perEntityCounts = relatedByEntity.map(() => 0);
+  // Round robin gives each candidate a turn; recalled references do not seed
+  // a second retrieval wave.
+  for (let round = 0; round < 3 && optionalCount < 10; round += 1) {
+    for (let index = 0; index < relatedByEntity.length && optionalCount < 10; index += 1) {
+      if (perEntityCounts[index]! >= 3) continue;
+      const entry = relatedByEntity[index]!.find(candidate => !historyIds.has(candidate.id));
+      if (entry === undefined) continue;
+      historyIds.add(entry.id);
+      addManifest(manifest, entry.id, "related_history", false);
+      perEntityCounts[index]! += 1;
+      optionalCount += 1;
+    }
+  }
+
   return {
     entityIds: selectedIds,
     eventIds: [...eventIds]

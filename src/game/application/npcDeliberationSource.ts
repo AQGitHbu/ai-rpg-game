@@ -2,6 +2,7 @@ import { isWellFormedEventId, type NarrativeJobId, type EventId } from "@/game/d
 import type { FactId, NpcId } from "@/game/domain/worldEntity";
 import type { StoryInteractionProposal } from "@/game/domain/storyInteraction";
 import { parseStoryInteractionProposal } from "@/game/domain/storyInteraction";
+import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
 
 export type NpcDeliberationInput = Readonly<{
   readonly npcId: NpcId;
@@ -11,6 +12,8 @@ export type NpcDeliberationInput = Readonly<{
   readonly privateContext: string;
   readonly signal?: AbortSignal;
   readonly reserveHttpAttempt?: () => Promise<boolean> | boolean;
+  readonly maxEstimatedTokens?: number;
+  readonly auditLink?: AiTextAuditLink;
 }>;
 
 export const NPC_DELIBERATION_RESPONSES = [
@@ -34,7 +37,7 @@ export type NpcDeliberationProposal = Readonly<{
 export interface NpcDeliberationSource {
   generate(input: NpcDeliberationInput): Promise<
     { readonly ok: true; readonly proposal: NpcDeliberationProposal }
-    | { readonly ok: false; readonly code: "PROVIDER_FAILURE" | "INVALID_PROPOSAL" }
+    | { readonly ok: false; readonly code: "PROVIDER_FAILURE" | "INVALID_PROPOSAL" | "CONTEXT_OVERFLOW" }
   >;
 }
 

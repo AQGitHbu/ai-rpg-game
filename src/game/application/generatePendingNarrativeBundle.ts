@@ -10,7 +10,7 @@ import type { GameLogger } from "@/game/logging";
 import type { StoryState } from "@/game/domain/storyState";
 import type { NarrativeMemoryContext } from "@/game/domain/narrativeMemoryContext";
 import type { MemoryAttemptGuard, PreparedNarrativeMemory, NarrativeMemorySummaryRepository } from "./narrativeMemorySummaryRepository";
-import type { WorldState } from "@/game/domain/worldState";
+import type { NarrativeMemoryPreparationInput } from "./prepareNarrativeMemoryPackage";
 import { deriveStructuralEvolutionNeed } from "@/game/gameplay/rpg/worldEvolution";
 import type { ObjectiveTransition } from "@/game/domain/narrativeBeat";
 import type { NarrativeRuntimeState } from "@/game/domain/narrative";
@@ -65,7 +65,7 @@ export type GeneratePendingNarrativeBundleDeps = {
   /** Optional P2 preparation hook; its result is frozen for every candidate version. */
   readonly prepareMemoryContext?: (input: Readonly<{ record: import("./server/persistence/gameRepository").GameRecord; job: import("@/game/domain/pendingNarrativeJob").PendingNarrativeJob; signal: AbortSignal }>) => Promise<NarrativeMemoryContext | null>;
   /** Optional server-owned preparation that can be frozen and recovered by job epoch. */
-  readonly prepareMemoryPackage?: (input: Readonly<{ record: import("./server/persistence/gameRepository").GameRecord; job: import("@/game/domain/pendingNarrativeJob").PendingNarrativeJob; signal: AbortSignal }>) => Promise<PreparedNarrativeMemory | null>;
+  readonly prepareMemoryPackage?: (input: NarrativeMemoryPreparationInput) => Promise<PreparedNarrativeMemory | null>;
   readonly memorySummaryRepository?: NarrativeMemorySummaryRepository;
 };
 
@@ -218,6 +218,17 @@ export async function generatePendingNarrativeBundle(
   let fixedMemoryContext: NarrativeMemoryContext | null = null;
   let fixedNpcMemoryContext: NarrativeMemoryContext | undefined;
   let fixedPromptMaxEstimatedTokens: number | undefined;
+  let fixedMemoryAudit: AiTextAuditLink["memory"];
+  const attachFixedMemory = (prepared: PreparedNarrativeMemory, preparedHash: string | null) => {
+    fixedMemoryContext = prepared.player;
+    fixedNpcMemoryContext = prepared.npc;
+    fixedPromptMaxEstimatedTokens = prepared.policy.promptMaxEstimatedTokens;
+    fixedMemoryAudit = { observerId: String(prepared.player.observerId), sourceFingerprint: prepared.sourceFingerprint,
+      ...(preparedHash === null ? {} : { preparedHash }), coveredThroughSequence: prepared.player.coveredThroughSequence,
+      historyIds: prepared.player.overviewHistoryIds, eventIds: prepared.player.overviewEventIds.map(String),
+      rawCount: prepared.player.uncovered.length, recallCount: prepared.player.recalled.length,
+    };
+  };
   // This closure belongs to one worker and its immutable gameplay snapshot.
   // Cache only authorized outward data, never request controls or failures.
   let authorizedOutward: Extract<NarrativeBundleSourceContext, { kind: "decision" }>["npcOutward"];
@@ -326,6 +337,29 @@ export async function generatePendingNarrativeBundle(
   let candidateRevision: NarrativeCandidateRevision | undefined;
   let authorDraftRevision: NarrativeAuthorDraftRevision | undefined;
   let memoryPreparationFailure = false;
+  let memoryReservationFailure: string | undefined;
+  const reserveMemoryAttempt = async (kind: "reserveBatchUpdate" | "reserveHttpAttempt"): Promise<boolean> => {
+    if (requestSignal.aborted) return false;
+    const guard = durableRecovery ? memoryAttemptGuard(durableRecord, job, deps.now()) : null;
+    const reserve = deps.memorySummaryRepository?.[kind];
+    let result;
+    try {
+      result = guard === null || reserve === undefined
+        ? { ok: false as const, code: "UNAVAILABLE" as const }
+        : await reserve(guard);
+    } catch {
+      result = { ok: false as const, code: "UNAVAILABLE" as const };
+    }
+    if (result.ok) return true;
+    if (result.code === "BUDGET_EXHAUSTED") return false;
+    memoryReservationFailure = result.code;
+    if (result.code === "STALE_ATTEMPT") {
+      leaseLost = true;
+      durableMutationFailure = "STALE_GAME_REVISION";
+    }
+    requestController.abort();
+    return false;
+  };
   const memoryGuard = durableRecovery ? memoryAttemptGuard(durableRecord, job, deps.now()) : null;
   if (deps.memorySummaryRepository?.loadPrepared !== undefined && memoryGuard !== null) {
     const loaded = await deps.memorySummaryRepository.loadPrepared(memoryGuard.key);
@@ -334,9 +368,7 @@ export async function generatePendingNarrativeBundle(
       lastFailureKind = "AI_CALL_FAILED";
       lastRepair = { attempt: 1, reason: "provider_failure", detail: loaded.code };
     } else if (loaded.prepared !== null) {
-      fixedMemoryContext = loaded.prepared.player;
-      fixedNpcMemoryContext = loaded.prepared.npc;
-      fixedPromptMaxEstimatedTokens = loaded.prepared.policy.promptMaxEstimatedTokens;
+      attachFixedMemory(loaded.prepared, loaded.preparedHash);
     } else if (job.attempt.candidateVersion > 0) {
       // A later candidate belongs to the same frozen generation attempt. It
       // must never be regenerated with a different memory package after a
@@ -346,23 +378,29 @@ export async function generatePendingNarrativeBundle(
       lastRepair = { attempt: 1, reason: "provider_failure", detail: "memory_preparation_missing" };
     } else if (deps.prepareMemoryPackage !== undefined && deps.memorySummaryRepository.freezePrepared !== undefined) {
       try {
-        const next = await deps.prepareMemoryPackage({ record: durableRecord, job, signal: requestSignal });
-        if (next !== null) {
-          const frozen = await deps.memorySummaryRepository.freezePrepared({ ...memoryGuard, next });
+        const next = await deps.prepareMemoryPackage({ record: durableRecord, job, signal: requestSignal,
+          reserveBatchUpdate: () => reserveMemoryAttempt("reserveBatchUpdate"),
+          reserveSummaryHttpAttempt: () => reserveMemoryAttempt("reserveHttpAttempt"),
+        });
+        if (requestSignal.aborted || next === null) throw new Error(memoryReservationFailure ?? "memory_preparation_missing");
+        const freezeGuard = memoryAttemptGuard(durableRecord, job, deps.now());
+        if (freezeGuard === null) throw new Error("STALE_ATTEMPT");
+        {
+          const frozen = await deps.memorySummaryRepository.freezePrepared({ ...freezeGuard, next });
           if (!frozen.ok) {
             memoryPreparationFailure = true;
             lastFailureKind = "AI_CALL_FAILED";
             lastRepair = { attempt: 1, reason: "provider_failure", detail: frozen.code };
           } else {
-            fixedMemoryContext = frozen.prepared.player;
-            fixedNpcMemoryContext = frozen.prepared.npc;
-            fixedPromptMaxEstimatedTokens = frozen.prepared.policy.promptMaxEstimatedTokens;
+            attachFixedMemory(frozen.prepared, frozen.preparedHash);
           }
         }
-      } catch {
+      } catch (error) {
         memoryPreparationFailure = true;
         lastFailureKind = "AI_CALL_FAILED";
-        lastRepair = { attempt: 1, reason: "provider_failure", detail: "memory_preparation_failed" };
+        const code = error instanceof Error && ["MEMORY_CONTEXT_OVERFLOW", "CANCELLED", "STALE_ATTEMPT", "memory_preparation_missing"].includes(error.message)
+          ? error.message : "memory_preparation_failed";
+        lastRepair = { attempt: 1, reason: code === "MEMORY_CONTEXT_OVERFLOW" ? "context_budget_exceeded" : "provider_failure", detail: memoryReservationFailure ?? code };
       }
     }
   }
@@ -406,6 +444,7 @@ export async function generatePendingNarrativeBundle(
           ...(fixedMemoryContext === null ? {} : { memoryContext: fixedMemoryContext }),
           auditLink: {
             ...(deps.auditLink ?? {}),
+            ...(fixedMemoryAudit === undefined ? {} : { memory: fixedMemoryAudit }),
             gameId: String(record.gameId),
             jobId: String(job.jobId),
             turnNumber: job.turnNumber,
@@ -519,6 +558,7 @@ export async function generatePendingNarrativeBundle(
               job,
               auditLink: {
                 ...(deps.auditLink ?? {}),
+                ...(fixedMemoryAudit === undefined ? {} : { memory: fixedMemoryAudit }),
                 gameId: String(record.gameId),
                 jobId: String(job.jobId),
                 turnNumber: job.turnNumber,
