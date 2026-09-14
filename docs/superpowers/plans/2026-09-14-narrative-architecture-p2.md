@@ -41,6 +41,23 @@
 | 优于 main | 不作该结论；P2 对照只分析摘要对证据使用的影响 | P2/P3 稳定后的同配置 main 对照，另行 Plan |
 | 性能/扩容 | 有限输入、缓存一致性和计数 | 索引服务、事件分段/归档、长篇交 P4 |
 
+## 三份参考的采用与边界
+
+参考文档提供设计原料，不能把其中所有建议作为本期必做事项。下表区分已经由 P1 提供的基础与 P2 需要补齐的路径；“纳入 P2”表示已列入实施与验收，尚不表示代码已完成。
+
+| 参考及章节 | 只采用的高收益部分 | P2 落点及预期收益 |
+| --- | --- | --- |
+| [SillyTavern 分析](../../设想/SillyTavern_Architecture_Analysis_for_AI_RPG.md) §7–11、§23 | 多来源查询、scope、优先级、业务化 Context Slot；先召回再按预算编译 | Task 1/2/5：复用已有 Context Compiler，补权限先行、必需证据传递和来源 manifest；避免靠扩大整段 prompt 解决遗忘 |
+| 同上 §7.2/§7.3、§8 | 查询不只取最后一句；保持当前话题、限制关联扩展 | Task 1/2/5：当前行动、已有 dialogueFocus、活跃 Thread、近期原文及摘要引用参与查询；只做一次有上限的旧事补充，不实现世界书规则引擎 |
+| [Entity/WorldState/Memory](../../设想/AI_RPG_Entity_WorldState_Memory_Architecture.md) §10–18 | 当前状态与历史分离；多路 Entity 召回；Entity→模型可见投影 | P1 已有 Entity/History/Thread，P2 Task 1/2/5 按正式 ID 读取当前状态和最小实体卡；回忆“以前给过我信”不能恢复旧持有者或把已离开的 NPC 当作在场 |
+| 同上 §21、§24、§33 | 稳定身份、别名消歧、保留历史引用；不把整个 WorldState 交给模型 | Task 1/2：复用现有 ID/alias/lifecycle，不因代词或旧称创建分身；不增加动态组件、实体识别模型或软删除系统 |
+| [四类信息维护](../../设想/AI_RPG_information_memory_context_spec.md) §3、§5–7 | 原文保留、50/10 覆盖水位、摘要引用→当前 Entity→有限旧原文 | Task 1–5：明确补齐这条闭环；摘要不是只供阅读的一段概览，压缩掉的具体旧话仍有可达路径 |
+| 同上 §9–10；ST §5/§15 | 角色自知与本次披露分开，历史和派生记忆分开，维护不污染正式提交 | Task 2/4/5：各 observer 独立记忆包、摘要缓存独立版本；避免秘密传播和缓存覆盖玩家行动 |
+
+**不照搬的部分：** ST 的概率激活、任意 depth/脚本、完整 Lorebook/Data Bank/角色卡导入和向量库；Entity 设想的任意字段/组件扩展、生成后再提取并改写已展示事实；四类信息设想的固定四次生成、自由输入必经额外意图模型和生产文本回退。P2 保留现有整场作者、规则与审批边界，不增加这些系统。
+
+**明确的取舍：** 借用“滚动摘要的覆盖与恢复”语义，首版采用带来源的完整摘录选编，不照搬“上一版自由摘要再压缩”的实现；借用“持续激活”语义，只复用 dialogueFocus/活跃 Thread，不另建 sticky/cooldown/delay 计时器。只有 Task 6/7 证明回忆、动机衔接或完整故事有收益，才算本期借鉴有效。
+
 ## 共享契约与实现布局
 
 代码路径均相对仓库根；新增文件在所属 Task 创建。domain 只放纯类型/解析；application 调 gameplay 只走各子系统 `index.ts`。新增函数的输入不读取全局环境、时间或随机数；hash/IO/时钟在 server 注入。每个 Task 完成相关测试、typecheck、boundaries 与一次限定文件提交。
@@ -65,7 +82,7 @@
 - Modify: `src/game/gameplay/rpg/narrativeMemory/retrieveStoryEvidence.ts`、`retrieveNarrativeMemory.ts`、`renderNarrativeMemory.ts`、`index.ts` 及各自测试。
 - Modify: `src/game/application/entityContextProjection.ts`、对应测试；Docs: 连续性与记忆。
 
-**Interfaces:** 保留 `EvidenceQuery` 和 `EvidenceSelection` 的公开用途，增加可选的 `visibleEvidence` 参数，使同一请求复用一次投影。新函数：
+**Interfaces:** 保留 `EvidenceQuery` 和 `EvidenceSelection` 的公开用途，增加可选的 `visibleEvidence: ObserverEvidence` 参数，使同一请求复用一次投影；另加 `contextEntityIds?: readonly EntityId[]`、`contextEventIds?: readonly EventId[]`，接收有来源的摘要/近期上下文线索，以及 `presentHistoryIds?: readonly string[]`，供可选补充排除当前包已有原文。它们与 actionEntityIds 的当前规则硬引用分开；出现于摘要不代表当前相关，更不代表授知。presentHistoryIds 只影响可选名额/去重，不能删除显式追问或承诺所需来源及其 mandatory 理由。新函数：
 
 ```ts
 type ObserverEvidence = Readonly<{
@@ -86,6 +103,7 @@ function projectObserverEvidence(input: {
 - [ ] 运行 `npx vitest run src/game/gameplay/rpg/narrativeMemory --minWorkers=1 --maxWorkers=2`，确认新增断言因旧逻辑失败。
 - [ ] 实现投影先于匹配：可见原文限实际 audience/speaker，并排除 shown_choice；实体名字只在已观察/交互、可知事实或已授权历史中有依据时成为名称入口。事件含秘密事实时按 observer 当前知识和实际来源筛选；不能安全呈现的整个事件不进入历史原文包，当前规则仍可另给获准结构投影，不能以“该事件有一条可见旁白”直接授权全部 payload。名称防撞表仍仅用于创建约束，不能成为记忆知识源。
 - [ ] 对显式旧事、活跃承诺、持续焦点建立 event→History 反向索引；优先精确问句匹配和相关证据，不把某 NPC 最后八条事件当全部历史。可选补充默认每实体 3 条、合计 10 条，相关实体/因果最多一跳；mandatory 不受这些数量上限裁掉。
+- [ ] contextEntityIds/contextEventIds 经同一 observer 来源校验后作为低于显式问题和活跃 Thread 的候选；按实体轮流填充可选旧记录，排除已在 uncovered/概览中的原文，防止高频地点占满十条。关联索引复用已存在的 History.entityIds、Event.actorIds/targetIds/locationId，不额外调模型识别人名或关系。补充结果中的新实体只附最小当前卡片，不再触发下一轮旧史搜索。
 - [ ] `retrieveNarrativeMemory` 显式合并 manifest 中必需的 event，不再只作为 cause 参与 episode 排序：
 
 ```ts
@@ -110,6 +128,7 @@ const requiredEventIds = [...new Set([
 
 - Create: `src/game/domain/narrativeMemoryContext.ts`；`src/game/gameplay/rpg/narrativeMemory/buildNarrativeMemoryContext.ts`、对应 `.test.ts`。
 - Modify: `src/game/gameplay/rpg/narrativeMemory/index.ts`、`src/game/application/projectNpcDeliberation.ts`、`src/game/application/narrativeBundleSource.ts`。
+- Modify: `src/game/application/entityContextProjection.ts` 及其测试，接入已验证的记忆实体引用。
 - Modify: `src/game/application/server/ai/narrativeContext/narrativeBundleContext.ts`、`src/game/application/server/ai/liveNarrativeCandidateReview.ts` 及上述相关测试。
 - Create: `src/game/application/testing/narrativeMemoryContext.integration.test.ts`；Docs: 连续性与记忆、NPC 系统。
 
@@ -124,18 +143,20 @@ type NarrativeMemoryContext = Readonly<{
   uncovered: readonly HistoryEntry[];
   recalled: readonly HistoryEntry[];
   requiredEvents: readonly CommittedNarrativeEvent[];
+  referencedEntityIds: readonly EntityId[];
   ambiguousEntityIds: readonly EntityId[];
   manifest: readonly { ref: string; reason: string; mandatory: boolean }[];
 }>;
 ```
 
-Task 2 的 `coveredThroughSequence=-1`、overviewHistoryIds/overviewEventIds 为空；Task 3–5 接入后由有效缓存决定。新 `buildNarrativeMemoryContext(input: { evidence: ObserverEvidence; selection: EvidenceSelection; coveredThroughSequence: number; overviewHistoryIds: readonly string[]; overviewEventIds: readonly EventId[] }): NarrativeMemoryContext` 验证所有引用属于 evidence，按 sequence 去重排序；它不调用模型、不写状态。overviewEventIds 单独渲染为带原事件时间的概要，不冒充本回合 requiredEvents。
+Task 2 的 `coveredThroughSequence=-1`、overviewHistoryIds/overviewEventIds 为空；Task 3–5 接入后由有效缓存决定。新 `buildNarrativeMemoryContext(input: { evidence: ObserverEvidence; selection: EvidenceSelection; coveredThroughSequence: number; overviewHistoryIds: readonly string[]; overviewEventIds: readonly EventId[] }): NarrativeMemoryContext` 验证所有引用属于 evidence，按 sequence 去重排序；它不调用模型、不写状态。overviewEventIds 单独渲染为带原事件时间的概要，不冒充本回合 requiredEvents。referencedEntityIds 从实际使用的原文/事件引用派生，与 observer.knownEntityIds 取交集；不能从自由摘要文本重新猜 ID。
 
 - [ ] 写 RED：作者收到玩家可见的旧 NPC 原句；NPC 自知包只收到自己听见/说过的旧表达；另一 NPC 不知。玩家选择 label 被保留为 action expression，不能以 NPC 亲闻原话的身份跨回合传入。当前 `currentNpcPlayerExpressions` 的本轮特例保持明确。
 - [ ] 用完整 `projectNpcDeliberation` 与真实 bundle prompt 构造测试检查实际输入；不能仅断言 build helper 返回字符串。运行上述 integration、projectNpcDeliberation、bundle context tests。
 - [ ] 实现同一记忆包的两个 observer 投影；作者用 player，单 NPC 用自身。所有未覆盖、已提交且可见原文都进入 uncovered，不以“近期四场结构卡”替代。回忆条目标记原 speaker/kind/turn，旧物品归属或旧承诺状态标为当时记录，当前状态仍由 Entity 单独注入。
 - [ ] 接入 NarrativeBundleSourceContext 的 `memoryContext?: NarrativeMemoryContext` 和 NPC projection 的同名可选输入；Task 5 完成装配后生产必须传入，现有纯 fixture 可显式使用源状态构造。reviewer 看同版作者包及自己的规则投影，不能从别的 observer 私密记忆推断可公开内容。
 - [ ] 将 manifest 的 mandatory 映射为独立 ContextBlock；所有 uncovered 为 mandatory，recalled 依据来源区分；有歧义时给候选及证据，不自动把当前焦点作为过去行为人。旧原话进入 NPC 私密判断并不扩大 `npcSpeechAuthority` 的 outward 授权集合。
+- [ ] `buildEntityContextProjection` 增加 `memoryEntityIds?: readonly EntityId[]`，消费上述已验证引用，按当前 EntityStore 生成最小相关卡片；复用既有字段可见性和可选实体上限，不把整份 NPC knowledge/JSON 注入作者。旧回忆中的位置、owner、承诺状态仍是历史，当前卡片才说明现在状态；停用/离场实体可被回忆，不自动获得在场或可交互资格。
 - [ ] 检验来源状态在构造前后完全不变：
 
 ```ts
@@ -275,6 +296,7 @@ WHERE game_id = ? AND generation_id = ? AND observer_id = ?
 - [ ] 写 RED：摘要超时/非法引用/概览失败时水位不动，全部未覆盖可见原文仍在请求里；50条后失败，到61条不得只发最后50条。超过硬预算时零 author HTTP、明确失败，A 的行动不重复结算。
 - [ ] 写 preparation 与真实 requestClient/generator 集成测试：同一 job 三版候选使用同一记忆快照；角色 outward 成功缓存仍复用，不因摘要修订重复判断。另一个 observer 的维护结果不能进入作者包。
 - [ ] 在取得既有 narrative job 租约后、角色判断和候选循环前准备一次；P2 采用请求内有界维护，不新建后台常驻服务或额外 gameplay provider 触发点。未触发生成的移动/物品消费不为摘要调用网络；下次合法生成入口再追赶。进程恢复可重建，缓存以来源和策略版本校验。compositionRoot 的测试/实验 options 增加 `memorySummaries?:"enabled"|"disabled"`、`memoryPolicy?:NarrativeMemoryPolicy`，生产默认 enabled；disabled 不读/写/生成摘要，读取全部可见原文，仍保留相同检索/权限与长度检查，不成为另一个生成实现。
+- [ ] 准备顺序固定为：observer 来源投影→校验/有界更新摘要→取得有效概览及 uncovered→收集这些记录已有 Entity/Event ID、当前行动/地点/焦点、活跃任务/Thread 引用→一次 retrieveStoryEvidence→当前实体卡与记忆包。全部可见 uncovered 引用可进入候选，近两场引用仅作排序加权；只有实际选中概览的引用参与，不累积被概览遗弃的旧 ID。软候选沿 Task 1 数量/长度约束进入上下文，不能一律标 mandatory 或递归膨胀。
 - [ ] 每 job/epoch 给所有 observer 合计最多 **8 次摘要 HTTP**，最多准备 **2 个批次更新**（每次叶+概览、每请求最多2次传输）；先 player，再当前需要判断的 NPC。其余保留原文，不延迟到无上限队列。原 author/NPC/review **24 HTTP/epoch、3候选**保持，P2 总上限明确为 **32 HTTP/epoch**；所有用途还共同受实验批预算。Task 4 的缓存端口/适配器在本 Task 增加 `reserveHttpAttempt(input:{gameId:GameId;generationId:GenerationId;jobId:NarrativeJobId;epoch:number}):Promise<boolean>`，使用独立 `narrative_memory_attempts` 表按这些键原子计数并在发送前预留；崩溃不退额度。不能挪用叙事额度后声称24次包含全部调用。计数表与缓存一起遵循清档/关闭策略，测试并发上限和重启保持。
 - [ ] preparation 超时/额度耗尽后若原文可装入完整预算，继续用旧有效概览+全部 uncovered；这是读取真实来源，不是确定性剧情回退。若仍装不入，沿同一 job 显式失败，允许用户重试，不能切掉 mandatory：
 
@@ -320,6 +342,7 @@ expect(result.itemGivenEventCount).toBe(1);
 
 `runOfflineP2Story(input:{gameLength:"short"|"medium";summaries:"enabled"|"disabled"|"fail"})` 由新 testutil 导出，其 result 精确含上述五字段以及 `reloadEqual:boolean`；内部只走正式 API，可注入模型响应但不能为结局修改状态。
 - [ ] 写摘要失败/缓存损坏/并发 late writer、回滚后相同 sequence 不同 source、reload/重复 ensure 的旅程变体。跨幕回忆覆盖与旧 `storyEvidenceJourney` 的单条手造原文测试分别报告。
+- [ ] 增加“摘要保留地点引用但省去旧话”的低成本离线用例：当前输入仅为“接下来怎么办”，没有旧人姓名；有效概览引用既有破庙，按该 ID 召回已覆盖且被概览省去的相关原话，并读取破庙/说话人的当前卡片。该地点符合条件的旧记录不超过每实体上限，用来验证入口闭环，不声称任意细节必被想起。断言同一 History 不因概览、近期原文和召回多路命中重复出现；检索只一轮，未知人物/秘密不随引用自动授予。用真实 prepare→作者请求检查，不只断言构造了候选 ID。
 - [ ] 注册两条新生产路线 **S-short、M-medium**，分别三幕/五幕，都是有公开依据的递送，不强制秘密或新增操作。固定 characterName=沈行、identity=受托递送书信的旅人、profile=愿意听取不同意见并记住先前约定、tags=[谨慎,守信]、gameType=wuxia、style=novel、intensity=normal；premise=“沿途数个聚落之间往来书信，人物各有立场，委托可由实际交付完成。”；opening=“我接受一封公开书信的递送委托。请明确委托人的理由与接收约定，沿途人物的不同意见应围绕这次递送；我会在后段回想早先的话，再决定完成交付。” 两路仅 gameLength 不同，不读历史开局 seed。
 - [ ] 选择政策复用合法 Action/目标推进，不以 label 关键词猜 ID。中篇在第三幕或之后、仍未交付且已产生两次摘要时的首个合法 NPC 决策输入：“最初委托人对这封信说过什么？我想先回想原话，再决定是否交付。” 查询是谁、原话是什么以真实开局 History 为 oracle；不把期望原句注入玩家输入。触发条件始终没满足则记 coverage failure，不能为通过临时降低阈值或追加无意义动作。
 - [ ] 预登记 **短篇24动作/200 HTTP/90分钟，中篇48动作/500 HTTP/180分钟**；包括初始化、摘要、角色、作者、review及所有传输尝试。每 epoch 24叙事+8摘要，三候选，正式批不自动执行耗尽后的手动 retry。失败保留分母，不另抽成功开局。两个模型及所有参数沿同一实际配置冻结，记录代码/配置/策略/输入/来源 hash。
@@ -355,7 +378,7 @@ npm run journey:narrative:p2 -- --mode=live --run-id=p2-01 --protocol=artifacts/
 
 | 编号 | 必须成立 | 负责 Task |
 | --- | --- | --- |
-| M1 | 较早NPC/事件/原话可双向找到，mandatory贯穿真实请求 | 1、2、6 |
+| M1 | 较早NPC/事件/原话可双向找到，摘要/近期引用可发起一次旧事补充，mandatory贯穿真实请求 | 1、2、5、6 |
 | M2 | 显示选项、隐藏名字、私密听众、代词歧义不制造错误知识 | 1、2、6 |
 | M3 | 50/10以有效History计数；source/sequence与Event/turn分离 | 3 |
 | M4 | 概览从原始叶来源重建，文字逐字对应、当前状态仍读Entity | 3、5 |
