@@ -7,7 +7,7 @@
 ## 当前契约
 
 - 普通 ready 焦点场景提供恰好两个固定回应和一个自定义输入；交接只提供承接入口，终幕立场不开放自由输入。自定义输入必须绑定当前焦点 NPC，每次请求使用新的 `actionId`。
-- 对话会话至少经过两轮正式回应后才完成 `talk_to_npc`；`met` 只表示接触，不能代替 `npc_dialogue_completed`。
+- 对话会话至少经过两轮正式选项回应后才完成 `talk_to_npc`。自由输入转换为 `talk/ask/utterance`，产生真实交互与直接回应，但保留正式回应计数；首次追问建立未完成会话，不能借 `met=true` 提前完成目标。玩家可先了解分歧，再用正式选项推进；`met` 只表示接触，不能代替 `npc_dialogue_completed`。
 - 固定选择与自定义输入都走 `POST /api/game/actions` → `performTurn` → 单次规则 CAS。不存在独立 dialogue route 或 dialogue use case。
 - 正式回合的生成与审批由 [运行时 AI](运行时AI导演与场景表演.md) 编排；界面提交后保留对话快照并显示 waiting，ready 后显示新回应与入口。
 - `speechPurpose=focus|ambient` 区分正式回应与非焦点环境台词；`speechSource=generated` 只描述来源。读模型不会把 ambient 台词当作正式目标对白，也不会在读取时补写正式对白。

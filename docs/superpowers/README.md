@@ -16,3 +16,5 @@
 - [P2 Plan 独立审阅](reports/2026-09-14-narrative-p2-plan-review.md)：固定记忆恢复、租约隔离和 NPC 私密传递的规划问题及修订依据。
 - [P2 准入缺口修复 Plan](plans/2026-09-14-narrative-p2-readiness-fixes.md)：组织实现核查后的 R1–R6 修复；对应 [离线验收报告](reports/2026-09-14-narrative-p2-readiness-fixes.md) 与 [验证协议](reports/2026-09-14-narrative-p2-protocol.md)。
 - [P2 真实 API 与剧情质量验收](reports/2026-09-14-narrative-p2-acceptance.md)：冻结批次的通关、严格回放、记忆覆盖与全文质量证据，区分实际执行和未覆盖项目。
+- [P2 剧情修复 Plan](plans/2026-09-14-narrative-p2-story-repair.md)：行动核查、具体冲突推进、追问与正式回应分离、有限委托的真实收束；对应 [修复验收报告](reports/2026-09-14-narrative-p2-story-repair.md)。
+- [P2 记忆覆盖重规划](plans/2026-09-14-narrative-p2-memory-coverage.md)：先短篇质量门禁，再以有界议题形成自然经历；规定后续驱动、摘要追问、两臂与 UI 接续任务。

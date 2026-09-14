@@ -399,6 +399,8 @@ expect(result.itemGivenEventCount).toBe(1);
 
 **执行证据：** `p2-01` 已冻结、实跑、严格回放并阅读全文，见 [验收报告](../reports/2026-09-14-narrative-p2-acceptance.md)。两路线通关，记忆覆盖与质量门槛未通过；两臂及UI因预定checkpoint未产生而未执行。以下保留未满足的验收条件，不以通关替代它们。
 
+**后续实施入口：** 先执行 [剧情修复](2026-09-14-narrative-p2-story-repair.md)，再按 [记忆覆盖重规划](2026-09-14-narrative-p2-memory-coverage.md) 实施新驱动并冻结新协议。后者尚是计划，不能直接复用下面的 v1 命令声称已完成新议题与分阶段验收。
+
 - [x] 先完成一次完整验收：lint、typecheck、boundaries、`npm test -- --minWorkers=1 --maxWorkers=2`、check:docs；涉及 production build 的本 Plan 再执行 `npm run build`。不能用P1旧成绩替代本版本结果。冻结代码与协议后运行：
 
 ```powershell
