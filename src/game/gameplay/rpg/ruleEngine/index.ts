@@ -37,6 +37,7 @@ function advanceDialogueSession(
   action: Action,
 ): StoryState {
   if (action.type !== "talk") return storyState;
+  const isFreeQuestion = action.dialogueAct === "ask" && action.utterance !== undefined;
   const existing = storyState.narrative.dialogueSession;
   const readyScene = storyState.narrative.status === "ready"
     ? storyState.narrative.currentScene
@@ -49,9 +50,9 @@ function advanceDialogueSession(
     && String(currentSceneNpcId) === String(action.npcId);
   // 某些旧流程先展示“与 NPC 交谈”入口，再由下一回合打开正式双选项。
   // 这个入口本身不是玩家对 NPC 台词的回应，不应消耗多轮会话的一轮。
-  const isExplicitDialogueResponse = action.dialogueAct !== "ask"
+  const isExplicitDialogueResponse = !isFreeQuestion && (action.dialogueAct !== "ask"
     || action.topic !== undefined
-    || action.utterance !== undefined;
+    || action.utterance !== undefined);
   const objectiveRef = currentObjectiveOf(worldState, storyState);
   const objectiveNpcId = objectiveRef === null ? undefined : (() => {
     const quest = worldState.quests.find((entry) => String(entry.id) === String(objectiveRef.questId));
@@ -59,8 +60,7 @@ function advanceDialogueSession(
     return objective?.kind === "talk_to_npc" ? objective.npcId : undefined;
   })();
   const sameSession = existing !== undefined
-    && String(existing.npcId) === String(action.npcId)
-    && isExplicitDialogueResponse;
+    && String(existing.npcId) === String(action.npcId);
   const isObjectiveDialogueBootstrap = action.dialogueAct === "ask"
     && !isExplicitDialogueResponse
     && String(objectiveNpcId) === String(action.npcId);
@@ -75,8 +75,9 @@ function advanceDialogueSession(
   const requiredTurns = sameSession
     ? existing?.requiredTurns ?? DIALOGUE_REQUIRED_TURNS
     : DIALOGUE_REQUIRED_TURNS;
-  const turnCount = isObjectiveDialogueBootstrap
-    ? 0
+  const turnCount = isFreeQuestion
+    ? sameSession ? existing.turnCount : 0
+    : isObjectiveDialogueBootstrap ? 0
     : sameSession ? existing.turnCount + 1 : 1;
   const dialogueSession = {
     npcId: action.npcId,

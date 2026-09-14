@@ -8,6 +8,7 @@ import { installTsHooks } from "./narrativeP1Journey.mjs";
 import { createNarrativeP1ReplayRuntime } from "./narrativeP1Replay.mjs";
 import { createNarrativeP2ProductionRunner, readP2MemoryState, hashP2Snapshot } from "./narrativeP2Production.mjs";
 installTsHooks();
+const { fixtureNarrativeReviewPass } = await import("../src/game/application/server/ai/testing/narrativeReviewFixture.testutil.ts");
 const { createNarrativeP2Protocol } = await import("../src/game/application/testing/narrativeP2Journey.ts");
 const env = { AI_MODEL: "offline-fixture", AI_API_BASE_URL: "https://fixture.invalid", AI_API_KEY: "offline-fixture-secret", AI_NARRATIVE_INPUT_MAX_ESTIMATED_TOKENS: "64000" };
 const deps = { environment: { model: env.AI_MODEL, apiBaseUrl: env.AI_API_BASE_URL, inputMaxEstimatedTokens: 64000 }, codeFingerprint: "fixture-code" };
@@ -105,7 +106,7 @@ test("complete five-act production fixture records and strictly replays summary 
         sends += 1;
         let response;
         switch (request.context.purpose) {
-          case "narrative_candidate_review": response = { verdict: "pass" }; break;
+          case "narrative_candidate_review": response = fixtureNarrativeReviewPass(request.messages); break;
           case "npc_deliberation": {
             const context = JSON.parse(request.messages[1].content.split("\n\n只返回")[0]);
             response = { npcId: context.npc.npcId, goalIds: [], response: "cooperate", evidenceEventIds: [], discloseFactIds: [], interactionProposals: [] };

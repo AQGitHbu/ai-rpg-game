@@ -5,6 +5,8 @@ import { buildNpcSpeechAuthority } from "../../npcSpeechAuthority";
 import { buildEntityContextProjection } from "../../entityContextProjection";
 import { narrativeSlotResolution, projectNarrativeDraft } from "./narrativeDraftProjection";
 import { OPENING_SEMANTIC_CONTRACT } from "./openingSemanticContract";
+import { buildNarrativeProgressRequirements, NARRATIVE_PROGRESS_CONTRACT } from "./narrativeProgressContract";
+import { projectObserverEvidence } from "@/game/gameplay/rpg/narrativeMemory";
 
 export type NarrativeRuleBasis = Readonly<{
   key: string;
@@ -21,6 +23,9 @@ export function buildNarrativeReviewRules(input: NarrativeCandidateReviewInput):
     if (!catalog.some(entry => entry.key === key)) catalog.push({ key, kind, impacts, value });
   };
   const context = input.context;
+  for (const requirement of buildNarrativeProgressRequirements(input)) {
+    add(requirement.key, "opening_contract", ["interaction_effect"], { ...requirement, contract: NARRATIVE_PROGRESS_CONTRACT });
+  }
   if (context.kind === "opening") {
     const { signal: _signal, reserveHttpAttempt: _reserve, ...openingInput } = context.input;
     add("opening:input", "input", ["input_response"], openingInput);
@@ -66,8 +71,14 @@ export function buildNarrativeReviewRules(input: NarrativeCandidateReviewInput):
     }
   }
   const closure = buildEntityContextProjection({ worldState, storyState, job });
-  for (const item of [...closure.mandatory, ...closure.optional].filter(entry => entry.kind === "item")) {
+  const deliveryItem = storyState.delivery === undefined ? undefined : entitiesOfKind(worldState.entityStore, "item").find(item => item.core.id === storyState.delivery!.itemId);
+  for (const item of [...closure.mandatory, ...closure.optional].filter(entry => entry.kind === "item").concat(deliveryItem === undefined ? [] : [{ id: String(deliveryItem.core.id), kind: "item", name: deliveryItem.core.name, summary: "正式递送委托物" }])) {
     add(`item:${item.id}`, "item", ["item_state"], item);
+    for (const event of projectObserverEvidence({ worldState, storyState, observerId: PLAYER_ENTITY_ID }).events) {
+      if (event.outcome === "success" && (event.payload.type === "item_given" || event.payload.type === "item_obtained") && event.payload.itemId === item.id) {
+        add(`event:${event.eventId}`, "item", ["item_state", "interaction_effect"], event.payload);
+      }
+    }
   }
   const visibleIds = entitiesOfKind(worldState.entityStore, "fact").filter(fact => fact.fact.discovered).map(fact => fact.core.id);
   const authority = job.focusNpcId === undefined ? null : buildNpcSpeechAuthority({
@@ -83,6 +94,10 @@ export function buildNarrativeReviewRules(input: NarrativeCandidateReviewInput):
       add(`action:interaction:${proposal.proposalKey}`, "action", ["action_binding", "interaction_effect"], proposal);
       for (const id of [...proposal.factIds, ...(proposal.confidentiality?.protectedFactIds ?? [])]) references.add(id);
     }
+  }
+  for (const graph of alternatives) for (const slot of graph.slots) if (slot.resolution !== null) {
+    add(`step:${slot.slotKey}`, "step", slot.resolution.trigger.kind === "take_item" || slot.resolution.trigger.kind === "give_item"
+      ? ["step_order", "item_state"] : ["step_order"], { stepKey: slot.slotKey, resolution: slot.resolution });
   }
   if ("currentScene" in input.proposal) {
     const reviewState = context.reviewWorldState ?? worldState;

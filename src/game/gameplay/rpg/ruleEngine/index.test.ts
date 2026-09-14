@@ -78,13 +78,13 @@ describe("ruleEngine facade", () => {
     }
   });
 
-  it("对话会话至少连续两轮后才完成 talk_to_npc 目标", () => {
+  it.each([0, 5])("自由追问 %s 次保留未完成目标，随后两次正式回应才完成", (questionCount) => {
     const npc: NpcEntry = {
       id: asNpcId("npc_dialogue"), name: "线人", role: "知情人", description: "知道一条线索",
       locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
       memory: { npcId: asNpcId("npc_dialogue"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
     };
-    const dialogueWs = makeWorld({
+    let dialogueWs = makeWorld({
       npcs: [npc],
       quests: [{
         id: asQuestId("quest_dialogue"), name: "查清口供", description: "把口供问完整",
@@ -93,13 +93,27 @@ describe("ruleEngine facade", () => {
         tags: [], kind: "main", stage: 1, status: "active",
       }],
     });
-    const dialogueState = {
+    let dialogueState = {
       ...ss,
       narrative: {
         ...ss.narrative,
         dialogueSession: { npcId: npc.id, turnCount: 0, requiredTurns: 2, completed: false },
       },
     };
+
+    for (let index = 0; index < questionCount; index += 1) {
+      // First free ask must establish a zero-turn session even without a prior bootstrap.
+      if (index === 0) dialogueState = { ...dialogueState, narrative: { ...ss.narrative } } as typeof dialogueState;
+      const question = resolveTurn(dialogueWs, dialogueState, { type: "talk", npcId: npc.id, dialogueAct: "ask", utterance: `问题${index}` }, `question_${index}`, index, asTurnId(`turn_question_${index}`), "free_text", deps);
+      expect(question.ok).toBe(true);
+      if (!question.ok) throw new Error("free question failed");
+      dialogueWs = question.resolution.nextWorldState;
+      dialogueState = question.resolution.nextStoryState as typeof dialogueState;
+      expect(dialogueWs.quests[0]?.status).toBe("active");
+      expect(dialogueState.narrative.dialogueSession).toMatchObject({ turnCount: 0, completed: false });
+      expect(dialogueState.currentAct).toBe(ss.currentAct);
+      expect(question.resolution.domainEvents.some(event => event.kind === "npc_interaction_recorded")).toBe(true);
+    }
 
     const first = resolveTurn(
       dialogueWs,

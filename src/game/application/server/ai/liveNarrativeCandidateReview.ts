@@ -10,6 +10,8 @@ import type { NarrativeRequestClient } from "./narrativeRequestClient";
 import { compileDecisionNarrativeContext } from "./narrativeContext";
 import { OPENING_SEMANTIC_CONTRACT } from "./openingSemanticContract";
 import { buildOpeningNarrativePrompt } from "./openingNarrativePrompt";
+import { buildNarrativeExecutionChecks, NARRATIVE_EXECUTION_CHECK_CONTRACT, validateNarrativeExecutionChecks } from "./narrativeExecutionChecks";
+import { buildNarrativeProgressRequirements } from "./narrativeProgressContract";
 
 export type LiveNarrativeCandidateReviewDeps = Readonly<{
   readonly aiClient?: RpgAiClient;
@@ -100,7 +102,8 @@ function parseDefects(
     const evidence = parseRuleEvidence(entry.evidence, buildNarrativeReviewRules(input));
     const path = canonicalCandidatePath(input.proposal, entry.path);
     if (evidence === null || path === null) return null;
-    if (evidence.basisKey.startsWith("ending:")) {
+    const endingBasisKey = evidence.basisKey.replace(/^progress:/, "");
+    if (endingBasisKey.startsWith("ending:")) {
       const slot = /^endingOutcomes\[(\d+)\]\.(?:choiceLabel$|scene(?:\.|\[|$))/.exec(path);
       const summary = /^worldDelta\.endingPair\[(\d+)\]\.(?:name|description)$/.exec(path);
       const delta = "worldDelta" in input.proposal && isRecord(input.proposal.worldDelta) ? input.proposal.worldDelta : null;
@@ -109,7 +112,7 @@ function parseDefects(
       const outcome = "endingOutcomes" in input.proposal && slot !== null
         ? input.proposal.endingOutcomes?.[Number(slot[1])]
         : isRecord(caption) ? caption : undefined;
-      if (outcome === undefined || evidence.basisKey !== `ending:${outcome.themeKey}`) return null;
+      if (outcome === undefined || endingBasisKey !== `ending:${outcome.themeKey}`) return null;
     }
     defects.push({
       evidence,
@@ -145,7 +148,11 @@ function parseReviewVerdict(
   const review = isRecord(value.review) && hasOnlyKeys(value, ["review"]) ? value.review : value;
   const qualityObservations = parseQualityObservations(review.qualityObservations);
   if (qualityObservations === null) return null;
-  if (review.verdict === "pass" && hasOnlyKeys(review, ["verdict", "qualityObservations"])) return { pass: true, qualityObservations };
+  if (review.verdict === "pass" && hasOnlyKeys(review, ["verdict", "qualityObservations", "executionChecks", "progressChecks"])) {
+    if (input.context.kind === "opening") return hasOnlyKeys(review, ["verdict", "qualityObservations"]) ? { pass: true, qualityObservations } : null;
+    const defects = validateNarrativeExecutionChecks(review.executionChecks, review.progressChecks, input);
+    return defects === null ? null : defects.length > 0 ? { pass: false, defects, qualityObservations } : { pass: true, qualityObservations };
+  }
   if ((review.verdict === "revise" && hasOnlyKeys(review, ["verdict", "defects", "qualityObservations"]))
     || hasOnlyKeys(review, ["defects", "qualityObservations"])) {
     const defects = parseDefects(review.defects, input);
@@ -210,6 +217,8 @@ function publicReviewContext(input: NarrativeCandidateReviewInput): unknown {
   return {
     kind: "decision",
     ruleBasis: buildNarrativeReviewRules(input),
+    executionChecks: buildNarrativeExecutionChecks(input),
+    progressRequirements: buildNarrativeProgressRequirements(input),
     candidateVersion: input.context.candidateVersion,
     prompt: compilation.prompt,
     manifest: compilation.manifest,
@@ -246,7 +255,8 @@ export function createLiveNarrativeCandidateReview(
               "无玩法效果的服饰、环境、动作姿态和风格属于 qualityObservations=[{path,reason}]，不影响 verdict；物品持有/交付违规必须引用具体正式 item 的依据，不能因为普通装饰没有 Entity ID 就判背包违规。真实交付、知识披露、Action 绑定与续接顺序仍须严格检查。",
               "fact 目录区分 ID 存在、获准提案引用与当前允许披露正文；authorizedProposalKeys 许可结构化提案引用，不表示玩家已知或现在可说出正文。未在公开事实正文中列出不能推断 ID 不存在。不要根据秘密 ID 猜测内容。",
               "不得改写候选、补造事实、授予知识或输出思维链。",
-              "只返回 JSON：通过为 {\"verdict\":\"pass\"}，需修订为 {\"verdict\":\"revise\",\"defects\":[{\"scope\",\"code\",\"path\",\"reason\",\"evidence\":{\"basisKey\",\"impact\",\"detail\"}}]}。",
+              "只返回 JSON：opening 通过为 {\"verdict\":\"pass\"}；decision 通过必须为 {\"verdict\":\"pass\",\"executionChecks\":[...],\"progressChecks\":[...]}。需修订为 {\"verdict\":\"revise\",\"defects\":[{\"scope\",\"code\",\"path\",\"reason\",\"evidence\":{\"basisKey\",\"impact\",\"detail\"}}]}。",
+              NARRATIVE_EXECUTION_CHECK_CONTRACT,
               "scope 只能是 scene、proposal、npc_behavior；code 只能是 MISSED_INPUT、UNSUPPORTED_FACT、DISCLOSURE、ACTION_MISMATCH、BROKEN_CAUSALITY。",
               "不要创造其他 scope 或 code；无法归类时仍使用上述最接近的稳定 code，并把具体说明写入 reason。",
             ].join("\n"),

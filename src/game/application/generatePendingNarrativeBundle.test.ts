@@ -1,3 +1,4 @@
+import { fixtureNarrativeReviewPass } from "./server/ai/testing/narrativeReviewFixture.testutil";
 import type { NpcDeliberationSource } from "./npcDeliberationSource";
 import { hashNarrativeCandidate } from "./narrativeCandidateReview";
 import { describe, it, expect, vi } from "vitest";
@@ -670,18 +671,19 @@ describe("generatePendingNarrativeBundle", () => {
         choiceLabel: repaired ? (themeKey === "trust" ? "认可你的回应" : "我仍然存疑") : "回去核清账目再回应",
         scene: { segments: [{ beatId: "atmosphere", text: repaired
           ? (themeKey === "trust" ? "你当面表明支持，先前针锋相对的争执终于停下。" : "你当面保留疑虑，双方坦然承认这次分歧。")
-          : "你回到远处核清账目，所有欠款都已偿还。" }], npcLine: null, objectiveLink: null, choices: [] },
+          : "你已经离开内堂登船，回到远处核清账目，所有欠款都已偿还。" }], npcLine: null, objectiveLink: null, choices: [] },
       })),
     });
-    const defects = ["choiceLabel", "scene.segments[0].text"].map(field => ({
-      scope: "scene", code: "ACTION_MISMATCH", path: `endingOutcomes[0].${field}`, reason: "实际支持行动未执行返回与核验。",
-      evidence: { basisKey: "ending:trust", impact: "action_binding", detail: "预览的当前位置不变，不能将返回核验或财物结清写成已执行的因果依据。" },
-    }));
-    const responses = [draft(false), { verdict: "revise", defects }, draft(true), { verdict: "pass" }];
+    const responses = [draft(false), { verdict: "pass" }, draft(true), { verdict: "pass" }];
     const requests: (readonly { content: string }[])[] = [];
     const complete = vi.fn(async (_role: unknown, messages: readonly { content: string }[]) => {
       requests.push(messages);
-      return { ok: true as const, content: JSON.stringify(responses.shift()) };
+      const response = responses.shift();
+      const payload = response && "verdict" in response ? fixtureNarrativeReviewPass(messages) : response;
+      if (requests.length === 2 && payload && "executionChecks" in payload) {
+        for (const check of payload.executionChecks ?? []) if (check.path.startsWith("endingOutcomes[0]")) check.playerLocation.kind = "outside_known_location";
+      }
+      return { ok: true as const, content: JSON.stringify(payload) };
     });
     const aiClient = { complete } as unknown as RpgAiClient;
     const generated = await generatePendingNarrativeBundle({ repository: repo, source: createNarrativeBundleSource({ aiClient }),
@@ -696,6 +698,8 @@ describe("generatePendingNarrativeBundle", () => {
     expect(saved.storyState.narrative.status).toBe("ready");
     if (saved.storyState.narrative.status !== "ready") throw new Error("ending not approved");
     expect(saved.storyState.narrative.narrativeBundle?.endingOutcomes?.[0]?.choiceLabel).toBe("认可你的回应");
+    expect(saved.storyState.narrative.narrativeBundle?.candidateVersion).toBe(2);
+    expect(saved.storyState.history.entries.filter(entry => entry.text === "掌柜等着你表明立场。")).toHaveLength(1);
     expect(JSON.stringify(saved.storyState.history)).not.toContain("所有欠款");
     expect(JSON.stringify(saved.storyState.history)).not.toContain("针锋相对");
     expect(saved.worldState.ending).toBeNull();
@@ -740,7 +744,7 @@ describe("generatePendingNarrativeBundle", () => {
     const requests: (readonly { content: string }[])[] = [];
     const complete = vi.fn(async (_role: unknown, messages: readonly { content: string }[]) => {
       requests.push(messages);
-      return { ok: true as const, content: JSON.stringify(responses.shift()) };
+      return { ok: true as const, content: JSON.stringify((() => { const response = responses.shift(); return response && "verdict" in response && response.verdict === "pass" ? fixtureNarrativeReviewPass(messages) : response; })()) };
     });
     const aiClient = { complete } as unknown as RpgAiClient;
     const generated = await generatePendingNarrativeBundle({ repository: repo, source: createNarrativeBundleSource({ aiClient }),

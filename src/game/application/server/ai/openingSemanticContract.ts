@@ -1,5 +1,7 @@
+import { NARRATIVE_PROGRESS_CONTRACT } from "./narrativeProgressContract";
 /** Shared author/reviewer interpretation of the existing opening compiler. */
 export const OPENING_SEMANTIC_CONTRACT = [
+  NARRATIVE_PROGRESS_CONTRACT,
   "开局候选契约：本次是建立初始世界，不是仅复述玩家输入。允许在事实目录/history 中建立与输入不冲突的必要新人物背景、核验凭据与因果；已明确的玩家经历和已发生行动不可改写。",
   "world.publicFacts 是历史命名的事实目录，不等于全部向玩家公开。privateFactKeys 必须引用该目录，目录中出现秘密本身不是披露；实际泄密检查 prologue、场景正文、选项与公开历史/thread 的受众。不能要求把秘密移出目录或增加 privateFacts 字段。",
   "目录按数组顺序编译 fact_0、fact_1……；opening_npc 编译 npc_0。usedFactIds 使用编译后的 ID，不能要求改成本地 key。",

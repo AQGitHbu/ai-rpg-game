@@ -1,3 +1,4 @@
+import { fixtureNarrativeReviewPass } from "./ai/testing/narrativeReviewFixture.testutil";
 // @vitest-environment node
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -30,7 +31,7 @@ it("replays raw opening, NPC and reviewer responses through production parsing a
         attempt: (request) => rawRuntime.attempt!(request, async () => {
           purposes.push(request.context.purpose);
           let payload: unknown;
-          if (request.context.purpose === "narrative_candidate_review") payload = { verdict: "pass" };
+          if (request.context.purpose === "narrative_candidate_review") payload = fixtureNarrativeReviewPass(request.messages);
           else if (request.context.purpose === "npc_deliberation") payload = { npcId: "npc_0", goalIds: [], response: "question", evidenceEventIds: [], discloseFactIds: [], interactionProposals: [] };
           else {
             const current = await repo.getCurrentGame();

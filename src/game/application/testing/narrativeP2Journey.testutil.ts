@@ -1,3 +1,4 @@
+import { fixtureNarrativeReviewPass } from "../server/ai/testing/narrativeReviewFixture.testutil";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -114,6 +115,9 @@ export async function runOfflineP2Story(input: { gameLength: "short" | "medium";
   let summaryRequestCount = 0;
   const playerWatermarks = new Set<number>();
   let queried = false;
+  let questionPreservedDecision = false;
+  let questionAct = 0;
+  let questionSessionTurns = 0;
   let reloadEqual = true;
   let actionsTaken = 0;
   let quoteTurn = 0;
@@ -127,7 +131,7 @@ export async function runOfflineP2Story(input: { gameLength: "short" | "medium";
       if (options?.beforeTransportAttempt !== undefined && !(await options.beforeTransportAttempt())) return { ok: false, code: "aborted", retryable: false, latencyMs: 0 };
       const prompt = messages.map(message => message.content).join("\n");
       if (audit !== undefined) memoryAudits.push(audit);
-      if (audit?.purpose === "narrative_candidate_review") return { ok: true, content: JSON.stringify({ verdict: "pass" }), latencyMs: 0 };
+      if (audit?.purpose === "narrative_candidate_review") return { ok: true, content: JSON.stringify(fixtureNarrativeReviewPass(messages)), latencyMs: 0 };
       if (audit?.purpose === "narrative_memory_summary") {
         summaryRequestCount += 1;
         if (input.summaries === "fail") return { ok: false, code: "network_error", retryable: false, latencyMs: 0 };
@@ -179,6 +183,14 @@ export async function runOfflineP2Story(input: { gameLength: "short" | "medium";
         });
         record = await read();
         if (!generated.ok || record.storyState.narrative.status !== "ready") throw new Error(`generation failed act ${record.storyState.currentAct}: ${JSON.stringify({ generated, narrative: record.storyState.narrative })}`);
+        if (queryInFlight) {
+          const questionView = projectGameSessionView(record.worldState, record.storyState, record.revision, "p2-offline");
+          const questionMap = buildChoiceMap(record.worldState, record.storyState, record.revision);
+          questionPreservedDecision = record.storyState.currentAct === questionAct
+            && record.storyState.narrative.dialogueSession?.turnCount === questionSessionTurns
+            && questionView.narrative.npcDialogues.some(entry => entry.freeInputEnabled)
+            && visibleTokens(questionView).some(token => { const action = questionMap.get(token); return action?.type === "talk" && action.dialogueAct !== "ask"; });
+        }
         queryInFlight = false;
         await observeSummary(record);
       }
@@ -204,6 +216,9 @@ export async function runOfflineP2Story(input: { gameLength: "short" | "medium";
           interaction: { kind: "free_text", text: P2_RECALL_QUESTION, targetNpcId: asNpcId(dialogue.npcId) } }, { repository, now });
         if (!result.ok) throw new Error(`query failed: ${JSON.stringify(result)}`);
         queried = true;
+        questionAct = record.storyState.currentAct;
+        questionSessionTurns = record.storyState.narrative.dialogueSession?.npcId === dialogue.npcId
+          ? record.storyState.narrative.dialogueSession.turnCount : 0;
         queryInFlight = true;
         queryTurn = record.storyState.turnNumber;
         actionsTaken += 1;
@@ -237,6 +252,9 @@ export async function runOfflineP2Story(input: { gameLength: "short" | "medium";
       && left.memory.sourceFingerprint === right.memory?.sourceFingerprint;
     return {
       completed: final.worldState.ending !== null && final.storyState.narrative.status === "ready",
+      questionPreservedDecision,
+      stateVersions: { entity: final.worldState.entityStore.version, world: final.worldState.version, story: final.storyState.version },
+      unclosedQuestions: final.storyState.threads.filter(thread => thread.kind === "question" && thread.closure.length === 0 && thread.status !== "resolved").length,
       finalAct: final.storyState.currentAct, eligibleHistoryCount: final.storyState.history.entries.filter(entry => entry.kind !== "shown_choice").length,
       publishedSummaryRevisions: playerWatermarks.size, watermarks: [...playerWatermarks], summaryRequestCount,
       oldQuoteInActualAuthorRequest, oldQuoteLeakedToUninformedNpc, npcRequestCount,

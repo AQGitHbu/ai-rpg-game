@@ -2,6 +2,7 @@ import { createEntityStore, projectEntityStore } from "@/game/domain/entity";
 import { createWorldStateFixtureWith } from "@/game/domain/testing/worldStateFixture.testutil";
 import { asItemId, asQuestId } from "@/game/domain/worldEntity";
 import { projectNarrativeDraft } from "./narrativeDraftProjection";
+import { fixtureNarrativeReviewPass } from "./testing/narrativeReviewFixture.testutil";
 import { describe, expect, it, vi } from "vitest";
 import type { AiMessage } from "@ai-game/ai-transport";
 import type { NarrativeBundleSourceContext } from "../../narrativeBundleSource";
@@ -347,10 +348,11 @@ describe("live narrative candidate reviewer", () => {
   });
   it("keeps the observed arrival's cosmetic hat as a quality observation without inventing inventory", async () => {
     const qualityObservations = [{ path: "continuationScenes[0].scene.segments[0].text", reason: "斗笠是无规则效果的服饰细节。" }];
-    const complete = vi.fn().mockResolvedValue({ ok: true, content: JSON.stringify({ verdict: "pass", qualityObservations }) });
+    const complete = vi.fn(async (_role: unknown, messages: readonly AiMessage[]) => ({ ok: true, content: JSON.stringify({ ...fixtureNarrativeReviewPass(messages), qualityObservations }) }));
     const proposal = observedArrival as NarrativeBundleProposal;
     expect(proposal.continuationScenes[0]?.scene.segments?.[0]?.text).toContain("把斗笠上的水抖在门槛外");
-    const input = { context: { kind: "decision", worldState: makeWorldState(), storyState: makeStoryState(), job: makeJob() } as const,
+    const initialStory = makeStoryState();
+    const input = { context: { kind: "decision", worldState: makeWorldState(), storyState: { ...initialStory, evolution: { ...initialStory.evolution, status: "needs_next_act" as const, nextLocationOrdinal: 1 } }, job: makeJob() } as const,
       proposal, candidateVersion: 3, candidateHash: hashNarrativeCandidate(proposal) };
     const review = createLiveNarrativeCandidateReview({ aiClient: client(complete) });
     expect(await review.reviewNarrativeCandidate(input)).toMatchObject({ ok: true, qualityObservations });

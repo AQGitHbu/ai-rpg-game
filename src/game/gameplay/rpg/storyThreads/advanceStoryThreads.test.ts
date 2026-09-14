@@ -91,6 +91,8 @@ describe("advanceStoryThreads", () => {
     ]);
     expect(result[0]?.evidenceEventIds).toEqual([outcomeId]);
     expect(result[1]?.evidenceEventIds).toEqual([outcomeId]);
+    const ended = { ...current, eventLedger: [...current.eventLedger, makeCommittedEvent({ type: "ending_reached", endingId: "ending_trust" as never, outcome: "success" }, { eventId: asEventId("turn:ending") })] };
+    expect(reconcileRuleDerivedStoryThreads({ worldState: ended, threads: result }).map(entry => entry.status)).toEqual(result.map(entry => entry.status));
   });
 
   it("requires both resolved quest state and its committed outcome event", () => {

@@ -9,6 +9,8 @@ describe("P2 complete production story with observer memory", () => {
       oldQuoteLeakedToUninformedNpc: false, itemGivenEventCount: 1, reloadEqual: true, queried: true,
       oldQuoteCoveredAtQuery: true, oldQuoteOmittedFromOverview: true,
       authorReviewerShareFixedPacket: true, npcAuditHasPrivateObserver: true, summaryAuditHasSources: true });
+    expect(result).toMatchObject({ questionPreservedDecision: true, stateVersions: { entity: 3, world: 7, story: 12 } });
+    expect(result.unclosedQuestions).toBeGreaterThan(0);
     expect(result.eligibleHistoryCount).toBeGreaterThanOrEqual(70);
     expect(result.publishedSummaryRevisions).toBeGreaterThanOrEqual(2);
     expect(result.npcRequestCount).toBeGreaterThanOrEqual(1);

@@ -1,4 +1,5 @@
 import { storyInteractionPrompt } from "../storyInteractionPrompt";
+import { NARRATIVE_PROGRESS_CONTRACT } from "../narrativeProgressContract";
 import { renderNarrativeCandidateRevision } from "../narrativeCandidateRevisionPrompt";
 import { dialogueTopicKey, type Action } from "@/game/domain/action";
 import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
@@ -386,6 +387,11 @@ export function buildDecisionNarrativeContextBlocks(
   };
   const worldDeltaContract = `- 若要求 worldDelta，严格使用 {\"beatSummary\":\"...\",\"newLocation\":{\"name\":\"...\",\"description\":\"...\",\"scale\":\"scene\",\"placement\":\"world\",\"connectFromLocationId\":\"现有地点 ID\"},\"newNpc\":{\"name\":\"...\",\"role\":\"...\",\"description\":\"...\",\"locationRef\":{\"kind\":\"new_location\"},\"anchors\":{\"selfConcept\":\"...\",\"values\":[\"...\"],\"speechStyle\":\"...\",\"capabilityBoundaries\":[\"...\"],\"taboos\":[]},\"goals\":[{\"horizon\":\"short\",\"description\":\"...\",\"priority\":3,\"reason\":\"...\"}],\"relationshipSeeds\":[{\"targetNpcId\":\"既有 active NPC ID\",\"stance\":\"ally|protective_of|indebted_to|rival|wary\",\"reason\":\"...\"}]},\"newItem\":null或{\"name\":\"...\",\"description\":\"...\",\"locationRef\":\"new_location\"},\"newEnemy\":null或{\"name\":\"...\",\"tier\":\"normal\",\"locationRef\":\"new_location\"},\"newFact\":null或{\"text\":\"...\",\"visibility\":\"public或private\",\"investigationLabel\":\"可选\",\"investigationApproaches\":[{\"approachId\":\"...\",\"label\":\"...\",\"hint\":\"可选\",\"evidenceQuality\":\"clean或noisy\",\"tensionDelta\":-5到20}]},\"nextMainQuest\":{\"name\":\"...\",\"description\":\"...\",\"objectiveText\":\"...\"},\"endingPair\":null或[{\"themeKey\":\"trust\",\"name\":\"...\",\"description\":\"...\"},{\"themeKey\":\"doubt\",\"name\":\"...\",\"description\":\"...\"}]}；anchors 五个字段都必需，goals 至少 1 条且最多 4 条；relationshipSeeds 最多 4 条，每项只能包含 targetNpcId、stance、reason，targetNpcId 只能引用实体规则闭包中的既有 active NPC，stance 只能使用上述定性枚举，reason 必须非空且≤200字；不得提交 affinity、stage、evidence 或 actionId；goalId/status 由服务端生成，禁止输出。未要求字段必须为 null。`;
   const blocks: NarrativeContextBlock[] = [
+    block({
+      id: "bundle:progress-contract", slot: "system_rules", title: "推进与有限收束",
+      authority: "rule", retention: "mandatory", priority: 1000,
+      source: { kind: "narrative_bundle_contract", refs: [] }, content: NARRATIVE_PROGRESS_CONTRACT,
+    }),
     block({
       id: "bundle:rules", slot: "system_rules", title: "规则与事实优先级",
       authority: "rule", retention: "mandatory", priority: 1000,
