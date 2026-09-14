@@ -37,7 +37,7 @@ import type { AiRetryOrigin } from "./ai/textAuditTypes";
 import { createLiveNarrativeMemorySummarySource } from "./ai/liveNarrativeMemorySummarySource";
 import { createSqliteNarrativeMemorySummaryRepository } from "./persistence/sqliteNarrativeMemorySummaryRepository";
 import { DEFAULT_NARRATIVE_MEMORY_POLICY, resolveNarrativeMemoryPolicy } from "./ai/narrativeMemoryPolicy";
-import { createNarrativeMemoryPackagePreparer } from "../prepareNarrativeMemoryPackage";
+import { type NarrativeMemoryPreparationHooks, createNarrativeMemoryPackagePreparer } from "../prepareNarrativeMemoryPackage";
 import type { NarrativeMemoryPolicy } from "@/game/domain/narrativeMemoryContext";
 
 export type { RequestLogContext };
@@ -230,6 +230,8 @@ export function createServerGameEntryPoints(
     readonly beforeNarrativeHttpAttempt?: () => Promise<boolean> | boolean;
     readonly narrativeAbortSignal?: AbortSignal;
     readonly aiRuntime?: RpgAiRuntime;
+    readonly memoryPreparationHooks?: NarrativeMemoryPreparationHooks;
+    readonly beforeNarrativeRequest?: NonNullable<Parameters<typeof createNarrativeRequestClient>[0]>["beforeRequest"];
     readonly memorySummaries?: "enabled" | "disabled";
     readonly memoryPolicy?: NarrativeMemoryPolicy;
     readonly identity?: (kind: "gameId" | "generationSeed") => string;
@@ -265,6 +267,7 @@ export function createServerGameEntryPoints(
   const narrativeRequestClient = createNarrativeRequestClient({
     aiClient,
     beforeTransportAttempt: options.beforeNarrativeHttpAttempt,
+    beforeRequest: options.beforeNarrativeRequest,
     maxEstimatedTokens: memoryPolicy.promptMaxEstimatedTokens,
   });
   const memorySummarySource = createLiveNarrativeMemorySummarySource({ aiClient, requestClient: narrativeRequestClient });
@@ -296,7 +299,7 @@ export function createServerGameEntryPoints(
       npcDeliberationSource,
       memorySummaryRepository,
       prepareMemoryPackage: createNarrativeMemoryPackagePreparer({ repository: memorySummaryRepository,
-        source: memorySummarySource, policy: memoryPolicy, summaries: memorySummaries }),
+        source: memorySummarySource, policy: memoryPolicy, summaries: memorySummaries, hooks: options.memoryPreparationHooks }),
       ...(options.narrativeAbortSignal === undefined ? {} : { signal: options.narrativeAbortSignal }),
       auditLink: {
         ...(traceId !== undefined ? { traceId } : {}),

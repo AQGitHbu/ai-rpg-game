@@ -56,6 +56,7 @@ export function createNarrativeRequestClient(
     /** Optional batch-wide guard, used by the P1 journey protocol. */
     readonly beforeTransportAttempt?: () => Promise<boolean> | boolean;
     readonly maxEstimatedTokens?: number;
+    readonly beforeRequest?: (input: CompleteNarrativeRequestInput) => Promise<(result: AiCompletionResult) => Promise<void>>;
   }>,
 ): NarrativeRequestClient {
   return {
@@ -73,7 +74,8 @@ export function createNarrativeRequestClient(
             if (input.reserveHttpAttempt !== undefined && !(await input.reserveHttpAttempt())) return false;
             return deps.beforeTransportAttempt!();
           };
-      return deps.aiClient.complete(
+      const settle = await deps.beforeRequest?.(input);
+      const result = await deps.aiClient.complete(
         "narrative_bundle",
         input.messages,
         input.auditContext,
@@ -83,6 +85,8 @@ export function createNarrativeRequestClient(
           policyOverride: policyFor(input.purpose),
         },
       );
+      await settle?.(result);
+      return result;
     },
   };
 }
