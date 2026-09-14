@@ -106,7 +106,7 @@ describe("sqliteGameRepository", () => {
       args: [],
     });
 
-    expect(tables.rows.map((row) => row["name"])).toEqual(["current_game", "game_records", "opening_history"]);
+    expect(tables.rows.map((row) => row["name"])).toEqual(["current_game", "game_records", "narrative_memory_attempts", "narrative_memory_summaries", "opening_history"]);
   });
 
   it("世界事实的 investigationApproaches 随 SQLite JSON 写回完整往返", async () => {

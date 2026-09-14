@@ -100,6 +100,35 @@ const SCHEMA_STATEMENTS: readonly SqliteStatement[] = [
   {
     sql: "CREATE INDEX IF NOT EXISTS opening_history_game_type_created ON opening_history (game_type, history_id DESC)",
   },
+  {
+    sql: `CREATE TABLE IF NOT EXISTS narrative_memory_summaries (
+            game_id TEXT NOT NULL,
+            generation_id TEXT NOT NULL,
+            observer_id TEXT NOT NULL,
+            policy_version TEXT NOT NULL,
+            format_version INTEGER NOT NULL,
+            summary_revision INTEGER NOT NULL,
+            covered_through_sequence INTEGER NOT NULL,
+            source_fingerprint TEXT NOT NULL,
+            state_json TEXT NOT NULL,
+            PRIMARY KEY (game_id, generation_id, observer_id, policy_version)
+          )`,
+  },
+  {
+    sql: `CREATE TABLE IF NOT EXISTS narrative_memory_attempts (
+            game_id TEXT NOT NULL,
+            generation_id TEXT NOT NULL,
+            job_id TEXT NOT NULL,
+            epoch INTEGER NOT NULL,
+            expected_revision INTEGER NOT NULL,
+            expected_narrative_job_json TEXT NOT NULL,
+            http_attempts INTEGER NOT NULL DEFAULT 0,
+            batch_updates INTEGER NOT NULL DEFAULT 0,
+            prepared_json TEXT,
+            prepared_hash TEXT,
+            PRIMARY KEY (game_id, generation_id, job_id, epoch)
+          )`,
+  },
 ];
 
 export type SqliteGameRepositoryOptions = {
@@ -828,6 +857,14 @@ export function createSqliteGameRepository(
         });
         await tx.execute({
           sql: "DELETE FROM game_records",
+          args: [],
+        });
+        await tx.execute({
+          sql: "DELETE FROM narrative_memory_summaries WHERE game_id NOT IN (SELECT game_id FROM game_records)",
+          args: [],
+        });
+        await tx.execute({
+          sql: "DELETE FROM narrative_memory_attempts WHERE game_id NOT IN (SELECT game_id FROM game_records)",
           args: [],
         });
         await tx.commit();
