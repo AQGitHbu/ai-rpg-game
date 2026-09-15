@@ -559,7 +559,7 @@ const GOAL_ALLOWED_KEYS = [...GOAL_KEYS, "resolution"] as const;
 function validGoalResolution(value: unknown): value is NpcGoalResolution {
   if (!isRecord(value) || !hasExactKeys(value, ["completeWhen", "blockWhen"], ["completeWhen", "blockWhen"])) return false;
   const conditions = (raw: unknown): raw is readonly StoryCondition[] => Array.isArray(raw)
-    && raw.length > 0 && raw.length <= 4 && raw.every((condition) => {
+    && raw.length <= 4 && raw.every((condition) => {
       const parsed = parseStoryCondition(condition);
       return parsed !== null && parsed.kind !== "goal_status";
     });

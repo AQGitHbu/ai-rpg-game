@@ -37,8 +37,9 @@ function conditionsOf(
   worldState: WorldState,
   symbols: ReadonlyMap<string, string>,
   path: string,
+  allowEmpty = false,
 ): { ok: true; conditions: readonly StoryCondition[] } | { ok: false; code: string; path: string } {
-  if (conditions.length === 0 || conditions.length > 4) return { ok: false, code: "invalid_conditions", path };
+  if ((!allowEmpty && conditions.length === 0) || conditions.length > 4) return { ok: false, code: "invalid_conditions", path };
   const resolved: StoryCondition[] = [];
   for (const [index, proposal] of conditions.entries()) {
     const result = resolveStoryConditionProposal({ proposal, worldState, symbols });
@@ -62,7 +63,7 @@ function approachesOf(
     ids.add(approach.approachId);
     const conditions = approach.requirements === undefined
       ? { ok: true as const, conditions: [] as readonly StoryCondition[] }
-      : conditionsOf(approach.requirements, worldState, symbols, `${path}[${index}].requirements`);
+      : conditionsOf(approach.requirements, worldState, symbols, `${path}[${index}].requirements`, true);
     if (!conditions.ok) return conditions;
     const witnesses: string[] = [];
     for (const rawWitness of approach.witnessNpcIds ?? []) {
@@ -96,9 +97,9 @@ function compileBinding(
       if (npc === null || !Number.isInteger(binding.goalOrdinal) || binding.goalOrdinal < 0) return { ok: false, code: "unknown_goal_ref", path };
       const goal = npc.dynamicState.goals[binding.goalOrdinal];
       if (goal === undefined) return { ok: false, code: "unknown_goal_ref", path };
-      const completeWhen = conditionsOf(binding.resolution.completeWhen, worldState, symbols, `${path}.resolution.completeWhen`);
+      const completeWhen = conditionsOf(binding.resolution.completeWhen, worldState, symbols, `${path}.resolution.completeWhen`, true);
       if (!completeWhen.ok) return completeWhen;
-      const blockWhen = conditionsOf(binding.resolution.blockWhen, worldState, symbols, `${path}.resolution.blockWhen`);
+      const blockWhen = conditionsOf(binding.resolution.blockWhen, worldState, symbols, `${path}.resolution.blockWhen`, true);
       if (!blockWhen.ok) return blockWhen;
       return { ok: true, mutation: { kind: "bind_npc_goal_resolution", npcId: npc.core.id, goalId: goal.goalId, resolution: { completeWhen: completeWhen.conditions, blockWhen: blockWhen.conditions } } };
     }
