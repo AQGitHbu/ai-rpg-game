@@ -331,7 +331,7 @@ type ParseOpeningBundleResult =
   | { readonly ok: false; readonly reason: string };
 
 function p3FirstActInvestigationRequired(context: Extract<NarrativeBundleSourceContext, { readonly kind: "decision" }>): boolean {
-  return context.storyState.currentAct === 1
+  return context.storyState.currentAct === 2
     && context.storyState.evolution.status === "needs_next_act"
     && context.worldState.generation.setup?.storyOpening.includes("consequenceBindings.bind_investigation") === true;
 }

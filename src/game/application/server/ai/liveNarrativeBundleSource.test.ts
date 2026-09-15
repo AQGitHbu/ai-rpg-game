@@ -725,7 +725,7 @@ describe("createNarrativeBundleSource", () => {
     };
     const storyState: StoryState = {
       ...makeStoryState(),
-      currentAct: 1,
+      currentAct: 2,
       evolution: { ...makeStoryState().evolution, status: "needs_next_act" },
     };
 
