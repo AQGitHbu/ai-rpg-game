@@ -1436,6 +1436,42 @@ describe("createNarrativeBundleSource", () => {
     expect(result).toMatchObject({ ok: true, kind: "opening" });
   });
 
+  it("normalizes a provider response that flattens opening creation fields", async () => {
+    const opening = await createFixtureOpeningCandidateSource().generate({
+      gameType: "wuxia", gameLength: "short", seed: "opening-flat-shape",
+    });
+    const flatOpening = {
+      world: opening.world,
+      player: opening.player,
+      prologue: opening.prologue,
+      storyContract: opening.storyContract,
+      ...opening.opening,
+    };
+    const complete = vi.fn().mockResolvedValue({
+      ok: true,
+      content: JSON.stringify({
+        opening: flatOpening,
+        currentScene: {
+          segments: [{ beatId: "opening", text: "渡口的风压过旧纸。" }],
+          npcLine: { npcId: "npc_0", text: "先把规矩说清。", emotion: "guarded", answeredBeatIds: [], usedFactIds: [], usedEventIds: [] },
+          objectiveLink: null,
+          choices: opening.opening.situation.responses.map((response) => ({ candidateId: response.key, label: response.key })),
+        },
+        continuationScenes: [],
+        terminal: { kind: "next_decision", target: { kind: "current_scene" } },
+      }),
+    });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+
+    const result = await source.generate({
+      kind: "opening",
+      jobId: asNarrativeJobId("job-opening-flat-shape"),
+      input: { gameType: "wuxia", gameLength: "short", seed: "opening-flat-shape" },
+    });
+
+    expect(result).toMatchObject({ ok: true, kind: "opening" });
+  });
+
   it("preserves structurally valid opening interaction proposals and candidate bindings", async () => {
     const opening = await createFixtureOpeningCandidateSource().generate({
       gameType: "wuxia", gameLength: "short", seed: "opening-interaction-source",

@@ -60,6 +60,44 @@ function firstString(...values: readonly unknown[]): string {
   return values.find((value): value is string => typeof value === "string") ?? "";
 }
 
+function normalizeFlatOpeningResponseShape(value: unknown): unknown {
+  const raw = asRecord(value);
+  const candidate = asRecord(raw?.opening);
+  if (raw === null || candidate === null
+    || candidate.opening !== undefined
+    || !("world" in candidate) || !("player" in candidate)
+    || !("prologue" in candidate) || !("storyContract" in candidate)) return value;
+  const allowedKeys = new Set([
+    "world", "player", "prologue", "storyContract",
+    "location", "npc", "item", "quest", "situation", "firstScene",
+    "consequenceBindings", "variationProfile",
+  ]);
+  if (Object.keys(candidate).some((key) => !allowedKeys.has(key))) return value;
+  const {
+    world, player, prologue, storyContract,
+    location, npc, item, quest, situation, firstScene, consequenceBindings, variationProfile,
+  } = candidate;
+  return {
+    ...raw,
+    opening: {
+      world,
+      player,
+      prologue,
+      storyContract,
+      opening: {
+        location,
+        npc,
+        ...(item === undefined ? {} : { item }),
+        quest,
+        situation,
+        ...(firstScene === undefined ? {} : { firstScene }),
+        ...(consequenceBindings === undefined ? {} : { consequenceBindings }),
+        ...(variationProfile === undefined ? {} : { variationProfile }),
+      },
+    },
+  };
+}
+
 /**
  * Some compatible providers still emit prior presentation vocabulary despite
  * the current prompt. This is structural normalization only: it reuses text
@@ -354,11 +392,12 @@ function hasP3FirstActInvestigation(worldDelta: WorldDeltaProposal | null): bool
 
 function parseOpeningBundleProposal(value: unknown, targetActs: 3 | 5): ParseOpeningBundleResult {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return { ok: false, reason: "root_not_object" };
-  const response = value as Record<string, unknown>;
+  const normalizedFlatResponse = normalizeFlatOpeningResponseShape(value);
+  const response = normalizedFlatResponse as Record<string, unknown>;
   const allowedResponseKeys = new Set(["opening", "interactionProposals", "npcOutwardProposals", "currentScene", "continuationScenes", "terminal"]);
   if (Object.keys(response).some((key) => !allowedResponseKeys.has(key))) return { ok: false, reason: "unknown_keys" };
   if (!hasOnlyKnownOpeningCandidateKeys(response.opening)) return { ok: false, reason: "opening_unknown_keys" };
-  const raw = normalizeOpeningCandidateShape(value, targetActs) as Record<string, unknown>;
+  const raw = normalizeOpeningCandidateShape(normalizedFlatResponse, targetActs) as Record<string, unknown>;
   const opening = parseOpeningGenerationCandidate(raw.opening);
   if (!opening.ok) return { ok: false, reason: `opening_${opening.code}` };
   const narrative = parseNarrativeBundleProposal({
