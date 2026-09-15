@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   NARRATIVE_P3_PROTOCOL_VERSION,
+  createNarrativeP3RoutePolicy,
+  selectNarrativeP3ProductionChoice,
   parseNarrativeP3Args,
   runNarrativeP3Journey,
   validateNarrativeP3Args,
@@ -24,6 +26,67 @@ const deps = {
   codeFingerprint: "fixture-code",
 };
 const options = { environment: env, codeFingerprint: "fixture-code" };
+
+function productionView(choices) {
+  return {
+    story: { currentObjectiveChoiceToken: null },
+    narrative: { choices, npcDialogues: [] },
+    currentLocation: { actions: [], npcs: [], town: { interactiveBuildings: [] } },
+    worldMap: { locations: [] },
+    obtainableItems: [],
+  };
+}
+
+function policyInput(route, view, actions, events = []) {
+  return {
+    route: { routeId: route },
+    view,
+    actionMap: new Map(actions.map((entry) => [entry.choiceToken, entry.action])),
+    interactions: [
+      { id: "interaction:quiet", operation: "share_known_fact" },
+      { id: "interaction:witnessed", operation: "request_verification" },
+    ],
+    state: { record: { worldState: { eventLedger: events }, storyState: { delivery: undefined, currentObjectiveChoiceToken: null } } },
+    performed: new Set(),
+    performedActions: new Set(),
+    delivery: undefined,
+    actionCount: 0,
+  };
+}
+
+test("P3 production policy selects the approved investigation approach and follow-up cooperation", () => {
+  const privateChoices = productionView([
+    { choiceToken: "quiet", label: "沿纸档暗记查验" },
+    { choiceToken: "witnessed", label: "请船户当面见证" },
+  ]);
+  assert.equal(selectNarrativeP3ProductionChoice(policyInput("private", privateChoices, [
+    { choiceToken: "quiet", action: { type: "investigate", approachId: "quiet" } },
+    { choiceToken: "witnessed", action: { type: "investigate", approachId: "witnessed" } },
+  ])).choiceToken, "quiet");
+  assert.equal(selectNarrativeP3ProductionChoice(policyInput("public", privateChoices, [
+    { choiceToken: "quiet", action: { type: "investigate", approachId: "quiet" } },
+    { choiceToken: "witnessed", action: { type: "investigate", approachId: "witnessed" } },
+  ])).choiceToken, "witnessed");
+
+  const evidenceEvent = { outcome: "success", payload: { type: "fact_discovered", evidenceQuality: "clean" } };
+  const followUp = productionView([{ choiceToken: "share", label: "把查验结果告诉接应人" }]);
+  assert.equal(selectNarrativeP3ProductionChoice(policyInput("private", followUp, [
+    { choiceToken: "share", action: { type: "talk", interactionId: "interaction:quiet" } },
+  ], [evidenceEvent])).choiceToken, "share");
+  assert.equal(selectNarrativeP3ProductionChoice(policyInput("public", followUp, [
+    { choiceToken: "share", action: { type: "talk", interactionId: "interaction:quiet" } },
+  ], [evidenceEvent])).choiceToken, "share");
+  assert.equal(createNarrativeP3RoutePolicy().noChoiceFailureCode, "P3_CAPABILITY_COVERAGE_FAILED");
+});
+
+test("P3 production policy reports capability coverage instead of falling back to P1 policy", () => {
+  const view = productionView([{ choiceToken: "witnessed", label: "请船户当面见证" }]);
+  const selected = selectNarrativeP3ProductionChoice(policyInput("private", view, [
+    { choiceToken: "witnessed", action: { type: "investigate", approachId: "witnessed" } },
+  ]));
+  assert.equal(selected, undefined);
+  assert.equal(createNarrativeP3RoutePolicy().actionLimit, 32);
+});
 
 test("P3 CLI registers a fixed denominator without transport and keeps route statuses", async () => {
   const root = mkdtempSync(join(tmpdir(), "p3-script-register-"));

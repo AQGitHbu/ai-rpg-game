@@ -184,7 +184,7 @@ function readConfiguredAiEnvironment() {
   return configured;
 }
 
-export async function createProductionRouteRunner(runtimeEnv, adapters, replaySource, binding, seed) {
+export async function createProductionRouteRunner(runtimeEnv, adapters, replaySource, binding, seed, policy = {}) {
   const { createServerGameEntryPoints } = adapters ?? await import("../src/game/application/server/compositionRoot.ts");
   const { createSqliteGameRepository } = adapters ?? await import("../src/game/application/server/persistence/sqliteGameRepository.ts");
   const { createServerSqliteClientFactory, createSqliteClient } = adapters ?? await import("../src/game/application/server/persistence/sqliteClient.ts");
@@ -287,7 +287,8 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
       }
       await entry.ackPrologue(`${route.routeId}-ack`);
 
-      while (actionCount <= 24) {
+      const actionLimit = policy.actionLimit ?? 24;
+      while (actionCount <= actionLimit) {
         if (signal?.aborted) return routeResult({ completed: false, actionCount, failureCode: "BATCH_INTERRUPTED" });
         const current = await waitForNarrativeP1Generation(entry, `${route.routeId}-${actionCount}`, { signal });
         if (runtime.failureCode) throw new Error(runtime.failureCode);
@@ -307,10 +308,11 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
           entry = null;
           runtime.finish();
           finalized = true;
-          const routeSatisfied = route.kind === "complete" ? coreCompleted : route.kind === "deliver" ? performed.has("give_item") : route.kind === "withdraw" ? performed.has("abandon_quest") : route.kind === "diagnostic" ? performed.has("promise_confidentiality") && performed.has("request_introduction") && performed.has("request_verification") && verifySubmitted : route.kind === "private" ? performed.has("promise_confidentiality") && performed.has("request_introduction") : performed.has("request_verification") && (route.kind !== "verify_first" || verifySubmitted);
+          const routeSatisfied = policy.routeSatisfied?.({ route, endingState, performed, performedActions, actionCount })
+            ?? (route.kind === "complete" ? coreCompleted : route.kind === "deliver" ? performed.has("give_item") : route.kind === "withdraw" ? performed.has("abandon_quest") : route.kind === "diagnostic" ? performed.has("promise_confidentiality") && performed.has("request_introduction") && performed.has("request_verification") && verifySubmitted : route.kind === "private" ? performed.has("promise_confidentiality") && performed.has("request_introduction") : performed.has("request_verification") && (route.kind !== "verify_first" || verifySubmitted));
           return routeResult({ completed: routeSatisfied, actionCount, ...(!routeSatisfied ? { failureCode: "ROUTE_POLICY_NOT_EXERCISED" } : {}) });
         }
-        if (actionCount === 24) return routeResult({ completed: false, actionCount, failureCode: "ROUTE_ACTION_BUDGET_EXHAUSTED" });
+        if (actionCount === actionLimit) return routeResult({ completed: false, actionCount, failureCode: "ROUTE_ACTION_BUDGET_EXHAUSTED" });
         const view = current.view;
         if (view.narrativeGeneration.status === "failed") {
           return routeResult({ completed: false, httpAttempts: budget.used - httpBefore, actionCount, failureCode: "AI_GENERATION_FAILED" });
@@ -339,8 +341,23 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
           } else return routeResult({ completed: false, actionCount, failureCode: "ROUTE_POLICY_UNSUPPORTED" });
         }
         if (interaction === undefined) {
-          const selected = selectProductionChoice(view, route.kind, actionMap, interactions, performed, performedActions, state.record.storyState.delivery, actionCount);
-          if (selected === undefined) return routeResult({ completed: false, httpAttempts: budget.used - httpBefore, actionCount, failureCode: "ROUTE_POLICY_UNSUPPORTED" });
+          const choiceContext = {
+            route,
+            view,
+            current,
+            state,
+            actionMap,
+            interactions,
+            performed,
+            performedActions,
+            offeredChoices,
+            delivery,
+            actionCount,
+          };
+          const selected = policy.selectChoice === undefined
+            ? selectProductionChoice(view, route.kind, actionMap, interactions, performed, performedActions, state.record.storyState.delivery, actionCount)
+            : policy.selectChoice(choiceContext);
+          if (selected === undefined) return routeResult({ completed: false, httpAttempts: budget.used - httpBefore, actionCount, failureCode: policy.noChoiceFailureCode ?? "ROUTE_POLICY_UNSUPPORTED" });
           selectedAction = actionMap.get(selected.choiceToken);
           interaction = { kind: "fixed_choice", choiceToken: selected.choiceToken };
         }

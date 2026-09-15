@@ -5,6 +5,7 @@ import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import { installTsHooks, freezeCurrentCodeIdentity, createProductionRouteRunner } from "./narrativeP1Journey.mjs";
+import { findOfferedStoryDelivery, offeredProductionChoices, selectProductionChoice } from "./narrativeP1Choices.mjs";
 import { projectRoot, readAiEnv } from "./aiEnv.mjs";
 
 export const NARRATIVE_P3_PROTOCOL_VERSION = "narrative-p3/v1";
@@ -59,9 +60,107 @@ function configuredEnvironment(mode, protocolPath) {
   return env;
 }
 
+function p3RouteId(route) {
+  return typeof route === "string" ? route : route?.routeId;
+}
+
+function eventLedger(input) {
+  return input.state?.record?.worldState?.eventLedger ?? [];
+}
+
+function hasSuccessfulOperation(input, operation) {
+  return input.performed?.has(operation) === true || eventLedger(input).some((event) => event.outcome === "success"
+    && event.payload?.type === "story_interaction_resolved" && event.payload.operation === operation);
+}
+
+function actionOperation(input, choice) {
+  const action = input.actionMap.get(choice.choiceToken);
+  return action?.type === "talk"
+    ? input.interactions.find((interaction) => interaction.id === action.interactionId)?.operation
+    : undefined;
+}
+
+function findOperationChoice(input, operation) {
+  return input.offeredChoices.find((choice) => actionOperation(input, choice) === operation
+    && !input.performedActions.has(JSON.stringify(input.actionMap.get(choice.choiceToken))));
+}
+
+function fallbackP3Choice(input) {
+  const selected = selectProductionChoice(input.view, "complete", input.actionMap, input.interactions,
+    input.performed, input.performedActions, input.state.record.storyState.delivery, input.actionCount);
+  if (selected === undefined) return undefined;
+  const action = input.actionMap.get(selected.choiceToken);
+  return input.performedActions.has(JSON.stringify(action)) ? undefined : selected;
+}
+
+export function selectNarrativeP3ProductionChoice(input) {
+  const route = p3RouteId(input.route);
+  const approachId = route === "private" ? "quiet" : "witnessed";
+  const choices = input.offeredChoices ?? offeredProductionChoices(input.view);
+  const context = { ...input, offeredChoices: choices };
+  const hasInvestigationEvidence = eventLedger(context).some((event) => event.outcome === "success"
+    && event.payload?.type === "fact_discovered" && event.payload.evidenceQuality !== undefined);
+  const investigation = choices.find((choice) => {
+    const action = context.actionMap.get(choice.choiceToken);
+    return action?.type === "investigate" && action.approachId === approachId
+      && !context.performedActions.has(JSON.stringify(action));
+  });
+  if (!hasInvestigationEvidence) {
+    if (investigation !== undefined) return investigation;
+    if (choices.some((choice) => context.actionMap.get(choice.choiceToken)?.type === "investigate")) return undefined;
+    return fallbackP3Choice(context);
+  }
+
+  if (!hasSuccessfulOperation(context, "share_known_fact")) {
+    const share = findOperationChoice(context, "share_known_fact");
+    if (share !== undefined) return share;
+    if (route === "private") {
+      const introduction = findOperationChoice(context, "request_introduction");
+      if (introduction !== undefined) return introduction;
+      const confidentiality = findOperationChoice(context, "promise_confidentiality");
+      if (confidentiality !== undefined) return confidentiality;
+    }
+  }
+  if (!hasSuccessfulOperation(context, "request_verification")) {
+    const verification = findOperationChoice(context, "request_verification");
+    if (verification !== undefined) return verification;
+  }
+
+  const delivery = findOfferedStoryDelivery(input.view, input.actionMap, input.state.record.storyState.delivery);
+  if (delivery !== undefined && !context.performedActions.has(JSON.stringify(input.actionMap.get(delivery.choiceToken)))) return delivery;
+  return fallbackP3Choice(context);
+}
+
+function p3RouteSatisfied({ route, endingState }) {
+  if (!endingState?.ok || endingState.status !== "active") return false;
+  const { worldState, storyState } = endingState.record;
+  const ending = worldState.ending;
+  if (storyState.narrative?.status !== "ready" || ending?.outcome !== "success") return false;
+  const events = worldState.eventLedger;
+  const endingReached = events.some((event) => event.outcome === "success" && event.payload?.type === "ending_reached"
+    && event.payload.endingId === ending.endingId && event.payload.outcome === "success");
+  const evidence = events.find((event) => event.outcome === "success" && event.payload?.type === "fact_discovered"
+    && event.payload.evidenceQuality !== undefined);
+  const witnessed = (evidence?.payload?.witnessNpcIds ?? []).length > 0;
+  const approachMatchesRoute = p3RouteId(route) === "public" ? witnessed : !witnessed;
+  const verified = events.some((event) => event.outcome === "success" && event.payload?.type === "story_interaction_resolved"
+    && event.payload.operation === "request_verification");
+  const delivered = events.some((event) => event.outcome === "success" && event.payload?.type === "item_given");
+  return endingReached && evidence !== undefined && approachMatchesRoute && verified && delivered;
+}
+
+export function createNarrativeP3RoutePolicy() {
+  return {
+    actionLimit: 32,
+    noChoiceFailureCode: "P3_CAPABILITY_COVERAGE_FAILED",
+    selectChoice: selectNarrativeP3ProductionChoice,
+    routeSatisfied: p3RouteSatisfied,
+  };
+}
+
 async function createP3ProductionRouteRunner(runtimeEnv, replaySource, protocol) {
   const binding = { protocolVersion: protocol.protocolVersion, protocolHash: protocol.protocolHash, inputHash: protocol.inputHash, codeFingerprint: protocol.codeFingerprint };
-  const p1Runner = await createProductionRouteRunner(runtimeEnv, undefined, replaySource, binding, undefined);
+  const p1Runner = await createProductionRouteRunner(runtimeEnv, undefined, replaySource, binding, undefined, createNarrativeP3RoutePolicy());
   return async ({ mode, route, outputDirectory, signal }) => {
     const budget = {
       used: 0,
