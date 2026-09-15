@@ -115,6 +115,7 @@ export function selectNarrativeP3ProductionChoice(input) {
   const context = { ...input, offeredChoices: choices };
   const hasInvestigationEvidence = eventLedger(context).some((event) => event.outcome === "success"
     && event.payload?.type === "fact_discovered" && event.payload.evidenceQuality !== undefined);
+  if (route === "private" && !hasInvestigationEvidence && !context.performed.has("strategy_freeform_submitted")) return undefined;
   const investigation = choices.find((choice) => {
     const action = context.actionMap.get(choice.choiceToken);
     return investigationMatchesRoute(context, action, route, approachId)
@@ -159,19 +160,24 @@ function p3RouteSatisfied({ route, endingState, performed = new Set(), steps = [
   const witnessed = (evidence?.payload?.witnessNpcIds ?? []).length > 0;
   const approachMatchesRoute = p3RouteId(route) === "public" ? witnessed : !witnessed;
   const verified = events.some((event) => event.outcome === "success" && event.payload?.type === "story_interaction_resolved"
-    && event.payload.operation === "request_verification");
+    && event.payload.operation === "request_verification" && event.payload.factIds?.includes(evidence?.payload.factId));
   const delivered = storyState.delivery !== undefined && events.filter((event) => event.outcome === "success"
     && event.payload?.type === "item_given" && event.payload.itemId === storyState.delivery.itemId
     && event.payload.npcId === storyState.delivery.recipientNpcId).length === 1;
-  const goalChanged = events.some((event) => event.outcome === "success" && event.payload?.type === "npc_goal_status_changed");
-  const revisited = p3RouteId(route) !== "private" || events.some((event) => event.payload?.type === "location_visited"
-    && events.some((previous) => previous.sequence < event.sequence && previous.payload?.type === "location_visited"
-      && previous.payload.locationId === event.payload.locationId));
+  const shared = events.find((event) => event.outcome === "success" && event.payload?.type === "story_interaction_resolved"
+    && event.payload.operation === "share_known_fact" && event.payload.factIds?.includes(evidence?.payload.factId)
+    && event.payload.evidenceEventIds?.includes(evidence?.eventId));
+  const goalChanged = events.some((event) => event.outcome === "success" && event.payload?.type === "npc_goal_status_changed"
+    && event.payload.evidenceEventIds?.some((id) => id === evidence?.eventId || id === shared?.eventId));
+  const revisited = p3RouteId(route) !== "private" || steps.some((step) => step.ok && step.action?.type === "move"
+    && step.resultBoundaryProof?.kind === "changed_revisit"
+    && step.resultBoundaryProof.locationId === step.action.locationId
+    && step.resultBoundaryProof.sourceEventIds?.includes(evidence?.eventId));
   const strategyConfirmed = p3RouteId(route) !== "private" || (performed.has("strategy_freeform_submitted")
     && steps.some((step, index) => step.interaction?.kind === "free_text"
       && steps.slice(index + 1).some((next) => next.ok && next.action?.type === "investigate")));
   return endingReached && evidence !== undefined && approachMatchesRoute && verified && delivered
-    && goalChanged && revisited && strategyConfirmed;
+    && goalChanged && revisited && strategyConfirmed && (p3RouteId(route) !== "private" || shared !== undefined);
 }
 
 /** Advance once to the first actual decision, then let the shared SQLite cache fork. */
@@ -218,6 +224,7 @@ export function createNarrativeP3RoutePolicy() {
     actionLimit: 32,
     noChoiceFailureCode: "P3_CAPABILITY_COVERAGE_FAILED",
     prepareSharedSnapshot: prepareNarrativeP3SharedSnapshot,
+    shouldReload: ({ action, steps }) => action?.type === "investigate" && !steps.some((step) => step.kind === "reload"),
     selectInteraction: ({ route, view, performed }) => {
       if (p3RouteId(route) !== "private" || performed.has("strategy_freeform_submitted")) return undefined;
       const npc = view.narrative.npcDialogues.find((dialogue) => dialogue.freeInputEnabled);
@@ -229,9 +236,9 @@ export function createNarrativeP3RoutePolicy() {
   };
 }
 
-async function createP3ProductionRouteRunner(runtimeEnv, replaySource, protocol) {
+export async function createP3ProductionRouteRunner(runtimeEnv, replaySource, protocol, policyOverrides = {}) {
   const binding = { protocolVersion: protocol.protocolVersion, protocolHash: protocol.protocolHash, inputHash: protocol.inputHash, codeFingerprint: protocol.codeFingerprint };
-  const p1Runner = await createProductionRouteRunner(runtimeEnv, undefined, replaySource, binding, undefined, createNarrativeP3RoutePolicy());
+  const p1Runner = await createProductionRouteRunner(runtimeEnv, undefined, replaySource, binding, undefined, { ...createNarrativeP3RoutePolicy(), ...policyOverrides });
   return async ({ mode, route, outputDirectory, signal }) => {
     const budget = {
       used: 0,
@@ -283,7 +290,7 @@ export async function runNarrativeP3Journey(input, options = {}, journeyOptions 
   if (input.mode === "register") return run({ mode: input.mode, runId: input.runId, protocolPath: input.protocolPath, outputDirectory: input.outputDirectory }, deps);
   const protocol = readNarrativeP3Protocol(resolve(input.protocolPath));
   if (canonicalP3(protocol) !== canonicalP3(createNarrativeP3Protocol(input.runId, deps))) throw new Error("P3_FROZEN_CONFIGURATION_MISMATCH");
-  const routeRunner = journeyOptions.routeRunner ?? await createP3ProductionRouteRunner(env, resolve(input.replaySource ?? dirname(input.protocolPath)), protocol);
+  const routeRunner = journeyOptions.routeRunner ?? await createP3ProductionRouteRunner(env, resolve(input.replaySource ?? dirname(input.protocolPath)), protocol, journeyOptions.policyOverrides);
   return run({ mode: input.mode, runId: input.runId, protocolPath: input.protocolPath, outputDirectory: input.outputDirectory, replaySource: input.replaySource }, deps, { routeRunner });
 }
 

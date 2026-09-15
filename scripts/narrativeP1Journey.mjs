@@ -263,6 +263,7 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
       AI_TEXT_AUDIT: "full",
       AI_TEXT_AUDIT_DIR: resolve(artifactDirectory, "audit"),
       AI_TEXT_AUDIT_RUN_ID: route.routeId,
+      ...(policy.openUiDriver === undefined ? {} : { GAME_API_AUDIT: "full" }),
     };
     const auditFiles = [];
     let runtime;
@@ -278,6 +279,7 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
     };
     let entry = null;
     const steps = [];
+    let uiDriver;
     let actionCount = opening.sharedActionCount ?? 0;
     let finalized = false;
     let verifySubmitted = false;
@@ -285,6 +287,8 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
     const performedActions = new Set();
     try {
       entry = createEntry();
+      uiDriver = await policy.openUiDriver?.({ mode, route, artifactDirectory, signal,
+        getEntry: () => entry, readState: () => repository.getCurrentGame() });
       if (seed) {
         const initial = await repository.getCurrentGame();
         validateNarrativeP1SeedState(seed, initial);
@@ -307,6 +311,7 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
         }
         if (current.view.ending !== null) {
           const endingState = await repository.getCurrentGame();
+          await uiDriver?.finish(endingState);
           runtime.state("ending", endingState);
           const coreCompleted = route.kind === "complete" && hasCompletedCoreStory(endingState, isStoryDeliveryComplete);
           await closeNarrativeP1Entry(entry);
@@ -372,7 +377,9 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
           interaction,
           expectedRevision: current.revision,
         };
-        const after = await entry.performTurn(command, `${route.routeId}-turn-${actionCount}`);
+        const after = uiDriver === undefined
+          ? await entry.performTurn(command, `${route.routeId}-turn-${actionCount}`)
+          : await uiDriver.performTurn(command, `${route.routeId}-turn-${actionCount}`);
         steps.push({
           before: {
             revision: current.revision,
@@ -396,6 +403,10 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
           return routeResult({ completed: false, actionCount, failureCode: "ROUTE_ACTION_NOT_SETTLED" });
         }
         actionCount += 1;
+        if (settled.record.storyState.narrative?.status === "provider_pending"
+          && settled.record.storyState.narrative.job.resultBoundaryProof !== undefined) {
+          steps[steps.length - 1].resultBoundaryProof = settled.record.storyState.narrative.job.resultBoundaryProof;
+        }
         if (selectedAction && ["give_item", "abandon_quest"].includes(selectedAction.type)) {
           const success = settled.record.worldState.eventLedger.some(event => event.actionId === command.actionId && (selectedAction.type === "give_item" ? event.outcome === "success" && event.payload.type === "item_given" && event.payload.itemId === selectedAction.itemId && event.payload.npcId === selectedAction.npcId : event.outcome === "failure" && event.payload.type === "quest_abandoned" && event.payload.questId === selectedAction.questId));
           if (success) performed.add(selectedAction.type);
@@ -412,7 +423,7 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
           else if (selectedAction.interactionId !== undefined) return routeResult({ completed: false, actionCount, failureCode: "ROUTE_INTERACTION_NOT_SETTLED" });
         }
         writeFileSync(resolve(artifactDirectory, `${route.routeId}.steps.json`), `${JSON.stringify(steps, null, 2)}\n`, "utf8");
-        if (actionCount === 4) {
+        if (policy.shouldReload?.({ action: selectedAction, actionCount, steps }) ?? actionCount === 4) {
           await closeNarrativeP1Entry(entry);
           entry = createEntry();
           steps.push({ kind: "reload", revision: after.revision });
@@ -422,6 +433,10 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
     } catch (error) {
       return routeResult({ completed: false, actionCount, failureCode: runtime.failureCode ?? ((error.message?.startsWith("REPLAY_") || error.message?.startsWith("SEED_")) ? error.message : "PRODUCTION_ROUTE_CRASHED") });
     } finally {
+      try { await uiDriver?.close(); }
+      catch {
+        if (outcome !== undefined) { outcome.completed = false; outcome.failureCode = "UI_CLOSE_FAILED"; }
+      }
       try {
         mkdirSync(artifactDirectory, { recursive: true });
         writeFileSync(resolve(artifactDirectory, `${route.routeId}.steps.json`), `${JSON.stringify(steps, null, 2)}\n`, "utf8");

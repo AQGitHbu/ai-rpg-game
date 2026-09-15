@@ -78,11 +78,11 @@ test("P3 strategy input is offered once and cannot pass route acceptance without
   assert.deepEqual(policy.selectInteraction(request), { kind: "free_text", targetNpcId: "keeper", text: "先查看原始记录，再决定怎么交付。" });
   request.performed.add("strategy_freeform_submitted");
   assert.equal(policy.selectInteraction(request), undefined);
-  const event = (payload, sequence) => ({ outcome: "success", payload, sequence });
+  const event = (payload, sequence) => ({ eventId: `event:${sequence}`, outcome: "success", payload, sequence });
   const events = [
     event({ type: "ending_reached", endingId: "ending", outcome: "success" }, 8),
-    event({ type: "fact_discovered", evidenceQuality: "clean", witnessNpcIds: [] }, 2),
-    event({ type: "story_interaction_resolved", operation: "request_verification" }, 5),
+    event({ type: "fact_discovered", factId: "fact", evidenceQuality: "clean", witnessNpcIds: [] }, 2),
+    event({ type: "story_interaction_resolved", operation: "request_verification", factIds: ["fact"] }, 5),
     event({ type: "item_given", itemId: "letter", npcId: "recipient" }, 7),
   ];
   const input = { route: request.route, performed: request.performed, endingState: { ok: true, status: "active", record: {
@@ -90,10 +90,18 @@ test("P3 strategy input is offered once and cannot pass route acceptance without
     worldState: { ending: { endingId: "ending", outcome: "success" }, eventLedger: events },
   } }, steps: [] };
   assert.equal(policy.routeSatisfied(input), false);
-  events.push(event({ type: "npc_goal_status_changed" }, 4), event({ type: "location_visited", locationId: "old" }, 1), event({ type: "location_visited", locationId: "old" }, 6));
+  events.push(event({ type: "npc_goal_status_changed", evidenceEventIds: ["event:3"] }, 4),
+    event({ type: "story_interaction_resolved", operation: "share_known_fact", factIds: ["fact"], evidenceEventIds: ["event:2"] }, 3),
+    event({ type: "location_visited", locationId: "old" }, 1), event({ type: "location_visited", locationId: "old" }, 6));
   assert.equal(policy.routeSatisfied(input), false);
   input.steps.push({ interaction: { kind: "free_text" } }, { ok: true, action: { type: "investigate" } });
+  assert.equal(policy.routeSatisfied(input), false);
+  input.steps.push({ ok: true, action: { type: "move", locationId: "old" }, resultBoundaryProof: {
+    kind: "changed_revisit", locationId: "old", sourceEventIds: ["event:2"],
+  } });
   assert.equal(policy.routeSatisfied(input), true);
+  events[2].payload.factIds = ["unrelated"];
+  assert.equal(policy.routeSatisfied(input), false);
 });
 
 function productionView(choices) {
@@ -116,7 +124,7 @@ function policyInput(route, view, actions, events = [], worldFacts = []) {
       { id: "interaction:witnessed", operation: "request_verification" },
     ],
     state: { record: { worldState: { eventLedger: events, worldFacts }, storyState: { delivery: undefined, currentObjectiveChoiceToken: null } } },
-    performed: new Set(),
+    performed: new Set(["strategy_freeform_submitted"]),
     performedActions: new Set(),
     delivery: undefined,
     actionCount: 0,
@@ -146,6 +154,18 @@ test("P3 production policy selects the approved investigation approach and follo
     { choiceToken: "share", action: { type: "talk", interactionId: "interaction:quiet" } },
   ], [evidenceEvent])).choiceToken, "share");
   assert.equal(createNarrativeP3RoutePolicy().noChoiceFailureCode, "P3_CAPABILITY_COVERAGE_FAILED");
+});
+
+test("private investigation cannot run before the actual strategy input and reload follows investigation", () => {
+  const input = policyInput("private", productionView([{ choiceToken: "quiet", label: "查验" }]), [
+    { choiceToken: "quiet", action: { type: "investigate", approachId: "quiet" } },
+  ]);
+  input.performed.clear();
+  assert.equal(selectNarrativeP3ProductionChoice(input), undefined);
+  const policy = createNarrativeP3RoutePolicy();
+  assert.equal(policy.shouldReload({ action: { type: "talk" }, actionCount: 4, steps: [] }), false);
+  assert.equal(policy.shouldReload({ action: { type: "investigate" }, actionCount: 7, steps: [] }), true);
+  assert.equal(policy.shouldReload({ action: { type: "investigate" }, actionCount: 9, steps: [{ kind: "reload" }] }), false);
 });
 
 test("P3 production policy reports capability coverage instead of falling back to P1 policy", () => {
