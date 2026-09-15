@@ -132,6 +132,22 @@ function itemPossession(ws: WorldState, itemId: ItemEntry["id"]): PossessionComp
 }
 
 describe("P3 consequence binding mutations", () => {
+  it.each(["completed", "abandoned"] as const)("only revalidates identical already-installed resolutions on a %s goal", status => {
+    const base = world();
+    const resolution = { completeWhen: [{ kind: "knows_fact" as const, actorId: NPC_1, factId: FACT_1 }], blockWhen: [] };
+    const withResolution = (installed: boolean): WorldState => ({ ...base, entityStore: { ...base.entityStore,
+      records: base.entityStore.records.map(record => record.core.id !== NPC_1 ? record : {
+        ...(record as NpcEntityRecord), dynamicState: { ...(record as NpcEntityRecord).dynamicState, goals: [{
+          goalId: "hear", horizon: "short", priority: 3, status, description: "确认", reason: "守约", ...(installed ? { resolution } : {}),
+        }] },
+      } as NpcEntityRecord),
+    } });
+    const binding = { kind: "bind_npc_goal_resolution" as const, npcId: NPC_1, goalId: "hear", resolution };
+    expect(applyEntityMutations(withResolution(true), [binding]).ok).toBe(true);
+    expect(applyEntityMutations(withResolution(true), [{ ...binding, resolution: { completeWhen: [], blockWhen: resolution.completeWhen } }]))
+      .toMatchObject({ ok: false, code: "binding_conflict" });
+    expect(applyEntityMutations(withResolution(false), [binding])).toMatchObject({ ok: false, code: "invalid_binding" });
+  });
   it.each(["completed", "failed", "closed"] as const)("does not add completion clauses to a %s quest", (status) => {
     const current = world({ quests: [{ ...QUEST_1_ENTRY, status, objectives: [{ kind: "talk_to_npc", npcId: NPC_1 }] }] });
     const result = applyEntityMutations(current, [{ kind: "bind_quest_talk_completion", questId: QUEST_1, npcId: NPC_1, conditions: [{ kind: "knows_fact", actorId: NPC_1, factId: FACT_1 }] }]);

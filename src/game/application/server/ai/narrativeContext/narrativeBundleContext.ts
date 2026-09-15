@@ -271,7 +271,7 @@ export function buildDecisionNarrativeContextBlocks(
   const currentDraft = Array.isArray(draftScenes) ? object(draftScenes.find(entry => object(entry)?.slotKey === "current"))?.scene : undefined;
   const candidate = input.candidateRevision?.proposal;
   const current = candidate?.currentScene ?? currentDraft;
-  const parsed = current === undefined ? null : parseNarrativeBundleProposal({ worldDelta: null, currentScene: current, continuationScenes: [], terminal: { kind: "ending" } });
+  const parsed = current === undefined ? null : parseNarrativeBundleProposal({ worldDelta: null, currentScene: { ...object(current), choices: [] }, continuationScenes: [], terminal: { kind: "ending" } });
   const topBindings = (candidate !== undefined && "consequenceBindings" in candidate ? candidate.consequenceBindings : undefined) ?? raw?.consequenceBindings ?? [];
   const deltaBindings = object(candidate !== undefined && "worldDelta" in candidate ? candidate.worldDelta : raw?.worldDelta)?.consequenceBindings ?? [];
   const rawBindings = Array.isArray(topBindings) && Array.isArray(deltaBindings) ? [...deltaBindings, ...topBindings] : null;

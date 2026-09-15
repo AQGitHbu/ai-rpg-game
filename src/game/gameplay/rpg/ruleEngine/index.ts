@@ -497,4 +497,4 @@ export function ruleEngine(
     resolvedEvent: resolution.primaryResult,
   };
 }
-export { previewSceneDisclosure } from "./previewSceneDisclosure";
+export { previewSceneDisclosure, projectSceneSpeechKnowledge } from "./previewSceneDisclosure";

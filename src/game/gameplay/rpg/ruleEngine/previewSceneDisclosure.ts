@@ -8,6 +8,26 @@ import { asFactId, asNpcId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import { applyEntityMutations } from "@/game/gameplay/rpg/entityWorld";
 import { reconcileStoryConsequences } from "./reconcileStoryConsequences";
 
+/** Read-only authority projection after one approved line; never persisted. */
+export function projectSceneSpeechKnowledge(worldState: WorldState, line: Extract<SceneExpressionProposal, { kind: "npc_line" }>): WorldState {
+  const speaker = getEntity(worldState.entityStore, line.npcId);
+  if (speaker?.core.kind !== "npc") return worldState;
+  const incoming = (speaker as NpcEntityRecord).knowledge.entries.filter(entry => line.usedFactIds.includes(String(entry.factId)));
+  return { ...worldState, entityStore: { ...worldState.entityStore, records: worldState.entityStore.records.map(record => {
+    if (record.core.kind !== "npc" || !line.audienceIds.includes(String(record.core.id)) || record.core.id === speaker.core.id) return record;
+    const npc = record as NpcEntityRecord;
+    const entries = [...npc.knowledge.entries];
+    for (const heard of incoming) {
+      const index = entries.findIndex(entry => entry.factId === heard.factId);
+      // Actual writes use the same policy: certainty can improve, but an
+      // existing listener's source/disclosure are never overwritten.
+      if (index >= 0) entries[index] = { ...entries[index]!, certainty: "known" };
+      else entries.push({ ...heard, certainty: "known" });
+    }
+    return { ...npc, knowledge: { ...npc.knowledge, entries } };
+  }) } };
+}
+
 /** Apply only permission-approved, resolved current-scene lines. No Action is replayed. */
 export function previewSceneDisclosure(input: {
   worldState: WorldState; storyState: StoryState; expressions: readonly SceneExpressionProposal[];

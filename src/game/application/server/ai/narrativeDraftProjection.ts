@@ -106,7 +106,9 @@ export function compileNarrativeDraft(value: unknown, context: NarrativeDraftCon
   const current = record(raw.sceneDrafts.find(value => record(value)?.slotKey === "current"))?.scene;
   if (current === undefined) return fail("missing_slot", "$.sceneDrafts[slotKey=current]");
   if (record(current)?.expressions !== undefined) {
-    const parsed = parseNarrativeBundleProposal({ worldDelta: null, currentScene: current, continuationScenes: [], terminal: { kind: "ending" } });
+    // Only validate the body here. Actual choice cardinality belongs to the
+    // routing computed below, and a legal draft may already have two choices.
+    const parsed = parseNarrativeBundleProposal({ worldDelta: null, currentScene: { ...record(current), choices: [] }, continuationScenes: [], terminal: { kind: "ending" } });
     if (!parsed.ok) return fail("invalid_current_scene", "$.sceneDrafts[slotKey=current].scene");
     const bindings = [...(Array.isArray(record(raw.worldDelta)?.consequenceBindings) ? record(raw.worldDelta)!.consequenceBindings as unknown[] : []), ...(Array.isArray(raw.consequenceBindings) ? raw.consequenceBindings : [])];
     if (!isStoryConsequenceBindingsProposal(bindings)) return fail("invalid_bindings", "$.consequenceBindings");

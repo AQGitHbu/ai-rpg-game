@@ -21,7 +21,7 @@ import { retryNarrativeGeneration } from "../retryNarrativeGeneration";
 
 const now = () => "2026-09-15T00:00:00.000Z";
 
-function fixture(last: boolean) {
+function fixture(last: boolean, bindInCandidate = false, restrictedListener = false) {
   const q = quest([{ kind: "talk_to_npc", npcId: NPC_2_ID, completionConditions: [{ kind: "knows_fact", actorId: NPC_2_ID, factId: FACT_1_ID }] },
     ...(last ? [] : [{ kind: "visit_location" as const, locationId: LOC_2_ID }, { kind: "talk_to_npc" as const, npcId: asNpcId("npc_3") }])]);
   const speaker = makeNpc(NPC_1_ID, "证人", "证人", true);
@@ -30,9 +30,13 @@ function fixture(last: boolean) {
     eventLedger: [makeCommittedEvent({ type: "npc_interaction_recorded", npcId: NPC_2_ID, dialogueAct: "ask" }, {
       eventId: asEventId("turn:ask:interaction"), turnId: asTurnId("turn:ask"), actionId: "action:ask", sequence: 0,
       actorIds: [PLAYER_ENTITY_ID], targetIds: [NPC_2_ID], locationId: LOC_1_ID })] });
+  const resolution = { completeWhen: [{ kind: "knows_fact" as const, actorId: NPC_2_ID, factId: FACT_1_ID }], blockWhen: [] };
+  const speakerKnowledge = (worldState.entityStore.records.find(record => record.core.id === NPC_1_ID) as NpcEntityRecord).knowledge;
   const entityStore = { ...worldState.entityStore, records: worldState.entityStore.records.map(record => record.core.id !== NPC_2_ID ? record : {
-    ...record, dynamicState: { ...(record as NpcEntityRecord).dynamicState, goals: [{ goalId: "hear", horizon: "short" as const, description: "获知封印情况", priority: 3 as const,
-      status: "active" as const, reason: "确认状况", resolution: { completeWhen: [{ kind: "knows_fact" as const, actorId: NPC_2_ID, factId: FACT_1_ID }], blockWhen: [] } }] } }) };
+    ...(record as NpcEntityRecord),
+    ...(restrictedListener ? { knowledge: { entries: speakerKnowledge.entries.map(entry => ({ ...entry, certainty: "suspected" as const, disclosure: "secret" as const })) } } : {}),
+    dynamicState: { ...(record as NpcEntityRecord).dynamicState, goals: [{ goalId: "hear", horizon: "short" as const, description: "获知封印情况", priority: 3 as const,
+      status: "active" as const, reason: "确认状况", ...(bindInCandidate ? {} : { resolution }) }] } }) };
   worldState = { ...worldState, entityStore, ...projectEntityStore(entityStore) };
   const transition = { before: null, completed: [], after: { questId: q.id, objectiveIndex: 0, label: "交谈" }, mode: "unchanged" as const };
   const job = createPendingNarrativeJob({ jobId: asNarrativeJobId("job:disclosure"), turnId: asTurnId("turn:ask"), actionId: "action:ask", expectedRevision: 0, turnNumber: 1,
@@ -50,7 +54,9 @@ function fixture(last: boolean) {
     newItem: null, newEnemy: null, newFact: null, nextMainQuest: { name: "前往渡口", description: "询问渡口。", objectiveText: "拜访船夫" }, endingPair: null } : null;
   const arrival = { segments: [{ beatId: "atmosphere", text: "你抵达下一站。" }], npcLine: { npcId: last ? "npc_dyn_1" : "npc_3", text: "你来了。", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedEventIds: [] },
     objectiveLink: null, choices: [1, 2].map(i => ({ candidateId: `move:${target}_choice_${i}`, label: `询问${i}` })) };
-  return { worldState, storyState, draft: { worldDelta: delta, sceneDrafts: [{ slotKey: "current", scene }, { slotKey: `move:${target}`, scene: arrival }] }, q };
+  return { worldState, storyState, draft: { worldDelta: delta,
+    consequenceBindings: bindInCandidate ? [{ kind: "bind_goal_resolution", npcRef: NPC_2_ID, goalOrdinal: 0, resolution }] : [],
+    sceneDrafts: [{ slotKey: "current", scene }, { slotKey: `move:${target}`, scene: arrival }] }, q };
 }
 
 describe("B current disclosure through production source and SQLite CAS", () => {
@@ -58,23 +64,26 @@ describe("B current disclosure through production source and SQLite CAS", () => 
     { last: false, failure: "missing_slot" }, { last: true, failure: "missing_slot" },
     { last: true, failure: "missing_delta" }, { last: false, failure: "absent_audience" },
     { last: false, failure: "unknown_fact" }, { last: false, failure: "future_only" },
+    { last: false, failure: "same_candidate_binding" }, { last: true, failure: "same_candidate_binding" },
+    { last: false, failure: "restricted_rebroadcast" },
   ])("commits the compiled candidate after $failure rejection (last=$last)", async ({ last, failure }) => {
     const root = mkdtempSync(join(tmpdir(), "rpg-disclosure-"));
     const repository = createSqliteGameRepository({ clientFactory: () => createSqliteClient(join(root, "game.sqlite")), logError: () => undefined });
     try {
       await repository.initializeSchema();
-      const { worldState, storyState, draft, q } = fixture(last);
+      const { worldState, storyState, draft, q } = fixture(last, failure === "same_candidate_binding", failure === "restricted_rebroadcast");
       expect(await repository.createInitialGame({ gameId: asGameId("disclosure"), worldState, storyState, createdAt: now() })).toEqual({ ok: true });
       let valid = false;
       let calls = 0;
       const invalidDraft = structuredClone(draft);
-      if (failure === "missing_slot") invalidDraft.sceneDrafts = invalidDraft.sceneDrafts.slice(0, 1);
+      if (failure === "missing_slot" || failure === "same_candidate_binding") invalidDraft.sceneDrafts = invalidDraft.sceneDrafts.slice(0, 1);
       if (failure === "missing_delta") invalidDraft.worldDelta = null;
       const current = invalidDraft.sceneDrafts[0]!.scene;
       if ("expressions" in current && current.expressions !== undefined) {
         const line = current.expressions[1]!;
         if (failure === "absent_audience") line.audienceIds = [asNpcId("npc_3")];
         if (failure === "unknown_fact") line.usedFactIds = ["fact:unknown" as typeof FACT_1_ID];
+        if (failure === "restricted_rebroadcast" && line.npcId !== undefined) current.expressions.push({ ...line, npcId: NPC_2_ID, audienceIds: [PLAYER_ENTITY_ID] });
         if (failure === "future_only") {
           invalidDraft.sceneDrafts[1]!.scene = { ...invalidDraft.sceneDrafts[1]!.scene, expressions: current.expressions };
           current.expressions = current.expressions.slice(0, 1);

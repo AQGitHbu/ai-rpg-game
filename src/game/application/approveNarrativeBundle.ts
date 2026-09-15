@@ -64,7 +64,7 @@ import { applyEntityMutations, type EntityMutation } from "@/game/gameplay/rpg/e
 import { approveStoryConsequenceBindings } from "./approveStoryConsequenceBindings";
 
 import type { TurnId } from "@/game/domain/events";
-import { previewSceneDisclosure } from "@/game/gameplay/rpg/ruleEngine";
+import { previewSceneDisclosure, projectSceneSpeechKnowledge } from "@/game/gameplay/rpg/ruleEngine";
 import { deriveObjectiveTransition } from "@/game/gameplay/rpg/narrativeContext";
 import { deriveStructuralEvolutionNeed } from "@/game/gameplay/rpg/worldEvolution";
 
@@ -745,7 +745,6 @@ function validateBundleNpcSpeech(
   },
   worldState: WorldState,
   presentNpcIds?: ReadonlySet<string>,
-  incomingFactIds: readonly string[] = [],
   currentEventIds: readonly import("@/game/domain/events").EventId[] = [],
 ): SceneContentRejection | null {
   const visibleFactIds = entitiesOfKind(worldState.entityStore, "fact")
@@ -753,8 +752,7 @@ function validateBundleNpcSpeech(
     .map((fact) => fact.core.id);
   const audienceIds = line.audienceIds ?? [String(PLAYER_ENTITY_ID)];
   if (audienceIds.length === 0) return { code: "bundle_invalid_scene", detail: "invalid_target" };
-  const factIdsInWorld = new Set(visibleFactIds.map(String));
-  const disclosedFactIds = incomingFactIds.filter((factId) => factIdsInWorld.has(String(factId)));
+
 
   for (const targetId of audienceIds) {
     if (!isValidNpcSpeechTarget(worldState.entityStore, targetId as never)) {
@@ -774,13 +772,7 @@ function validateBundleNpcSpeech(
     });
     if (authority === null) return { code: "bundle_invalid_scene", detail: "missing_speaker" };
     const result = validateNpcSpeechReferences({
-      authority: {
-        ...authority,
-        // A fact explicitly disclosed to this speaker by an earlier expression
-        // is available for this later line, but is never added to the global
-        // world visibility set.
-        allowedFactIds: [...authority.allowedFactIds, ...disclosedFactIds.map((id) => id as never)],
-      },
+      authority,
       usedFactIds: line.usedFactIds,
       usedEventIds: line.usedEventIds,
       eventLedger: worldState.eventLedger,
@@ -818,7 +810,7 @@ function validateBundleSceneNpcSpeech(
     return { code: "bundle_invalid_scene", detail: "missing_speaker" };
   }
   if (scene.expressions !== undefined) {
-    const disclosedFactsByNpc = new Map<string, readonly string[]>();
+    let speechWorld = worldState;
     for (const line of expressionLines) {
       const rejection = validateBundleNpcSpeech(
         {
@@ -827,23 +819,18 @@ function validateBundleSceneNpcSpeech(
           usedFactIds: line.usedFactIds,
           usedEventIds: line.usedEventIds,
         },
-        worldState,
+        speechWorld,
         presentNpcIds,
-        disclosedFactsByNpc.get(line.npcId) ?? [],
         currentEventIds,
       );
       if (rejection !== null) return rejection;
-      for (const targetId of line.audienceIds) {
-        if (targetId === String(PLAYER_ENTITY_ID)) continue;
-        const previous = disclosedFactsByNpc.get(targetId) ?? [];
-        disclosedFactsByNpc.set(targetId, [...new Set([...previous, ...line.usedFactIds])]);
-      }
+      speechWorld = projectSceneSpeechKnowledge(speechWorld, line);
     }
   } else if (parts.npcLine !== null) {
     if (expectedNpcId !== undefined && parts.npcLine.npcId !== expectedNpcId) {
       return { code: "bundle_invalid_scene", detail: "missing_speaker" };
     }
-    const rejection = validateBundleNpcSpeech(parts.npcLine, worldState, presentNpcIds, [], currentEventIds);
+    const rejection = validateBundleNpcSpeech(parts.npcLine, worldState, presentNpcIds, currentEventIds);
     if (rejection !== null) return rejection;
   }
   for (const dialogue of dialogues) {
@@ -851,7 +838,7 @@ function validateBundleSceneNpcSpeech(
       npcId: dialogue.npcId,
       usedFactIds: dialogue.usedFactIds,
       usedEventIds: dialogue.usedEventIds,
-    }, worldState, presentNpcIds, [], currentEventIds);
+    }, worldState, presentNpcIds, currentEventIds);
     if (rejection !== null) return rejection;
   }
   return null;

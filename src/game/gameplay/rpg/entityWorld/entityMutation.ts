@@ -849,12 +849,12 @@ function applyOne(records: readonly EntityRecord[], mutation: EntityMutation, ba
       if (!subject.ok) return failure(subject.code, subject.entityId);
       const goal = subject.npc.dynamicState.goals.find((entry) => entry.goalId === mutation.goalId);
       if (goal === undefined) return failure("unknown_npc_goal", mutation.goalId);
-      if (goal.status === "completed" || goal.status === "abandoned") return failure("invalid_binding", mutation.goalId);
       if (goal.resolution !== undefined) {
         return JSON.stringify(goal.resolution) === JSON.stringify(mutation.resolution)
           ? { ok: true, records }
           : failure("binding_conflict", mutation.goalId);
       }
+      if (goal.status === "completed" || goal.status === "abandoned") return failure("invalid_binding", mutation.goalId);
       return {
         ok: true,
         records: replaceRecord(records, mutation.npcId, {

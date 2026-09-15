@@ -26,6 +26,13 @@ function scene(text: string, count: number) {
 }
 
 describe("narrative draft projection and compilation", () => {
+  it("validates an expressions draft body without imposing an ending's zero-choice contract", () => {
+    const current = { expressions: [{ kind: "narration", beatId: "atmosphere", text: "继续交谈。", referencedEntityIds: [] }],
+      objectiveLink: null, choices: [{ candidateId: "first", label: "问询" }, { candidateId: "second", label: "倾听" }] };
+    const compiled = compileNarrativeDraft({ worldDelta: null, sceneDrafts: [{ slotKey: "current", scene: current }] }, context());
+    expect(compiled).toMatchObject({ ok: true, value: { currentScene: current } });
+    if (compiled.ok) expect(parseNarrativeBundleProposal(compiled.value).ok).toBe(true);
+  });
   it("preserves top-level consequence bindings for approval without a world delta", () => {
     const consequenceBindings = [{ kind: "bind_talk_completion", questRef: "quest_0", npcRef: "npc_0", conditions: [{ kind: "goal_status", npcId: "npc_0", goalOrdinal: 0, status: "completed" }] }];
     const result = compileNarrativeDraft({ worldDelta: null, consequenceBindings, sceneDrafts: [{ slotKey: "current", scene: scene("原文。", 2) }] }, context());
