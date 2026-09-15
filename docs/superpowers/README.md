@@ -15,6 +15,7 @@
 - [P2 较长经历召回与完整中篇 Plan](plans/2026-09-14-narrative-architecture-p2.md)：旧事证据链、派生摘要和正式旅程任务；范围依据见 [P2 代码核查](reports/2026-09-14-narrative-p2-scope-review.md)，完成判定见 [P2 工程验收](reports/2026-09-15-narrative-p2-engineering-acceptance.md)。
 - [P3 有后果的调查与角色合作 Plan](plans/2026-09-15-narrative-architecture-p3.md)：规则闭环、正式操作链、完整短篇三段实施；范围与三份参考取舍见 [P3 代码核查](reports/2026-09-15-narrative-p3-scope-review.md)。工程与玩法按证据验收，文学质量单独报告。
 - [P3 Plan 独立审阅](reports/2026-09-15-narrative-p3-plan-review.md)：目标引用、合作门槛、调查来源、B 后果推进和现场范围的缺口及对应修订。
+- [P3 规则与模块代码审阅](reports/2026-09-15-narrative-p3-code-review.md)：调查来源、绑定与依赖、受控回访、恢复及 runner 的缺陷修复，区分已验证模块和未完成的 P3 能力。
 - [P2 Plan 独立审阅](reports/2026-09-14-narrative-p2-plan-review.md)：固定记忆恢复、租约隔离和 NPC 私密传递的规划问题及修订依据。
 - [P2 准入缺口修复 Plan](plans/2026-09-14-narrative-p2-readiness-fixes.md)：组织实现核查后的 R1–R6 修复；对应 [离线验收报告](reports/2026-09-14-narrative-p2-readiness-fixes.md) 与 [验证协议](reports/2026-09-14-narrative-p2-protocol.md)。
 - [P2 真实 API 与剧情质量验收](reports/2026-09-14-narrative-p2-acceptance.md)：冻结批次的通关、严格回放、记忆覆盖与全文质量证据，区分实际执行和未覆盖项目。

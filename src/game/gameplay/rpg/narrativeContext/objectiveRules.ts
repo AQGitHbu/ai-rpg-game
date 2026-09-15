@@ -2,6 +2,7 @@ import type { WorldState } from "@/game/domain/worldState";
 import type { ItemId, NpcId } from "@/game/domain/worldEntity";
 import { findNpc, findLocation, findItem } from "@/game/domain/worldState";
 import { evaluateStoryCondition } from "@/game/gameplay/rpg/storyInteraction";
+import { entitiesOfKind } from "@/game/domain/entity";
 
 // 内部共享规则：目标满足判定与稳定展示标签（与 ruleEngine/reconcileQuests 语义一致）。
 
@@ -16,8 +17,16 @@ export function isObjectiveSatisfied(ws: WorldState, objective: QuestObjective):
   switch (objective.kind) {
     case "visit_location": return ws.visitedLocationIds.includes(objective.locationId);
     case "talk_to_npc": {
-      if (objective.completionConditions !== undefined
-        && !objective.completionConditions.every((condition) => evaluateStoryCondition(ws, condition))) return false;
+      if (objective.completionConditions !== undefined) {
+        const npc = entitiesOfKind(ws.entityStore, "npc").find((entry) => entry.core.id === objective.npcId);
+        if (!npc?.dynamicState.met || objective.completionConditions.length === 0
+          || !objective.completionConditions.every((condition) => evaluateStoryCondition(ws, condition))) return false;
+        return npc.history.interactions.length > 0 || ws.eventLedger.some((event) =>
+          (event.payload.type === "npc_interaction_recorded"
+            || event.payload.type === "npc_dialogue_completed"
+            || event.payload.type === "story_interaction_resolved")
+          && event.payload.npcId === objective.npcId && event.outcome !== "failure");
+      }
       const completed = ws.eventLedger.some((event) =>
         event.kind === "npc_dialogue_completed" && (event.payload as { npcId: NpcId }).npcId === objective.npcId);
       if (completed) return true;

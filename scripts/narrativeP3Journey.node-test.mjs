@@ -10,8 +10,9 @@ import {
   parseNarrativeP3Args,
   runNarrativeP3Journey,
   validateNarrativeP3Args,
+  prepareNarrativeP3SharedSnapshot,
 } from "./narrativeP3Journey.mjs";
-import { installTsHooks } from "./narrativeP1Journey.mjs";
+import { installTsHooks, createScenarioSnapshotCache } from "./narrativeP1Journey.mjs";
 
 installTsHooks();
 const { createNarrativeP3Protocol } = await import("../src/game/application/testing/narrativeP3LiveJourney.ts");
@@ -26,6 +27,74 @@ const deps = {
   codeFingerprint: "fixture-code",
 };
 const options = { environment: env, codeFingerprint: "fixture-code" };
+
+test("shared prefix performs real offered actions once and freezes both methods of the same fact", async () => {
+  let turns = 0;
+  let acks = 0;
+  const snapshots = [];
+  const actionMap = new Map([
+    ["move", { type: "move", locationId: "scene" }],
+    ["quiet", { type: "investigate", factId: "evidence", approachId: "quiet" }],
+    ["public", { type: "investigate", factId: "evidence", approachId: "public" }],
+  ]);
+  const state = () => ({ ok: true, status: "active", record: { revision: turns, storyState: { turnNumber: turns }, worldState: {
+    entityStore: { records: [] }, worldFacts: [{ factId: "evidence", investigationApproaches: [
+      { approachId: "quiet", witnessNpcIds: [] }, { approachId: "public", witnessNpcIds: ["witness"] },
+    ] }],
+  } } });
+  const entry = {
+    async ackPrologue() { acks += 1; },
+    async getCurrentGame() {
+      const view = productionView((turns === 0 ? ["move"] : ["quiet", "public"]).map((choiceToken) => ({ choiceToken, label: choiceToken })));
+      view.story.currentObjectiveChoiceToken = "move";
+      return { ok: true, status: "active", revision: turns, view: { ...view, narrativeGeneration: { status: "idle" }, ending: null } };
+    },
+    async performTurn(command) {
+      assert.equal(command.interaction.choiceToken, "move");
+      assert.equal(command.expectedRevision, 0);
+      turns += 1;
+      return { ok: true };
+    },
+  };
+  const initialize = createScenarioSnapshotCache(() => prepareNarrativeP3SharedSnapshot({
+    entry, repository: { getCurrentGame: async () => state() }, runtime: { state: (key, value) => snapshots.push([key, value]) },
+    buildChoiceMap: () => actionMap, scenarioId: "shared",
+  }));
+  const privateFork = await initialize("shared", {});
+  const publicFork = await initialize("shared", {});
+  assert.equal(privateFork, publicFork);
+  assert.equal(privateFork.ok, true);
+  assert.equal(privateFork.actionCount, 1);
+  assert.equal(turns, 1);
+  assert.equal(acks, 1);
+  assert.equal(snapshots.at(-1)[0], "investigation-fork");
+});
+
+test("P3 strategy input is offered once and cannot pass route acceptance without confirmed consequences", () => {
+  const policy = createNarrativeP3RoutePolicy();
+  const view = productionView([]);
+  view.narrative.npcDialogues = [{ npcId: "keeper", freeInputEnabled: true }];
+  const request = { route: { routeId: "private" }, view, performed: new Set() };
+  assert.deepEqual(policy.selectInteraction(request), { kind: "free_text", targetNpcId: "keeper", text: "先查看原始记录，再决定怎么交付。" });
+  request.performed.add("strategy_freeform_submitted");
+  assert.equal(policy.selectInteraction(request), undefined);
+  const event = (payload, sequence) => ({ outcome: "success", payload, sequence });
+  const events = [
+    event({ type: "ending_reached", endingId: "ending", outcome: "success" }, 8),
+    event({ type: "fact_discovered", evidenceQuality: "clean", witnessNpcIds: [] }, 2),
+    event({ type: "story_interaction_resolved", operation: "request_verification" }, 5),
+    event({ type: "item_given", itemId: "letter", npcId: "recipient" }, 7),
+  ];
+  const input = { route: request.route, performed: request.performed, endingState: { ok: true, status: "active", record: {
+    storyState: { narrative: { status: "ready" }, delivery: { itemId: "letter", recipientNpcId: "recipient" } },
+    worldState: { ending: { endingId: "ending", outcome: "success" }, eventLedger: events },
+  } }, steps: [] };
+  assert.equal(policy.routeSatisfied(input), false);
+  events.push(event({ type: "npc_goal_status_changed" }, 4), event({ type: "location_visited", locationId: "old" }, 1), event({ type: "location_visited", locationId: "old" }, 6));
+  assert.equal(policy.routeSatisfied(input), false);
+  input.steps.push({ interaction: { kind: "free_text" } }, { ok: true, action: { type: "investigate" } });
+  assert.equal(policy.routeSatisfied(input), true);
+});
 
 function productionView(choices) {
   return {

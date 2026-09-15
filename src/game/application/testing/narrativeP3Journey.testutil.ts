@@ -35,6 +35,9 @@ export type P3StoryEvidence = Readonly<{
   privateEvidenceLeaked: boolean;
   itemGivenEventCount: number;
   reloadEqual: boolean;
+  verificationAvailableAfterInvestigation: boolean;
+  goalEvidenceKindsAfterFollowUps: readonly string[];
+  revisited: boolean;
 }>;
 
 const FIXED_NOW = "2026-09-15T00:00:00.000Z";
@@ -70,6 +73,25 @@ function firstDynamicDelta(delta: WorldDeltaProposal): WorldDeltaProposal {
       investigationApproaches: undefined,
     },
     consequenceBindings: [
+      {
+        kind: "bind_goal_resolution",
+        npcRef: "@new.npc",
+        goalOrdinal: 0,
+        resolution: {
+          completeWhen: [{ kind: "investigation_observed", npcId: "@new.npc", factId: "@new.fact", evidenceQuality: "clean" }],
+          blockWhen: [{ kind: "investigation_observed", npcId: "@new.npc", factId: "@new.fact", evidenceQuality: "noisy" }],
+        },
+      },
+      {
+        kind: "bind_npc_cooperation",
+        npcRef: "@new.npc",
+        definitions: [{
+          operation: "request_verification",
+          requirements: [{ kind: "goal_status", npcId: "@new.npc", goalOrdinal: 0, status: "completed" }],
+          allowedFactIds: ["@new.fact"],
+          allowedAudienceIds: [String(PLAYER_ENTITY_ID)],
+        }],
+      },
       {
         kind: "bind_investigation",
         factRef: "@new.fact",
@@ -228,7 +250,16 @@ function installEvidenceInteraction(
             audienceIds: [FIRST_INVESTIGATION_NPC_ID],
             evidenceEventIds: [],
           },
+          {
+            proposalKey: "p3_verify_evidence", npcId: FIRST_INVESTIGATION_NPC_ID,
+            operation: "request_verification", condition: [], factIds: [FIRST_INVESTIGATION_FACT_ID],
+            goalIds: [], promiseId: null, audienceIds: [PLAYER_ENTITY_ID], evidenceEventIds: [evidence.eventId],
+          },
         ],
+        currentScene: { ...result.proposal.currentScene, choices: [
+          { candidateId: "interaction:p3_public_evidence", label: "公开说明信筒来路" },
+          { candidateId: "interaction:p3_verify_evidence", label: "请接应人核验这条记录" },
+        ] },
       }, "interaction:p3_public_evidence", "公开说明信筒来路"),
     };
   }
@@ -294,11 +325,13 @@ function installPublicAlternative(
   };
 }
 
-function createP3Source(route: "private" | "public", onAuthorRequest: (context: DecisionContext) => void): NarrativeBundleSource {
+function createP3Source(onAuthorRequest: (context: DecisionContext) => void): NarrativeBundleSource {
   const base = createTempleLetterBundleSource("private");
   return {
     async generate(context): Promise<NarrativeBundleSourceResult> {
       if (context.kind === "opening") return base.generate(context);
+      const evidence = investigationEvent(context);
+      const route = evidence?.payload.type === "fact_discovered" && (evidence.payload.witnessNpcIds ?? []).length > 0 ? "public" : "private";
       if (context.job.utterance?.includes("查验")) onAuthorRequest(context);
       const generated = await base.generate(context);
       if (!generated.ok || generated.kind !== "decision") return generated;
@@ -409,7 +442,7 @@ function activeMoveIds(record: GameRecord): readonly string[] {
     .map((step) => step.trigger.kind === "move" ? String(step.trigger.locationId) : "");
 }
 
-export async function runOfflineP3Story(input: { route: "private" | "public"; reloadAtRevisit: boolean }): Promise<P3StoryEvidence> {
+export async function runOfflineP3Story(input: { route: "private" | "public"; reloadAfterInvestigation: boolean }): Promise<P3StoryEvidence> {
   const directory = mkdtempSync(join(tmpdir(), "rpg-p3-offline-"));
   const dbPath = join(directory, "journey.sqlite");
   const clientFactory = () => createSqliteClient(dbPath);
@@ -423,7 +456,7 @@ export async function runOfflineP3Story(input: { route: "private" | "public"; re
   const goalChangeEventIds: EventId[] = [];
   let beforeEvidence: readonly Action[] = [];
   let afterEvidence: readonly Action[] = [];
-  const source = createP3Source(input.route, (context) => {
+  const source = createP3Source((context) => {
     const evidence = investigationEvent(context);
     if (evidence === undefined || context.memoryContext === undefined) return;
     const refs = [...context.memoryContext.recalled, ...context.memoryContext.uncovered, ...context.memoryContext.requiredEvents,
@@ -479,7 +512,7 @@ export async function runOfflineP3Story(input: { route: "private" | "public"; re
       expectedRevision: current.revision,
       choiceMap: buildChoiceMap(current.worldState, current.storyState, current.revision),
     }, { repository, now: () => FIXED_NOW });
-    if (!result.ok) throw new Error(`P3 action failed: ${JSON.stringify(result)}; action=${JSON.stringify(entry.action)}`);
+    if (!result.ok) throw new Error(`P3 action failed: ${JSON.stringify(result)}; action=${JSON.stringify(entry.action)}; battle=${JSON.stringify(current.worldState.battle)}; act=${current.storyState.currentAct}`);
     actionCount += 1;
     await ensure();
   };
@@ -535,7 +568,7 @@ export async function runOfflineP3Story(input: { route: "private" | "public"; re
     beforeEvidence = visibleActions(await read()).map((entry) => entry.action);
     await choose((action) => action.type === "investigate" && action.approachId === (input.route === "private" ? "quiet" : "witnessed"), "route investigation");
     afterEvidence = visibleActions(await read()).map((entry) => entry.action);
-    if (input.reloadAtRevisit) await reopenAndCompare();
+    if (input.reloadAfterInvestigation) await reopenAndCompare();
 
     if (input.route === "private") {
       await submitFreeform();
@@ -583,6 +616,18 @@ export async function runOfflineP3Story(input: { route: "private" | "public"; re
       privateEvidenceLeaked,
       itemGivenEventCount: final.worldState.eventLedger.filter((event) => event.kind === "item_given").length,
       reloadEqual,
+      verificationAvailableAfterInvestigation: afterEvidence.some((action) => action.type === "talk" && action.interactionId?.endsWith(":p3_verify_evidence") === true),
+      goalEvidenceKindsAfterFollowUps: final.worldState.eventLedger.flatMap((event) => event.payload.type === "npc_goal_status_changed"
+        && event.payload.npcId === FIRST_INVESTIGATION_NPC_ID
+        ? event.payload.evidenceEventIds.flatMap((id) => {
+            const source = final.worldState.eventLedger.find((entry) => entry.eventId === id);
+            return source === undefined ? [] : [source.payload.type];
+          }) : []),
+      revisited: final.worldState.eventLedger.some((event) => {
+        const payload = event.payload;
+        return payload.type === "location_visited" && final.worldState.eventLedger.some((previous) => previous.sequence < event.sequence
+          && previous.payload.type === "location_visited" && previous.payload.locationId === payload.locationId);
+      }),
     };
   } finally {
     await memoryRepository.close();

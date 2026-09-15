@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { CommittedNarrativeEvent } from "@/game/domain/events";
 import { asEventId, asEpisodeId, asTurnId } from "@/game/domain/events";
 import type { StoryState } from "@/game/domain/storyState";
-import { asFactId, asGenerationId, asLocationId, asPlayerEntityId, type GenerationMetadata } from "@/game/domain/worldEntity";
+import { asFactId, asGenerationId, asLocationId, PLAYER_ENTITY_ID, type GenerationMetadata } from "@/game/domain/worldEntity";
 import type { LocationEntry, WorldFactEntry } from "@/game/domain/worldState";
 import { createWorldStateFixtureWith, emptyProjection } from "@/game/domain/testing/worldStateFixture.testutil";
 import { proveResultBoundary } from "./resultBoundary";
@@ -109,7 +109,7 @@ function event(input: {
     turnNumber: 1,
     episodeId: asEpisodeId(`episode:${input.eventId}`),
     kind: input.kind,
-    actorIds: [asPlayerEntityId("player")],
+    actorIds: [PLAYER_ENTITY_ID],
     targetIds: [],
     locationId: input.locationId,
     causeEventIds: [],
@@ -122,7 +122,7 @@ function event(input: {
   };
 }
 
-const story = {} as StoryState;
+const story = { history: { entries: [] } } as unknown as StoryState;
 
 describe("proveResultBoundary", () => {
   it("proves a successful explicit investigation only from the committed discovery event", () => {
@@ -190,7 +190,7 @@ describe("proveResultBoundary", () => {
         revealedFactIds: [],
       },
     });
-    const changed = event({
+    const changed = { ...event({
       eventId: "turn:revisit:goal",
       kind: "npc_goal_status_changed",
       locationId: LOCATION,
@@ -202,7 +202,7 @@ describe("proveResultBoundary", () => {
         to: "active",
         evidenceEventIds: [previousScene.eventId],
       },
-    });
+    }), sequence: 2 };
 
     expect(proveResultBoundary({
       beforeWorld: world({ currentLocationId: OTHER_LOCATION, visitedLocationIds: [OTHER_LOCATION, LOCATION], eventLedger: [previousScene] }),
@@ -251,5 +251,56 @@ describe("proveResultBoundary", () => {
       beforeWorld: world({ currentLocationId: OTHER_LOCATION, visitedLocationIds: [OTHER_LOCATION, LOCATION], eventLedger: [scene] }),
       afterWorld: world({ currentLocationId: LOCATION, visitedLocationIds: [OTHER_LOCATION, LOCATION], eventLedger: [scene] }),
     })).toBeNull();
+  });
+
+  it("uses visible changes committed before the return move and consumes them at the new scene", () => {
+    const previousScene = event({
+      eventId: "turn:old:scene", kind: "narrative_scene_presented", locationId: LOCATION,
+      payload: { type: "narrative_scene_presented", sceneId: "scene:old", focusNpcId: null,
+        pacing: "develop", beatIds: [], revealedFactIds: [] },
+    });
+    const changed = { ...event({
+      eventId: "turn:earlier:discovery", kind: "fact_discovered", locationId: LOCATION,
+      factIds: [FACT], payload: { type: "fact_discovered", factId: FACT },
+    }), sequence: 2 };
+    const move = { ...event({
+      eventId: "turn:return:observed", kind: "location_observed", locationId: LOCATION,
+      payload: { type: "location_observed", locationId: LOCATION },
+    }), sequence: 3 };
+    const input = {
+      beforeWorld: world({ currentLocationId: OTHER_LOCATION, visitedLocationIds: [OTHER_LOCATION, LOCATION], discovered: true, eventLedger: [previousScene, changed] }),
+      beforeStory: story,
+      afterWorld: world({ currentLocationId: LOCATION, visitedLocationIds: [OTHER_LOCATION, LOCATION], discovered: true, eventLedger: [previousScene, changed, move] }),
+      afterStory: story, action: { type: "move", locationId: LOCATION } as const, newEvents: [move],
+    };
+    expect(proveResultBoundary(input)).toMatchObject({ kind: "changed_revisit", sourceEventIds: [changed.eventId] });
+
+    const presented = { ...previousScene, eventId: asEventId("turn:return:scene"), sequence: 4 };
+    expect(proveResultBoundary({ ...input,
+      beforeWorld: { ...input.beforeWorld, eventLedger: [previousScene, changed, move, presented] },
+      afterWorld: { ...input.afterWorld, eventLedger: [previousScene, changed, move, presented] },
+    })).toBeNull();
+  });
+
+  it("ignores earlier unrelated changes and private facts unknown to the player", () => {
+    const previousScene = event({
+      eventId: "turn:old:scene", kind: "narrative_scene_presented", locationId: LOCATION,
+      payload: { type: "narrative_scene_presented", sceneId: "scene:old", focusNpcId: null,
+        pacing: "develop", beatIds: [], revealedFactIds: [] },
+    });
+    const change = { ...event({
+      eventId: "turn:earlier:discovery", kind: "fact_discovered", locationId: LOCATION,
+      factIds: [FACT], payload: { type: "fact_discovered", factId: FACT },
+    }), sequence: 2 };
+    const input = {
+      beforeStory: story, afterStory: story, action: { type: "move", locationId: LOCATION } as const, newEvents: [],
+    };
+    for (const [changed, discovered] of [[change, false], [{ ...change, locationId: OTHER_LOCATION }, true]] as const) {
+      const ledger = [previousScene, changed];
+      expect(proveResultBoundary({ ...input,
+        beforeWorld: world({ currentLocationId: OTHER_LOCATION, visitedLocationIds: [OTHER_LOCATION, LOCATION], discovered, eventLedger: ledger }),
+        afterWorld: world({ currentLocationId: LOCATION, visitedLocationIds: [OTHER_LOCATION, LOCATION], discovered, eventLedger: ledger }),
+      })).toBeNull();
+    }
   });
 });

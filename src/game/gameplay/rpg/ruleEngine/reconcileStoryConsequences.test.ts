@@ -3,10 +3,21 @@ import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestF
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
 import { asEventId, asTurnId } from "@/game/domain/events";
-import { FACT_1_ID, baseWorld, quest, withDiscoveredFact, withQuest } from "@/game/gameplay/rpg/narrativeContext/narrativeContext.testutil";
+import { FACT_1_ID, NPC_1_ID, ITEM_SEAL_ID, baseWorld, quest, withDiscoveredFact, withQuest, withMet, withInventoryItem } from "@/game/gameplay/rpg/narrativeContext/narrativeContext.testutil";
+import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import { reconcileStoryConsequences } from "./reconcileStoryConsequences";
 
 describe("reconcileStoryConsequences", () => {
+  it("uses current dialogue preview to finish a conditional talk without a completed session", () => {
+    const spoken = makeCommittedEvent({ type: "npc_interaction_recorded", npcId: NPC_1_ID, dialogueAct: "ask" });
+    const q = quest([{ kind: "talk_to_npc", npcId: NPC_1_ID, completionConditions: [{ kind: "has_item", itemId: ITEM_SEAL_ID, ownerId: PLAYER_ENTITY_ID }] }]);
+    const worldState = withQuest(withMet(withInventoryItem(baseWorld())), q);
+    const initial = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 2, npcs: 1, quests: 1, events: 0 } });
+    const storyState = { ...initial, narrative: { ...initial.narrative, dialogueSession: { npcId: NPC_1_ID, turnCount: 0, requiredTurns: 2, completed: false } } };
+    const result = reconcileStoryConsequences({ worldState, storyState, triggerEvents: [spoken], source: { actionId: "action:talk", turnId: asTurnId("turn:talk"), turnNumber: 1 } });
+    expect(result.worldState.quests.find((entry) => entry.id === q.id)?.status).toBe("completed");
+    expect(result.worldState.eventLedger).toEqual(worldState.eventLedger);
+  });
   it("从已提交的事实事件推进任务、reveal 和 Thread，而不重新执行调查 Action", () => {
     const event = makeCommittedEvent({
       type: "fact_discovered",

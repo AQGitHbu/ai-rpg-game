@@ -4,3 +4,4 @@ export {
   isInvestigationActionAvailable,
   type InvestigationOpportunity,
 } from "./investigation";
+export { validateInvestigationDependencies } from "./validateInvestigationDependencies";

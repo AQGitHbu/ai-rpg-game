@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { asGameId } from "./server/persistence/gameRepository";
-import { asGenerationId, asPlayerEntityId } from "@/game/domain/worldEntity";
+import { asGenerationId, asPlayerEntityId, asLocationId, asNpcId } from "@/game/domain/worldEntity";
 import type { GameRecord } from "./server/persistence/gameRepository";
 import type { NarrativeMemoryPolicy } from "@/game/domain/narrativeMemoryContext";
 import type { NarrativeMemorySummarySource } from "./narrativeMemorySummarySource";
 import type { NarrativeMemorySummaryRepository } from "./narrativeMemorySummaryRepository";
 import { prepareNarrativeMemory } from "./prepareNarrativeMemory";
-import { asNarrativeJobId } from "@/game/domain/events";
+import { asNarrativeJobId, asEventId, asTurnId, asEpisodeId, type CommittedNarrativeEvent } from "@/game/domain/events";
 import type { MemorySummaryState } from "@/game/domain/narrativeMemorySummary";
 
 const PLAYER = asPlayerEntityId("player_0");
@@ -47,6 +47,32 @@ function longRecord(length = 61): GameRecord {
 }
 
 describe("prepareNarrativeMemory", () => {
+  it("keeps old revisit proof events mandatory while respecting each observer's visibility", async () => {
+    const locationId = asLocationId("loc:old-evidence");
+    const oldEvent: CommittedNarrativeEvent = {
+      eventId: asEventId("turn:old:change"), sequence: 1, turnId: asTurnId("turn:old"), turnNumber: 1,
+      episodeId: asEpisodeId("episode:old"), kind: "location_unlocked", actorIds: [PLAYER], targetIds: [],
+      locationId, causeEventIds: [], factIds: [], questIds: [], outcome: "success", salience: 50,
+      committedAt: "2026-09-14T00:00:00.000Z", payload: { type: "location_unlocked", locationId },
+    };
+    const base = longRecord();
+    const current = { ...base, worldState: { ...base.worldState, eventLedger: [oldEvent] } };
+    const source: NarrativeMemorySummarySource = { select: vi.fn(async () => { throw new Error("no compression needed"); }) };
+    const repository: NarrativeMemorySummaryRepository = {
+      load: async () => ({ summaryRevision: 1, state: { formatVersion: 1, observerId: PLAYER, policyVersion: "memory-p2/1",
+        summaryRevision: 1, coveredThroughSequence: 49, coveredSourceFingerprint: "source:49", batches: [], overview: { historyIds: [], eventIds: [] } } }),
+      publish: async () => ({ ok: true }),
+    };
+    for (const observerId of [PLAYER, asNpcId("npc:uninformed")]) {
+      const result = await prepareNarrativeMemory({ record: current, observerId, job: {
+        actionId: "action:return", jobId: asNarrativeJobId("job:return"), domainEventIds: [],
+        resultBoundaryProof: { kind: "changed_revisit", locationId, previousSceneEventId: asEventId("turn:previous:scene"), sourceEventIds: [oldEvent.eventId] },
+      } as never, source, repository, policy, summaries: "enabled", signal: new AbortController().signal,
+      reserveBatchUpdate: async () => false, reserveSummaryHttpAttempt: async () => true });
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.context.requiredEvents.map(event => event.eventId)).toEqual(observerId === PLAYER ? [oldEvent.eventId] : []);
+    }
+  });
   it("does not force another compression because of long source text already covered and omitted", async () => {
     const base = longRecord();
     const current = { ...base, storyState: { ...base.storyState, history: { entries: base.storyState.history.entries.map(entry =>

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import type { CommittedNarrativeEvent } from "@/game/domain/events";
 import { asEventId } from "@/game/domain/events";
+import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
 import { resolve } from "node:path";
 import { describe, it, expect } from "vitest";
 import { createWorldStateFixture, emptyProjection } from "@/game/domain/testing/worldStateFixture.testutil";
@@ -131,6 +132,27 @@ function itemPossession(ws: WorldState, itemId: ItemEntry["id"]): PossessionComp
 }
 
 describe("P3 consequence binding mutations", () => {
+  it.each(["completed", "failed", "closed"] as const)("does not add completion clauses to a %s quest", (status) => {
+    const current = world({ quests: [{ ...QUEST_1_ENTRY, status, objectives: [{ kind: "talk_to_npc", npcId: NPC_1 }] }] });
+    const result = applyEntityMutations(current, [{ kind: "bind_quest_talk_completion", questId: QUEST_1, npcId: NPC_1, conditions: [{ kind: "knows_fact", actorId: NPC_1, factId: FACT_1 }] }]);
+    expect(result).toMatchObject({ ok: false, code: "invalid_binding" });
+    expect(current.quests[0]?.objectives[0]).not.toHaveProperty("completionConditions");
+  });
+
+  it("does not retrospectively restrict an installed legacy cooperation operation", () => {
+    const existing: StoryInteraction = { id: "legacy:verify", npcId: NPC_1, operation: "request_verification", condition: [], factIds: [FACT_1], goalIds: [], promiseId: null, audienceIds: [PLAYER_ENTITY_ID], evidenceEventIds: [] };
+    const current = okApply(world(), [{ kind: "install_story_interaction", npcId: NPC_1, interaction: existing }]);
+    expect(applyEntityMutations(current, [{ kind: "bind_npc_cooperation", npcId: NPC_1, definitions: [] }])).toMatchObject({ ok: false, code: "binding_conflict" });
+  });
+
+  it("rejects first cooperation terms after a successful operation even without its installed definition", () => {
+    const previous = makeCommittedEvent({ type: "story_interaction_resolved", interactionId: "old:verify", npcId: NPC_1, operation: "request_verification", factIds: [FACT_1], audienceIds: [PLAYER_ENTITY_ID], evidenceEventIds: [] }, { outcome: "success" });
+    const current = { ...world(), eventLedger: [previous] };
+    expect(applyEntityMutations(current, [{ kind: "bind_npc_cooperation", npcId: NPC_1, definitions: [] }])).toMatchObject({ ok: false, code: "binding_conflict" });
+    const met = okApply(world(), [{ kind: "set_npc_met", npcId: NPC_1, met: true }]);
+    expect(applyEntityMutations(met, [{ kind: "bind_npc_cooperation", npcId: NPC_1, definitions: [] }]).ok).toBe(true);
+  });
+
   it("installs an investigation binding atomically and is idempotent only for the same definition", () => {
     const current = world({
       worldFacts: [{ ...FACT_1_ENTRY, discoveryMode: "automatic", investigationLabel: "查验古井", investigationApproaches: undefined }],

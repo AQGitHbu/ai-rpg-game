@@ -53,23 +53,28 @@ export function reconcileStoryConsequences(
 ): ReconcileStoryConsequencesResult {
   const triggerEvents = uniqueEvents(input.triggerEvents);
   const triggerIds = new Set(triggerEvents.map((event) => String(event.eventId)));
+  const previewWorld = reconcileConfidentialityPromises({
+    ...input.worldState,
+    eventLedger: uniqueEvents([...input.worldState.eventLedger, ...triggerEvents]),
+  }, input.storyState);
 
   const goals = reconcileNpcGoals({
-    worldState: input.worldState,
+    worldState: { ...previewWorld, eventLedger: input.worldState.eventLedger },
     triggerEvents,
     actionId: input.source.actionId,
     turnId: input.source.turnId,
     turnNumber: input.source.turnNumber,
   });
+  const goalPreviewWorld = { ...goals.worldState, eventLedger: previewWorld.eventLedger };
   const dialogueSession = completedDialogueSession(triggerEvents);
-  const objectiveRef = currentObjectiveOf(goals.worldState, input.storyState);
-  const objectiveQuest = objectiveRef === null ? undefined : goals.worldState.quests.find((quest) => String(quest.id) === String(objectiveRef.questId));
+  const objectiveRef = currentObjectiveOf(goalPreviewWorld, input.storyState);
+  const objectiveQuest = objectiveRef === null ? undefined : goalPreviewWorld.quests.find((quest) => String(quest.id) === String(objectiveRef.questId));
   const objective = objectiveQuest?.objectives[objectiveRef?.objectiveIndex ?? -1];
   const talkSession = dialogueSession
     ?? (objective?.kind === "talk_to_npc"
       ? { npcId: String(objective.npcId), completed: false as const }
       : undefined);
-  const quests = reconcileQuests(goals.worldState, { now: () => "" }, talkSession === undefined ? undefined : {
+  const quests = reconcileQuests(goalPreviewWorld, { now: () => "" }, talkSession === undefined ? undefined : {
     talkToNpcSession: talkSession,
     ...(dialogueSession === undefined ? {} : {
       actionContext: {
@@ -95,7 +100,7 @@ export function reconcileStoryConsequences(
     triggerEvents,
   });
   return {
-    worldState: withConfidentiality,
+    worldState: { ...withConfidentiality, eventLedger: input.worldState.eventLedger },
     storyState: {
       ...progression.nextStoryState,
       threads,

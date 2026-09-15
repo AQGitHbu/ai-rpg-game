@@ -33,7 +33,11 @@ function rawContext(input: Readonly<{ record: GameRecord; job: PendingNarrativeJ
     contextEventIds: input.evidence.events.filter(event => contextEventIds.has(String(event.eventId))).map(event => event.eventId),
     presentHistoryIds: presentHistory.map(entry => entry.id),
   });
-  const requiredEventIds = input.evidence.events.filter(event => input.job.domainEventIds?.includes(event.eventId)).map(event => event.eventId);
+  const jobEvidenceIds = new Set([
+    ...(input.job.domainEventIds ?? []),
+    ...(input.job.resultBoundaryProof?.sourceEventIds ?? []),
+  ].map(String));
+  const requiredEventIds = input.evidence.events.filter(event => jobEvidenceIds.has(String(event.eventId))).map(event => event.eventId);
   return buildNarrativeMemoryContext({
     evidence: input.evidence,
     selection: { ...selection, eventIds: [...selection.eventIds, ...requiredEventIds],

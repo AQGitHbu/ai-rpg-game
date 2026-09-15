@@ -9,7 +9,7 @@ import {
 } from "./entity/npcComponents";
 import type { NpcGoalProposal, NpcIdentityAnchors } from "./entity/npcComponents";
 import { parseOpeningSituation, type OpeningSituationProposal } from "./openingSituation";
-import type { StoryConsequenceBindingsProposal } from "./storyConsequenceBindings";
+import { isStoryConsequenceBindingsProposal, type StoryConsequenceBindingsProposal } from "./storyConsequenceBindings";
 
 // ---------------------------------------------------------------------------
 // Task 2：开局切片候选——AI/确定性 fallback 只产出这一份材料：
@@ -123,12 +123,7 @@ function isLocalStoryKey(value: unknown): value is string {
     && !/^(?:loc|npc|item|quest|enemy|fact|ending)_\d+$/.test(value);
 }
 
-function isConsequenceBindings(value: unknown): value is StoryConsequenceBindingsProposal {
-  return Array.isArray(value) && value.length <= 8 && value.every((entry) => {
-    if (!isRecord(entry) || typeof entry.kind !== "string") return false;
-    return ["bind_goal_resolution", "bind_investigation", "bind_talk_completion", "bind_npc_cooperation"].includes(entry.kind);
-  });
-}
+
 
 function parseDeliveryContract(value: unknown): StoryDeliveryContract | null {
   if (!isRecord(value)
@@ -357,7 +352,7 @@ export function parseOpeningGenerationCandidate(
     return { ok: false, code: "INVALID_OPENING_VARIATION_PROFILE" };
   }
   const normalizedVariationProfile = variationProfile === null ? undefined : variationProfile;
-  if (opening.consequenceBindings !== undefined && !isConsequenceBindings(opening.consequenceBindings)) {
+  if (opening.consequenceBindings !== undefined && !isStoryConsequenceBindingsProposal(opening.consequenceBindings)) {
     return { ok: false, code: "INVALID_CONSEQUENCE_BINDINGS" };
   }
 

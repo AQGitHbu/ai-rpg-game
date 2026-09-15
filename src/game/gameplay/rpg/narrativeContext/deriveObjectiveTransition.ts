@@ -28,6 +28,7 @@ export function isObjectiveSatisfiedInStory(
 ): boolean {
   if (!isObjectiveSatisfied(ws, objective)) return false;
   if (objective.kind !== "talk_to_npc") return true;
+  if (objective.completionConditions !== undefined) return true;
   const session = ss.narrative.dialogueSession;
   if (session === undefined) return true;
   // 旧 NPC 的 completed 会话不能完成当前 NPC 的目标；规则层可能已经在

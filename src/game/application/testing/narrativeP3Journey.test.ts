@@ -4,7 +4,7 @@ import { runOfflineP3Story } from "./narrativeP3Journey.testutil";
 
 describe("P3 divergent evidence and cooperation journeys", () => {
   it("completes the private route with a reload-safe recalled investigation", async () => {
-    const result = await runOfflineP3Story({ route: "private", reloadAtRevisit: true });
+    const result = await runOfflineP3Story({ route: "private", reloadAfterInvestigation: true });
 
     expect(result.completed).toBe(true);
     expect(result.itemGivenEventCount).toBe(1);
@@ -14,10 +14,13 @@ describe("P3 divergent evidence and cooperation journeys", () => {
     expect(result.privateEvidenceLeaked).toBe(false);
     expect(result.reloadEqual).toBe(true);
     expect(result.availableActionsAfterEvidence).not.toEqual(result.availableActionsBeforeEvidence);
+    expect(result.verificationAvailableAfterInvestigation).toBe(false);
+    expect(result.goalEvidenceKindsAfterFollowUps).toContain("story_interaction_resolved");
+    expect(result.revisited).toBe(false); // This journey proves reload, not a physical revisit.
   }, 30_000);
 
   it("completes the public route with a witnessed investigation and a different action set", async () => {
-    const result = await runOfflineP3Story({ route: "public", reloadAtRevisit: true });
+    const result = await runOfflineP3Story({ route: "public", reloadAfterInvestigation: true });
 
     expect(result.completed).toBe(true);
     expect(result.itemGivenEventCount).toBe(1);
@@ -27,13 +30,18 @@ describe("P3 divergent evidence and cooperation journeys", () => {
     expect(result.privateEvidenceLeaked).toBe(false);
     expect(result.reloadEqual).toBe(true);
     expect(result.availableActionsAfterEvidence).not.toEqual(result.availableActionsBeforeEvidence);
+    expect(result.verificationAvailableAfterInvestigation).toBe(true);
+    expect(result.goalEvidenceKindsAfterFollowUps).toContain("fact_discovered");
   }, 30_000);
 
   it("keeps the witness boundary route-dependent while sharing the approved initial state", async () => {
-    const privateRoute = await runOfflineP3Story({ route: "private", reloadAtRevisit: false });
-    const publicRoute = await runOfflineP3Story({ route: "public", reloadAtRevisit: false });
+    const privateRoute = await runOfflineP3Story({ route: "private", reloadAfterInvestigation: false });
+    const publicRoute = await runOfflineP3Story({ route: "public", reloadAfterInvestigation: false });
 
     expect(privateRoute.publicWitnessFactIds).not.toEqual(publicRoute.publicWitnessFactIds);
     expect(privateRoute.investigationEventIds).not.toEqual(publicRoute.investigationEventIds);
+    expect(privateRoute.verificationAvailableAfterInvestigation).toBe(false);
+    expect(publicRoute.verificationAvailableAfterInvestigation).toBe(true);
+    expect(privateRoute.goalEvidenceKindsAfterFollowUps).not.toEqual(publicRoute.goalEvidenceKindsAfterFollowUps);
   }, 60_000);
 });

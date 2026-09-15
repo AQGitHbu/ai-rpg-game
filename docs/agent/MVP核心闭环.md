@@ -8,7 +8,7 @@
 
 - 开局只生成可完成的切片：故事契约、世界前提、玩家、序幕、一个起始地点、一个 NPC、一条活动主线和起始事实；后续实体按需具象化。
 - 玩家固定选择和焦点 NPC 自定义输入都经 `/api/game/actions` 进入 `performTurn`；服务端规则拥有 Action、任务、关系、知识、物品、战斗、事件和结局。
-- 生产 provider 触发点只有 `initialization`、`narrative_choice`、`npc_free_text`；叙事 provider、审批和失败重试边界见 [运行时 AI 导演与场景表演](./运行时AI导演与场景表演.md)。
+- 生产 provider 触发点包括 `initialization`、`narrative_choice`、`npc_free_text` 及服务端证明的 `investigation_result`、`changed_revisit`；叙事 provider、审批和失败重试边界见 [运行时 AI 导演与场景表演](./运行时AI导演与场景表演.md)。
 - `PreparedContinuationState` 仅为 offline fixture 的续接状态；生产续接唯一使用 `narrativeBundle`。
 - 地图、城镇、建筑是空间 read model；物品、战斗和规则移动消费 bundle 步骤或规则 scene，不在动作路径额外调用 provider。
 - 生产失败保留 `provider_failed` 和同一 job，用户显式重试；失败状态不会被改写为成功场景。

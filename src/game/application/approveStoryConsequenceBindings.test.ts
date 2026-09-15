@@ -25,6 +25,48 @@ function world() {
 const storyState = createInitialStoryState({ initialNarrative: { status: "idle", currentScene: null } as never, gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 1, events: 0 } });
 
 describe("approveStoryConsequenceBindings", () => {
+  it.each([
+    { proposal: [{ kind: "bind_goal_resolution", npcRef: NPC, goalOrdinal: 0 }] },
+    { proposal: [{ kind: "bind_npc_cooperation", npcRef: NPC }] },
+    { proposal: [{ kind: "bind_investigation", factRef: FACT, discoveryMode: "investigation", approaches: [null] }] },
+    { proposal: null },
+  ])("rejects malformed provider bindings without throwing (%j)", ({ proposal }) => {
+    expect(approveStoryConsequenceBindings({ proposal: proposal as never, worldState: world(), storyState, symbols: new Map() }))
+      .toEqual({ ok: false, code: "invalid_bindings", path: "bindings" });
+  });
+  it("rejects evidence gated behind knowledge of itself without mutating the original", () => {
+    const current = world();
+    const result = approveStoryConsequenceBindings({
+      proposal: [{ kind: "bind_investigation", factRef: FACT, discoveryMode: "investigation", approaches: [
+        { approachId: "clean", label: "查验", evidenceQuality: "clean", tensionDelta: 0,
+          requirements: [{ kind: "knows_fact", actorId: "player_0", factId: FACT }] },
+        { approachId: "noisy", label: "翻找", evidenceQuality: "noisy", tensionDelta: 1,
+          requirements: [{ kind: "knows_fact", actorId: "player_0", factId: FACT }] },
+      ] }], worldState: current, storyState, symbols: new Map(),
+    });
+    expect(result).toMatchObject({ ok: false, code: "investigation_dependency_cycle" });
+    expect(current.worldFacts[0]?.discoveryMode).toBe("automatic");
+  });
+
+  it.each([false, true])("checks goal/evidence cycles while preserving an independent method (alternative=%s)", (alternative) => {
+    const result = approveStoryConsequenceBindings({
+      proposal: [
+        { kind: "bind_goal_resolution", npcRef: NPC, goalOrdinal: 0, resolution: {
+          completeWhen: [{ kind: "investigation_observed", npcId: NPC, factId: FACT, evidenceQuality: "clean" }],
+          blockWhen: [{ kind: "investigation_observed", npcId: NPC, factId: FACT, evidenceQuality: "noisy" }],
+        } },
+        { kind: "bind_investigation", factRef: FACT, discoveryMode: "investigation", approaches: [
+          { approachId: "clean", label: "合作查验", evidenceQuality: "clean", tensionDelta: 0,
+            ...(alternative ? {} : { requirements: [{ kind: "goal_status" as const, npcId: NPC, goalOrdinal: 0, status: "completed" as const }] }) },
+          { approachId: "noisy", label: "合作翻找", evidenceQuality: "noisy", tensionDelta: 1,
+            requirements: [{ kind: "goal_status", npcId: NPC, goalOrdinal: 0, status: "completed" }] },
+        ] },
+      ], worldState: world(), storyState, symbols: new Map(),
+    });
+    expect(result.ok).toBe(alternative);
+    if (!alternative) expect(result).toMatchObject({ code: "investigation_dependency_cycle" });
+  });
+
   it("resolves ordinals and installs all four bounded binding kinds through mutations", () => {
     const result = approveStoryConsequenceBindings({
       proposal: [

@@ -5,11 +5,7 @@ import type { WorldDeltaProposal, DynamicLocationPlacement } from "@/game/domain
 import type { WorldState, InvestigationApproach } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { GameTypeId } from "@/game/domain/newGame";
-import type {
-  InvestigationApproachProposal,
-  StoryConditionProposal,
-  StoryConsequenceBindingsProposal,
-} from "@/game/domain/storyConsequenceBindings";
+import { isStoryConsequenceBindingsProposal } from "@/game/domain/storyConsequenceBindings";
 import { createRpgAiClient, RPG_AI_DEFAULT_POLICIES, type RpgAiClient } from "./rpgAiClient";
 import type { ProviderJsonMode } from "./providerRequestOptions";
 import { classifyAiFailure, transportFailureCodeToCategory } from "../../aiGenerationFailure";
@@ -87,110 +83,6 @@ function isNonEmptyString(value: unknown): value is string {
 
 function isStringArray(value: unknown): value is readonly string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === "string");
-}
-
-function isStoryConditionProposal(value: unknown): value is StoryConditionProposal {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const condition = value as Record<string, unknown>;
-  if (typeof condition.kind !== "string") return false;
-  switch (condition.kind) {
-    case "has_item":
-      return hasNoUnknownKeys(condition, ["kind", "itemId", "ownerId"])
-        && isNonEmptyString(condition.itemId) && isNonEmptyString(condition.ownerId);
-    case "knows_fact":
-      return hasNoUnknownKeys(condition, ["kind", "actorId", "factId"])
-        && isNonEmptyString(condition.actorId) && isNonEmptyString(condition.factId);
-    case "promise_status":
-      return hasNoUnknownKeys(condition, ["kind", "npcId", "promiseId", "status"])
-        && isNonEmptyString(condition.npcId) && isNonEmptyString(condition.promiseId)
-        && ["open", "fulfilled", "broken", "released"].includes(condition.status as string);
-    case "goal_status": {
-      if (!hasNoUnknownKeys(condition, ["kind", "npcId", "status", "goalId", "goalOrdinal"])
-        || !isNonEmptyString(condition.npcId)
-        || !["active", "blocked", "completed", "abandoned"].includes(condition.status as string)) return false;
-      const hasGoalId = isNonEmptyString(condition.goalId);
-      const hasGoalOrdinal = Number.isInteger(condition.goalOrdinal) && (condition.goalOrdinal as number) >= 0;
-      return hasGoalId !== hasGoalOrdinal;
-    }
-    case "investigation_observed":
-      return hasNoUnknownKeys(condition, ["kind", "npcId", "factId", "evidenceQuality"])
-        && isNonEmptyString(condition.npcId) && isNonEmptyString(condition.factId)
-        && ["clean", "noisy"].includes(condition.evidenceQuality as string);
-    default:
-      return false;
-  }
-}
-
-function isConditionArray(value: unknown): value is readonly StoryConditionProposal[] {
-  return Array.isArray(value) && value.every(isStoryConditionProposal);
-}
-
-function isInvestigationApproachProposal(value: unknown): value is InvestigationApproachProposal {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const approach = value as Record<string, unknown>;
-  if (!hasNoUnknownKeys(approach, ["approachId", "label", "hint", "evidenceQuality", "tensionDelta", "requirements", "witnessNpcIds"])
-    || !isNonEmptyString(approach.approachId)
-    || !isNonEmptyString(approach.label)
-    || (approach.hint !== undefined && !isNonEmptyString(approach.hint))
-    || !["clean", "noisy"].includes(approach.evidenceQuality as string)
-    || typeof approach.tensionDelta !== "number"
-    || !Number.isFinite(approach.tensionDelta)
-    || approach.tensionDelta < MIN_TENSION_DELTA
-    || approach.tensionDelta > MAX_TENSION_DELTA) return false;
-  return (approach.requirements === undefined || isConditionArray(approach.requirements))
-    && (approach.witnessNpcIds === undefined
-      || (isStringArray(approach.witnessNpcIds) && approach.witnessNpcIds.every(isNonEmptyString)));
-}
-
-function isStoryConsequenceBindings(value: unknown): value is StoryConsequenceBindingsProposal {
-  if (!Array.isArray(value) || value.length > 8) return false;
-  return value.every((entry) => {
-    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return false;
-    const binding = entry as Record<string, unknown>;
-    switch (binding.kind) {
-      case "bind_goal_resolution": {
-        const resolution = binding.resolution;
-        return hasNoUnknownKeys(binding, ["kind", "npcRef", "goalOrdinal", "resolution"])
-          && isNonEmptyString(binding.npcRef)
-          && Number.isInteger(binding.goalOrdinal) && (binding.goalOrdinal as number) >= 0
-          && typeof resolution === "object" && resolution !== null && !Array.isArray(resolution)
-          && hasNoUnknownKeys(resolution as Record<string, unknown>, ["completeWhen", "blockWhen"])
-          && isConditionArray((resolution as Record<string, unknown>).completeWhen)
-          && isConditionArray((resolution as Record<string, unknown>).blockWhen);
-      }
-      case "bind_investigation":
-        return hasNoUnknownKeys(binding, ["kind", "factRef", "discoveryMode", "approaches"])
-          && isNonEmptyString(binding.factRef)
-          && binding.discoveryMode === "investigation"
-          && Array.isArray(binding.approaches)
-          && binding.approaches.length >= MIN_APPROACH_COUNT
-          && binding.approaches.length <= MAX_APPROACH_COUNT
-          && binding.approaches.every(isInvestigationApproachProposal);
-      case "bind_talk_completion":
-        return hasNoUnknownKeys(binding, ["kind", "questRef", "npcRef", "conditions"])
-          && isNonEmptyString(binding.questRef)
-          && isNonEmptyString(binding.npcRef)
-          && isConditionArray(binding.conditions);
-      case "bind_npc_cooperation": {
-        if (!hasNoUnknownKeys(binding, ["kind", "npcRef", "definitions"])
-          || !isNonEmptyString(binding.npcRef)
-          || !Array.isArray(binding.definitions)) return false;
-        return binding.definitions.every((definition) => {
-          if (typeof definition !== "object" || definition === null || Array.isArray(definition)) return false;
-          const value = definition as Record<string, unknown>;
-          return hasNoUnknownKeys(value, ["operation", "requirements", "allowedFactIds", "allowedAudienceIds"])
-            && ["request_introduction", "request_verification"].includes(value.operation as string)
-            && isConditionArray(value.requirements)
-            && isStringArray(value.allowedFactIds)
-            && value.allowedFactIds.every(isNonEmptyString)
-            && isStringArray(value.allowedAudienceIds)
-            && value.allowedAudienceIds.every(isNonEmptyString);
-        });
-      }
-      default:
-        return false;
-    }
-  });
 }
 
 function parseLocationRef(v: unknown): { readonly kind: "existing"; readonly id: string } | { readonly kind: "new_location" } | null {
@@ -431,7 +323,7 @@ export function parseWorldDeltaProposal(
 
   const consequenceBindings = rec.consequenceBindings === undefined
     ? undefined
-    : isStoryConsequenceBindings(rec.consequenceBindings)
+    : isStoryConsequenceBindingsProposal(rec.consequenceBindings)
       ? rec.consequenceBindings
       : null;
   if (consequenceBindings === null) return null;

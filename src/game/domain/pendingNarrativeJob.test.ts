@@ -356,6 +356,17 @@ describe("PendingNarrativeJob", () => {
     expect(parsePendingNarrativeJob(JSON.parse(JSON.stringify(result.job)))).toEqual(result);
   });
 
+  it("rejects missing or mismatched result proofs when restoring a job", () => {
+    const proof = { kind: "changed_revisit" as const, locationId: asLocationId("loc_0"), previousSceneEventId: asEventId("turn:scene:old"), sourceEventIds: [asEventId("turn:source:changed")] };
+    expect(createResult({ generationKind: "changed_revisit", sceneRequestKind: "changed_revisit", actionSummary: { kind: "move", locationId: proof.locationId } }).ok).toBe(false);
+    expect(createResult({ resultBoundaryProof: proof }).ok).toBe(false);
+    expect(createResult({ generationKind: "changed_revisit", sceneRequestKind: "changed_revisit", actionSummary: { kind: "move", locationId: asLocationId("other") }, resultBoundaryProof: proof }).ok).toBe(false);
+    const result = createResult({ generationKind: "changed_revisit", sceneRequestKind: "changed_revisit", actionSummary: { kind: "move", locationId: proof.locationId }, resultBoundaryProof: proof });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(parsePendingNarrativeJob({ ...result.job, resultBoundaryProof: { ...proof, arbitrary: true } }).ok).toBe(false);
+  });
+
   it("拒绝没有来源事件的结果边界 proof", () => {
     const result = createResult({
       generationKind: "changed_revisit",

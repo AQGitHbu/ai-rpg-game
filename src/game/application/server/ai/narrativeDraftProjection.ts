@@ -88,7 +88,7 @@ export function compileNarrativeDraft(value: unknown, context: NarrativeDraftCon
   const fail = (code: string, path: string) => ({ ok: false as const, code, path });
   const raw = record(value);
   if (raw === null) return fail("invalid_draft", "$");
-  const unknownKey = Object.keys(raw).find(key => !["worldDelta", "sceneDrafts", "endingOutcomes", "interactionProposals", "graph"].includes(key));
+  const unknownKey = Object.keys(raw).find(key => !["worldDelta", "consequenceBindings", "sceneDrafts", "endingOutcomes", "interactionProposals", "graph"].includes(key));
   if (unknownKey !== undefined) return fail("unknown_field", `$.${unknownKey}`);
   if (raw.graph !== undefined && raw.graph !== "default" && raw.graph !== "return_delivery") return fail("unknown_graph", "$.graph");
   const projection = projectNarrativeDraft({ ...context, includeDeliveryReturn: raw.graph === "return_delivery" });
@@ -152,6 +152,7 @@ export function compileNarrativeDraft(value: unknown, context: NarrativeDraftCon
     : raw.worldDelta;
   return { ok: true, value: {
     worldDelta,
+    ...(raw.consequenceBindings === undefined ? {} : { consequenceBindings: raw.consequenceBindings }),
     ...(raw.interactionProposals === undefined ? {} : { interactionProposals: raw.interactionProposals }),
     currentScene: byKey.get("current"),
     continuationScenes: projection.stepKeys.map(stepKey => ({ stepKey, scene: byKey.get(stepKey) })),

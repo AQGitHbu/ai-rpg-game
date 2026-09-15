@@ -8,11 +8,12 @@ import {
   PLAYER_ENTITY_ID,
 } from "@/game/domain/worldEntity";
 import { asEventId } from "@/game/domain/events";
+import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
 import { createWorldStateFixture, emptyProjection } from "@/game/domain/testing/worldStateFixture.testutil";
 import { createEntityStore, getEntity, projectEntityStore, type EntityRecord, type NpcEntityRecord, type PlayerEntityRecord } from "@/game/domain/entity";
 import type { NpcCooperationDefinition, StoryInteraction } from "@/game/domain/storyInteraction";
 import type { WorldState } from "@/game/domain/worldState";
-import { resolveStoryInteraction } from "./resolveStoryInteraction";
+import { evaluateStoryCondition, resolveStoryInteraction } from "./resolveStoryInteraction";
 
 const LOCATION = asLocationId("loc_temple");
 const MESSENGER = asNpcId("npc_messenger");
@@ -323,6 +324,23 @@ describe("resolveStoryInteraction", () => {
 });
 
 describe("player sharing authority", () => {
+  it("does not grant an investigation observation by attaching a different fact's source", () => {
+    const discovery = makeCommittedEvent({ type: "fact_discovered", factId: SECRET_FACT, approachId: "quiet", evidenceQuality: "clean" }, { eventId: asEventId("turn:1:private"), actorIds: [PLAYER_ENTITY_ID], targetIds: [PLAYER_ENTITY_ID] });
+    const shared = makeCommittedEvent({ type: "story_interaction_resolved", interactionId: "share", npcId: MESSENGER, operation: "share_known_fact", factIds: [FACT], audienceIds: [MESSENGER], evidenceEventIds: [discovery.eventId] });
+    const condition = { kind: "investigation_observed" as const, npcId: MESSENGER, factId: SECRET_FACT, evidenceQuality: "clean" as const };
+    expect(evaluateStoryCondition({ ...world(), eventLedger: [discovery, shared] }, condition)).toBe(false);
+    const exactShare = { ...shared, payload: { ...shared.payload, factIds: [SECRET_FACT] } };
+    expect(evaluateStoryCondition({ ...world(), eventLedger: [discovery, exactShare] }, condition)).toBe(true);
+  });
+
+  it("rejects execution when the shared investigation source belongs to an unshared fact", () => {
+    const discovery = makeCommittedEvent({ type: "fact_discovered", factId: SECRET_FACT, approachId: "quiet", evidenceQuality: "clean" }, { eventId: asEventId("turn:1:private"), actorIds: [PLAYER_ENTITY_ID], targetIds: [PLAYER_ENTITY_ID] });
+    const definition = interaction({ operation: "share_known_fact", audienceIds: [MESSENGER], evidenceEventIds: [discovery.eventId] });
+    const current = world(definition, { secret: true });
+    const records = current.entityStore.records.map((record): EntityRecord => record.core.kind === "player_character" ? { ...(record as PlayerEntityRecord), knowledge: { knownFactIds: [FACT] } } : record);
+    const result = resolveStoryInteraction({ ...current, entityStore: createEntityStore(records), eventLedger: [discovery] }, { type: "talk", npcId: MESSENGER, interactionId: definition.id, dialogueAct: "ask" }, deps);
+    expect(result.ok).toBe(false);
+  });
   it("requires player knowledge and a present target, and records player_told only after selection", () => {
     const definition = interaction({ operation: "share_known_fact", audienceIds: [MESSENGER, WITNESS] });
     const unknown = world(definition);

@@ -294,6 +294,10 @@ function isValidMandatoryBeat(candidate: unknown): boolean {
 function isValidResultBoundaryProof(candidate: unknown): candidate is ResultBoundaryProof {
   if (!candidate || typeof candidate !== "object") return false;
   const proof = candidate as Record<string, unknown>;
+  const keys = proof.kind === "investigation_result"
+    ? ["kind", "factId", "approachId", "sourceEventIds"]
+    : ["kind", "locationId", "previousSceneEventId", "sourceEventIds"];
+  if (Object.keys(proof).some((key) => !keys.includes(key))) return false;
   if (!Array.isArray(proof.sourceEventIds)
     || proof.sourceEventIds.length === 0
     || proof.sourceEventIds.some((id) => typeof id !== "string" || !isWellFormedEventId(id))
@@ -348,7 +352,14 @@ export function createPendingNarrativeJob(
       errors.push({ code: "INVALID_KIND_PAIR" });
     }
   }
-  if (input.resultBoundaryProof !== undefined && !isValidResultBoundaryProof(input.resultBoundaryProof)) {
+  const proof = input.resultBoundaryProof;
+  const requiresResultProof = input.generationKind === "investigation_result" || input.generationKind === "changed_revisit";
+  const validProof = proof === undefined ? !requiresResultProof
+    : isValidResultBoundaryProof(proof) && proof.kind === input.generationKind
+      && (proof.kind === "investigation_result"
+        ? input.actionSummary.kind === "investigate" && input.actionSummary.factId === proof.factId
+        : input.actionSummary.kind === "move" && input.actionSummary.locationId === proof.locationId);
+  if (!validProof) {
     errors.push({ code: "RESULT_BOUNDARY_PROOF_INVALID" });
   }
   if (!isValidObjectiveTransition(input.objectiveTransition)) {

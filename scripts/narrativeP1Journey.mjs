@@ -221,10 +221,15 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
       entry = createServerGameEntryPoints(env, undefined, repository, { ...runtime.options, beforeNarrativeHttpAttempt: mode === "replay" ? () => true : budget.reserve, narrativeAbortSignal: signal });
       const created = await entry.createGame({ gameType: setup.gameType, gameLength: setup.gameLength, setup: projectNarrativeP1GameSetup(setup) }, `${scenarioId}-create`);
       runtime.state("opening", await repository.getCurrentGame());
+      const shared = created.ok && policy.prepareSharedSnapshot !== undefined
+        ? await policy.prepareSharedSnapshot({ entry, repository, runtime, buildChoiceMap, signal, scenarioId })
+        : { ok: created.ok, actionCount: 0 };
       await closeNarrativeP1Entry(entry);
       entry = null;
       runtime.finish();
-      result = created.ok ? { ok: true, databasePath } : { ok: false, code: created.code ?? "CREATE_FAILED" };
+      result = created.ok && shared.ok
+        ? { ok: true, databasePath, sharedActionCount: shared.actionCount ?? 0 }
+        : { ok: false, code: shared.code ?? created.code ?? "CREATE_FAILED" };
     } catch (error) { result = { ok: false, code: runtime.failureCode ?? ((error.message?.startsWith("REPLAY_") || error.message?.startsWith("SEED_")) ? error.message : "OPENING_RUNNER_CRASHED") }; }
     finally { await closeNarrativeP1Entry(entry); }
     if (result.ok) {
@@ -273,7 +278,7 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
     };
     let entry = null;
     const steps = [];
-    let actionCount = 0;
+    let actionCount = opening.sharedActionCount ?? 0;
     let finalized = false;
     let verifySubmitted = false;
     const performed = new Set();
@@ -308,7 +313,7 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
           entry = null;
           runtime.finish();
           finalized = true;
-          const routeSatisfied = policy.routeSatisfied?.({ route, endingState, performed, performedActions, actionCount })
+          const routeSatisfied = policy.routeSatisfied?.({ route, endingState, performed, performedActions, actionCount, steps })
             ?? (route.kind === "complete" ? coreCompleted : route.kind === "deliver" ? performed.has("give_item") : route.kind === "withdraw" ? performed.has("abandon_quest") : route.kind === "diagnostic" ? performed.has("promise_confidentiality") && performed.has("request_introduction") && performed.has("request_verification") && verifySubmitted : route.kind === "private" ? performed.has("promise_confidentiality") && performed.has("request_introduction") : performed.has("request_verification") && (route.kind !== "verify_first" || verifySubmitted));
           return routeResult({ completed: routeSatisfied, actionCount, ...(!routeSatisfied ? { failureCode: "ROUTE_POLICY_NOT_EXERCISED" } : {}) });
         }
@@ -328,7 +333,8 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
         const offeredChoices = offeredProductionChoices(view);
         const deliveryChoice = findOfferedStoryDelivery(view, actionMap, state.record.storyState.delivery);
         const delivery = deliveryChoice === undefined ? undefined : actionMap.get(deliveryChoice.choiceToken);
-        if ((route.kind === "verify_first" || route.kind === "diagnostic") && !verifySubmitted
+        interaction = policy.selectInteraction?.({ route, view, state, actionMap, interactions, performed, performedActions, actionCount, steps });
+        if (interaction === undefined && (route.kind === "verify_first" || route.kind === "diagnostic") && !verifySubmitted
           && delivery !== undefined) {
           const targetNpcId = view.narrative.npcDialogues.find((dialogue) => dialogue.freeInputEnabled && dialogue.npcId === delivery.npcId)?.npcId;
           if (targetNpcId !== undefined) {
@@ -395,6 +401,7 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
           if (success) performed.add(selectedAction.type);
         }
         if (interaction.kind === "free_text" && (route.kind === "verify_first" || route.kind === "diagnostic")) performed.add("verify_freeform_submitted");
+        if (interaction.kind === "free_text") performed.add("strategy_freeform_submitted");
         if (selectedAction !== undefined) performedActions.add(JSON.stringify(selectedAction));
         if (selectedAction?.type === "talk") {
           const event = settled.record.worldState.eventLedger.find((event) => event.actionId === command.actionId

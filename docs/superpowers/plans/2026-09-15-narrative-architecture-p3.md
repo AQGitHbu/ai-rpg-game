@@ -472,7 +472,7 @@ function reconcileStoryConsequences(input: {
 - Test: 复用 `narrativeRecoveryJourney.test.ts`、`narrativeP2Journey.integration.test.ts`、现有 provider trigger 和 UI tests，不重写 P2 验收框架。
 - Docs: 本 Plan P3-A/P3-B gates；有问题只回到对应 Task 修复。
 
-**Interfaces:** testutil 导出 `runOfflineP3Story(input: {route:"private"|"public";reloadAtRevisit:boolean}):Promise<P3StoryEvidence>`；内部创建独立 SQLite，经正式 createGame/read model/performTurn/ensure 到终局。
+**Interfaces:** testutil 导出 `runOfflineP3Story(input: {route:"private"|"public";reloadAfterInvestigation:boolean}):Promise<P3StoryEvidence>`；内部创建独立 SQLite，经正式 createGame/read model/performTurn/ensure 到终局。调查后重载不等同于实际离场后回访。
 
 ```ts
 type P3StoryEvidence = Readonly<{
@@ -493,8 +493,8 @@ type P3StoryEvidence = Readonly<{
 - [x] 先写两路完整失败测试；数据来自同一获批初态，仅玩家方法/合法后续策略不同：
 
 ```ts
-const privateRoute = await runOfflineP3Story({route:"private",reloadAtRevisit:true});
-const publicRoute = await runOfflineP3Story({route:"public",reloadAtRevisit:true});
+const privateRoute = await runOfflineP3Story({route:"private",reloadAfterInvestigation:true});
+const publicRoute = await runOfflineP3Story({route:"public",reloadAfterInvestigation:true});
 for (const route of [privateRoute, publicRoute]) {
   expect(route.completed).toBe(true);
   expect(route.itemGivenEventCount).toBe(1);
@@ -506,7 +506,7 @@ expect(privateRoute.publicWitnessFactIds).not.toEqual(publicRoute.publicWitnessF
 ```
 
 - [x] 运行 `npx vitest run src/game/application/testing/narrativeP3Journey.test.ts --minWorkers=1 --maxWorkers=2` RED；实现双场景 fixture source 同时覆盖 opening/decision。source 可以提供确定性 AI 内容，不能 runner 写入 History、goal、Quest 或 owner 来推进。
-- [x] 私下路线：方法前提→真实查阅→回访→实际告知→目标/合作改变→合法引荐/核验→显式交付。公开路线：真实见证→不同目标/合作可用性→已声明替代方法→显式交付。不得通过直接跳终幕或自由输入宣称成功缩短路径。
+- [ ] 私下路线：方法前提→真实查阅→回访→实际告知→目标/合作改变→合法引荐/核验→显式交付。公开路线：真实见证→不同目标/合作可用性→已声明替代方法→显式交付。现有双路线已覆盖调查、合作分化、告知/核验、显式交付和调查后重载，尚未把实际回访接入同一完整故事。独立 SQLite 回访恢复测试不替代本项完整故事要求。
 - [x] 在条件变化后读取同一 NPC 的正式候选，证明两路至少有一项可用/不可用 Action 不同，并继续两次有效行动验证后果仍存在。不同张力数字或一句不同 label 单独不足以证明合作分化。
 - [ ] 另用 Task 3 匠人材料场景跑最小“查证→告知→开放另一方法”片段，防止依赖递送、人名或道具名硬编码。主动退出、死锁拒绝、未选方法零影响、重复 ensure/调查、旧 token、回访故障、NPC 无来源不可反应均覆盖。
 - [x] 不重复建设旧 P2 集成；在既有测试上确保新增 schema/事件不会破坏 memory 固定包和权限；运行相关 tests/typecheck/boundaries 后提交 `test: complete divergent evidence and cooperation journeys`。
@@ -561,9 +561,10 @@ npm run journey:narrative:p3 -- --mode=live --protocol=artifacts/narrative-p3/p3
 
 - **范围确认：** 用户已确认本 Plan 的玩法范围、自由输入方式、两类生成边界和验收口径，详见“Global Constraints”与范围核查；其余均是待实现契约。
 - **设计审阅：** [独立审阅与修订](../reports/2026-09-15-narrative-p3-plan-review.md)记录目标引用、合作门槛、调查来源、B 后果与现场范围的核查依据；不作为实现通过证据。
-- **P3-A：** Task 1–3 已完成；主动调查、目标结算、有限后果绑定及对应单元/边界验证已落地。
-- **P3-B：** Task 4–6 已完成；结果边界、真实选项、记忆与叙事后果已接入既有 A/B 链，相关全量回归通过。
-- **P3-C：** Task 7 已完成离线双路线旅程证明；Task 8 已完成协议/runner、零网络 register/replay 测试，并执行真实 `p3-01` 登记/live/replay；两路均 `blocked/ROUTE_POLICY_UNSUPPORTED`，没有 UI 证据，人工故事阅读和 C7 仍未通过。
-- **P3 总结论：** P3-A/P3-B 工程闭环及 P3-C 离线证据已实现；真实批次证明当前 runner 尚未覆盖可执行的 P3 路线，不能宣称整个 P3 完成，也不能用严格 replay 通过替代玩法完成。
+- **P3-A：** 主动调查、目标结算、有限后果绑定已落地；代码审阅修复来源匹配、追溯绑定和有限依赖死锁。另一题材的正式复用片段仍待验证，不将 Task 1–3 全部标为完成。
+- **P3-B：** 结果边界、真实选项和固定记忆已接入 A/B 链；独立 SQLite 测试覆盖历史证据触发回访及失败后重开重试成功。Task 6 所规划的“本场 B 披露产生 NPC 知识事件，并在同候选编译/审阅前预览后果”尚无完整生产链，不将 Task 4–6 全部标为完成。
+- **P3-C：** Task 7 离线双路线证明调查、合作分化与交付，但没有同故事实际回访；另一题材片段待执行。Task 8 已有协议/runner、零网络测试及历史 `p3-01` 登记/live/replay；两路均 `blocked/ROUTE_POLICY_UNSUPPORTED`，没有 UI 证据。代码审阅修正分叉位置与完成门槛，尚未重跑真实批次。
+- **代码审阅：** [P3 规则与模块审阅修复](../reports/2026-09-15-narrative-p3-code-review.md)记录独立审阅、可复现缺陷、修复及验证边界。
+- **P3 总结论：** 已有核心规则和离线模块证据，但仍有 B 披露预览链、同故事回访、另一题材复用及真实 live/UI 验收缺口；不能宣称整个 P3 完成，也不能用严格 replay 通过替代玩法完成。
 
 后续若发现缺口属于直接意图解析、错误信念、离场行为或更复杂世界系统，记录新的具体用例再与用户确认，不以“总 Spec 的 P3 曾提到”自动扩大本 Plan。

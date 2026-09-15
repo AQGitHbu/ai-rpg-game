@@ -11,6 +11,8 @@ import type { StoryState } from "@/game/domain/storyState";
 import type { FactId, LocationId } from "@/game/domain/worldEntity";
 import type { WorldState } from "@/game/domain/worldState";
 import type { ResultBoundaryProof } from "@/game/domain/resultBoundary";
+import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
+import { projectObserverEvidence } from "@/game/gameplay/rpg/narrativeMemory";
 
 export type { ResultBoundaryProof } from "@/game/domain/resultBoundary";
 
@@ -138,8 +140,16 @@ function proveChangedRevisit(input: ResultBoundaryInput): ResultBoundaryProof | 
   const previousScene = previousSceneEventAt(input.beforeWorld, locationId);
   if (previousScene === null) return null;
 
-  const sourceEventIds = input.newEvents
-    .filter((event) => event.eventId !== previousScene.eventId)
+  // Changes normally happen on an earlier action, before the player returns.
+  // The latest actually presented scene is the acknowledgement watermark;
+  // rendering a new result prevents subsequent visits replaying old changes.
+  const visibleEvents = projectObserverEvidence({
+    worldState: input.afterWorld,
+    storyState: input.afterStory,
+    observerId: PLAYER_ENTITY_ID,
+  }).events;
+  const sourceEventIds = visibleEvents
+    .filter((event) => event.sequence > previousScene.sequence)
     .filter((event) => isLocationRelatedVisibleChange(event, locationId, input.afterWorld))
     .map((event) => event.eventId);
   if (sourceEventIds.length === 0) return null;
@@ -163,6 +173,5 @@ function uniqueEventIds(eventIds: readonly EventId[]): readonly EventId[] {
  */
 export function proveResultBoundary(input: ResultBoundaryInput): ResultBoundaryProof | null {
   void input.beforeStory;
-  void input.afterStory;
   return proveInvestigationResult(input) ?? proveChangedRevisit(input);
 }

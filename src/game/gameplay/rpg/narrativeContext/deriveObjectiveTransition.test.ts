@@ -9,7 +9,8 @@ import {
   makeNpc, withAddedNpc, withEntityProjection,
 } from "./narrativeContext.testutil";
 import type { LocationEntry, WorldState } from "@/game/domain/worldState";
-import { deriveObjectiveTransition, currentObjectiveOf } from "./deriveObjectiveTransition";
+import { deriveObjectiveTransition, currentObjectiveOf, isObjectiveSatisfiedInStory } from "./deriveObjectiveTransition";
+import { reconcileQuests } from "../ruleEngine/reconcileQuests";
 import { objectiveLabel } from "./objectiveRules";
 import { asItemId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import { isObjectiveSatisfied } from "./objectiveRules";
@@ -22,6 +23,17 @@ function story() {
 }
 
 describe("deriveObjectiveTransition（Task 4）", () => {
+  it("conditional talk requires actual dialogue and ignores the legacy two-turn gate", () => {
+    const objective = { kind: "talk_to_npc" as const, npcId: NPC_1_ID, completionConditions: [{ kind: "has_item" as const, itemId: ITEM_SEAL_ID, ownerId: PLAYER_ENTITY_ID }] };
+    const current = withQuest(withMet(withInventoryItem(baseWorld())), quest([objective]));
+    expect(isObjectiveSatisfied(current, objective)).toBe(false);
+    const spoken = makeCommittedEvent({ type: "npc_interaction_recorded", npcId: NPC_1_ID, dialogueAct: "support" });
+    const after = { ...current, eventLedger: [spoken] };
+    const initialStory = story();
+    const ss = { ...initialStory, narrative: { ...initialStory.narrative, dialogueSession: { npcId: NPC_1_ID, turnCount: 1, requiredTurns: 2, completed: false } } };
+    expect(isObjectiveSatisfiedInStory(after, ss, objective)).toBe(true);
+    expect(reconcileQuests(after, { now: () => "" }, { talkToNpcSession: { npcId: NPC_1_ID, completed: false } }).nextWorldState.quests[0]?.status).toBe("completed");
+  });
   it("带 completionConditions 的交谈目标不被普通 met 或对白计数越过", () => {
     const objective = {
       kind: "talk_to_npc" as const,
@@ -29,7 +41,7 @@ describe("deriveObjectiveTransition（Task 4）", () => {
       completionConditions: [{ kind: "has_item" as const, itemId: ITEM_SEAL_ID, ownerId: PLAYER_ENTITY_ID }],
     };
     expect(isObjectiveSatisfied(withMet(baseWorld()), objective)).toBe(false);
-    expect(isObjectiveSatisfied(withMet(withInventoryItem(baseWorld())), objective)).toBe(true);
+    expect(isObjectiveSatisfied(withMet(withInventoryItem(baseWorld())), objective)).toBe(false);
   });
 
   it("authoritative 目标 = 当前幕第一个 active 主线任务的首个未完成目标", () => {

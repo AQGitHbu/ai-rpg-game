@@ -1,12 +1,15 @@
 import { getEntity, type NpcEntityRecord } from "@/game/domain/entity";
 import type { StoryState } from "@/game/domain/storyState";
 import type { StoryConsequenceBindingProposal, StoryConsequenceBindingsProposal, StoryConditionProposal } from "@/game/domain/storyConsequenceBindings";
+import { isStoryConsequenceBindingsProposal } from "@/game/domain/storyConsequenceBindings";
 import { parseNpcCooperationDefinition, type NpcCooperationDefinition, type StoryCondition } from "@/game/domain/storyInteraction";
 import type { InvestigationApproach } from "@/game/domain/worldEntries";
 import type { WorldState } from "@/game/domain/worldState";
 import { applyEntityMutations, type EntityMutation } from "@/game/gameplay/rpg/entityWorld";
 import { resolveStoryConditionProposal } from "./resolveStoryConditionProposal";
 import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
+import { validateInvestigationDependencies } from "@/game/gameplay/rpg/investigation";
+import { isObjectiveSatisfied } from "@/game/gameplay/rpg/narrativeContext";
 
 export type ApproveStoryConsequenceBindingsInput = Readonly<{
   proposal: StoryConsequenceBindingsProposal;
@@ -152,6 +155,7 @@ function compileBinding(
 }
 
 export function approveStoryConsequenceBindings(input: ApproveStoryConsequenceBindingsInput): ApproveStoryConsequenceBindingsResult {
+  if (!isStoryConsequenceBindingsProposal(input.proposal)) return { ok: false, code: "invalid_bindings", path: "bindings" };
   if (input.proposal.length > 8) return { ok: false, code: "too_many_bindings", path: "bindings" };
   const mutations: EntityMutation[] = [];
   for (const [index, binding] of input.proposal.entries()) {
@@ -161,5 +165,23 @@ export function approveStoryConsequenceBindings(input: ApproveStoryConsequenceBi
   }
   const applied = applyEntityMutations(input.worldState, mutations);
   if (!applied.ok) return { ok: false, code: applied.code, path: "bindings" };
+  // A new rule must govern a future action, not reinterpret the interaction
+  // already settled by A. Otherwise B can advance an act after scene review.
+  // Existing identical bindings remain idempotent even after being fulfilled.
+  for (const [index, mutation] of mutations.entries()) {
+    if (mutation.kind !== "bind_quest_talk_completion") continue;
+    const previous = input.worldState.quests.find((quest) => quest.id === mutation.questId)?.objectives
+      .find((objective) => objective.kind === "talk_to_npc" && objective.npcId === mutation.npcId);
+    if (previous?.kind === "talk_to_npc" && previous.completionConditions !== undefined) continue;
+    const objective = applied.worldState.quests.find((quest) => quest.id === mutation.questId)?.objectives
+      .find((entry) => entry.kind === "talk_to_npc" && entry.npcId === mutation.npcId);
+    if (objective !== undefined && isObjectiveSatisfied(applied.worldState, objective)) {
+      return { ok: false, code: "retroactive_talk_completion", path: `bindings[${index}]` };
+    }
+  }
+  if (mutations.length > 0) {
+    const dependencies = validateInvestigationDependencies(applied.worldState);
+    if (!dependencies.ok) return { ok: false, code: dependencies.code, path: `bindings:${dependencies.factId}` };
+  }
   return { ok: true, worldState: applied.worldState, storyState: input.storyState };
 }

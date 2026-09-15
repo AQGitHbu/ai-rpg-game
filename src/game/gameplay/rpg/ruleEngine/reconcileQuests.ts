@@ -97,6 +97,7 @@ export function reconcileQuests(
     if (quest.status !== "active") continue;
     const allSatisfied = quest.objectives.every((obj) => {
       if (obj.kind === "talk_to_npc"
+        && obj.completionConditions === undefined
         && options?.talkToNpcSession !== undefined
         && String(obj.npcId) === options.talkToNpcSession.npcId) {
         return options.talkToNpcSession.completed && isObjectiveSatisfied(ws, obj);

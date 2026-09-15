@@ -11,7 +11,7 @@ import type { PreparedSceneSeedState } from "./preparedContinuation";
 import { areUniqueNpcSpeechReferenceIds } from "./npcSpeechReferences";
 import { parseSceneExpressionProposal, type SceneExpressionProposal } from "./sceneExpression";
 import { parseStoryInteractionProposal, type StoryInteractionProposal } from "./storyInteraction";
-import type { StoryConsequenceBindingsProposal } from "./storyConsequenceBindings";
+import { isStoryConsequenceBindingsProposal, type StoryConsequenceBindingsProposal } from "./storyConsequenceBindings";
 
 // ---------------------------------------------------------------------------
 // Pure value types moved from application/sceneSource.ts so domain code does
@@ -389,12 +389,7 @@ function isBundleStepProposal(value: unknown): value is BundleStepProposal {
   return isNonEmptyString(value.stepKey) && isBundleSceneProposal(value.scene);
 }
 
-function isConsequenceBindings(value: unknown): value is StoryConsequenceBindingsProposal {
-  return Array.isArray(value) && value.length <= 8 && value.every((entry) => (
-    isRecord(entry) && typeof entry.kind === "string"
-      && ["bind_goal_resolution", "bind_investigation", "bind_talk_completion", "bind_npc_cooperation"].includes(entry.kind)
-  ));
-}
+
 
 export function parseNarrativeBundleProposal(value: unknown): ParseNarrativeBundleProposalResult {
   if (!isRecord(value)) return invalidProposal("not_object");
@@ -408,7 +403,7 @@ export function parseNarrativeBundleProposal(value: unknown): ParseNarrativeBund
     && (!Array.isArray(value.npcOutwardProposals) || !value.npcOutwardProposals.every(isNarrativeNpcOutwardProposal))) {
     return invalidProposal("npc_outward_proposals_invalid");
   }
-  if (value.consequenceBindings !== undefined && !isConsequenceBindings(value.consequenceBindings)) {
+  if (value.consequenceBindings !== undefined && !isStoryConsequenceBindingsProposal(value.consequenceBindings)) {
     return invalidProposal("consequence_bindings_invalid");
   }
   // worldDelta can be null or any object (approval validates it separately)

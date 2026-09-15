@@ -902,6 +902,9 @@ function applyOne(records: readonly EntityRecord[], mutation: EntityMutation, ba
           ? { ok: true, records }
           : failure("binding_conflict", mutation.questId);
       }
+      if (quest.record.quest.status !== "active" && quest.record.quest.status !== "locked") {
+        return failure("invalid_binding", mutation.questId);
+      }
       const objectives = quest.record.quest.objectives.map((entry, entryIndex) => entryIndex === index
         ? { ...entry, completionConditions: [...mutation.conditions] }
         : entry);
@@ -915,6 +918,8 @@ function applyOne(records: readonly EntityRecord[], mutation: EntityMutation, ba
           ? { ok: true, records }
           : failure("binding_conflict", mutation.npcId);
       }
+      if (subject.npc.interactions?.some((interaction) => interaction.operation === "request_introduction"
+        || interaction.operation === "request_verification")) return failure("binding_conflict", mutation.npcId);
       return {
         ok: true,
         records: replaceRecord(records, mutation.npcId, {
@@ -1060,6 +1065,16 @@ export function applyEntityMutations(
   const batch: MutationBatch = { baselines: new Map() };
   let records = worldState.entityStore.records;
   for (const mutation of mutations) {
+    if (mutation.kind === "bind_npc_cooperation") {
+      const subject = activeNpcSubject(records, mutation.npcId);
+      if (subject.ok && subject.npc.cooperationDefinitions === undefined
+        && worldState.eventLedger.some((event) => event.kind === "story_interaction_resolved"
+          && event.outcome === "success" && event.payload.type === "story_interaction_resolved"
+          && event.payload.npcId === mutation.npcId
+          && (event.payload.operation === "request_introduction" || event.payload.operation === "request_verification"))) {
+        return { ok: false, code: "binding_conflict", entityId: mutation.npcId };
+      }
+    }
     const applied = applyOne(records, mutation, batch);
     if (applied.ok === false) {
       return {

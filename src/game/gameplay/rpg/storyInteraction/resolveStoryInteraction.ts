@@ -82,6 +82,7 @@ export function evaluateStoryCondition(worldState: WorldState, condition: StoryC
         }
       }
       return worldState.eventLedger.some((event) => {
+        if (event.outcome === "failure") return false;
         if (event.payload.type === "fact_discovered") {
           return String(event.payload.factId) === String(condition.factId)
             && event.payload.evidenceQuality === condition.evidenceQuality
@@ -89,6 +90,7 @@ export function evaluateStoryCondition(worldState: WorldState, condition: StoryC
         }
         if (event.payload.type !== "story_interaction_resolved" || event.payload.operation !== "share_known_fact") return false;
         if (!(event.payload.audienceIds ?? []).some((audienceId) => String(audienceId) === String(condition.npcId))) return false;
+        if (!event.payload.factIds.includes(condition.factId)) return false;
         return event.payload.evidenceEventIds.some((sourceEventId) => {
           const source = discoveries.get(String(sourceEventId));
           return source !== undefined && source.factId === String(condition.factId) && source.evidenceQuality === condition.evidenceQuality;
@@ -279,6 +281,13 @@ export function resolveStoryInteraction(
     return { ok: false, feedback: "互动引用了未知听众。" };
   }
   const playerShares = interaction.operation === "share_known_fact";
+  if (playerShares && !interaction.evidenceEventIds.every((id) => {
+    const source = worldState.eventLedger.find((event) => event.eventId === id);
+    if (source === undefined || source.outcome === "failure") return false;
+    if (source.payload.type !== "fact_discovered") return true;
+    return interaction.factIds.includes(source.payload.factId)
+      && (source.actorIds.includes(PLAYER_ENTITY_ID) || source.targetIds.includes(PLAYER_ENTITY_ID));
+  })) return { ok: false, feedback: "告知的调查来源与实际分享不一致。" };
   if (playerShares && (!interaction.audienceIds.includes(action.npcId) || interaction.audienceIds.some((id) => npcOf(worldState, id as NpcId)?.position.locationId !== worldState.currentLocationId))) return { ok: false, feedback: "告知听众不在现场。" };
   if (!(playerShares ? interaction.factIds.every((id) => knowsFact(worldState, PLAYER_ENTITY_ID, id)) : knownFacts(worldState, action.npcId, interaction.factIds))) {
     return { ok: false, feedback: "角色没有足够的事实依据。" };

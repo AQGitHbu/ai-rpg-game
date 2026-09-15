@@ -26,6 +26,12 @@ function scene(text: string, count: number) {
 }
 
 describe("narrative draft projection and compilation", () => {
+  it("preserves top-level consequence bindings for approval without a world delta", () => {
+    const consequenceBindings = [{ kind: "bind_talk_completion", questRef: "quest_0", npcRef: "npc_0", conditions: [{ kind: "goal_status", npcId: "npc_0", goalOrdinal: 0, status: "completed" }] }];
+    const result = compileNarrativeDraft({ worldDelta: null, consequenceBindings, sceneDrafts: [{ slotKey: "current", scene: scene("原文。", 2) }] }, context());
+    expect(result).toMatchObject({ ok: true, value: { consequenceBindings } });
+    if (result.ok) expect(parseNarrativeBundleProposal(result.value).ok).toBe(true);
+  });
   it.each(["@current.location", "小镇", "loc_explicit"])("resolves only the explicit current-location symbol: %s", connectFromLocationId => {
     const input = context();
     const worldDelta = { newLocation: { name: "原名", description: "原文。", connectFromLocationId } };

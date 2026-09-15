@@ -700,7 +700,7 @@ describe("createNarrativeBundleSource", () => {
     expect(systemPrompt).not.toContain('terminal: {"kind":"ending"}');
   });
 
-  it("rejects a P3 first-act bundle without an executable scene investigation", async () => {
+  it("does not turn a setup text marker into an extra production approval gate", async () => {
     const complete = vi.fn().mockResolvedValue({
       ok: true,
       content: JSON.stringify(validBundleResponse),
@@ -731,14 +731,10 @@ describe("createNarrativeBundleSource", () => {
 
     const result = await source.generate({ worldState, storyState, job: makeJob(), kind: "decision" });
 
-    expect(result).toMatchObject({
-      ok: false,
-      repairReason: "invalid_schema",
-      repairDetail: "p3_scene_investigation_missing",
-    });
+    expect(result).toMatchObject({ ok: true, kind: "decision" });
     const prompt = (complete.mock.calls[0]![1] as readonly AiMessage[])[0]!.content as string;
-    expect(prompt).toContain("P3 首幕调查");
-    expect(prompt).toContain("worldDelta.newFact 与 worldDelta.consequenceBindings");
+    expect(prompt).not.toContain("P3 首幕调查");
+    expect(prompt).toContain(worldState.generation.setup!.storyOpening);
   });
 
   it("把已占用实体名称交给 provider，新实体撞名会让整包被服务端拒绝", async () => {
@@ -1472,7 +1468,7 @@ describe("createNarrativeBundleSource", () => {
     expect(result).toMatchObject({ ok: true, kind: "opening" });
   });
 
-  it("normalizes a provider repair response that wraps the complete opening bundle", async () => {
+  it.each(["none", "extra", "currentScene", "mixedCandidateFields"])("normalizes only unambiguous wrapped opening bundles (extra=%s)", async (extra) => {
     const opening = await createFixtureOpeningCandidateSource().generate({
       gameType: "wuxia", gameLength: "short", seed: "opening-wrapped-shape",
     });
@@ -1485,7 +1481,10 @@ describe("createNarrativeBundleSource", () => {
     const complete = vi.fn().mockResolvedValue({
       ok: true,
       content: JSON.stringify({
-        opening: { ...opening, currentScene, continuationScenes: [], terminal: { kind: "next_decision", target: { kind: "current_scene" } } },
+        opening: { ...opening, currentScene, continuationScenes: [], terminal: { kind: "next_decision", target: { kind: "current_scene" } },
+          ...(extra === "mixedCandidateFields" ? { consequenceBindings: [] } : {}) },
+        ...(extra === "extra" ? { extra: true } : {}),
+        ...(extra === "currentScene" ? { currentScene } : {}),
       }),
     });
     const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
@@ -1496,7 +1495,9 @@ describe("createNarrativeBundleSource", () => {
       input: { gameType: "wuxia", gameLength: "short", seed: "opening-wrapped-shape" },
     });
 
-    expect(result).toMatchObject({ ok: true, kind: "opening" });
+    expect(result).toMatchObject(extra === "none"
+      ? { ok: true, kind: "opening" }
+      : { ok: false, failure: { kind: "AI_RESPONSE_INVALID" } });
   });
 
   it("preserves structurally valid opening interaction proposals and candidate bindings", async () => {
