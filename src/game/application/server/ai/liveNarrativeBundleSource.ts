@@ -427,7 +427,8 @@ export function createNarrativeBundleSource(
           ...(context.contentRepair === undefined ? {} : { retry: aiRepairAuditContext(context.contentRepair, context.auditLink?.retry) }),
           purpose: "narrative_bundle_generation" as const,
           trigger: context.kind === "decision"
-            ? context.job.utterance === undefined ? "narrative_choice" : "npc_free_text"
+            ? context.job.resultBoundaryProof?.kind
+              ?? (context.job.utterance === undefined ? "narrative_choice" : "npc_free_text")
             : "initialization",
           jobId: context.kind === "decision" ? String(context.job.jobId) : String(context.jobId),
           turnNumber: context.kind === "decision" ? context.job.turnNumber : 0,

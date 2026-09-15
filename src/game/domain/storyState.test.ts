@@ -31,11 +31,11 @@ const initialInput = {
 } as const;
 
 describe("StoryState", () => {
-  it("initializes the v12 schema at turn zero with the supplied runtime and empty memory", () => {
+  it("initializes the v13 schema at turn zero with the supplied runtime and empty memory", () => {
     const ss = createInitialStoryState(initialInput);
 
-    expect(STORY_STATE_SCHEMA_VERSION).toBe(12);
-    expect(ss.version).toBe(12);
+    expect(STORY_STATE_SCHEMA_VERSION).toBe(13);
+    expect(ss.version).toBe(13);
     expect(ss.turnNumber).toBe(0);
     expect(ss.narrative).toBe(initialNarrative);
     expect(ss.memory).toEqual(createEmptyEpisodicMemory());
@@ -68,7 +68,8 @@ describe("StoryState", () => {
     expect(classifyStoryStateSchemaVersion(9)).toEqual({ ok: false, code: "UNSUPPORTED_RECORD" });
     expect(classifyStoryStateSchemaVersion(10)).toEqual({ ok: false, code: "UNSUPPORTED_RECORD" });
     expect(classifyStoryStateSchemaVersion(11)).toEqual({ ok: false, code: "UNSUPPORTED_RECORD" });
-    expect(classifyStoryStateSchemaVersion(12)).toEqual({ ok: true, version: 12 });
+    expect(classifyStoryStateSchemaVersion(12)).toEqual({ ok: false, code: "UNSUPPORTED_RECORD" });
+    expect(classifyStoryStateSchemaVersion(13)).toEqual({ ok: true, version: 13 });
   });
 
   it("createInitialStoryState sets act=1, tension=30, reveal", () => {

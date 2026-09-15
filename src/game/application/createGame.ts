@@ -275,7 +275,7 @@ function compileOpeningNarrative(
     currentScene,
     choiceRegistry,
     narrativeBundle: {
-      contractVersion: 2,
+      contractVersion: 3,
       originJobId: jobId,
       ...(candidateVersion === undefined || candidateHash === undefined
         ? {}

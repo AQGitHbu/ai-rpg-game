@@ -10,7 +10,7 @@
 
 - 正式 trust/doubt 终幕候选在同一 bundle 中携带两条有界 `endingOutcomes`；每条只有主题、玩家选择标签和完整结果场景。两条结果与当前决策场景一同做结构、引用、听众权限和语义审阅，审批后由服务端绑定真实 ending ID，选择前不会发布或写入 History。实际规则结局按 ending ID 消费唯一结果，发布副本的 `turn` 使用实际 Action 提交回合，与 History 和场景事件一致；已审批结果保留生成回合、ID 和原文。缺失、重复或错绑时零写入；显式 offline fixture 可继续使用旧终幕内容。
 
-- 生产 provider 只有 `initialization`、`narrative_choice`、`npc_free_text` 三类触发。开局由 opening source 直接编译为 ready；正式选择和焦点 NPC 自定义输入进入 pending job。
+- 生产 provider 的决策边界包括 `initialization`、`narrative_choice`、`npc_free_text`，以及服务端规则证明的 `investigation_result`、`changed_revisit`。开局由 opening source 直接编译为 ready；正式选择和焦点 NPC 自定义输入进入 pending job；合法调查结果或有可见规则变化的已访问地点回访在没有可消费 bundle 时进入同一 pending job。
 - 初始化由唯一的 `buildOpeningNarrativePrompt` 传入完整 `GameSetup`、叙事风格策略和最多三条近期 novelty 摘要；玩家设定优先于 novelty。开局 source 与后续叙事共用生产 `RpgAiClient`、transport 策略和 application 审批；结构预检通过后调用统一候选语义审阅。作者与审阅器共享开局字段语义、事实 key→正式 ID 映射及披露边界，事实目录中存有秘密不等于玩家已获知。递送 verificationFactKeys 可用公开交付约定与知情来源，无需身份谜题或核验状态；持物或受托不足以说明接应职责，保密权限不变。
 - 初始化最多三次完整尝试；source、候选校验、场景审批和 novelty 拒绝都通过统一修复反馈传到下一次 opening context。调查方式须符合对象数组契约，陌生人关系仍要求 neutral 且无历史依据；格式或关系失败不靠补造字段放行。
 - `NarrativeBundleSource.generate` 一次返回原子提案：可选 `worldDelta`、`currentScene`、`continuationScenes` 和 `terminal`。生产续接图唯一存放在 `storyState.narrative.narrativeBundle`。
@@ -25,7 +25,7 @@
 - NPC 的 `offer_condition` 带有已授权互动提案时，作者须在终点提供对应 `interaction:proposalKey` 的真实行动选择，并保留原条款；不得把答应条件写成普通交谈。应用层按候选引用携带原提案并拒绝冲突修改，语义审阅核对台词与行动及条件先后；提案获准不等于条件已经成立。
 - 所有决策共用必选的生效时点上下文：`currentScene` 与 `worldDelta.beatSummary` 绑定当前已提交 Action 和玩家地点，摘要只概括当前行动及回应。换幕编号与新实体/任务的创建不代表玩家已抵达、会面或完成任务。续接槽按正式 trigger 投影 `resolution`，正文展示于触发成功之后：move 已抵达、take_item 已归玩家、give_item 已交付、战斗开始与胜利分别承接对应结果。作者、修订与 reviewer 共用这一范围；生成时旧背包/地点快照只是续接起点，未来槽的结果也不能倒灌进当前摘要。条件结局按对应立场行动生效。
 - 条件终局槽的标签、正文与 worldDelta.endingPair 共用 endingResolutions：support/challenge 经真实 resolveTurn 预览，投影 Action、玩家与已见/同场 active NPC 的前后地点、规则事件、物品变化及新发现事实 ID。未见异地 NPC、秘密正文与伪造事件 ID 不进入预览。未变的位置不能写成异地到场；待执行前提不能由其他人代办或靠结果正文兑现。同场无关键状态效果的表现仍可创作。新结局对尚未具象化时 resolvedEndingId=null；实际 endingId 决定发布，不能由主题反推玩家已执行的立场，两结果不同时发生。结局依据 ending:trust|doubt 必须匹配候选对应主题的实际数组项；错绑为 uncertain。worldDelta.beatSummary 与 currentScene 属于选择前回应，只能使用已提交依据，不能提前引用条件终局结果。
-- 生产移动、探索、取物、给予、战斗开始与胜利交接必须消费匹配的 bundle 步骤；缺失或失效零写入。活跃战斗、战败恢复和终幕立场由规则直接处理，不增加 provider 调用。`PreparedContinuationState` 及其消费函数只供显式离线 fixture；不能据此描述生产续接。
+- 生产移动、探索、取物、给予、战斗开始与胜利交接必须消费匹配的 bundle 步骤；缺失或失效零写入。调查结果和变化回访只有 `ResultBoundaryProof` 证明规则事件、真实地点历史和可见变化后才可沿同一 A/B 链生成；普通移动、首次到访、UI 导航、场景展示和未知秘密都不能触发。新 proof、规则事件、玩家 History 与 pending job 在同一次 CAS 写入，B 失败保留 A 的后果。活跃战斗、战败恢复和终幕立场由规则直接处理，不增加 provider 调用。`PreparedContinuationState` 及其消费函数只供显式离线 fixture；不能据此描述生产续接。
 - `mode="ai"` 只投影已审批的 `generated` 场景。缺少正式 NPC focus 台词时投影单一权威 `ask`；失败仍进入同 job 的 failed 状态，不合成 deterministic/default 文案。
 - 内容审批同时检查强制节拍、当前地点和焦点 NPC、`objectiveLink`、下一步抵达 NPC、实体引用、题材限制和 NPC speech authority。审批失败不部分写入。
 - 决策上下文以 `consumer=author|reviewer` 共用事实、权限、行动及演化依据；作者获得 sceneDrafts 传输契约，审阅器获得实际编译后 NarrativeBundleProposal 契约（含服务端附加的 npcOutwardProposals）。作者修复指令和抵达输出骨架不进入审阅上下文，candidateHash 仍绑定原内部候选；审阅不改写候选、不按作者传输字段误判内部表示。

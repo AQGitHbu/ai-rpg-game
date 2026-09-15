@@ -180,7 +180,7 @@ describe("sqliteGameRepository", () => {
       expect(current.record.revision).toBe(0);
       expect(current.record.worldState.version).toBe(WORLD_STATE_SCHEMA_VERSION);
       expect(current.record.worldState.entityStore.version).toBe(4);
-      expect(current.record.storyState.version).toBe(12);
+      expect(current.record.storyState.version).toBe(13);
     }
   });
 

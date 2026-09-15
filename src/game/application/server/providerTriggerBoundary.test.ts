@@ -33,6 +33,8 @@ describe("provider trigger architecture boundary", () => {
       "initialization",
       "narrative_choice",
       "npc_free_text",
+      "investigation_result",
+      "changed_revisit",
     ]);
   });
 

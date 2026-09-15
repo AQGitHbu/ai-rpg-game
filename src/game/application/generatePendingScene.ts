@@ -469,9 +469,14 @@ export async function generatePendingScene(
  */
 function deriveSceneTrigger(
   summary: StructuredActionSummary,
-  job: { actionId: string; utterance?: string },
+  job: {
+    actionId: string;
+    utterance?: string;
+    resultBoundaryProof?: { readonly kind: "investigation_result" | "changed_revisit" };
+  },
 ): string {
   if (job.actionId.startsWith("start_")) return "initial_opening";
+  if (job.resultBoundaryProof !== undefined) return job.resultBoundaryProof.kind;
   if (summary.kind === "talk") {
     return job.utterance !== undefined && job.utterance !== "" ? "free_text_dialogue" : "talk_choice";
   }

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { asEventId, asNarrativeJobId, asTurnId } from "./events";
 import type { ResolvedEvent } from "./resolvedEvent";
-import { asLocationId, asNpcId, asQuestId } from "./worldEntity";
+import { asFactId, asLocationId, asNpcId, asQuestId } from "./worldEntity";
 import {
   PLAYER_UTTERANCE_MAX_LENGTH,
   createPendingNarrativeJob,
@@ -335,6 +335,41 @@ describe("PendingNarrativeJob", () => {
     }).ok).toBe(true);
   });
 
+  it("结果边界 job 持久化 proof，并在 JSON round-trip 后保留", () => {
+    const proof = {
+      kind: "investigation_result" as const,
+      factId: asFactId("fact:result"),
+      approachId: "approach:careful",
+      sourceEventIds: [asEventId("turn:result:fact")],
+    };
+    const result = createResult({
+      actionSummary: { kind: "investigate", factId: proof.factId },
+      utterance: undefined,
+      focusNpcId: undefined,
+      generationKind: "investigation_result",
+      sceneRequestKind: "investigation_result",
+      resultBoundaryProof: proof,
+    });
+    expect(result).toMatchObject({ ok: true });
+    if (!result.ok) return;
+    expect(result.job.resultBoundaryProof).toEqual(proof);
+    expect(parsePendingNarrativeJob(JSON.parse(JSON.stringify(result.job)))).toEqual(result);
+  });
+
+  it("拒绝没有来源事件的结果边界 proof", () => {
+    const result = createResult({
+      generationKind: "changed_revisit",
+      sceneRequestKind: "changed_revisit",
+      resultBoundaryProof: {
+        kind: "changed_revisit",
+        locationId: asLocationId("loc:result"),
+        previousSceneEventId: asEventId("turn:result:scene"),
+        sourceEventIds: [],
+      },
+    });
+    expect(result).toMatchObject({ ok: false, errors: [{ code: "RESULT_BOUNDARY_PROOF_INVALID" }] });
+  });
+
   it("非 provider pending job 接受 null/null metadata", () => {
     const result = createResult({
       actionSummary: { kind: "move", locationId: asLocationId("loc_2") },
@@ -422,12 +457,41 @@ describe("PendingNarrativeJob", () => {
 });
 
 describe("decision boundary classification", () => {
-  it("DECISION_BOUNDARY_KINDS 只包含三种语义明确的触发点", () => {
+  it("DECISION_BOUNDARY_KINDS 只包含五种语义明确的触发点", () => {
     expect(DECISION_BOUNDARY_KINDS).toEqual([
       "initialization",
       "narrative_choice",
       "npc_free_text",
+      "investigation_result",
+      "changed_revisit",
     ]);
+  });
+
+  it("服务端结果证明分类为对应的结果边界", () => {
+    expect(classifyProviderDecisionBoundary({
+      action: { type: "investigate", factId: asFactId("fact:1"), approachId: "approach:1" },
+      interactionKind: null,
+      fixedChoiceIsCurrentFormalDecision: false,
+      focusedNpcId: null,
+      resultBoundaryProof: {
+        kind: "investigation_result",
+        factId: asFactId("fact:1"),
+        approachId: "approach:1",
+        sourceEventIds: [asEventId("turn:1:fact")],
+      },
+    })).toBe("investigation_result");
+    expect(classifyProviderDecisionBoundary({
+      action: { type: "move", locationId: asLocationId("loc:1") },
+      interactionKind: null,
+      fixedChoiceIsCurrentFormalDecision: false,
+      focusedNpcId: null,
+      resultBoundaryProof: {
+        kind: "changed_revisit",
+        locationId: asLocationId("loc:1"),
+        previousSceneEventId: asEventId("turn:0:scene"),
+        sourceEventIds: [asEventId("turn:1:change")],
+      },
+    })).toBe("changed_revisit");
   });
 
   it("正式剧情二选一分类为 narrative_choice", () => {

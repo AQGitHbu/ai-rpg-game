@@ -17,7 +17,7 @@ import {
   type NarrativeSceneRequestKind,
 } from "@/game/domain/pendingNarrativeJob";
 import { buildOutcomeBeats, currentObjectiveOf, deriveObjectiveTransition } from "@/game/gameplay/rpg/narrativeContext";
-import { endingDecisionStances } from "@/game/gameplay/rpg/narrativeBundle";
+import { endingDecisionStances, proveResultBoundary, type ResultBoundaryProof } from "@/game/gameplay/rpg/narrativeBundle";
 import type { MandatoryNarrativeBeat, ObjectiveTransition } from "@/game/domain/narrativeBeat";
 import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
 import { advanceStoryReveal, isActionReleased } from "@/game/gameplay/rpg/worldEvolution";
@@ -339,6 +339,14 @@ export async function performTurn(
     resolution.primaryResult,
     converted.action,
   );
+  const resultBoundaryProof = proveResultBoundary({
+    beforeWorld: record.worldState,
+    beforeStory: record.storyState,
+    afterWorld: revealed.worldState,
+    afterStory: revealed.storyState,
+    action: converted.action,
+    newEvents: revealed.worldState.eventLedger.slice(record.worldState.eventLedger.length),
+  });
   // A settled formal ending stance consumes the already authored ending; it
   // does not request another scene. Story exit still requires its own prose.
   const settledEndingStance = endingStance !== undefined
@@ -425,8 +433,31 @@ export async function performTurn(
         resolvedEvent: resolution.primaryResult,
         domainEvents: resolution.domainEvents,
         playerHistoryText,
-      });
+    });
   if (!nextStoryState.ok) {
+    if (nextStoryState.code === "NARRATIVE_CONTINUATION_MISSING" && resultBoundaryProof !== null) {
+      return commitResolution({
+        repository: deps.repository,
+        gameId: command.gameId,
+        actionId: command.actionId,
+        expectedRevision: record.revision,
+        action: converted.action,
+        turnId: resolution.turnId,
+        nextWorldState: revealed.worldState,
+        nextStoryState: revealed.storyState,
+        turnNumber: resolution.turnNumber,
+        primaryResult: resolution.primaryResult,
+        baseLedgerLength: record.worldState.eventLedger.length,
+        now: deps.now(),
+        objectiveTransition: narrative.objectiveTransition,
+        mandatoryBeats: narrative.mandatoryBeats,
+        dialogueChoiceLabel,
+        playerHistoryText,
+        generationKind: resultBoundaryProof.kind,
+        sceneRequestKind: resultBoundaryProof.kind,
+        resultBoundaryProof,
+      });
+    }
     return {
       ok: false,
       code: nextStoryState.code,
@@ -533,6 +564,7 @@ type CommitResolutionInput = {
   readonly playerHistoryText: string;
   readonly generationKind: ProviderGenerationKind | null;
   readonly sceneRequestKind: NarrativeSceneRequestKind | null;
+  readonly resultBoundaryProof?: ResultBoundaryProof;
   readonly endingOutcomeScene?: NarrativeSceneState;
 };
 
@@ -630,6 +662,7 @@ async function commitResolution(input: CommitResolutionInput): Promise<PerformTu
     mandatoryBeats: input.mandatoryBeats,
     generationKind: input.generationKind,
     sceneRequestKind: input.sceneRequestKind,
+    ...(input.resultBoundaryProof === undefined ? {} : { resultBoundaryProof: input.resultBoundaryProof }),
   });
   if (!built.ok) {
     return { ok: false, code: "ACTION_REJECTED", feedback: "本回合无法形成叙事任务" };

@@ -659,7 +659,7 @@ describe("performTurn 单次 CAS 提交", () => {
       activeStepIds: ["battle-start"],
     };
     const narrativeBundle = {
-      contractVersion: 2 as const,
+      contractVersion: 3 as const,
       originJobId: asNarrativeJobId("job-battle-checkpoint-bundle"),
       steps: [{
         stepId: "battle-start",
@@ -898,7 +898,7 @@ describe("performTurn 单次 CAS 提交", () => {
         },
         choiceRegistry: [],
         narrativeBundle: {
-          contractVersion: 2,
+          contractVersion: 3,
           originJobId: asNarrativeJobId("arrival-job"),
           activeStepIds: ["move:loc_2"],
           terminal: { kind: "next_decision", target: { kind: "continuation_step", stepId: "move:loc_2" } },

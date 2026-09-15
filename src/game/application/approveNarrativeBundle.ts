@@ -1381,7 +1381,7 @@ export function approveNarrativeBundle(
   // Build the final bundle state
   const terminalState = resolveTerminalState(graph);
   const bundle: NarrativeBundleState = {
-    contractVersion: 2,
+    contractVersion: 3,
     originJobId: jobId,
     ...(input.candidateVersion === undefined || input.candidateHash === undefined
       ? {}

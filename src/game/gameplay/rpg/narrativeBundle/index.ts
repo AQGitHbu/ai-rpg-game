@@ -20,3 +20,8 @@ export {
   isEndingDecisionDue,
   type EndingDecisionStance,
 } from "./endingDecision";
+
+export {
+  proveResultBoundary,
+  type ResultBoundaryProof,
+} from "./resultBoundary";

@@ -118,7 +118,7 @@ function makeStory(trigger?: PreparedContinuationTrigger): StoryState {
     narrative: {
       ...base.narrative,
       narrativeBundle: {
-        contractVersion: 2,
+        contractVersion: 3,
         originJobId: asNarrativeJobId("job-provider-trigger-matrix"),
         activeStepIds: ["step-trigger"],
         steps: [{
@@ -301,6 +301,35 @@ describe("provider trigger matrix", () => {
     expect(fixture.applyState).not.toHaveBeenCalled();
     expect(fixture.applySceneWriteBack).not.toHaveBeenCalled();
     expect(proposal.propose).not.toHaveBeenCalled();
+  });
+
+  it("successful investigation without a continuation enters a result-boundary pending job", async () => {
+    const fixture = makeRepository(makeWorld(), makeStory());
+
+    const result = await performTurn(
+      {
+        gameId,
+        actionId: "matrix-investigation-result",
+        interaction: { kind: "fixed_choice", choiceToken: "investigate" },
+        expectedRevision: 0,
+        choiceMap: new Map([["investigate", { type: "investigate", factId, approachId: "follow" }]]),
+      },
+      { repository: fixture.repository, now: () => "2026-08-24T00:00:00.000Z" },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(fixture.applyState).toHaveBeenCalledOnce();
+    expect(fixture.record().worldState.worldFacts.find((fact) => fact.factId === factId)?.discovered).toBe(true);
+    const narrative = fixture.record().storyState.narrative;
+    expect(narrative.status).toBe("provider_pending");
+    if (narrative.status !== "provider_pending") return;
+    expect(narrative.job.generationKind).toBe("investigation_result");
+    expect(narrative.job.sceneRequestKind).toBe("investigation_result");
+    expect(narrative.job.resultBoundaryProof).toMatchObject({
+      kind: "investigation_result",
+      factId,
+      approachId: "follow",
+    });
   });
 
   it("NPC handoff acknowledgement is a local close and never submits a persistence action", async () => {

@@ -74,7 +74,7 @@ function states() {
     narrative: {
       ...storyState.narrative,
       narrativeBundle: {
-        contractVersion: 2 as const,
+          contractVersion: 3 as const,
         originJobId: jobId,
         activeStepIds: ["step:temple"],
         steps: [{

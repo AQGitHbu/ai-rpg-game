@@ -56,7 +56,7 @@ function makeStep(stepKey: string): BundleStepProposal {
 
 function makeValidBundleState(): NarrativeBundleState {
   return {
-    contractVersion: 2,
+    contractVersion: 3,
     originJobId: asNarrativeJobId("job-1"),
     steps: [],
     activeStepIds: [],
@@ -267,6 +267,10 @@ describe("narrativeBundleTriggerKey", () => {
 describe("NarrativeBundleState parser", () => {
   it("accepts a valid current_scene terminal state", () => {
     expect(parseNarrativeBundleState(makeValidBundleState()).ok).toBe(true);
+  });
+
+  it("rejects the pre-Task-4 Bundle2 contract", () => {
+    expect(parseNarrativeBundleState({ ...makeValidBundleState(), contractVersion: 2 } as never).ok).toBe(false);
   });
 
   it("accepts a prepared step whose scene uses only the ordered expressions body", () => {

@@ -173,7 +173,7 @@ export type NarrativeBundleStepState = {
 };
 
 export type NarrativeBundleState = {
-  readonly contractVersion: 2;
+  readonly contractVersion: 3;
   readonly originJobId: NarrativeJobId;
   /** Server-owned identity of the approved complete candidate. */
   readonly candidateVersion?: number;
@@ -648,7 +648,7 @@ function isAcyclic(steps: readonly NarrativeBundleStepState[]): boolean {
 export function parseNarrativeBundleState(value: unknown): ParseNarrativeBundleStateResult {
   if (!isRecord(value)) return INVALID_STATE;
   if (!hasOnlyKeys(value, ["contractVersion", "originJobId", "candidateVersion", "candidateHash", "steps", "activeStepIds", "endingOutcomes", "terminal"])) return INVALID_STATE;
-  if (value.contractVersion !== 2) return INVALID_STATE;
+  if (value.contractVersion !== 3) return INVALID_STATE;
   if (!isNonEmptyString(value.originJobId)) return INVALID_STATE;
   if ((value.candidateVersion !== undefined
     && (!Number.isInteger(value.candidateVersion) || (value.candidateVersion as number) < 1))

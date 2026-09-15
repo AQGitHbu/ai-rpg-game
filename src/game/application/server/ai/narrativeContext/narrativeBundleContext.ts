@@ -351,13 +351,19 @@ export function buildDecisionNarrativeContextBlocks(
     ? `本回合没有其他强制叙事节拍。currentScene.segments 可以省略；若返回，必须且只能包含一条氛围段，固定使用 beatId="${ATMOSPHERE_BEAT_ID}"；不得出现 dialogue、narration、response、player_utterance 或任何其他自造 beatId。`
     : `本回合强制叙事节拍（currentScene.segments 的 beatId 只能是下列之一）：\n${beatLines || "（无；只允许可选 atmosphere）"}`;
   const utteranceBeat = job.mandatoryBeats.find((beat) => beat.kind === "player_utterance");
-  const actionSummary = job.utterance !== undefined
+  const resultBoundarySummary = job.resultBoundaryProof?.kind === "investigation_result"
+    ? `本轮是已提交的主动调查结果：事实=${String(job.resultBoundaryProof.factId)}；方式=${job.resultBoundaryProof.approachId}；依据事件=${job.resultBoundaryProof.sourceEventIds.map(String).join(",")}。只表现已结算结果，不重新选择方式或再次执行调查；currentScene 可以没有 NPC。`
+    : job.resultBoundaryProof?.kind === "changed_revisit"
+      ? `本轮是已提交的变化回访：地点=${String(job.resultBoundaryProof.locationId)}；上次场景事件=${String(job.resultBoundaryProof.previousSceneEventId)}；变化依据事件=${job.resultBoundaryProof.sourceEventIds.map(String).join(",")}。只表现已结算变化，不把普通移动或未知秘密写成提示；currentScene 可聚焦当前已释放且在场角色。`
+      : undefined;
+  const actionSummary = resultBoundarySummary
+    ?? (job.utterance !== undefined
     ? `玩家自定义输入：${job.utterance}`
     : job.selectedDialogue?.label !== undefined
       ? `玩家选择了选项：“${job.selectedDialogue.label}”\n本次所选结构化意图：dialogueAct=${job.selectedDialogue.dialogueAct}；topic=${dialogueTopicKey(job.selectedDialogue.topic)}。若是 ask，已批准事实只代表当前已知材料，不代表其中已经含有问题的精确答案；NPC 可回答已知部分，并明确哪些部分仍待核对。`
       : job.actionSummary.kind === "abandon_quest"
         ? `玩家明确放弃主线任务：${String(job.actionSummary.questId)}。这是一次正式退出，不是普通移动或对话；请生成无 NPC、无 choices 的退出收束。`
-      : `玩家行动：${job.actionSummary.kind}`;
+      : `玩家行动：${job.actionSummary.kind}`);
   const evolutionRequirement = structuralEvolutionNeed.kind === "next_act"
     ? `本回合已进入第 ${storyState.currentAct} 幕：worldDelta 绝不能为 null，必须提供 newLocation、newNpc、${storyState.contract.delivery === undefined ? "newItem、newEnemy、" : ""}nextMainQuest；其余字段可为 null。${storyState.contract.delivery === undefined ? "" : "递送主线只需服务同一交付的地点、NPC 与任务；newItem/newEnemy 默认 null，不为凑目标链增加无关物品或战斗。"}${storyState.currentAct >= storyState.targetActs ? `这是最终幕：新地点、新 NPC、nextMainQuest 及抵达场景必须共同承接中心冲突“${storyState.contract.centralConflict}”的实际处理，现有目标必须在本幕可执行完成，不能继续引荐或转交给不存在的下一幕；当前只建立终幕处理场景与任务，不提前替玩家完成或选择结果。` : "这是非最终幕：继续推进中心冲突，不提前完成或宣告结局。"}`
     : structuralEvolutionNeed.kind === "ending_pair"

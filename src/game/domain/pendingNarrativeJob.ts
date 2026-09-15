@@ -15,6 +15,7 @@ import {
   parseNarrativeGenerationAttempt,
   type NarrativeGenerationAttempt,
 } from "./narrativeGenerationAttempt";
+import type { ResultBoundaryProof } from "./resultBoundary";
 
 /** 玩家原话（utterance）的长度上限：全链路统一引用的常量。 */
 export const PLAYER_UTTERANCE_MAX_LENGTH = 200 as const;
@@ -30,6 +31,8 @@ export const DECISION_BOUNDARY_KINDS = [
   "initialization",
   "narrative_choice",
   "npc_free_text",
+  "investigation_result",
+  "changed_revisit",
 ] as const;
 
 export type DecisionBoundaryKind = (typeof DECISION_BOUNDARY_KINDS)[number];
@@ -40,6 +43,7 @@ export type DecisionBoundaryProofInput = {
   readonly interactionKind: "fixed_choice" | "free_text" | null;
   readonly fixedChoiceIsCurrentFormalDecision: boolean;
   readonly focusedNpcId: NpcId | null;
+  readonly resultBoundaryProof?: ResultBoundaryProof | null;
 };
 
 /**
@@ -55,6 +59,10 @@ export type DecisionBoundaryProofInput = {
 export function classifyProviderDecisionBoundary(
   input: DecisionBoundaryProofInput,
 ): DecisionBoundaryKind | null {
+  if (input.resultBoundaryProof !== undefined && input.resultBoundaryProof !== null) {
+    return input.resultBoundaryProof.kind;
+  }
+
   // Formal fixed choice: must be a talk action with a fixed_choice interaction
   // that has been proven to belong to the current formal decision.
   if (
@@ -84,17 +92,27 @@ export const PROVIDER_GENERATION_KINDS = [
   "npc_fixed_choice",
   "npc_free_text",
   "story_exit",
+  "investigation_result",
+  "changed_revisit",
 ] as const;
 
 export type ProviderGenerationKind = (typeof PROVIDER_GENERATION_KINDS)[number];
 
 /** 场景请求种类：与 generationKind 配对，决定 prompt 路由。 */
-export type NarrativeSceneRequestKind = "opening" | "npc_response" | "npc_handoff" | "story_exit";
+export type NarrativeSceneRequestKind =
+  | "opening"
+  | "npc_response"
+  | "npc_handoff"
+  | "story_exit"
+  | "investigation_result"
+  | "changed_revisit";
 const NARRATIVE_SCENE_REQUEST_KINDS = [
   "opening",
   "npc_response",
   "npc_handoff",
   "story_exit",
+  "investigation_result",
+  "changed_revisit",
 ] as const satisfies readonly NarrativeSceneRequestKind[];
 
 /** 合法的 generationKind + sceneRequestKind 配对。 */
@@ -103,6 +121,8 @@ const VALID_KIND_PAIRS: ReadonlyMap<string, readonly NarrativeSceneRequestKind[]
   ["npc_fixed_choice", ["npc_response", "npc_handoff"]],
   ["npc_free_text", ["npc_response", "npc_handoff"]],
   ["story_exit", ["story_exit"]],
+  ["investigation_result", ["investigation_result"]],
+  ["changed_revisit", ["changed_revisit"]],
 ]);
 
 function isValidKindPair(
@@ -166,6 +186,8 @@ export type PendingNarrativeJob = {
   readonly generationKind: ProviderGenerationKind | null;
   /** 场景请求种类；必须与 generationKind 合法配对。 */
   readonly sceneRequestKind: NarrativeSceneRequestKind | null;
+  /** 由服务端规则证明的结果边界；普通 NPC job 不设置。 */
+  readonly resultBoundaryProof?: ResultBoundaryProof;
   /** Durable candidate/lease/HTTP accounting for this logical job epoch. */
   readonly attempt: NarrativeGenerationAttempt;
 };
@@ -194,6 +216,8 @@ export type CreatePendingNarrativeJobInput = {
   readonly generationKind: ProviderGenerationKind | null;
   /** 场景请求种类；必须与 generationKind 合法配对。 */
   readonly sceneRequestKind: NarrativeSceneRequestKind | null;
+  /** 由服务端规则证明的结果边界；客户端输入不得伪造。 */
+  readonly resultBoundaryProof?: ResultBoundaryProof;
   readonly attempt?: NarrativeGenerationAttempt;
 };
 
@@ -207,6 +231,7 @@ export type PendingNarrativeJobErrorCode =
   | "INVALID_GENERATION_KIND"
   | "INVALID_SCENE_REQUEST_KIND"
   | "INVALID_KIND_PAIR"
+  | "RESULT_BOUNDARY_PROOF_INVALID"
   | "ATTEMPT_INVALID";
 
 export type PendingNarrativeJobError = {
@@ -266,6 +291,28 @@ function isValidMandatoryBeat(candidate: unknown): boolean {
     && beat.instruction.length > 0;
 }
 
+function isValidResultBoundaryProof(candidate: unknown): candidate is ResultBoundaryProof {
+  if (!candidate || typeof candidate !== "object") return false;
+  const proof = candidate as Record<string, unknown>;
+  if (!Array.isArray(proof.sourceEventIds)
+    || proof.sourceEventIds.length === 0
+    || proof.sourceEventIds.some((id) => typeof id !== "string" || !isWellFormedEventId(id))
+    || new Set(proof.sourceEventIds).size !== proof.sourceEventIds.length) return false;
+  if (proof.kind === "investigation_result") {
+    return typeof proof.factId === "string"
+      && proof.factId.trim() !== ""
+      && typeof proof.approachId === "string"
+      && proof.approachId.trim() !== "";
+  }
+  if (proof.kind === "changed_revisit") {
+    return typeof proof.locationId === "string"
+      && proof.locationId.trim() !== ""
+      && typeof proof.previousSceneEventId === "string"
+      && isWellFormedEventId(proof.previousSceneEventId);
+  }
+  return false;
+}
+
 /** 纯构造：拒绝空 actionId、无效 Event 引用、超长 utterance 和非法 expectedRevision。 */
 export function createPendingNarrativeJob(
   input: CreatePendingNarrativeJobInput,
@@ -301,6 +348,9 @@ export function createPendingNarrativeJob(
       errors.push({ code: "INVALID_KIND_PAIR" });
     }
   }
+  if (input.resultBoundaryProof !== undefined && !isValidResultBoundaryProof(input.resultBoundaryProof)) {
+    errors.push({ code: "RESULT_BOUNDARY_PROOF_INVALID" });
+  }
   if (!isValidObjectiveTransition(input.objectiveTransition)) {
     errors.push({ code: "OBJECTIVE_TRANSITION_INVALID" });
   }
@@ -335,6 +385,7 @@ export function createPendingNarrativeJob(
       generationKind: input.generationKind,
       sceneRequestKind: input.sceneRequestKind,
       attempt: attempt.ok ? attempt.value : createNarrativeGenerationAttempt(),
+      ...(input.resultBoundaryProof === undefined ? {} : { resultBoundaryProof: input.resultBoundaryProof }),
       ...(input.utterance !== undefined ? { utterance: input.utterance } : {}),
       ...(input.focusNpcId !== undefined ? { focusNpcId: input.focusNpcId } : {}),
       ...(input.selectedDialogue !== undefined ? { selectedDialogue: input.selectedDialogue } : {}),
@@ -372,6 +423,7 @@ export function parsePendingNarrativeJob(value: unknown): ParsePendingNarrativeJ
     mandatoryBeats: v.mandatoryBeats as readonly MandatoryNarrativeBeat[],
     generationKind: v.generationKind as ProviderGenerationKind | null,
     sceneRequestKind: v.sceneRequestKind as NarrativeSceneRequestKind | null,
+    resultBoundaryProof: v.resultBoundaryProof as ResultBoundaryProof | undefined,
     attempt: v.attempt as NarrativeGenerationAttempt,
   });
   if (!result.ok) return { ok: false, code: "INVALID_PENDING_NARRATIVE_JOB" };
