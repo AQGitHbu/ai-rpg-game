@@ -20,12 +20,12 @@ P3 继承当前 **EntityStore3 / World7 / Story12 / Bundle2** 和 Node 内置 SQ
 
 | 核查点 | 当前代码证据 | P3 处理 |
 | --- | --- | --- |
-| Entity 基础 | `src/game/domain/entity/entityRecord.ts` 有八类固定 record；NPC 已有 anchors/goals/knowledge/relationships/history/interactions，Fact 已有调查 label/approaches | 复用这些组件；只增调查准入、目标结算条款及具体任务完成条件，不扩种类或通用组件平台 |
+| Entity 基础 | `src/game/domain/entity/entityRecord.ts` 有八类固定 record；NPC 已有 anchors/goals/knowledge/relationships/history/interactions，Fact 已有调查 label/approaches | 复用这些组件；增加调查准入、目标结算、引荐/核验固定条款及具体任务完成条件，不扩种类或通用组件平台 |
 | NPC 目标 | `entityWorld/entityMutation.ts` 有 `set_npc_goal_status`；生产检索到的是定义、校验和上下文读取，没有正式规则调用者持续推进目标 | 增加有来源的目标结算，并让状态被互动/调查准入消费；不能只往 prompt 多写几个目标 |
-| 当前互动 | `domain/storyInteraction.ts` 仅保密、引荐、核验、分享事实；`resolveStoryInteraction.ts` 能检查条件、知识/听众及承诺 | 本期不新增操作枚举，先让已有操作按目标和证据条件产生不同可用性 |
+| 当前互动 | `domain/storyInteraction.ts` 仅保密、引荐、核验、分享事实；`resolveStoryInteraction.ts` 能检查条件、知识/听众及承诺，但提案身份按 job 铸造 | 本期不新增操作枚举；引荐/核验必须受 NPC 内不可弱化的静态条款约束，防止下一轮换提案绕开条件 |
 | 普通选择 | `narrativeBundle/descriptors.ts:choicesForNpc` 无互动时生成 support/challenge；有互动时使用已安装互动 ID | 候选集合应体现可执行调查与合作条件；旧两项态度不能绕过新条件完成任务 |
 | 调查处于非生产入口 | `ruleEngine/resolveByType.ts:resolveFactDiscovery` 已产生 approachId/quality/张力与发现事件；`autoResolveCurrentInvestigation` 自动确认当前事实；descriptor 将 discover_fact 当零行动目标 | 显式区分自动观察与主动调查；后者必须由玩家选择方法，不能被自动发现、槽折叠或目标游标吞掉 |
-| 调查的现有来源字段 | `events.ts:FactDiscoveredPayload` 已有可选 witnessNpcIds；现有玩家调查默认无 NPC 听众 | 复用事件字段；公开方法仅让确实在场且明确列出的见证者知情，私下查阅不广播 |
+| 调查的现有来源字段 | `events.ts:FactDiscoveredPayload` 已有可选 witnessNpcIds；现有玩家调查默认无 NPC 听众，没有玩家建筑内部的权威位置 | 复用事件字段；本期调查限独立 scene，公开方法仅让确实在场且明确列出的见证者知情，私下查阅不广播 |
 | 任务推进 | `reconcileQuests.ts` 结合 `isObjectiveSatisfied` 与 dialogueSession；`worldEvolution/approveWorldDelta.ts:deriveActObjectives` 依种子形状拼线性目标 | 给需要真实合作的 talk objective 加可选完成条件；新 P3 切片按实际声明依赖排序，不按种子删掉关键调查或强制两次态度回应过关 |
 | 自由输入 | `application/actionConverter.ts` 将焦点输入映射成 `talk/ask/utterance`；P2 已使追问不消耗正式回应计数 | 保留；作者从完整合法候选中呈现符合策略的选项，玩家点击后才结算，不新增 intent provider |
 | 角色判断 | `prepareNpcNarrativeContext.ts` 只选择一个当前同场焦点；`response` 与互动提议经 outward 权限投影 | 保留单角色边界；私密动机用于反应，合作权限由已批准规则条款决定，不把模型一句 cooperate/refuse 当作改规则 |

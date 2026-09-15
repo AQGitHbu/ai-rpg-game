@@ -15,7 +15,7 @@
 - 用户已确认：有后果的选择、主动调查、NPC 目标与合作优先；自由输入继续“提出策略→选项确认→规则结算”；允许调查结果和变化回访进入同一生成链。
 - “质量与游戏性优先于 token、调用数和耗时。”“规则已结算结果不可被后续循环改写。”“原文永不因摘要删除。”生产失败显式重试，不以确定性剧情替代。
 - 暂缓直接自然语言行动、完整谎言/错误信念、离场 NPC 自主模拟、开放世界、组织经济、交易/装备、通用分支图和层级 Arc。P3 不增加新的互动 operation、reviewer、润色器或常驻调度器。
-- 目标的条件和状态归 NPC，调查定义归 Fact，任务完成条件归 Quest；Thread 只引用这些权威对象。Event/History 记录实际经过，不再复制一份 permission、relationship 或 goal 状态。
+- 目标的条件和状态、固定合作条款归 NPC，调查定义归 Fact，任务完成条件归 Quest；Thread 只引用这些权威对象。合作条款只存前提和效果范围，不存 permission 或 goal 状态副本；Event/History 记录实际经过。
 - 保留已有短篇/中篇；本期主要产品验证为三幕短篇。新字段按需使用，普通 P1/P2 故事仍可使用原自动观察和会话完成模式。未声明可执行条件的目标不得从文案猜出结算规则。
 - 初始 schema 为 **EntityStore3 / World7 / Story12 / Bundle2**；Task 1 升 Entity4/World8，Task 4 升 Story13/Bundle3。P2 缓存 formatVersion1、50/10、24,000 摘要源/6,000 概览/64,000 完整请求估算预算保持；新来源参与既有 fingerprint 校验。
 - 每 job/epoch 仍为 **3 个候选、24 次叙事 HTTP + 8 次记忆 HTTP**，沿用现有 lease、取消、重试与冻结记忆包。新增触发点不增加每 job 的隐式循环或独立额度。
@@ -51,13 +51,15 @@
 
 ### 1. 合作是规则可用性，不另建状态表
 
-继续使用 `promise_confidentiality`、`request_introduction`、`request_verification`、`share_known_fact`。NPC 目标满足后，可开放已有互动或其管理材料的调查方法；条件失效则该能力不再可选。模型的 cooperate/refuse/offer_condition 只表达与规则一致的反应，不能单凭一次返回值授予或撤销权限。
+继续使用 `promise_confidentiality`、`request_introduction`、`request_verification`、`share_known_fact`。NPC 目标满足后，可开放已有互动或其管理材料的调查方法；条件失效则该能力不再可选。引荐/核验的强制门槛由 NPC 内不可改写的合作定义约束，后续提案只能增加条件，不能换 proposalKey 或省掉 goalIds 重新安装无门槛版本。模型的 cooperate/refuse/offer_condition 只表达与规则一致的反应，不能单凭一次返回值授予或撤销权限。
 
 例如，核实材料的目标完成后允许引荐；公开调查使另一个“保护当事人”的目标 blocked，则关闭私下引荐，保留已声明的公开核验路径。变化的权威证据是目标/知识/互动 Event 和合法 Action 集合，不增加“私下路线=true”字段。
 
 ### 2. 新调查显式选择，自动观察继续存在
 
 事实是否需要调查由明确 `discoveryMode` 决定，不再猜测“有 approaches 就一定需要点”。P3 调查每处提供 2–3 个已批准方法，可有不同前提、见证者及 clean/noisy 证据来源。quality 表示取得方式的规则类别，不表示内容一会儿真、一会儿假；本期不实现错误信念。
+
+本期主动调查只在独立 `scale=scene` 的 Location 发生；当前没有玩家在 town 建筑内部的权威位置，不以 UI 选中建筑证明同场。town 保留普通自动观察，针对 town 的显式调查绑定拒绝。调查 Fact 表示必须通过方法取得的证据；可直接听取的证词使用普通 Fact，不增加“已听说但未查证”的第二套状态。
 
 调查中的动作是真实世界行为。未选方法、不在场的听众、未来场景和作者声称“已经查看”均不产生发现。一次事实发现只结算一次；不通过重复查同一条线索刷关系或目标事件。
 
@@ -73,7 +75,7 @@
 
 验证故事采用“旧契与证人”：玩家受托递送一份文书；途中需要查看材料，保管人既想核实依据，也想控制披露范围。私下核对与公开询问都能取得真实信息，但见证人、可用引荐/核验和后续回应不同；玩家必须实际选择并最终交付或主动退出。
 
-这是一份验证输入结构，不是生产固定剧情。开局/中途角色、文字、材料内容由真实作者生成并审批。最多三个主场所、四个 NPC、一件中心交付物、两处主动调查；需要第二个同场 NPC 时允许在既有地点按原 worldDelta 具象化，不强迫每幕增加一个地点。有效动作目标 10–24，单路线硬上限 32；不凑回合。至少一条路径含带新证据回访，回访不自动给旧 NPC 授知，仍需实际交流。
+这是一份验证输入结构，不是生产固定剧情。开局/中途角色、文字、材料内容由真实作者生成并审批。最多三个主场所、四个 NPC、一件中心交付物、两处主动调查，调查点使用独立 scene；需要第二个同场 NPC 时允许在既有 scene 地点按原 worldDelta 具象化，不强迫每幕增加一个地点。有效动作目标 10–24，单路线硬上限 32；不凑回合。至少一条路径含带新证据回访，回访不自动给旧 NPC 授知，仍需实际交流。
 
 ## 实现布局与公共类型
 
@@ -98,11 +100,13 @@
 
 - Create: `src/game/domain/investigation.ts`、`src/game/domain/investigation.test.ts`；`src/game/gameplay/rpg/investigation/index.ts`、`investigation.ts`、`investigation.test.ts`。
 - Modify: `src/game/domain/entity/entityComponents.ts`、`entityStore.ts`、`entityProjection.ts`、`src/game/domain/worldEntries.ts`、`src/game/domain/worldState.ts`、`src/game/domain/events.ts`、`eventPayloadValidation.ts`。
+- Modify: `src/game/gameplay/rpg/openingGeneration/compileOpeningGenerationCandidate.ts`、`src/game/gameplay/rpg/worldEvolution/approveWorldDelta.ts` 的 Fact 创建处，以及 `src/game/domain/testing/worldStateFixture.testutil.ts`；本 Task 仅给既有事实生产者补显式 automatic，新的 provider 调查提案在 Task 3 接入。
 - Modify: `src/game/gameplay/rpg/entityWorld/entityMutation.ts`、`src/game/gameplay/rpg/ruleEngine/resolveByType.ts`、`validateAction.ts`、`index.ts`；更新 `src/dependencyBoundaries.test.ts` 的新 facade 清单。
+- Modify: `src/game/gameplay/rpg/storyInteraction/resolveStoryInteraction.ts`、`src/game/gameplay/rpg/candidateEvents/approveCandidateEvents.ts`、`compileCandidateEvent.ts`、`src/game/application/npcSpeechAuthority.ts`、`projectNpcDeliberation.ts`、`approveNarrativeBundle.ts`；封住其他直接发现和提前披露入口。
 - Test: `src/game/domain/entity/entityStore.test.ts`、`src/game/gameplay/rpg/ruleEngine/resolveByType.test.ts`、`index.test.ts`、`src/game/application/server/persistence/worldStatePersistenceValidation.test.ts`、`sqliteGameRepository.test.ts`。
 - Docs: 探索与任务推进、实体状态中的已实现规则；UI 尚未接入时明确这一边界。
 
-**Interfaces:** FactComponent/WorldFactEntry 加 `discoveryMode: "automatic" | "investigation"`；构造新普通事实默认 automatic。显式调查需要非空安全 label、locationId、合法 2–3 approaches。既有 InvestigationApproach 加可选 `requirements: readonly StoryCondition[]`、`witnessNpcIds: readonly NpcId[]`；缺省分别为空，不改变现有 quality/tensionDelta 语义。新增：
+**Interfaces:** FactComponent/WorldFactEntry 加 `discoveryMode: "automatic" | "investigation"`；构造新普通事实默认 automatic。显式调查需要非空安全 label、指向 scale=scene 的 locationId、合法 2–3 approaches。既有 InvestigationApproach 加可选 `requirements: readonly StoryCondition[]`、`witnessNpcIds: readonly NpcId[]`；缺省分别为空，不改变现有 quality/tensionDelta 语义。新增：
 
 ```ts
 type InvestigationOpportunity = Readonly<{
@@ -115,11 +119,16 @@ type InvestigationOpportunity = Readonly<{
 function availableInvestigations(input: {
   worldState: WorldState; storyState: StoryState;
 }): readonly InvestigationOpportunity[];
+function canRevealFactWithoutInvestigation(input: {
+  worldState: WorldState; factId: FactId;
+}): boolean;
 ```
 
 此函数只返回已释放、当前真实场所、未发现且前提满足的方法，不带隐藏事实正文。它供 Task 4/5 的注册/展示共用，不能 UI 再实现一套过滤。
 
-- [ ] RED：主动调查目标在 move、ask 和自动确认边界均不发现；automatic 仍照旧发现；未知 approach/异地/重复/未释放均零变化。见证 NPC 必须 active 且处在该实际场所，不能把同镇不同建筑当作同场。
+`canRevealFactWithoutInvestigation` 对未知 Fact 返回 false；对尚未发现的 investigation Fact 返回 false，其余情况仍须满足原披露权限。它只增加调查门槛，不单独授予披露许可。`discover_fact` mutation 增加可选 `investigationSource: {approachId:string}`，显式调查事实没有该来源一律拒绝；该字段仅由通过 Action/方法准入的 player 调查规则构造，provider/互动提案不得携带或编译出它，automatic 分支不得构造。mutation 复核 Fact 的 mode、方法存在性及未发现状态；实际地点、见证者和 requirements 由同次规则动作完整校验。
+
+- [ ] RED：主动调查目标在 move、ask 和自动确认边界均不发现；automatic 仍照旧发现；未知 approach/异地/重复/未释放均零变化。见证 NPC 必须 active 且处在该独立 scene 地点；town 显式调查拒绝，UI 建筑切换不授知。
 
 ```ts
 const result = autoResolveCurrentInvestigation(worldWithInvestigation, story);
@@ -138,7 +147,9 @@ if (fact.discoveryMode === "investigation") return noOp;
 ```
 
 - [ ] 复用现有 fact_discovered payload 的 approachId/quality/witnessNpcIds；给真实见证者写同一事件来源知识，玩家私下取得证据不自动广播。requirements 每次执行重查；全部校验成功后才批量 mutation，不先发现再拒绝见证者。
-- [ ] 升 EntityStore4/World8，更新 constructor/projection/parser/fixtures 和已知旧版分类；不迁移、不清除已有用户存档。测试主动事实的隐藏正文和 mode 在 SQLite 重开后保持，战斗快照同步使用 Entity4。
+- [ ] 引荐/核验、candidate reveal、场景披露和自动续接统一消费上述门槛：不得把未调查证据写成玩家已知，也不得通过普通对白 usedFactIds/正文提前给出该证据。NPC 可保留本人初始知识用于私密判断，但 outward/作者的可披露集合受调查门槛限制。创建普通可披露 Fact 仍走原机制，不能复制一条同内容自动 Fact 绕过证据要求。
+- [ ] RED→GREEN：已知该证据的 NPC 引荐/核验、candidate reveal、开局初始授知和未消费续接均不能使其 discovered 或跳过调查 objective；直接 mutation 缺少方法来源也拒绝。成功调查后可正常核验/告知；自动 Fact 的原披露回归保持。
+- [ ] 升 EntityStore4/World8，更新 constructor/projection/parser/fixtures、开局及 worldDelta 的所有 Fact 创建者和已知旧版分类，使本 Task 独立通过 typecheck；不迁移、不清除已有用户存档。测试主动事实的隐藏正文和 mode 在 SQLite 重开后保持，战斗快照同步使用 Entity4。
 - [ ] 相关 tests、`npm run typecheck`、`npm run test:boundaries` 通过；更新系统文档，限定文件提交 `feat: distinguish explicit investigation from automatic observation`。
 
 **验收：** 玩家不选方法就得不到主动证据；先有实际方法和听众，才有发现与来源。
@@ -150,7 +161,7 @@ if (fact.discoveryMode === "investigation") return noOp;
 **Files:**
 
 - Create: `src/game/domain/npcGoalResolution.ts`、对应 `.test.ts`；`src/game/gameplay/rpg/npcGoals/index.ts`、`reconcileNpcGoals.ts`、对应 `.test.ts`。
-- Modify: `src/game/domain/entity/npcComponents.ts`、`entityStore.ts`、`src/game/domain/storyInteraction.ts`、`worldEntries.ts`、`events.ts`、`eventPayloadValidation.ts`；`src/dependencyBoundaries.test.ts`。
+- Modify: `src/game/domain/entity/npcComponents.ts`、`entityStore.ts`、`entityRecord.ts`、`src/game/domain/storyInteraction.ts`、`worldEntries.ts`、`events.ts`、`eventPayloadValidation.ts`；`src/dependencyBoundaries.test.ts`。
 - Modify: `src/game/gameplay/rpg/storyInteraction/resolveStoryInteraction.ts`、`src/game/gameplay/rpg/entityWorld/entityMutation.ts`、`src/game/gameplay/rpg/ruleEngine/index.ts`、`reconcileQuests.ts`、`src/game/gameplay/rpg/narrativeContext/objectiveRules.ts`、`deriveObjectiveTransition.ts`；目标 selector、会话 gate 和 Quest reconciliation 使用相同条件判定。
 - Test: `src/game/domain/entity/npcComponents.test.ts`、`src/game/gameplay/rpg/storyInteraction/resolveStoryInteraction.test.ts`、`src/game/gameplay/rpg/ruleEngine/reconcileQuests.test.ts`、`src/game/gameplay/rpg/narrativeContext/deriveObjectiveTransition.test.ts`、`src/game/application/server/persistence/sqliteGameRepository.test.ts`；Docs: NPC 系统、任务推进。
 
@@ -179,6 +190,19 @@ function reconcileNpcGoals(input: {
 
 目标条款可用本人 knows_fact、本人承诺状态、本人持有物品或 investigation_observed；禁止读取他人私密知识和引用其他 goal_status，避免目标递归依赖。调查 observed 只接受本人实际 witness，或本人收到成功 share_known_fact 且其合法 evidenceEventIds 明确包含该调查事件；分享必须实际传达这个来源，不能只凭全局 eventId 存在授知。带调查来源引用的分享操作明确同时告知 fact 与取得方式，label/正文按这个已批准行动审阅；没有来源引用的普通分享不自动传递 clean/noisy。被分享来源须为玩家实际知晓且可公开给该听众的来源，不能借一个合法 fact 把整段私密经历一起转授。
 
+NPC record 增加可选 `cooperationDefinitions: readonly NpcCooperationDefinition[]`，类型放在 `domain/storyInteraction.ts`。缺省是未启用 P3 条款的旧 NPC；出现该字段即启用下列有界规则，空数组不等于不受限。定义随 Task 3 的实际绑定安装，最多两条、每种 operation 一条，身份由服务端取 `${npcId}:${operation}`，不含 jobId/proposalKey：
+
+```ts
+type NpcCooperationDefinition = Readonly<{
+  operation: "request_introduction" | "request_verification";
+  requirements: readonly StoryCondition[];
+  allowedFactIds: readonly FactId[];
+  allowedAudienceIds: readonly EntityId[];
+}>;
+```
+
+启用后，未声明的合作 operation 不可安装或执行；已声明者必须满足定义 requirements AND 具体 interaction.condition，factIds/audienceIds 必须为对应 allowed 集合的非空子集，并继续原知识、披露和证据规则。requirements 非空，至少引用一个该 NPC 已绑定条款的目标，不能靠与合作无关的全局条件冒充门槛；allowed 两集合也非空。定义不可削弱或扩大效果范围；share_known_fact 是玩家告知，保留原规则，不纳入这两个 NPC 合作定义。P3 不支持同一 NPC、同一 operation 多套许可方案，公开替代用另一 operation 或已批准调查。
+
 - [ ] 写 RED：私下查阅后 NPC 仍不知；明确分享后核实目标 completed；公开方法使实际见证 NPC 的保护目标 blocked；另一 NPC 不变。相同事件再次消费不重复发 goal 变化。
 
 ```ts
@@ -192,7 +216,8 @@ expect(goalStatus(afterPublic, keeperId, privacyGoalId)).toBe("blocked");
 - [ ] 运行 `npx vitest run src/game/gameplay/rpg/npcGoals src/game/gameplay/rpg/storyInteraction --minWorkers=1 --maxWorkers=2` RED。
 - [ ] 复用 `set_npc_goal_status`，追加 `npc_goal_status_changed` payload `{npcId,goalId,from,to,evidenceEventIds}`，causes 指向实际调查/告知/履约。规则内构建同一 action 的有序事件预览，知识→目标→Quest/Thread；最后随原 commit 一次写入。不得增加第二个数据库提交，不从生成正文抽取完成状态。
 - [ ] `talk_to_npc` 增加可选、非空 `completionConditions`，只允许已绑定目标/事实/承诺。带条件时需 met、条件满足及实际交谈来源；普通 support/challenge 的计数不能越过它。`isObjectiveSatisfied`、`isObjectiveSatisfiedInStory`、`reconcileQuests` 都委托同一判定；满足新条件后也不能反过来被旧 dialogueSession 的两轮计数卡住。未带条件时保留旧会话完成规则；相关 NPC 对话不满足条件时不得自动换幕或消失。
-- [ ] 互动过滤和调查 requirements 复用同一 evaluateStoryCondition，目标改变后重算可用项；模型 outward 不得绕开条件。保留当前四种 operation 及原保密规则，公开调查不被硬塞进“玩家分享才算违约”的旧保密条款。
+- [ ] 互动过滤、执行及调查 requirements 复用同一 evaluateStoryCondition；引荐/核验始终叠加 NPC 的合作定义，不能仅检查具体 proposal 的 condition。目标改变后重算可用项，模型 outward 不得绕开条件。保留当前四种 operation 及原保密规则，公开调查不被硬塞进“玩家分享才算违约”的旧保密条款。
+- [ ] RED→GREEN：目标 blocked 后，跨 job 换 proposalKey、删 goalIds/condition、换 factIds/audienceIds 或使用旧 token 均不能重开合作；定义中没有的 operation 拒绝。尚未启用 P3 定义的旧 NPC 行为保持，已知事实的正常分享不受合作门槛误拦。
 - [ ] 回归终态不反转、无新证据不重复、错误来源/越权/条件环拒绝、普通旧目标不变、reload 和 battle rollback；相关 tests/typecheck/boundaries 后更新文档并提交 `feat: resolve npc goals from observed evidence and gate cooperation`。
 
 **验收：** 至少一项目标变化能改变后续合法 Action，而不仅改变 context 中的一行状态。
@@ -203,34 +228,77 @@ expect(goalStatus(afterPublic, keeperId, privacyGoalId)).toBe("blocked");
 
 **Files:**
 
-- Create: `src/game/domain/storyConsequenceBindings.ts`、对应 `.test.ts`；`src/game/application/approveStoryConsequenceBindings.ts`、对应 `.test.ts`。
-- Modify: `src/game/domain/openingGenerationCandidate.ts`、`worldDelta.ts`、`narrativeBundle.ts`；`src/game/gameplay/rpg/openingGeneration/compileOpeningGenerationCandidate.ts`、`validateOpeningGenerationCandidate.ts`。
+- Create: `src/game/domain/storyConsequenceBindings.ts`、对应 `.test.ts`；`src/game/application/approveStoryConsequenceBindings.ts`、对应 `.test.ts`；`src/game/application/resolveStoryConditionProposal.ts`、对应 `.test.ts`。
+- Modify: `src/game/domain/openingGenerationCandidate.ts`、`worldDelta.ts`、`narrativeBundle.ts`、`storyInteraction.ts`；`src/game/gameplay/rpg/openingGeneration/compileOpeningGenerationCandidate.ts`、`validateOpeningGenerationCandidate.ts`。
 - Modify: `src/game/gameplay/rpg/worldEvolution/approveWorldDelta.ts`、`materializeWorldDelta.ts`、`src/game/application/approveNarrativeBundle.ts`、`src/game/application/server/ai/liveWorldEvolutionSource.ts`、`openingNarrativePrompt.ts`、`narrativeDraftProjection.ts`。
-- Modify: `src/game/gameplay/rpg/entityWorld/entityMutation.ts`，只增加三个下文定义的绑定 mutation，不直接修改投影数组。
+- Modify: `src/game/application/server/ai/liveNarrativeBundleSource.ts` 的新提案解析与修复边界；显式调查或 consequenceBindings 引用的 Fact 不得沿旧 optional-enrichment 路径删除 newFact 后继续审批。
+- Modify: `src/game/gameplay/rpg/entityWorld/entityMutation.ts`，只增加下文四种绑定 mutation，不直接修改投影数组。
 - Test: `src/game/application/approveNarrativeBundle.test.ts`、`src/game/application/server/ai/openingGenerationSource.test.ts`、`narrativeDraftProjection.test.ts`、`src/game/gameplay/rpg/worldEvolution/approveWorldDelta.test.ts` 及新增绑定单元测试；Docs: 世界具象化、NPC 系统、实体状态。
 
-**Interfaces:** 当前已支持的 `NarrativeSymbolRef` 继续负责 @new.*；新增类型只描述本期绑定，所有正式 ID 由 compiler 分配。`StoryConsequenceBindingsProposal` 为最多八项的数组，每项为下面三个封闭变体之一：
+**Interfaces:** 当前已支持的 `NarrativeSymbolRef` 继续负责 @new.*；新增类型只描述本期绑定，所有正式 ID 由 compiler 分配。provider 条件提案与已持久化 StoryCondition 分开；`domain/storyInteraction.ts` 定义：
+
+```ts
+type StoryConditionProposal =
+  | { kind: "has_item"; itemId: string; ownerId: string }
+  | { kind: "knows_fact"; actorId: string; factId: string }
+  | { kind: "promise_status"; npcId: string; promiseId: string;
+      status: "open" | "fulfilled" | "broken" | "released" }
+  | ({ kind: "goal_status"; npcId: string;
+       status: "active" | "blocked" | "completed" | "abandoned" }
+      & ({ goalId: string; goalOrdinal?: never } | { goalOrdinal: number; goalId?: never }))
+  | { kind: "investigation_observed"; npcId: string; factId: string;
+      evidenceQuality: "clean" | "noisy" };
+```
+
+goalOrdinal 从 0 起，解析 npcId 的已有 ID/@new.* 后，读取该 NPC 实际 goals 数组取得 goalId；goalId 形式仅允许上下文已提供且确属该 NPC 的既有目标。两种字段同时出现、跨 NPC 目标或越界序号拒绝；正式 Entity 条件只保存 goalId。promiseId 仍只能引用已发生的承诺，不增加未来承诺占位。
+
+`resolveStoryConditionProposal(input: {proposal: StoryConditionProposal; worldState: WorldState; symbols: ReadonlyMap<string, string>}): {ok:true; condition:StoryCondition} | {ok:false; code:string; path:string}` 为唯一映射入口；调查 requirements、目标规则、合作定义、任务条件及 interaction.condition 共用。StoryInteractionProposal.condition 改为该提案类型，原 goalId 形式继续兼容；原 goalIds 元数据必须指向实际既有目标，新目标引用由已编译 goal_status 条件补入，不能把 goalIds 当作门槛。
+
+`domain/storyConsequenceBindings.ts` 再定义下列提案；存储类型仍使用 Task 1/2 的正式 ID：
+
+```ts
+type NpcGoalResolutionProposal = Readonly<{
+  completeWhen: readonly StoryConditionProposal[];
+  blockWhen: readonly StoryConditionProposal[];
+}>;
+type InvestigationApproachProposal = Omit<InvestigationApproach, "requirements" | "witnessNpcIds"> & {
+  requirements?: readonly StoryConditionProposal[]; witnessNpcIds?: readonly string[];
+};
+type NpcCooperationDefinitionProposal = Readonly<{
+  operation: "request_introduction" | "request_verification";
+  requirements: readonly StoryConditionProposal[];
+  allowedFactIds: readonly string[];
+  allowedAudienceIds: readonly string[];
+}>;
+```
+
+`StoryConsequenceBindingsProposal` 为最多八项的数组，每项为下面四个封闭变体之一：
 
 ```ts
 type StoryConsequenceBindingProposal =
   | { kind: "bind_goal_resolution"; npcRef: string; goalOrdinal: number;
-      resolution: NpcGoalResolution }
+      resolution: NpcGoalResolutionProposal }
   | { kind: "bind_investigation"; factRef: string;
-      discoveryMode: "investigation"; approaches: readonly InvestigationApproach[] }
+      discoveryMode: "investigation"; approaches: readonly InvestigationApproachProposal[] }
   | { kind: "bind_talk_completion"; questRef: string; npcRef: string;
-      conditions: readonly StoryCondition[] };
+      conditions: readonly StoryConditionProposal[] }
+  | { kind: "bind_npc_cooperation"; npcRef: string;
+      definitions: readonly NpcCooperationDefinitionProposal[] };
 type StoryConsequenceBindingsProposal = readonly StoryConsequenceBindingProposal[];
 ```
 
-`string` 只允许已存在的可引用 ID、现有 @new.* 符号，开局则使用该 candidate 已有局部 fact key；不能任意新造符号。条件中的类型品牌在 provider JSON 阶段由 parser 解析，应用编译映射为正式 ID 后再运行 domain/实体校验。goalOrdinal 是当前 NPC goals 的实际创建序号，0 起、不换序，编译后仅持久真实 goalId；不允许模型指定任意正式 goalId。
+引用字段的 string 只允许已存在的可引用 ID、现有 @new.* 符号，开局则使用该 candidate 已有局部 fact key；不能任意新造符号。条件提案先经严格 parser 和统一映射，再运行正式 domain/实体校验。goalOrdinal 以当前 NPC goals 实际创建序号为准、不换序；不允许模型猜测正式 goalId。
 
 `approveStoryConsequenceBindings(input: { proposal: StoryConsequenceBindingsProposal; worldState: WorldState; storyState: StoryState; symbols: ReadonlyMap<string, EntityId> }): {ok:true; worldState:WorldState; storyState:StoryState} | {ok:false; code:string; path:string}`。应用审批只做引用/一致性核对，规则合法性委托 Task 1/2 的 gameplay facade，不自行写规则数值。
 
-对应 `EntityMutation` 增加 `bind_npc_goal_resolution {npcId,goalId,resolution}`、`bind_fact_investigation {factId,approaches}`、`bind_quest_talk_completion {questId,npcId,conditions}` 三个封闭变体。调查 mode 随 bind_fact_investigation 固定为 investigation；首个绑定以原子候选的 blueprint_expanded 或开局来源记录角色/事实/任务引用，不生成虚假的玩家 Action。既有定义不得覆盖，完全相同的同候选重入幂等。mutation 只装配条款，不把条件已满足解释为玩家已经执行调查/合作。
+对应 `EntityMutation` 增加 `bind_npc_goal_resolution {npcId,goalId,resolution}`、`bind_fact_investigation {factId,approaches}`、`bind_quest_talk_completion {questId,npcId,conditions}`、`bind_npc_cooperation {npcId,definitions}` 四个封闭变体，均接收已映射的正式类型。调查 mode 随 bind_fact_investigation 固定为 investigation；首个绑定以原子候选的 blueprint_expanded 或开局来源记录角色/事实/任务引用，不生成虚假的玩家 Action。既有定义不得覆盖，完全相同的同候选重入幂等。mutation 只装配条款，不把条件已满足解释为玩家已经执行调查/合作。
+
+首次为 NPC 绑定可结算目标时，原子启用 cooperationDefinitions（没有合作定义时为空）。每种 operation 只允许在首次具象化或首次具体绑定、且此前从未安装/消费该 operation 时安装定义；已存在无门槛互动的冲突不能事后改条款掩盖。定义只需要实际 Entity 引用，不需要未来调查 EventId；定义获批不等于具体 interaction 已安装。实际知识和 evidenceEventIds 成立后才能通过原互动安装检查，并始终叠加定义前提。已声明 operation 不可重绑或扩充 fact/audience；未声明 operation 后续首次绑定仍受上述来源与未使用检查，不能在原 operation 失效时重置其身份。
 
 调查绑定只接受玩家尚未知晓且有安全 label/明确地点的 Fact，不能把已发现事实改成未发现。talk 绑定在该 Quest 中必须恰好定位一个对应 NPC 的 talk objective；缺失或重复均拒绝，不默取第一项。开局的公开可披露事实不等于玩家初始已知；作为主动调查的 fact key 不得同时进入玩家初始 knownFactIds。NPC 可以依自己的合法初始来源知晓同一事实，不受玩家调查状态替代。
 
 - [ ] RED：同批新 Fact 可以绑定既有 NPC 尚无条款的目标；正式 ID 解析后不创建第二个 NPC。未知 key、越界 ordinal、重复绑定、尝试改写已有条款、跨私密角色条件、无地点调查和循环依赖均拒绝；同时覆盖开局调查被提前授知、已发现事实重新绑定和同 Quest 重复 NPC 目标的拒绝。
+- [ ] 同批新 NPC 的新目标同时被调查 requirements、talk completion、合作定义和 interaction.condition 引用，四处必须编译为同一个真实 goalId；旧 goalId 形式仍通过。提前绑定合作定义不授知识、不造 EventId、不展示不可执行互动；换 key/删门槛/扩大效果范围及 legacy 冲突拒绝。
 - [ ] 运行 `npx vitest run src/game/application/approveStoryConsequenceBindings.test.ts src/game/gameplay/rpg/worldEvolution/approveWorldDelta.test.ts --minWorkers=1 --maxWorkers=2` RED。
 - [ ] 在 opening 和 decision bundle 增加可选 consequenceBindings；先原有实体预览/ID 铸造，再绑定并完整校验，再生成供 approval/review 共用的规则投影。只有完整候选获批才 B 提交。目标已有非空条款、已 completed/abandoned 或相关选择已被消费时不可重新绑定，不能临时改门槛使旧选择失效。
 - [ ] 绑定范围限当前可交互切片和已进入故事的关联人物；未来角色未物化不保存悬空 ID。开局核心目标依旧先用已有切片，后续新证据出现时补具体条件，而不改初始身份、价值观和世界设定。
@@ -300,8 +368,8 @@ expect(afterRetry.worldState.eventLedger.filter(e =>
 **Files:**
 
 - Modify: `src/game/application/buildChoiceMap.ts`、`gameSessionView.ts`、`sceneChoiceCandidates.ts`、`approveNarrativeBundle.ts`、`src/game/gameplay/rpg/narrativeBundle/descriptors.ts`。
-- Modify: `src/game/application/server/ai/narrativeDraftProjection.ts`、`narrativeContext/narrativeBundleContext.ts`、`storyInteractionPrompt.ts`、`liveNarrativeBundleSource.ts`。
-- Modify: `src/components/LocationSceneScreen.tsx`、对应 `.test.tsx`；`src/game/application/index.ts` 只转发安全 view 类型。
+- Modify: `src/game/application/server/ai/narrativeDraftProjection.ts`、`src/game/application/server/ai/narrativeContext/narrativeBundleContext.ts`、`src/game/application/server/ai/storyInteractionPrompt.ts`、`src/game/application/server/ai/liveNarrativeBundleSource.ts`。
+- Modify: `src/components/LocationSceneScreen.tsx`、`src/components/LocationSceneScreen.test.tsx`；`src/game/application/index.ts` 只转发安全 view 类型。
 - Test: `src/game/application/buildChoiceMap.test.ts`、`gameSessionView.test.ts`、`sceneChoiceCandidates.test.ts`、`approveNarrativeBundle.test.ts`、`src/game/application/server/ai/liveNarrativeBundleSource.test.ts`、`src/game/application/testing/investigationChoiceJourney.test.ts`（增加独立 production case，不冒充原 offline fixture）、`src/app/api/game/routeContract.test.ts`。
 - Docs: 地图与地点冒险、行动裁决、运行时 AI 和 [MVP 玩家规则](../../策划文档/AI生成RPG_MVP.md)。
 
@@ -320,7 +388,7 @@ type InvestigationView = Readonly<{
 
 - [ ] RED：真实 read model 显示两种合法方法且 token 对应不同 approachId；锁定方法不能经手造/旧 token 提交；两个普通支持回答不能完成带合作条件的 objective。React 点击走现有请求链，不能直接传 Action。
 - [ ] 运行 `npx vitest run src/game/application/buildChoiceMap.test.ts src/game/application/gameSessionView.test.ts src/components/LocationSceneScreen.test.tsx src/app/api/game/routeContract.test.ts --minWorkers=1 --maxWorkers=2` RED。
-- [ ] 来源唯一化：地图/地点行动栏和正文 fixed choice 都引用服务端相同 Action 身份；复用当前 deriveRuntimeChoiceToken/ApprovedChoice，不建立独立的调查 API。地点栏提供调查方法，NPC 场景仍保留两项表达；作者可以在合法 candidate 集合里选用相关调查或互动，不被固定 support/challenge 模板锁死。
+- [ ] 来源唯一化：地图/地点行动栏和正文 fixed choice 都引用服务端相同 Action 身份；复用当前 deriveRuntimeChoiceToken/ApprovedChoice，不建立独立的调查 API。地点栏提供调查方法，NPC 场景仍保留两项表达；作者可以在合法 candidate 集合里选用相关调查或互动，不被固定 support/challenge 模板锁死。合作候选、安装与最终执行使用同一 NPC 定义门槛；不同 job 的 proposalKey 不构成新的授权。
 - [ ] 准入投影由规则提供支持集合与原因引用；作者不能以漂亮 label 声称调用不受支持的能力。合作条件未满足时，给有依据的补证/已有替代方法，不能仅重复“我支持/我质疑”。没有足够合法选项时按现有生成错误修订，不能复制同一 Action 凑两个 token。
 - [ ] 自由输入原样经中性 talk，后续作者从完整合法集合中选出符合策略、此前未展示的现成方法或互动；不新增 intent 模型，不直接发现、交付、移动或承诺。超出当前规则能力的策略可被 NPC 解释或转为已有合法提案，不把自由文本编译成新 effect。
 
@@ -344,9 +412,12 @@ expect(proposedActions.some(a => a.type === "investigate" && a.factId === factId
 **Files:**
 
 - Create: `src/game/application/storyConsequenceContext.ts`、对应 `.test.ts`。
+- Create: `src/game/gameplay/rpg/ruleEngine/reconcileStoryConsequences.ts`、对应 `.test.ts`；经现有 `ruleEngine/index.ts` 导出并由 A/B 共用，仅组合既有后果规则，不重跑 Action。
 - Modify: `src/game/application/projectNpcDeliberation.ts`、`prepareNpcNarrativeContext.ts`、`entityContextProjection.ts`、`prepareNarrativeMemory.ts`、`approveNarrativeBundle.ts`、`generatePendingNarrativeBundle.ts`。
 - Modify: `src/game/gameplay/rpg/narrativeMemory/projectObserverEvidence.ts`、`retrieveStoryEvidence.ts`、`src/game/gameplay/rpg/storyThreads/advanceStoryThreads.ts`。
-- Modify: `src/game/application/server/ai/narrativeContext/narrativeBundleContext.ts`、`narrativeReviewRules.ts`、`liveNarrativeCandidateReview.ts`、`src/game/gameplay/rpg/narrativeBundle/endingDecision.ts`（仅后果依据投影需要时，不替换主题裁决）。
+- Modify: `src/game/gameplay/rpg/ruleEngine/index.ts`、`reconcileQuests.ts`、`advanceStoryProgression.ts`、`src/game/gameplay/rpg/worldEvolution/storyReveal.ts`；让后果预览使用同一任务、释放和阶段推进规则。
+- Modify: `src/game/application/server/ai/narrativeContext/narrativeBundleContext.ts`、`src/game/application/server/ai/narrativeReviewRules.ts`、`src/game/application/server/ai/liveNarrativeCandidateReview.ts`、`src/game/gameplay/rpg/narrativeBundle/endingDecision.ts`（仅后果依据投影需要时，不替换主题裁决）。
+- Modify: `src/game/application/server/ai/narrativeDraftProjection.ts`、`src/game/application/server/ai/liveNarrativeBundleSource.ts`；正式 source 的早期 draft 编译必须使用同一后果预览，不能先被旧固定 slots 拒绝。
 - Test: `src/game/application/prepareNarrativeMemory.test.ts`、`prepareNpcNarrativeContext.test.ts`、`projectNpcDeliberation.test.ts`、`src/game/application/server/ai/liveNarrativeBundleSource.test.ts`、`liveNarrativeCandidateReview.test.ts`、`src/game/application/testing/narrativeP2Journey.integration.test.ts`、`narrativeRecoveryJourney.test.ts`；Docs: 连续性与记忆、NPC 系统、运行时 AI、战斗与结局。
 
 **Interfaces:** `projectStoryConsequences(input: {worldState:WorldState;storyState:StoryState;observerId:EntityId;eventIds:readonly EventId[]}): StoryConsequenceContext`，输出只读来源引用：
@@ -363,11 +434,27 @@ type StoryConsequenceContext = Readonly<{
 
 该对象是当前请求投影，不持久化第二份状态。公开作者只能得到已经公开的角色条件/反应依据；私密 NPC 目标全文仍只入本人的 deliberation。控制隐蔽条件的规则检查看当前 Entity，但不把秘密原因通过 manifest 或 choice hint 泄露。
 
+Task 2 的目标结算在本 Task 组合成纯后果函数；调用者传入本次实际 Action 或本场实际披露产生的有序事件预览，不能把未来续接传入：
+
+```ts
+function reconcileStoryConsequences(input: {
+  worldState: WorldState; storyState: StoryState;
+  triggerEvents: readonly CommittedNarrativeEvent[];
+  source: { actionId: string; turnId: TurnId; turnNumber: number };
+}): { worldState: WorldState; storyState: StoryState;
+     drafts: readonly NarrativeEventDraft[] };
+```
+
+次序为已批准的实际知识变化→目标→Quest/Thread→reveal、幕推进与 endingAllowed，追加事件仍由调用者统一预铸并一次 CAS。复用现有有限自动观察规则，显式调查必须停在选择前；不重执行玩家 Action、不重复赠物或关系 signal、不自动选择终局。初始化只创建合法初态，不伪造 actionId 运行这条后果链。
+
 - [ ] RED：旧账原话离开近期窗口后，回访与合作条件仍将所需实际 Event/原话带入最终作者请求；私密查阅未告知 NPC 时，其 privateMemory 与 outward 都不声称亲见。只测 helper 返回值不算完成。
 - [ ] 用生产 prepare→NPC→author→review 装配捕获 requests；运行 `npx vitest run src/game/application/storyConsequenceContext.test.ts src/game/application/prepareNpcNarrativeContext.test.ts src/game/application/server/ai/liveNarrativeBundleSource.test.ts src/game/application/testing/narrativeP2Journey.integration.test.ts --minWorkers=1 --maxWorkers=2` RED。
 - [ ] 将新目标变化及调查/告知来源作为现有 mandatory/contextEntityIds/contextEventIds 的输入，继续 P2 单轮有限检索。当前 goal/owner/knowledge 状态优先，旧摘要中“愿意引荐”不能恢复已失效许可；缺少 mandatory 或超64,000则显式失败，不另加摘要层。
 - [ ] 更新 observer 对新 Event 的判定，只有实际角色可见来源才能进入其包。goal Event 的 evidenceEventIds 不自动授权整个因果链；分享某一来源只开放已明确告知的证据，不能把原事件所有私密听众/附带事实一并展开。
-- [ ] A 的调查/分享使用 Task 2 结算；B 若产生本场实际成立的 NPC 知识变化，也使用同一纯规则结算器。审批预览中先核对实际披露和受众，再结算目标并重建本场合法选择投影，作者/审阅针对同一预览；只有 B 成功才一并提交。未来续接和未选分支不提前结算；不得在 ready 发布后另补目标状态而使刚展示的 token 失效。测试 B 失败零新增目标变化、成功后选择准入与目标一致、同 job 重试不重复。
+- [ ] A 的调查/分享与 B 的本场实际 NPC 知识变化共用上述后果函数。B 先校验实际披露与受众、完成后果预览，再用最终任务游标核对本候选正文、continuation、terminal 和 choices；不能只改 goal 与 choices 而留下旧 Quest/reveal。作者/审阅针对同一版本的预览，只有 B 成功才一并提交；不得 ready 后补状态。
+- [ ] 将 `compileNarrativeDraft` 的处理次序拆为：原始 sceneDrafts 的结构/唯一 current 检查→当前场景引用、披露及同候选实体规则预检→调用共享有界后果预览→按预览计算 slots、choiceCount、terminal/evolutionNeed→完整编译。先前的固定 slots 不能在预览前以 unknown_slot 拒绝新增必需内容；预览只依结构化且合法的本场效果，不从正文猜状态。`liveNarrativeBundleSource` 与最终 `approveNarrativeBundle` 复用或确定性复算同一纯预览，以当前 job/epoch、状态来源指纹和候选 hash 核对；不匹配即拒绝，不通过改 memory 快照或先写入世界取得一致。
+- [ ] 若 B 完成当前幕最后目标，重新计算同候选的 evolutionNeed 和合法内容范围；需要的下一幕/终局准备必须由本候选获批内容覆盖，缺少则给出修订依据并拒绝发布 ready，沿原有限候选循环处理。最多推进当前这一幕，不继续结算新幕的未执行目标，不再创建另一 job 或第三类生成入口。未来续接和未选分支不进入本场后果预览。
+- [ ] RED→GREEN：经正式 `source→compileNarrativeDraft→approveNarrativeBundle→B CAS` 装配，令 B 披露完成普通条件目标及本幕最后目标，分别验证 goal/Quest/reveal/阶段/choices 一致；带完整下一幕内容的候选不能被旧 slots 阻断，覆盖缺失必须保持 pending/failed。B 失败零新增后果，重试/并发不重复事件、赠物、关系或玩家 Action；终局仍等待玩家实际选择。
 - [ ] fixed-memory 来源 fingerprint 纳入影响当前权限/准入的新增条款与状态；同 job 内固定，下一实际行动产生新包。摘要缓存仍派生；新增 goal Event 不计为 History 文字条目，不调低50/10阈值，不补对白凑数量。
 - [ ] 作者/现有审阅获得同一“已结算后果+当前可做事情+仍未解决条件”投影。NPC 私密判断可以解释取舍，但其 cooperate/refuse 不替代规则 gate；新目标条款/实际 goal 变化应触发当前焦点判断，保留最多一个角色，不增离场判断。
 - [ ] 终局沿原 endingOutcomes 发布；至少引用本路线已提交的调查方式、知情范围、合作变化或承诺后果，不能把最后 support 当作取消先前代价。Task 7 断言状态，真实文本由 Task 8 阅读；不另加评价器保证文学质量。
@@ -473,6 +560,7 @@ npm run journey:narrative:p3 -- --mode=live --protocol=artifacts/narrative-p3/p3
 ## 执行记录
 
 - **范围确认：** 用户已确认本 Plan 的玩法范围、自由输入方式、两类生成边界和验收口径，详见“Global Constraints”与范围核查；其余均是待实现契约。
+- **设计审阅：** [独立审阅与修订](../reports/2026-09-15-narrative-p3-plan-review.md)记录目标引用、合作门槛、调查来源、B 后果与现场范围的核查依据；不作为实现通过证据。
 - **P3-A：** 未执行。
 - **P3-B：** 未执行。
 - **P3-C：** 未执行。
