@@ -525,11 +525,11 @@ expect(privateRoute.publicWitnessFactIds).not.toEqual(publicRoute.publicWitnessF
 
 **Interfaces:** thin runner 支持 register/live/replay；register 零网络，live 需要既有显式环境门禁。新协议 `narrative-p3/v1`，plannedRoutes 固定 2，返回每条 completed/blocked/not_run，未执行保留分母；不得修改 P1/P2 CLI 的旧 passed 语义。
 
-- [ ] 先写脚本/runner 参数、冻结输入、分母、预算和零网络 replay 测试；runner 使用实际 read model action refs 选路，不能按 label 关键词猜 ID，不能直接提交未展示 token。
+- [x] 先写脚本/runner 参数、冻结输入、分母、预算和零网络 replay 测试；runner 使用实际 read model action refs 选路，不能按 label 关键词猜 ID，不能直接提交未展示 token。
 - [ ] 固定一次真实三幕初始化，输入为本 Plan 的“旧契与证人”结构；玩家名/身份、模型别名与实际策略从现有合法配置登记完整 JSON。不得注入旧获批开局冒充新生产创建。第一次出现两种调查方法的 ready 点冻结真实来源，分别复制到 private/public 独立数据库；共同开局与前缀只计一次实际 HTTP。
 - [ ] route private 优先无额外见证的方法，route public 优先明确现场见证的方法；路径只依服务端已批准 Action/方法规则选择。需要合作时从合法引荐/核验/分享中选择对应项；“先查看原始记录，再决定怎么交付”在一条路线只输入一次，通过新获批选项继续。没有两种合法方法或没有可执行替代路径就报告能力覆盖失败，不补抽开局或修改世界。
-- [ ] 每条最多32有效动作、300 HTTP、120分钟；共同初始化加两路整批最多600 HTTP、180分钟。每 job 仍3候选/32总HTTP，正式批不自动点耗尽后的手动 retry。失败保存来源与原始响应；代码有确认根因变更时结束旧批，重新冻结须明确新范围，不能无限采样。
-- [ ] 运行一次 `npm test -- --minWorkers=1 --maxWorkers=2`、typecheck、lint、P3脚本与相关旧协议 tests、check:docs；全量已含 boundaries 不重复。UI/bundle consumer 改变需一次 production build。冻结待测 commit、diff/config/input/策略哈希及模型能力；不输出 API key。
+- [x] 每条最多32有效动作、300 HTTP、120分钟；共同初始化加两路整批最多600 HTTP、180分钟。每 job 仍3候选/32总HTTP，正式批不自动点耗尽后的手动 retry。失败保存来源与原始响应；代码有确认根因变更时结束旧批，重新冻结须明确新范围，不能无限采样。
+- [x] 运行一次 `npm test -- --minWorkers=1 --maxWorkers=2`、typecheck、lint、P3脚本与相关旧协议 tests、check:docs；全量已含 boundaries 不重复。UI/bundle consumer 改变需一次 production build。冻结待测 commit、diff/config/input/策略哈希及模型能力；不输出 API key。
 
 ```powershell
 npm run journey:narrative:p3 -- --mode=register --run-id=p3-01 --output=artifacts/narrative-p3/p3-01
@@ -563,7 +563,7 @@ npm run journey:narrative:p3 -- --mode=live --protocol=artifacts/narrative-p3/p3
 - **设计审阅：** [独立审阅与修订](../reports/2026-09-15-narrative-p3-plan-review.md)记录目标引用、合作门槛、调查来源、B 后果与现场范围的核查依据；不作为实现通过证据。
 - **P3-A：** Task 1–3 已完成；主动调查、目标结算、有限后果绑定及对应单元/边界验证已落地。
 - **P3-B：** Task 4–6 已完成；结果边界、真实选项、记忆与叙事后果已接入既有 A/B 链，相关全量回归通过。
-- **P3-C：** Task 7 已完成离线双路线旅程证明；Task 8 的有限真实调用、UI 证据与正式验收报告仍待执行。
-- **P3 总结论：** P3-A/P3-B 工程闭环及 P3-C 离线证据已实现；不能据此宣称整个 P3 完成，Task 8 仍是未完成内容。
+- **P3-C：** Task 7 已完成离线双路线旅程证明；Task 8 已完成协议/runner、零网络 register/replay 测试，并执行真实 `p3-01` 登记/live/replay；两路均 `blocked/ROUTE_POLICY_UNSUPPORTED`，没有 UI 证据，人工故事阅读和 C7 仍未通过。
+- **P3 总结论：** P3-A/P3-B 工程闭环及 P3-C 离线证据已实现；真实批次证明当前 runner 尚未覆盖可执行的 P3 路线，不能宣称整个 P3 完成，也不能用严格 replay 通过替代玩法完成。
 
 后续若发现缺口属于直接意图解析、错误信念、离场行为或更复杂世界系统，记录新的具体用例再与用户确认，不以“总 Spec 的 P3 曾提到”自动扩大本 Plan。
