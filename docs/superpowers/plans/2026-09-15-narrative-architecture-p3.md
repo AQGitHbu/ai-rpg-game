@@ -490,7 +490,7 @@ type P3StoryEvidence = Readonly<{
 }>;
 ```
 
-- [ ] 先写两路完整失败测试；数据来自同一获批初态，仅玩家方法/合法后续策略不同：
+- [x] 先写两路完整失败测试；数据来自同一获批初态，仅玩家方法/合法后续策略不同：
 
 ```ts
 const privateRoute = await runOfflineP3Story({route:"private",reloadAtRevisit:true});
@@ -505,11 +505,11 @@ for (const route of [privateRoute, publicRoute]) {
 expect(privateRoute.publicWitnessFactIds).not.toEqual(publicRoute.publicWitnessFactIds);
 ```
 
-- [ ] 运行 `npx vitest run src/game/application/testing/narrativeP3Journey.test.ts --minWorkers=1 --maxWorkers=2` RED；实现双场景 fixture source 同时覆盖 opening/decision。source 可以提供确定性 AI 内容，不能 runner 写入 History、goal、Quest 或 owner 来推进。
-- [ ] 私下路线：方法前提→真实查阅→回访→实际告知→目标/合作改变→合法引荐/核验→显式交付。公开路线：真实见证→不同目标/合作可用性→已声明替代方法→显式交付。不得通过直接跳终幕或自由输入宣称成功缩短路径。
-- [ ] 在条件变化后读取同一 NPC 的正式候选，证明两路至少有一项可用/不可用 Action 不同，并继续两次有效行动验证后果仍存在。不同张力数字或一句不同 label 单独不足以证明合作分化。
+- [x] 运行 `npx vitest run src/game/application/testing/narrativeP3Journey.test.ts --minWorkers=1 --maxWorkers=2` RED；实现双场景 fixture source 同时覆盖 opening/decision。source 可以提供确定性 AI 内容，不能 runner 写入 History、goal、Quest 或 owner 来推进。
+- [x] 私下路线：方法前提→真实查阅→回访→实际告知→目标/合作改变→合法引荐/核验→显式交付。公开路线：真实见证→不同目标/合作可用性→已声明替代方法→显式交付。不得通过直接跳终幕或自由输入宣称成功缩短路径。
+- [x] 在条件变化后读取同一 NPC 的正式候选，证明两路至少有一项可用/不可用 Action 不同，并继续两次有效行动验证后果仍存在。不同张力数字或一句不同 label 单独不足以证明合作分化。
 - [ ] 另用 Task 3 匠人材料场景跑最小“查证→告知→开放另一方法”片段，防止依赖递送、人名或道具名硬编码。主动退出、死锁拒绝、未选方法零影响、重复 ensure/调查、旧 token、回访故障、NPC 无来源不可反应均覆盖。
-- [ ] 不重复建设旧 P2 集成；在既有测试上确保新增 schema/事件不会破坏 memory 固定包和权限；运行相关 tests/typecheck/boundaries 后提交 `test: complete divergent evidence and cooperation journeys`。
+- [x] 不重复建设旧 P2 集成；在既有测试上确保新增 schema/事件不会破坏 memory 固定包和权限；运行相关 tests/typecheck/boundaries 后提交 `test: complete divergent evidence and cooperation journeys`。
 
 **验收：** 两路不仅能 ending，还能从事件、真实 Action 集合、知识与原话解释为什么过程不同。
 
@@ -561,9 +561,9 @@ npm run journey:narrative:p3 -- --mode=live --protocol=artifacts/narrative-p3/p3
 
 - **范围确认：** 用户已确认本 Plan 的玩法范围、自由输入方式、两类生成边界和验收口径，详见“Global Constraints”与范围核查；其余均是待实现契约。
 - **设计审阅：** [独立审阅与修订](../reports/2026-09-15-narrative-p3-plan-review.md)记录目标引用、合作门槛、调查来源、B 后果与现场范围的核查依据；不作为实现通过证据。
-- **P3-A：** 未执行。
-- **P3-B：** 未执行。
-- **P3-C：** 未执行。
-- **P3 总结论：** 本轮仅完成范围规划与 Plan，尚未实现或调用真实 API。
+- **P3-A：** Task 1–3 已完成；主动调查、目标结算、有限后果绑定及对应单元/边界验证已落地。
+- **P3-B：** Task 4–6 已完成；结果边界、真实选项、记忆与叙事后果已接入既有 A/B 链，相关全量回归通过。
+- **P3-C：** Task 7 已完成离线双路线旅程证明；Task 8 的有限真实调用、UI 证据与正式验收报告仍待执行。
+- **P3 总结论：** P3-A/P3-B 工程闭环及 P3-C 离线证据已实现；不能据此宣称整个 P3 完成，Task 8 仍是未完成内容。
 
 后续若发现缺口属于直接意图解析、错误信念、离场行为或更复杂世界系统，记录新的具体用例再与用户确认，不以“总 Spec 的 P3 曾提到”自动扩大本 Plan。
