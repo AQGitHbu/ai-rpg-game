@@ -207,6 +207,36 @@ describe("buildNarrativeBundleDescriptors", () => {
     });
   });
 
+  it("exposes current explicit investigation methods as concrete choices before the next NPC step", () => {
+    const ws = worldState({
+      currentLocationId: locDyn1,
+      unlockedLocationIds: [locTown, locDyn1],
+      visitedLocationIds: [locTown, locDyn1],
+      worldFacts: [{
+        ...BASE_PROJECTION.worldFacts[0]!,
+        discoveryMode: "investigation",
+        investigationApproaches: [
+          { approachId: "quiet", label: "安静观察", evidenceQuality: "clean", tensionDelta: 0 },
+          { approachId: "open", label: "公开查验", evidenceQuality: "noisy", tensionDelta: 4 },
+        ],
+      }],
+      quests: [quest([{ kind: "discover_fact", factId: factTracks }, { kind: "talk_to_npc", npcId: npcDyn1 }])],
+    });
+
+    const graph = buildNarrativeBundleDescriptors({
+      worldState: ws,
+      storyState: storyState(),
+      transition: transition(0),
+    });
+
+    expect(graph.steps).toEqual([]);
+    expect(graph.currentChoiceCandidates.map((candidate) => candidate.action)).toEqual([
+      { type: "investigate", factId: factTracks, approachId: "quiet" },
+      { type: "investigate", factId: factTracks, approachId: "open" },
+    ]);
+    expect(graph.terminal).toEqual({ kind: "next_decision", target: { kind: "current_scene" } });
+  });
+
   it("produces canonical step keys using narrativeBundleTriggerKey", () => {
     const ws = worldState({
       quests: [quest([

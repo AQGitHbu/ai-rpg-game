@@ -17,7 +17,7 @@ import { createRuleIntentParser } from "@/game/application/server/ai/liveIntentP
 import type { IntentParserSource } from "@/game/gameplay/rpg/intentParser";
 import { asGameId } from "@/game/application/server/persistence/gameRepository";
 import { buildChoiceMap } from "@/game/application/buildChoiceMap";
-import { projectGameSessionView, type GameSessionView, type PlayerChoiceView } from "@/game/application/gameSessionView";
+import { projectGameSessionView, type GameSessionView } from "@/game/application/gameSessionView";
 import type { GameLength, GameTypeId } from "@/game/domain/newGame";
 
 // ---------------------------------------------------------------------------
@@ -242,11 +242,12 @@ export async function loadGameView(repo: GameRepository): Promise<GameSessionVie
   return projectGameSessionView(loaded.record.worldState, loaded.record.storyState, loaded.record.revision, "journey-session");
 }
 
-function allIssuedChoices(view: GameSessionView): readonly PlayerChoiceView[] {
+function allIssuedChoices(view: GameSessionView): readonly { readonly label: string; readonly choiceToken: string }[] {
   return [
     ...view.currentLocation.actions,
     ...view.worldMap.locations.flatMap((location) => location.travelChoice === null ? [] : [location.travelChoice]),
     ...view.obtainableItems.map((item) => item.choice),
+    ...(view.currentLocation.investigations ?? []).flatMap((investigation) => investigation.choices),
     ...view.narrative.choices,
     ...view.narrative.npcDialogues.flatMap((dialogue) => dialogue.choices),
     // Task 9: startChoice removed; talkChoice is now the authoritative NPC talk trigger.
@@ -293,8 +294,7 @@ export async function playIssuedChoice(
   if (choice === undefined) {
     throw new Error(`找不到服务器选项：${labelIncludes}`);
   }
-  // 服务器只接受它已经铸造的 opaque token；当前任务流不再把调查方式投影成
-  // 玩家选项，因此这里仅作为历史 choice fixture 的通用消费桥接。
+  // 服务器只接受它已经铸造的 opaque token；调查方式与其他地点选择共用该请求链。
   const result = await playTurn(
     repo,
     { kind: "fixed_choice", choiceToken: choice.choiceToken },

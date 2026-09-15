@@ -1,5 +1,12 @@
 // 客户端可达 application facade：只导出中性 read model 与开局输入类型。
-export type { GameSessionView, InventoryItemView, NpcDialogueView, PlayerChoiceView } from "./gameSessionView";
+export type {
+  GameSessionView,
+  InventoryItemView,
+  InvestigationChoiceView,
+  InvestigationView,
+  NpcDialogueView,
+  PlayerChoiceView,
+} from "./gameSessionView";
 export type { AiFailureKind } from "@/game/domain/narrativeGenerationFailure";
 export type { RelationshipTier } from "@/game/domain/relationship";
 export type { ItemCategory, ItemRarity, ItemStatLine } from "@/game/domain/worldEntity";

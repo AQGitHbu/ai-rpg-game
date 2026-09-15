@@ -35,6 +35,7 @@ import { buildOpeningHandoffContext } from "./openingHandoffContext";
 import { projectNarrativeDraft } from "../narrativeDraftProjection";
 import { deriveStructuralEvolutionNeed } from "@/game/gameplay/rpg/worldEvolution";
 import { isStoryDeliveryComplete } from "@/game/gameplay/rpg/storyDelivery";
+import { availableInvestigations } from "@/game/gameplay/rpg/investigation";
 
 // P1 live journeys may run in provider thinking mode, whose effective input
 // budget is provider-specific. Keep the compiler's bounded mode available for
@@ -274,6 +275,12 @@ export function buildDecisionNarrativeContextBlocks(
       : `\n可选归还图：仅当本轮玩家明确要求把委托物归还委托人时，整体使用以下图替代默认图；不得把两图拼接，不得因存在此图就替玩家决定归还。归还只变更物品归属，放弃任务仍须玩家后续选择。\n- 选择本图时输出 graph="return_delivery"，其场景槽=${JSON.stringify(returnProjection.slots)}\n- 服务端终点（只读，不输出）：${JSON.stringify(returnProjection.expectedTerminal)}\n- currentScene choices: ${returnProjection.expectedChoices}\n- continuationScenes:\n${returnProjection.expectedSteps}`
     : "";
   const currentLocation = worldState.locations.find((location) => location.id === worldState.currentLocationId);
+  const availableInvestigationMethods = availableInvestigations({ worldState, storyState }).map((opportunity) => ({
+    factId: String(opportunity.factId),
+    approachId: opportunity.approachId,
+    label: opportunity.label,
+    ...(opportunity.hint === undefined ? {} : { hint: opportunity.hint }),
+  }));
   const focusNpc = job.focusNpcId === undefined
     ? undefined
     : worldState.npcs.find((npc) => String(npc.id) === String(job.focusNpcId));
@@ -456,6 +463,14 @@ export function buildDecisionNarrativeContextBlocks(
       content: currentLocation === undefined
         ? "当前地点缺失；不得猜测地点。"
         : `玩家当前位置：${currentLocation.name}（${currentLocation.id}）：${currentLocation.description}；已连接地点=${list(currentLocation.connectedLocationIds.map(String))}。`,
+    }),
+    block({
+      id: "bundle:available-investigations", slot: "legal_actions", title: "合法主动调查方法",
+      authority: "rule", retention: "mandatory", priority: 925,
+      source: { kind: "world_state_projection", refs: availableInvestigationMethods.map((entry) => entry.factId) },
+      content: availableInvestigationMethods.length === 0
+        ? "当前没有可提交的主动调查方法。不能自行发明调查方式，也不能把未发现事实正文写进当前回应。"
+        : `当前地点仅允许玩家从以下已批准方法中选择主动调查：${JSON.stringify(availableInvestigationMethods)}。不能自行发明调查方式、替换 approachId、提前写出事实正文或把调查当作已经执行；方法选择仍由玩家通过地点 read model 的 opaque choiceToken 提交。`,
     }),
     block({
       id: "bundle:focus-npc", slot: "focus_character", title: "焦点角色",

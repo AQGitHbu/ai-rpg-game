@@ -121,6 +121,36 @@ function makeJob(): PendingNarrativeJob {
 
 
 describe("live narrative candidate reviewer", () => {
+  it("gives the author the server-approved investigation methods without hidden fact text", () => {
+    const initial = makeWorldState();
+    const factId = asFactId("fact_sealed_record");
+    const worldState = createWorldStateFixtureWith({ generation: initial.generation, base: projectEntityStore(initial.entityStore) }, {
+      worldFacts: [{
+        factId,
+        text: "密封记录的正文不能提前泄露。",
+        source: "generated",
+        discovered: false,
+        discoveryMode: "investigation",
+        locationId: initial.currentLocationId,
+        investigationLabel: "查验密封记录",
+        investigationApproaches: [
+          { approachId: "quiet", label: "保持原样查验", hint: "不惊动旁人", evidenceQuality: "clean", tensionDelta: 1 },
+          { approachId: "open", label: "公开拆封查验", hint: "可能引起注意", evidenceQuality: "noisy", tensionDelta: 5 },
+        ],
+      }],
+      quests: [{
+        id: asQuestId("quest_investigation"), name: "查验记录", description: "确认记录来源", kind: "main", stage: 1, status: "active", tags: [],
+        objectives: [{ kind: "discover_fact", factId }], onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
+      }],
+    });
+    const context = { kind: "decision" as const, worldState, storyState: makeStoryState(), job: makeJob() };
+    const prompt = buildDecisionNarrativeContextBlocks(context).map(block => block.content).join("\n");
+    expect(prompt).toContain("保持原样查验");
+    expect(prompt).toContain("公开拆封查验");
+    expect(prompt).not.toContain("密封记录的正文不能提前泄露");
+    expect(prompt).toContain("不能自行发明调查方式");
+  });
+
   it.each([false, true])("projects conditional ending action authority before/after pair materialization: %s", async (hasPair) => {
     const initial = makeWorldState();
     const npcId = asNpcId("npc_final");

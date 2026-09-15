@@ -10,6 +10,7 @@ export function storyInteractionPrompt(opening: boolean): string {
     "promise_confidentiality 是玩家向 NPC 作出保密承诺，尚未披露的秘密仅放 confidentiality.protectedFactIds，factIds=[]，audienceIds=[player_0]；request_introduction/request_verification 的 factIds 非空且 NPC 必须已知，audienceIds 为实际听众且不可包含说话 NPC、不能为空。share_known_fact 是玩家向当前NPC分享玩家已知事实，audienceIds 必须包含目标NPC且全部为同场NPC；不要求目标NPC预先知道，不允许远程或玩家自己作为听众。request_verification 必须有真实已提交 evidenceEventIds，不能以待发生事件自证。goalIds/promiseId 未引用已有目标或承诺时用 []/null。",
     '保密互动另须 confidentiality:{"protectedFactIds":["真实已知事实ID"],"allowedAudienceIds":["player_0","当前NPC ID"],"fulfillment":{"kind":"story_delivery"}}。它保护指定信息，允许名单外的实际披露会违约，直到本故事递送契约中的物品显式交给已绑定接应人才履行；未来NPC无需提前创建。普通任务完成或最终相信不能消除此承诺。引荐须另提 request_introduction，用 promise_status 引用已成立承诺的真实ID与open状态；许诺本身不会引荐。只有本人接受且玩家已正式选择、仍open的保密承诺，才允许再向player提出对应保护事实的引荐；不可把未执行引荐的秘密放discloseFactIds或当前台词，也不能向旁观者披露。',
     '如玩家准备归还本局递送物，且 delivery.giverNpcId 当前在场、delivery.itemId 仍由玩家持有，可提出唯一 give_item:<itemId>:<giverNpcId> 返还 continuation，并以该step为next_decision终点、提供两个合法后续talk候选。只审批权威绑定对象，不能用任意物品或NPC代替；返还仍需玩家实际选择give_item，解除委托另选abandon_quest。',
+    "主动调查只能引用服务端当前地点下发的已批准方法与其 label/hint；不得自行发明 approachId、泄露未发现事实正文、把 evidenceQuality/tensionDelta 写给玩家，或把未点击的方法当作已经执行。",
     "新提出互动尚未执行：正文不可写成已保密、已核验、已告知或已交付；只有玩家选择并经规则结算才产生结果。私密事实不得因出现在提案条件/引用中就写进当前台词。",
     opening
       ? '开局 npcId="npc_0"；事实 ID 为目录索引 fact_N；开局尚无可供 provider 引用的 runtime EventId，不能编造 verification 证据。choices 可选 situation.responses 的 key 或同包 "interaction:"+proposalKey，总数仍为二；优先给当前冲突的两项实际回应。'

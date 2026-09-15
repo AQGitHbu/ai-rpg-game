@@ -24,6 +24,7 @@ import {
 import type { PreparedChoiceCandidate, PreparedArrivalNpcContext } from "@/game/gameplay/rpg/preparedContinuation";
 import { getEntity, type EntityRecord, type NpcEntityRecord } from "@/game/domain/entity";
 import { evaluateStoryCondition } from "@/game/gameplay/rpg/storyInteraction";
+import { availableInvestigations } from "@/game/gameplay/rpg/investigation";
 
 export type { PreparedChoiceCandidate, PreparedArrivalNpcContext };
 
@@ -206,6 +207,7 @@ function choicesForNpc(npc: PreparedArrivalNpcContext | undefined, stepKey: stri
  */
 function currentSceneChoicesFor(
   worldState: WorldState,
+  storyState: StoryState,
   objectives: readonly QuestObjective[],
   startIndex: number,
 ): readonly PreparedChoiceCandidate[] {
@@ -214,6 +216,14 @@ function currentSceneChoicesFor(
     const objective = objectives[index];
     if (objective === undefined) return [];
     if (objective.kind === "discover_fact") {
+      const investigationCandidates = availableInvestigations({ worldState, storyState })
+        .filter((candidate) => String(candidate.factId) === String(objective.factId));
+      if (investigationCandidates.length > 0) {
+        return investigationCandidates.map((candidate, candidateIndex) => ({
+          candidateId: `current_scene_investigation_${candidateIndex + 1}`,
+          action: candidate.action,
+        }));
+      }
       index += 1;
       continue;
     }
@@ -608,6 +618,7 @@ export function buildNarrativeBundleDescriptors(
   let terminal: NarrativeBundleTerminal;
   const currentChoiceCandidates = descriptors.length > 0 ? [] : currentSceneChoicesFor(
     worldState,
+    storyState,
     quest.objectives,
     transition.after.objectiveIndex,
   );

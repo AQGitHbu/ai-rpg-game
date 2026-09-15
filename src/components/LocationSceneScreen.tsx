@@ -224,6 +224,7 @@ export function LocationSceneScreen({
   const buildingItems = hasBuildingSceneContext && view.currentLocation.scale === "town"
     ? view.obtainableItems.filter((item) => item.buildingId === sceneBuildingId)
     : view.obtainableItems;
+  const investigations = view.currentLocation.investigations ?? [];
   const currentSceneNpcName = sceneNpcName ?? focusedDialogueName;
   const locationNpcs = hasBuildingSceneContext
     ? currentSceneNpcName === null
@@ -585,6 +586,34 @@ export function LocationSceneScreen({
 
       {/* 场景主要视窗：含散布调查/物品图标 */}
       <div className="location-scene-content location-scene-content--fullscreen">
+
+        {/* 主动调查由服务端安全 read model 投影；点击只提交 opaque choiceToken。 */}
+        {displayedDialogue === undefined
+          && view.narrativeGeneration.status === "idle"
+          && view.battle === null
+          && view.ending === null
+          && investigations.length > 0 ? (
+          <section className="scene-investigations" aria-label="现场调查">
+            {investigations.map((investigation) => (
+              <div key={investigation.label} className="scene-investigation-group">
+                <h3>{investigation.label}</h3>
+                <div className="scene-investigation-choices">
+                  {investigation.choices.map((choice) => (
+                    <button
+                      key={choice.choiceToken}
+                      type="button"
+                      disabled={busy || pending}
+                      onClick={() => onSubmit({ kind: "fixed_choice", choiceToken: choice.choiceToken })}
+                    >
+                      <span>{choice.label}</span>
+                      {choice.hint === undefined ? null : <small>{choice.hint}</small>}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </section>
+        ) : null}
 
         {/* 散布在场景中的可探索/调查物品图标 */}
         {buildingItems.length > 0 ? (

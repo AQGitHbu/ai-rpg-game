@@ -31,6 +31,7 @@ import { normalizeNpcSpeech } from "@/game/domain/npcSpeech";
 import { isObjectiveEntityReleased, isQuestObjectiveReleased, isTakeItemPrepared } from "@/game/gameplay/rpg/worldEvolution";
 import { formatSceneChoiceLabel } from "./deterministicSceneSource";
 import { decorateNarrativePages, decorateNarrativeText } from "./narrativeText";
+import { availableInvestigations } from "@/game/gameplay/rpg/investigation";
 
 export type PlayerChoiceView = {
   readonly choiceToken: string;
@@ -38,6 +39,17 @@ export type PlayerChoiceView = {
   readonly hint?: string;
   readonly presentation: "dialogue" | "travel" | "explore" | "item" | "battle" | "investigate" | "exit";
 };
+
+export type InvestigationChoiceView = Readonly<{
+  readonly label: string;
+  readonly hint?: string;
+  readonly choiceToken: string;
+}>;
+
+export type InvestigationView = Readonly<{
+  readonly label: string;
+  readonly choices: readonly InvestigationChoiceView[];
+}>;
 
 export type NpcDialogueView = {
   readonly npcId: string;
@@ -105,6 +117,8 @@ export type GameSessionView = {
     readonly description: string;
     readonly scale: "town" | "scene";
     readonly actions: readonly PlayerChoiceView[];
+    /** 当前场景可执行的、已批准调查方法；不包含 factId 或内部规则字段。 */
+    readonly investigations?: readonly InvestigationView[];
     /** 当前地点的 NPC 名单：小镇视图渲染居民/人物入口。 */
     readonly npcs: readonly {
       readonly npcId: string;
@@ -209,6 +223,32 @@ function presentationForAction(action: Action): PlayerChoiceView["presentation"]
     case "ack_prologue":
       return "explore";
   }
+}
+
+function projectInvestigationViews(
+  worldState: WorldState,
+  storyState: StoryState,
+  revision: number,
+): readonly InvestigationView[] {
+  const groups = new Map<string, { label: string; choices: InvestigationChoiceView[] }>();
+  for (const opportunity of availableInvestigations({ worldState, storyState })) {
+    const fact = worldState.worldFacts.find((entry) => String(entry.factId) === String(opportunity.factId));
+    const key = String(opportunity.factId);
+    const group = groups.get(key) ?? {
+      label: fact?.investigationLabel?.trim() || "调查现场线索",
+      choices: [],
+    };
+    group.choices.push({
+      label: opportunity.label,
+      ...(opportunity.hint === undefined ? {} : { hint: opportunity.hint }),
+      choiceToken: deriveRuntimeChoiceToken(opportunity.action, revision),
+    });
+    groups.set(key, group);
+  }
+  return [...groups.values()].map((group) => ({
+    label: group.label,
+    choices: group.choices,
+  }));
 }
 
 function restoreDialogueResume(
@@ -460,6 +500,12 @@ export function projectGameSessionView(
             : entry,
         ),
       };
+  const projectedInvestigations = storyState.narrative.status === "ready"
+    && activeBattle === null
+    && worldState.ending === null
+    && !endingDecisionReady
+    ? projectInvestigationViews(worldState, storyState, revision)
+    : [];
 
   const mapLocations = worldState.locations
     .filter((location) => worldState.unlockedLocationIds.includes(location.id))
@@ -976,6 +1022,7 @@ export function projectGameSessionView(
       description: currentLocation?.description ?? "",
       scale: currentLocation === undefined ? "scene" : locationScaleOf(currentLocation),
       actions: locationActions,
+      investigations: projectedInvestigations,
       npcs: presentNpcs.map((npc) => ({
         npcId: String(npc.id),
         name: npc.name,

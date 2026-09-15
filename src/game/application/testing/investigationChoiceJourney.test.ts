@@ -21,10 +21,10 @@ import { entitiesOfKind } from "@/game/domain/entity";
 import { playIssuedChoice, advanceScene } from "./foundationJourney.testutil";
 
 // ---------------------------------------------------------------------------
-// Task 6：端到端事实自动揭示旅程。
+// Task 5：端到端主动调查 read model / opaque choice 旅程。
 //   - mode="offline"：真实临时 SQLite 上建立一个含两个历史调查方式的事实，
-//     经 application facade（performTurn）验证当前 read model 不再下发调查 token，
-//     普通探索行动后由规则层自动确认事实。
+//     经 application facade（performTurn）验证当前 read model 下发两个安全调查 token，
+//     选择其中一个后由规则层只结算一次事实发现。
 //   - mode="legacy_fact"：旧形状事实（无 investigationApproaches）在同一个规则
 //     回合内自动揭示；行动栏永不出现 investigate 按钮；reload 只恢复已写入的
 //     fact_discovered，不等待不存在的 pending。
@@ -80,7 +80,8 @@ function worldWithApproaches(): WorldState {
     text: "车辙尽头的旧镖局地窖里压着半枚盟誓印。",
     source: "generated" as const,
     discovered: false,
-    locationId: asLocationId("loc_next"),
+    discoveryMode: "investigation" as const,
+    locationId: asLocationId("loc_invest"),
     investigationLabel: "泥地上的车辙",
     investigationApproaches: [
       { approachId: "follow", label: "沿痕迹追查", evidenceQuality: "clean" as const, tensionDelta: 4 },
@@ -92,7 +93,6 @@ function worldWithApproaches(): WorldState {
     name: "追查车轮印",
     description: "查清车辙通向何处。",
     objectives: [
-      { kind: "visit_location" as const, locationId: asLocationId("loc_next") },
       { kind: "discover_fact" as const, factId: fact.factId },
     ],
     onSuccess: { kind: "advance_story" as const },
@@ -307,17 +307,35 @@ async function createInvestigationChoiceJourney(input: { mode: "offline" | "lega
 // 用例（brief Step 1 verbatim + Step 3.2 结构化分化）。
 // ---------------------------------------------------------------------------
 
-describe("调查选择旅程（Task 6 端到端）", () => {
-  it("multiple historical approaches do not create player investigation choices", async () => {
+describe("调查选择旅程（Task 5 端到端）", () => {
+  it("multiple approved approaches stay out of the generic action rail", async () => {
     const journey = await createInvestigationChoiceJourney({ mode: "offline" });
     const fact = entitiesOfKind(journey.record().worldState.entityStore, "fact").find((entry) => entry.core.id === CHOICE_FACT_ID);
     const npc = entitiesOfKind(journey.record().worldState.entityStore, "npc")[0];
     expect(fact?.fact.investigationApproaches).toHaveLength(2);
     expect(npc?.relationships.outgoing.some((edge) => edge.targetId === "player_0")).toBe(true);
     expect(journey.view().currentLocation.actions.some((choice) => choice.presentation === "investigate")).toBe(false);
+    expect(journey.view().currentLocation.investigations?.[0]?.choices).toHaveLength(2);
     const revisionBeforeReload = journey.record().revision;
     await journey.reload();
     expect(journey.record().revision).toBe(revisionBeforeReload);
+  });
+
+  it("production SQLite read model exposes two safe methods and commits only the selected approach", async () => {
+    const journey = await createInvestigationChoiceJourney({ mode: "offline" });
+    const before = journey.view();
+    const investigation = before.currentLocation.investigations?.[0];
+    expect(investigation?.choices).toHaveLength(2);
+    expect(JSON.stringify(investigation)).not.toContain(CHOICE_FACT_ID);
+    expect(JSON.stringify(investigation)).not.toContain("车辙尽头的旧镖局地窖里压着半枚盟誓印");
+    const selected = investigation?.choices.find((choice) => choice.label === "沿痕迹追查");
+    expect(selected).toBeDefined();
+    await journey.choose("沿痕迹追查");
+    const after = journey.record();
+    expect(after.worldState.worldFacts.find((fact) => fact.factId === CHOICE_FACT_ID)?.discovered).toBe(true);
+    expect(after.worldState.eventLedger.filter((event) => event.kind === "fact_discovered")).toHaveLength(1);
+    expect(after.storyState.narrative.status).toBe("provider_pending");
+    expect(journey.view().currentLocation.investigations).toEqual([]);
   });
 
   it("approach-less facts auto-resolve and never present an investigate button", async () => {
@@ -328,7 +346,7 @@ describe("调查选择旅程（Task 6 端到端）", () => {
       .toBeUndefined();
   });
 
-  it("facts with historical approaches auto-resolve without evidence divergence", async () => {
+  it("unselected approved approaches do not resolve or diverge evidence", async () => {
     const first = await createInvestigationChoiceJourney({ mode: "offline" });
     const second = await createInvestigationChoiceJourney({ mode: "offline" });
 

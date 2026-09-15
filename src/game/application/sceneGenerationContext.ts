@@ -25,6 +25,7 @@ import {
 import { buildFocusNpcContext, type FocusNpcContext, type FactCard } from "./focusNpcContext";
 import { buildNpcSpeechAuthority, type NpcSpeechAuthority } from "./npcSpeechAuthority";
 import { isObjectiveEntityReleased } from "@/game/gameplay/rpg/worldEvolution";
+import { availableInvestigations } from "@/game/gameplay/rpg/investigation";
 import { buildStylePolicy, type StylePolicy } from "./stylePolicy";
 import type { GameRecord } from "./server/persistence/gameRepository";
 import type { GameTypeId } from "@/game/domain/newGame";
@@ -116,9 +117,10 @@ export type BudgetSummary = {
 };
 
 export type LegalActionCandidate = {
-  readonly kind: "move" | "talk" | "explore" | "attack" | "battle_action";
+  readonly kind: "move" | "talk" | "explore" | "investigate" | "attack" | "battle_action";
   readonly label: string;
   readonly targetId?: string;
+  readonly approachId?: string;
 };
 
 /** 只暴露权威实体 ID，供纯审批验证 event target；不附带隐藏正文或状态。 */
@@ -661,6 +663,14 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
     (l) => currentLocation.connectedLocationIds.includes(l.id)
       && ws.unlockedLocationIds.includes(l.id),
   );
+  const investigationCandidates = ss.narrative.status === "ready" && ws.ending === null
+    ? availableInvestigations({ worldState: ws, storyState: ss }).map((opportunity) => ({
+        kind: "investigate" as const,
+        label: opportunity.label,
+        targetId: String(opportunity.factId),
+        approachId: opportunity.approachId,
+      }))
+    : [];
 
   // 对话回合的原话只能由当时的对象承接。幕交接可以引入下一位目标 NPC，
   // 但不能把玩家刚对旧 NPC 说的话改写成新 NPC 听见；新目标仍通过权威
@@ -856,6 +866,7 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
             label: `与${npc.name}交谈`,
             targetId: npc.id,
           })),
+          ...investigationCandidates,
           ...reachableLocations.map((l) => ({
             kind: "move" as const,
             label: `前往${l.name}`,

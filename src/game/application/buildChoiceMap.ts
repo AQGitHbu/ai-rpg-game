@@ -6,9 +6,10 @@ import type { ActionChoiceMap } from "./actionConverter";
 import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
 import { SKILL_ENERGY_COST } from "@/game/domain/combat";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
-import { endingDecisionStances } from "@/game/gameplay/rpg/narrativeBundle";
+import { endingDecisionStances, isEndingDecisionDue } from "@/game/gameplay/rpg/narrativeBundle";
 import { isStoryDeliveryComplete } from "@/game/gameplay/rpg/storyDelivery";
 import { isObjectiveEntityReleased, isTakeItemPrepared } from "@/game/gameplay/rpg/worldEvolution";
+import { availableInvestigations } from "@/game/gameplay/rpg/investigation";
 
 // ---------------------------------------------------------------------------
 // 服务端 choiceMap 构建器：从当前 WorldState + StoryState 派生所有合法行动的
@@ -54,6 +55,15 @@ export function buildChoiceMap(
       addRuntimeAction({ type: "battle_action", action: "guard" });
     }
   } else {
+    const investigationsEnabled = storyState.narrative.status === "ready"
+      && worldState.ending === null
+      && !isEndingDecisionDue(worldState, storyState);
+    if (investigationsEnabled) {
+      for (const investigation of availableInvestigations({ worldState, storyState })) {
+        addRuntimeAction(investigation.action);
+      }
+    }
+
     // 当前地点 NPC → talk
     for (const npc of worldState.npcs) {
       if (
@@ -212,8 +222,12 @@ function isCurrentlyLegalRegistryAction(
     case "explore":
       return false;
     case "investigate":
-      // 历史记录仍可由规则层结算，但当前客户端不再获得调查 token。
-      return false;
+      return worldState.ending === null
+        && !isEndingDecisionDue(worldState, storyState)
+        && storyState.narrative.status === "ready"
+        && availableInvestigations({ worldState, storyState }).some((candidate) =>
+          String(candidate.action.factId) === String(action.factId)
+          && candidate.action.approachId === action.approachId);
     case "ack_prologue":
     case "freeform":
       return false;

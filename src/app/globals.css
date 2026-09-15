@@ -2498,6 +2498,56 @@ body:has(.adventure-game-shell) {
   pointer-events: auto;
 }
 
+/* 服务端批准的主动调查方法：与物品热点同属地点层，不伪装成 NPC 对话。 */
+.scene-investigations {
+  position: absolute;
+  top: 120px;
+  right: 24px;
+  z-index: 8;
+  width: min(360px, calc(100vw - 48px));
+  padding: 14px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 14px;
+  background: rgba(10, 15, 12, 0.88);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+}
+
+.scene-investigation-group h3 {
+  margin: 0 0 10px;
+  color: var(--game-accent);
+  font-size: 0.82rem;
+  letter-spacing: 0.08em;
+}
+
+.scene-investigation-choices {
+  display: grid;
+  gap: 8px;
+}
+
+.scene-investigation-choices button {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 9px;
+  background: rgba(28, 36, 29, 0.9);
+  color: var(--game-text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.scene-investigation-choices button:hover:not(:disabled) {
+  border-color: var(--game-accent);
+  background: rgba(42, 55, 43, 0.95);
+}
+
+.scene-investigation-choices small {
+  color: var(--game-text-muted);
+  font-size: 0.72rem;
+}
+
 .location-scene-content--fullscreen .location-scene-caption {
   position: absolute;
   left: 24px;
@@ -2643,6 +2693,11 @@ body:has(.adventure-game-shell) {
     top: 70px;
     right: 12px;
     width: 140px;
+  }
+  .scene-investigations {
+    top: 70px;
+    right: 12px;
+    width: min(300px, calc(100vw - 24px));
   }
   .scene-top-nav {
     top: 70px;

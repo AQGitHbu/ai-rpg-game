@@ -57,7 +57,7 @@ describe("projected quest exit button", () => {
   });
 });
 
-/** 回归夹具：历史 view 仍可能带 investigate presentation，但地点页不再渲染它。 */
+/** 回归夹具：调查方式由安全地点 read model 投影，点击仍只提交 opaque token。 */
 function viewWithInvestigationApproaches(): GameSessionView {
   return {
     revision: 9,
@@ -76,6 +76,13 @@ function viewWithInvestigationApproaches(): GameSessionView {
         { choiceToken: "c_follow", label: "沿痕迹追查", presentation: "investigate" },
         { choiceToken: "c_search", label: "翻查附近杂物", presentation: "investigate" },
       ],
+      investigations: [{
+        label: "泥地上的异常痕迹",
+        choices: [
+          { choiceToken: "c_follow", label: "沿痕迹追查", hint: "留下的脚印较完整" },
+          { choiceToken: "c_search", label: "翻查附近杂物", hint: "动静较大" },
+        ],
+      }],
       npcs: [],
       town: null,
     },
@@ -99,11 +106,14 @@ function viewWithInvestigationApproaches(): GameSessionView {
   };
 }
 
-describe("LocationSceneScreen：调查和底部行动栏已移除", () => {
-  it("does not render investigation buttons or the bottom action rail", () => {
-    render(<LocationSceneScreen view={viewWithInvestigationApproaches()} busy={false} onSubmit={vi.fn()} onReturnMap={vi.fn()} />);
-    expect(screen.queryByRole("button", { name: "沿痕迹追查" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "翻查附近杂物" })).not.toBeInTheDocument();
+describe("LocationSceneScreen：调查选择走现有 opaque token 请求链", () => {
+  it("renders approved investigation choices and submits only the selected token", () => {
+    const onSubmit = vi.fn();
+    render(<LocationSceneScreen view={viewWithInvestigationApproaches()} busy={false} onSubmit={onSubmit} onReturnMap={vi.fn()} />);
+    expect(screen.getByRole("button", { name: /沿痕迹追查/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /翻查附近杂物/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /沿痕迹追查/ }));
+    expect(onSubmit).toHaveBeenCalledWith({ kind: "fixed_choice", choiceToken: "c_follow" });
     expect(screen.queryByRole("navigation", { name: "行动栏" })).not.toBeInTheDocument();
   });
 

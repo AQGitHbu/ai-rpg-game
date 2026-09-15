@@ -297,12 +297,13 @@ describe("泛化探索不再是玩家选择", () => {
   });
 });
 
-describe("investigate：调查动作保留规则兼容，但不再进入当前玩家 choice map", () => {
+describe("investigate：当前合法调查方式进入玩家 choice map", () => {
   const approachFact = {
     factId: asFactId("fact_trace"),
     text: "泥地上有两行车辙",
     source: "generated" as const,
     discovered: false,
+    discoveryMode: "investigation" as const,
     locationId: asLocationId("loc_1"),
     investigationLabel: "泥地上的异常痕迹",
     investigationApproaches: [
@@ -346,11 +347,14 @@ describe("investigate：调查动作保留规则兼容，但不再进入当前�
     return buildStoryState({});
   }
 
-  it("即使事实有多个已审批方式，也不铸造调查 token", () => {
+  it("为显式调查的每个已批准方式铸造不同 opaque token", () => {
     const map = buildChoiceMap(worldWithApproaches(), storyWithDiscoverFact(), 0);
     const investigate = [...map.values()].filter((action): action is Extract<Action, { type: "investigate" }> => action.type === "investigate");
-    expect(investigate).toHaveLength(0);
-    expect(map.has(deriveRuntimeChoiceToken({ type: "investigate", factId: asFactId("fact_trace"), approachId: "follow" }, 0))).toBe(false);
+    expect(investigate).toHaveLength(2);
+    const tokens = investigate.map((action) => deriveRuntimeChoiceToken(action, 0));
+    expect(new Set(tokens).size).toBe(2);
+    expect(map.get(tokens[0]!)).toEqual(investigate[0]);
+    expect(map.get(tokens[1]!)).toEqual(investigate[1]);
   });
 
   it("approach-less 事实不铸造任何 investigate token（规则层自动揭示路径）", () => {
@@ -358,7 +362,7 @@ describe("investigate：调查动作保留规则兼容，但不再进入当前�
     expect([...map.values()].some((action) => action.type === "investigate")).toBe(false);
   });
 
-  it("registry 中遗留的 investigate choice 也不再映射", () => {
+  it("当前 revision 的已批准调查 choice 复用同一规则准入", () => {
     const approvedFollow = approvedFor({
       sceneId: "scene-current", basedOnRevision: 0,
       label: "沿痕迹追查", action: { type: "investigate", factId: asFactId("fact_trace"), approachId: "follow" },
@@ -368,7 +372,9 @@ describe("investigate：调查动作保留规则兼容，但不再进入当前�
       choices: [{ choiceToken: approvedFollow.choiceToken, label: "沿痕迹追查" }, { choiceToken: "t_b", label: "B" }],
     });
     const map = buildChoiceMap(worldWithApproaches(), story, 0);
-    expect(map.has(approvedFollow.choiceToken)).toBe(false);
+    expect(map.get(approvedFollow.choiceToken)).toEqual({
+      type: "investigate", factId: asFactId("fact_trace"), approachId: "follow",
+    });
   });
 });
 

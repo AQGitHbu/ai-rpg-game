@@ -1,6 +1,6 @@
 import type { Action, DialogueTopic } from "@/game/domain/action";
 import { semanticSummaryOf } from "@/game/domain/approvedChoice";
-import { asEnemyId, asLocationId, asNpcId, asQuestId } from "@/game/domain/worldEntity";
+import { asEnemyId, asFactId, asLocationId, asNpcId, asQuestId } from "@/game/domain/worldEntity";
 import type { NarrativeEventState } from "@/game/domain/narrative";
 import type { PreparedStepDescriptor } from "@/game/gameplay/rpg/preparedContinuation";
 import type { SceneGenerationContext } from "./sceneGenerationContext";
@@ -283,6 +283,9 @@ function actionFromLegalCandidate(
     case "explore": return null;
     case "move": return candidate.targetId === undefined ? null : { type: "move", locationId: asLocationId(candidate.targetId) };
     case "talk": return candidate.targetId === undefined ? null : { type: "talk", npcId: asNpcId(candidate.targetId), dialogueAct: "ask" };
+    case "investigate": return candidate.targetId === undefined || candidate.approachId === undefined
+      ? null
+      : { type: "investigate", factId: asFactId(candidate.targetId), approachId: candidate.approachId };
     case "attack": return candidate.targetId === undefined ? null : { type: "attack", enemyId: asEnemyId(candidate.targetId) };
     case "battle_action": return candidate.targetId === "attack" || candidate.targetId === "guard" || candidate.targetId === "flee"
       ? { type: "battle_action", action: candidate.targetId }

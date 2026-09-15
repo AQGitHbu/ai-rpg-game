@@ -134,6 +134,7 @@ describe("projectGameSessionView", () => {
     text: "车辙尽头藏着半枚令牌",
     source: "generated" as const,
     discovered: false,
+    discoveryMode: "investigation" as const,
     locationId: asLocationId("loc_1"),
     investigationLabel: "泥地上的异常痕迹",
     investigationApproaches: [
@@ -181,11 +182,15 @@ describe("projectGameSessionView", () => {
     return projectGameSessionView(worldWithApproaches(), storyWithDiscoverFact(), 0, "ending");
   }
 
-  describe("调查方式不再进入玩家投影", () => {
-    it("does not project approach choices or a generic investigate button", () => {
+  describe("调查方式进入安全地点投影", () => {
+    it("projects approved approach choices without a generic investigate button", () => {
       const view = projectGameSessionView(worldWithApproaches(), storyWithDiscoverFact(), 0, "ending");
+      const investigations = view.currentLocation.investigations ?? [];
       expect(view.currentLocation.actions.filter((choice) => choice.presentation === "investigate")).toHaveLength(0);
-      expect(view.currentLocation.actions.some((choice) => choice.label === "调查现场线索")).toBe(false);
+      expect(investigations).toHaveLength(1);
+      expect(investigations[0]?.label).toBe("泥地上的异常痕迹");
+      expect(investigations[0]?.choices).toHaveLength(2);
+      expect(new Set(investigations[0]?.choices.map((choice) => choice.choiceToken)).size).toBe(2);
     });
 
     it("does not project any investigate action for an approach-less fact", () => {
@@ -193,15 +198,18 @@ describe("projectGameSessionView", () => {
       expect(view.currentLocation.actions.filter((choice) => choice.presentation === "investigate")).toHaveLength(0);
     });
 
-    it("多个 approach 也不生成 opaque token", () => {
+    it("多个 approach 生成对应的 opaque token", () => {
       const view = viewWithInvestigationApproaches();
       const investigate = view.currentLocation.actions.filter((choice) => choice.presentation === "investigate");
       expect(investigate).toHaveLength(0);
+      const investigations = view.currentLocation.investigations ?? [];
+      expect(investigations[0]?.choices).toHaveLength(2);
+      expect(investigations[0]?.choices.every((choice) => /^c_[0-9a-f]{16}$/.test(choice.choiceToken))).toBe(true);
     });
 
     it("当前地点行动不携带调查方式正文或内部字段", () => {
       const view = viewWithInvestigationApproaches();
-      const serialized = JSON.stringify(view.currentLocation.actions);
+      const serialized = JSON.stringify(view.currentLocation);
       expect(serialized).not.toContain("车辙尽头藏着半枚令牌");
       expect(serialized).not.toContain("follow");
       expect(serialized).not.toContain("noisy");
@@ -219,6 +227,29 @@ describe("projectGameSessionView", () => {
       expect(view.story.currentObjectiveChoiceTokens).toEqual([]);
       expect(view.story.currentObjectiveChoiceToken).toBeNull();
       expect(view.currentLocation.actions.some((choice) => choice.label === "调查客栈地窖")).toBe(false);
+    });
+
+    it.each(["provider_pending", "provider_failed"] as const)("%s 状态不提供可提交调查", (status) => {
+      const narrative = status === "provider_pending"
+        ? { status, mode: "ai" as const, job: { jobId: "job_pending" }, lastPresentedScene: null }
+        : { status, mode: "ai" as const, job: { jobId: "job_failed" }, failure: { kind: "AI_RESPONSE_INVALID" as const }, lastPresentedScene: null };
+      const view = projectGameSessionView(worldWithApproaches(), { ...ss, narrative } as StoryState, 0, "ending");
+      expect(view.currentLocation.investigations).toEqual([]);
+    });
+
+    it("battle and ending states do not expose investigation methods", () => {
+      const battleWorld = { ...worldWithApproaches(), battle: { status: "active" as const, enemyId: asEnemyId("enemy"), playerHp: 10, enemyHp: 5, round: 1 } };
+      expect(projectGameSessionView(battleWorld, ss, 0, "ending").currentLocation.investigations).toEqual([]);
+      const endedWorld = { ...worldWithApproaches(), ending: { endingId: asEndingId("ending"), outcome: "failure" as const } };
+      expect(projectGameSessionView(endedWorld, ss, 0, "ending").currentLocation.investigations).toEqual([]);
+    });
+
+    it("does not accept an investigation token minted for an older revision", () => {
+      const world = worldWithApproaches();
+      const oldToken = [...buildChoiceMap(world, ss, 4).entries()]
+        .find(([, action]) => action.type === "investigate")?.[0];
+      expect(oldToken).toBeDefined();
+      expect(buildChoiceMap(world, ss, 5).has(oldToken!)).toBe(false);
     });
 
     it("非 discover_fact 目标仍填充兼容的单一 token（currentObjectiveChoiceTokens 含该 token）", () => {
@@ -1367,7 +1398,7 @@ describe("projectGameSessionView", () => {
     expect(Object.keys(view.worldMap.locations[0]!).sort()).toEqual([
       "current", "name", "scale", "travelChoice", "visited",
     ]);
-    expect(Object.keys(view.currentLocation).sort()).toEqual(["actions", "description", "name", "npcs", "scale", "town"]);
+    expect(Object.keys(view.currentLocation).sort()).toEqual(["actions", "description", "investigations", "name", "npcs", "scale", "town"]);
     expect(Object.keys(view.obtainableItems[0]!).sort()).toEqual(["choice", "description", "name"]);
     const inventoryWorld = buildWorld({
       ...COMPLETE_OVERRIDES,
