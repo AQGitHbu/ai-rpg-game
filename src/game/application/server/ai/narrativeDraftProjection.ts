@@ -6,11 +6,15 @@ import type { StoryState } from "@/game/domain/storyState";
 import type { WorldState } from "@/game/domain/worldState";
 import { buildNarrativeBundleDescriptors } from "@/game/gameplay/rpg/narrativeBundle";
 import { projectEndingResolutions } from "./endingResolutionProjection";
+import { previewNarrativeDisclosure } from "../../approveNarrativeBundle";
+import { parseNarrativeBundleProposal } from "@/game/domain/narrativeBundle";
+import { asTurnId } from "@/game/domain/events";
+import { isStoryConsequenceBindingsProposal } from "@/game/domain/storyConsequenceBindings";
 
 export type NarrativeDraftContext = Readonly<{
   worldState: WorldState;
   storyState: StoryState;
-  job: Pick<PendingNarrativeJob, "objectiveTransition" | "actionSummary">;
+  job: Pick<PendingNarrativeJob, "objectiveTransition" | "actionSummary"> & Partial<Pick<PendingNarrativeJob, "turnId" | "actionId" | "turnNumber" | "domainEventIds">>;
   includeDeliveryReturn?: boolean;
 }>;
 
@@ -91,6 +95,30 @@ export function compileNarrativeDraft(value: unknown, context: NarrativeDraftCon
   const unknownKey = Object.keys(raw).find(key => !["worldDelta", "consequenceBindings", "sceneDrafts", "endingOutcomes", "interactionProposals", "graph"].includes(key));
   if (unknownKey !== undefined) return fail("unknown_field", `$.${unknownKey}`);
   if (raw.graph !== undefined && raw.graph !== "default" && raw.graph !== "return_delivery") return fail("unknown_graph", "$.graph");
+  if (!Array.isArray(raw.sceneDrafts)) return fail("invalid_slots", "$.sceneDrafts");
+  const keys = new Set<string>();
+  for (const [index, value] of raw.sceneDrafts.entries()) {
+    const entry = record(value);
+    if (entry === null || typeof entry.slotKey !== "string" || record(entry.scene) === null) return fail("invalid_slot", `$.sceneDrafts[${index}]`);
+    if (keys.has(entry.slotKey)) return fail("duplicate_slot", `$.sceneDrafts[${index}].slotKey`);
+    keys.add(entry.slotKey);
+  }
+  const current = record(raw.sceneDrafts.find(value => record(value)?.slotKey === "current"))?.scene;
+  if (current === undefined) return fail("missing_slot", "$.sceneDrafts[slotKey=current]");
+  if (record(current)?.expressions !== undefined) {
+    const parsed = parseNarrativeBundleProposal({ worldDelta: null, currentScene: current, continuationScenes: [], terminal: { kind: "ending" } });
+    if (!parsed.ok) return fail("invalid_current_scene", "$.sceneDrafts[slotKey=current].scene");
+    const bindings = [...(Array.isArray(record(raw.worldDelta)?.consequenceBindings) ? record(raw.worldDelta)!.consequenceBindings as unknown[] : []), ...(Array.isArray(raw.consequenceBindings) ? raw.consequenceBindings : [])];
+    if (!isStoryConsequenceBindingsProposal(bindings)) return fail("invalid_bindings", "$.consequenceBindings");
+    const preview = previewNarrativeDisclosure({ scene: parsed.proposal.currentScene,
+      bindings,
+      worldState: context.worldState, storyState: context.storyState, transition: context.job.objectiveTransition,
+      source: { turnId: context.job.turnId ?? asTurnId("draft-preview"), actionId: context.job.actionId ?? "draft-preview", turnNumber: context.job.turnNumber ?? context.storyState.turnNumber },
+      currentEventIds: context.job.domainEventIds });
+    if (!preview.ok) return fail(preview.detail ?? preview.code, "$.sceneDrafts[slotKey=current].scene");
+    context = { ...context, worldState: preview.worldState, storyState: preview.storyState,
+      job: { ...context.job, objectiveTransition: preview.transition } };
+  }
   const projection = projectNarrativeDraft({ ...context, includeDeliveryReturn: raw.graph === "return_delivery" });
   if (raw.graph === "return_delivery"
     && JSON.stringify(projection.stepKeys) === JSON.stringify(projectNarrativeDraft({ ...context, includeDeliveryReturn: false }).stepKeys)) {

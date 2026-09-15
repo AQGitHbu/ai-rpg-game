@@ -63,6 +63,11 @@ import {
 import { applyEntityMutations, type EntityMutation } from "@/game/gameplay/rpg/entityWorld";
 import { approveStoryConsequenceBindings } from "./approveStoryConsequenceBindings";
 
+import type { TurnId } from "@/game/domain/events";
+import { previewSceneDisclosure } from "@/game/gameplay/rpg/ruleEngine";
+import { deriveObjectiveTransition } from "@/game/gameplay/rpg/narrativeContext";
+import { deriveStructuralEvolutionNeed } from "@/game/gameplay/rpg/worldEvolution";
+
 // ---------------------------------------------------------------------------
 // Task 4：原子审批叙事生成包。
 // 纯函数：approveWorldDelta → materializeWorldDelta → buildDescriptors →
@@ -72,6 +77,7 @@ import { approveStoryConsequenceBindings } from "./approveStoryConsequenceBindin
 // ---------------------------------------------------------------------------
 
 export type ApprovedNarrativeBundle = {
+  readonly objectiveTransition: ObjectiveTransition;
   readonly nextWorldState: WorldState;
   readonly nextStoryStatePreview: StoryState;
   readonly currentScene: NarrativeSceneState;
@@ -1002,10 +1008,50 @@ function validateCurrentSceneContent(input: {
   return null;
 }
 
+/** Only the ordered current scene may cause knowledge changes. Future slots never enter this preview. */
+export function previewNarrativeDisclosure(input: {
+  scene: BundleSceneProposal; worldState: WorldState; storyState: StoryState;
+  transition: ObjectiveTransition; source: { actionId: string; turnId: TurnId; turnNumber: number };
+  currentEventIds?: readonly import("@/game/domain/events").EventId[];
+  bindings?: import("@/game/domain/storyConsequenceBindings").StoryConsequenceBindingsProposal;
+}) {
+  const fail = (detail: string) => ({ ok: false as const, code: "bundle_invalid_scene" as const, detail });
+  let { worldState } = input;
+  const { storyState, source } = input;
+  if (!input.scene.expressions?.some(line => line.kind === "npc_line" && line.usedFactIds.length > 0
+    && line.audienceIds.some(id => id !== String(PLAYER_ENTITY_ID) && id !== line.npcId))) {
+    return { ok: true as const, worldState, storyState, scene: input.scene, drafts: [] as NarrativeEventDraft[], transition: input.transition };
+  }
+  const focus = input.transition.after;
+  const objective = focus === null ? undefined : worldState.quests.find(q => q.id === focus.questId)?.objectives[focus.objectiveIndex];
+  const focusNpcId = objective?.kind === "talk_to_npc" ? String(objective.npcId) : undefined;
+  // Bind rules for existing entities before applying the current scene. Rules
+  // involving newly minted entities are validated after delta materialization.
+  const containsNewSymbol = (value: unknown): boolean => typeof value === "string" ? value.startsWith("@new.")
+    : Array.isArray(value) ? value.some(containsNewSymbol)
+      : value !== null && typeof value === "object" ? Object.values(value).some(containsNewSymbol) : false;
+  const bindings = approveStoryConsequenceBindings({ proposal: (input.bindings ?? []).filter(binding => !containsNewSymbol(binding)),
+    worldState, storyState, symbols: sceneSymbolBindings(worldState, undefined, focusNpcId) });
+  if (!bindings.ok) return fail(`${bindings.code}:${bindings.path}`);
+  worldState = bindings.worldState;
+  const scene = resolveSceneExpressions(input.scene, worldState, undefined, objective?.kind === "talk_to_npc" ? String(objective.npcId) : undefined);
+  if (scene === null) return fail("current_scene_reference");
+  const rejection = validateBundleSceneNpcSpeech(scene, worldState, undefined,
+    presentNpcIdsAtLocation(worldState, String(worldState.currentLocationId)), input.currentEventIds ?? []);
+  if (rejection !== null) return { ok: false as const, ...rejection };
+  const consequences = previewSceneDisclosure({ worldState, storyState, expressions: sceneExpressionsOf(scene), source });
+  if (!consequences.ok) return fail(consequences.code);
+  if (consequences.drafts.length === 0) return { ...consequences, scene, transition: input.transition };
+  return { ok: true as const, worldState: consequences.worldState, storyState: consequences.storyState, scene,
+    drafts: consequences.drafts, transition: deriveObjectiveTransition({ beforeWorldState: worldState,
+      beforeStoryState: storyState, afterWorldState: consequences.worldState, afterStoryState: consequences.storyState }) };
+}
+
 export function approveNarrativeBundle(
   input: ApproveNarrativeBundleInput,
 ): ApproveNarrativeBundleResult {
-  const { proposal, worldState, storyState, transition, evolutionNeed, jobId, basedOnRevision, now } = input;
+  const { proposal, jobId, basedOnRevision, now } = input;
+  let { worldState, storyState, transition, evolutionNeed } = input;
   if (input.candidateReview !== undefined
     && (input.candidateVersion === undefined
       || input.candidateHash === undefined
@@ -1024,6 +1070,20 @@ export function approveNarrativeBundle(
   // Step 1: Parse the proposal
   const parsed = parseNarrativeBundleProposal(proposal);
   if (!parsed.ok) return { ok: false, code: "bundle_invalid_scene" };
+
+  const disclosure = previewNarrativeDisclosure({ scene: proposal.currentScene, worldState, storyState, transition,
+    bindings: [...((proposal.worldDelta as WorldDeltaProposal | null)?.consequenceBindings ?? []), ...(proposal.consequenceBindings ?? [])],
+    source: { actionId: input.eventContext?.actionId ?? String(jobId), turnId: eventContext.turnId, turnNumber: eventContext.turnNumber },
+    currentEventIds: eventContext.domainEventIds });
+  if (!disclosure.ok) return disclosure;
+  worldState = disclosure.worldState;
+  storyState = disclosure.storyState;
+  transition = disclosure.transition;
+  worldEventDrafts = disclosure.drafts;
+  if (disclosure.drafts.length > 0) evolutionNeed = deriveStructuralEvolutionNeed(worldState, storyState);
+  if (disclosure.drafts.length > 0 && evolutionNeed.kind !== "none" && proposal.worldDelta === null) {
+    return { ok: false, code: "world_delta_rejected", detail: `missing_${evolutionNeed.kind}_after_disclosure` };
+  }
 
   // Step 2: Approve worldDelta (if present)
   let previewWorldState = worldState;
@@ -1075,7 +1135,7 @@ export function approveNarrativeBundle(
     });
     previewWorldState = approvedDelta.previewWorldState;
     previewStoryState = approvedDelta.previewStoryState;
-    worldEventDrafts = approvedDelta.eventDrafts;
+    worldEventDrafts = [...worldEventDrafts, ...approvedDelta.eventDrafts];
   }
 
   const consequenceBindings = approveStoryConsequenceBindings({
@@ -1183,7 +1243,7 @@ export function approveNarrativeBundle(
       ? undefined
       : String(graph.steps[0].arrivalNpc.id);
   let resolvedCurrentScene = resolveSceneExpressions(
-    proposal.currentScene,
+    disclosure.scene,
     previewWorldState,
     approvedDelta,
     symbolFocusNpcId,
@@ -1406,6 +1466,7 @@ export function approveNarrativeBundle(
   return {
     ok: true,
     approved: {
+      objectiveTransition: descriptorTransition,
       nextWorldState: previewWorldState,
       nextStoryStatePreview: previewStoryState,
       currentScene: finalScene,

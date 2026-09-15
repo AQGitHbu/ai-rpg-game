@@ -37,6 +37,9 @@ import { deriveStructuralEvolutionNeed } from "@/game/gameplay/rpg/worldEvolutio
 import { isStoryDeliveryComplete } from "@/game/gameplay/rpg/storyDelivery";
 import { availableInvestigations } from "@/game/gameplay/rpg/investigation";
 import { projectStoryConsequences } from "@/game/application/storyConsequenceContext";
+import { previewNarrativeDisclosure } from "@/game/application/approveNarrativeBundle";
+import { parseNarrativeBundleProposal } from "@/game/domain/narrativeBundle";
+import { isStoryConsequenceBindingsProposal } from "@/game/domain/storyConsequenceBindings";
 
 // P1 live journeys may run in provider thinking mode, whose effective input
 // budget is provider-specific. Keep the compiler's bounded mode available for
@@ -252,12 +255,36 @@ function expectedBundleProjection(worldState: WorldState, storyState: StoryState
 export function buildDecisionNarrativeContextBlocks(
   input: DecisionNarrativeContextInput,
 ): readonly NarrativeContextBlock[] {
-  const { storyState, job, contentRepair } = input;
+  let { storyState, job } = input;
+  const { contentRepair } = input;
   const reviewing = input.consumer === "reviewer";
   // Prompt facts must exclusively originate from the authoritative store. The
   // legacy arrays are a compatibility read model and may never repair a
   // missing/inconsistent store projection here.
-  const worldState = { ...input.worldState, ...projectEntityStore(input.worldState.entityStore) };
+  let worldState = { ...input.worldState, ...projectEntityStore(input.worldState.entityStore) };
+  // A repair of a legal disclosure receives its resulting routing, while the
+  // frozen memory remains the original job package. Recompute from the same
+  // candidate, never from prose or a previous failed candidate's world state.
+  const object = (value: unknown): Record<string, unknown> | undefined => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+  const raw = object(input.authorDraftRevision?.draft);
+  const draftScenes = raw?.sceneDrafts;
+  const currentDraft = Array.isArray(draftScenes) ? object(draftScenes.find(entry => object(entry)?.slotKey === "current"))?.scene : undefined;
+  const candidate = input.candidateRevision?.proposal;
+  const current = candidate?.currentScene ?? currentDraft;
+  const parsed = current === undefined ? null : parseNarrativeBundleProposal({ worldDelta: null, currentScene: current, continuationScenes: [], terminal: { kind: "ending" } });
+  const topBindings = (candidate !== undefined && "consequenceBindings" in candidate ? candidate.consequenceBindings : undefined) ?? raw?.consequenceBindings ?? [];
+  const deltaBindings = object(candidate !== undefined && "worldDelta" in candidate ? candidate.worldDelta : raw?.worldDelta)?.consequenceBindings ?? [];
+  const rawBindings = Array.isArray(topBindings) && Array.isArray(deltaBindings) ? [...deltaBindings, ...topBindings] : null;
+  if (parsed?.ok && isStoryConsequenceBindingsProposal(rawBindings)) {
+    const preview = previewNarrativeDisclosure({ scene: parsed.proposal.currentScene, worldState, storyState,
+      transition: job.objectiveTransition, source: { actionId: job.actionId, turnId: job.turnId, turnNumber: job.turnNumber },
+      currentEventIds: job.domainEventIds, bindings: rawBindings });
+    if (preview.ok) {
+      worldState = preview.worldState;
+      storyState = preview.storyState;
+      job = { ...job, objectiveTransition: preview.transition };
+    }
+  }
   const entityContext = buildEntityContextProjection({
     worldState,
     storyState,
@@ -409,6 +436,12 @@ export function buildDecisionNarrativeContextBlocks(
     ? "- 本回合 worldDelta 必须为 null；不生成 beatSummary，也不输出世界增量对象。"
     : `- 若要求 worldDelta，严格使用 {\"beatSummary\":\"...\",\"newLocation\":{\"name\":\"...\",\"description\":\"...\",\"scale\":\"scene\",\"placement\":\"world\",\"connectFromLocationId\":\"现有地点 ID\"},\"newNpc\":{\"name\":\"...\",\"role\":\"...\",\"description\":\"...\",\"locationRef\":{\"kind\":\"new_location\"},\"anchors\":{\"selfConcept\":\"...\",\"values\":[\"...\"],\"speechStyle\":\"...\",\"capabilityBoundaries\":[\"...\"],\"taboos\":[]},\"goals\":[{\"horizon\":\"short\",\"description\":\"...\",\"priority\":3,\"reason\":\"...\"}],\"relationshipSeeds\":[{\"targetNpcId\":\"既有 active NPC ID\",\"stance\":\"ally|protective_of|indebted_to|rival|wary\",\"reason\":\"...\"}]},\"newItem\":null或{\"name\":\"...\",\"description\":\"...\",\"locationRef\":\"new_location\"},\"newEnemy\":null或{\"name\":\"...\",\"tier\":\"normal\",\"locationRef\":\"new_location\"},\"newFact\":null或{\"text\":\"...\",\"visibility\":\"public或npc_private（provider 也可写 private，服务端会归一化）\",\"investigationLabel\":\"可选\",\"investigationApproaches\":[{\"approachId\":\"...\",\"label\":\"...\",\"hint\":\"可选\",\"evidenceQuality\":\"clean或noisy\",\"tensionDelta\":-5到20}]},\"nextMainQuest\":{\"name\":\"...\",\"description\":\"...\",\"objectiveText\":\"...\"},\"endingPair\":null或[{\"themeKey\":\"trust\",\"name\":\"...\",\"description\":\"...\"},{\"themeKey\":\"doubt\",\"name\":\"...\",\"description\":\"...\"}]}；anchors 五个字段都必需，goals 至少 1 条且最多 4 条；relationshipSeeds 最多 4 条，每项只能包含 targetNpcId、stance、reason，targetNpcId 只能引用实体规则闭包中的既有 active NPC，stance 只能使用上述定性枚举，reason 必须非空且≤200字；不得提交 affinity、stage、evidence 或 actionId；goalId/status 由服务端生成，禁止输出。未要求字段必须为 null。`;
   const blocks: NarrativeContextBlock[] = [
+    block({
+      id: "bundle:disclosure-consequences", slot: "system_rules", title: "本场披露与后果预览",
+      authority: "rule", retention: "mandatory", priority: 1000,
+      source: { kind: "narrative_bundle_contract", refs: [String(job.jobId)] },
+      content: "current 槽可使用有序 expressions：narration={kind,beatId,text,referencedEntityIds}；npc_line={kind,npcId,audienceIds,text,emotion,answeredBeatIds,usedFactIds,usedEventIds}。实际在场 NPC 听众收到合法 usedFactIds 后才形成知识后果；公开目录或未来续接不代表本人获知。程序在编译槽位前归约本场知识、目标、Quest、reveal 和最多当前一幕推进。下列槽位是未披露或当前修订稿的预览；若你改变本场披露，必须按新后果提供完整槽位、选择及必要的 nextMainQuest/endingPair；缺少内容会沿当前候选额度给出修订依据，不发布半成品。不得用未来续接完成本场目标，终局仍等玩家选择。",
+    }),
     block({
       id: "bundle:progress-contract", slot: "system_rules", title: "推进与有限收束",
       authority: "rule", retention: "mandatory", priority: 1000,
