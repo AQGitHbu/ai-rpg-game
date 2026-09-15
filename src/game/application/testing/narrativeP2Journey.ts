@@ -112,6 +112,7 @@ export async function runNarrativeP2Journey(input: NarrativeP2JourneyInput, deps
 export function createNarrativeP2MemoryProtocol(runId: string, deps: NarrativeP2JourneyDeps) {
   const { protocolHash: _previousHash, ...base } = createNarrativeP2Protocol(runId, deps);
   const body = { ...base, protocolVersion: "narrative-p2/v3", plannedRoutes: 1,
+    policy: { ...base.policy, overviewMaxEstimatedTokens: 24_000 },
     stages: { ...base.stages, order: ["B"], admission: "independent memory diagnosis; overall P2 remains unqualified",
       topicPolicy: "up to three ordered topics per act; first eligible recall takes priority; stop on human quality failure",
       ui: "API recall on main route; UI remains separately unexecuted",

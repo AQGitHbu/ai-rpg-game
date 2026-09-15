@@ -5,7 +5,7 @@ export const DEFAULT_NARRATIVE_MEMORY_POLICY: NarrativeMemoryPolicy = {
   batchSize: 10,
   rawSoftEstimatedTokens: 24_000,
   summarySourceMaxEstimatedTokens: 24_000,
-  overviewMaxEstimatedTokens: 6_000,
+  overviewMaxEstimatedTokens: 24_000,
   promptMaxEstimatedTokens: 64_000,
 };
 

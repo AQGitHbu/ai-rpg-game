@@ -159,3 +159,17 @@ describe("prepareNarrativeMemory", () => {
     expect(source.select).toHaveBeenNthCalledWith(1, expect.objectContaining({ kind: "batch" }));
   });
 });
+
+
+it.each([[6_000, false], [24_000, true]] as const)("overview source budget %i preserves publication gate (%s)", async (budget, published) => {
+  const base = longRecord(50);
+  const current = { ...base, storyState: { ...base.storyState, history: { entries: base.storyState.history.entries.map((h, i) => i < 4 ? { ...h, text: "旧事".repeat(900) } : h) } } };
+  const source: NarrativeMemorySummarySource = { select: vi.fn(async input => ({ ok: true as const, selection: { historyIds: input.history.slice(0, 4).map(h => h.id), eventIds: [] } })) };
+  const repository: NarrativeMemorySummaryRepository = { load: async () => ({ state: null, summaryRevision: 0 }), publish: vi.fn(async () => ({ ok: true as const })) };
+  const result = await prepareNarrativeMemory({ record: current, observerId: PLAYER, job: {} as never, source, repository,
+    policy: { ...policy, overviewMaxEstimatedTokens: budget }, summaries: "enabled", signal: new AbortController().signal,
+    reserveBatchUpdate: async () => true, reserveSummaryHttpAttempt: async () => true });
+  expect(result.ok).toBe(true);
+  expect(repository.publish).toHaveBeenCalledTimes(published ? 1 : 0);
+  expect(result.ok && result.context.coveredThroughSequence).toBe(published ? 9 : -1);
+});
