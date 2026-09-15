@@ -57,6 +57,7 @@ export function compileOpeningGenerationCandidate(
     factId: asFactId(`fact_${index}`),
     key: fact.key,
     text: fact.text,
+    ...(fact.investigationLabel === undefined ? {} : { investigationLabel: fact.investigationLabel }),
     investigationApproaches: fact.investigationApproaches,
   }));
 
@@ -167,7 +168,12 @@ export function compileOpeningGenerationCandidate(
     factId: fact.factId,
     text: fact.text,
     source: "generated",
+    // Opening facts are ordinary observations in Task 1.  The presence of
+    // legacy approach metadata must not silently opt them into active
+    // investigation; provider-authored investigation facts arrive in Task 3.
+    discoveryMode: "automatic",
     discovered: knownFactIds.includes(fact.factId),
+    ...(fact.investigationLabel === undefined ? {} : { investigationLabel: fact.investigationLabel }),
     // 只复制已审批（validated）候选携带的方式；缺省/空保持自动揭示。
     ...(fact.investigationApproaches === undefined || fact.investigationApproaches.length === 0
       ? {}

@@ -9,6 +9,7 @@ import {
 } from "./entity/npcComponents";
 import type { NpcGoalProposal, NpcIdentityAnchors } from "./entity/npcComponents";
 import { parseOpeningSituation, type OpeningSituationProposal } from "./openingSituation";
+import type { StoryConsequenceBindingsProposal } from "./storyConsequenceBindings";
 
 // ---------------------------------------------------------------------------
 // Task 2：开局切片候选——AI/确定性 fallback 只产出这一份材料：
@@ -27,6 +28,8 @@ export type OpeningGenerationCandidate = {
     readonly publicFacts: readonly {
       readonly key: string;
       readonly text: string;
+      /** 显式调查绑定的安全展示标签；没有绑定时可省略。 */
+      readonly investigationLabel?: string;
       /** 复用 WorldFactEntry 的同一 InvestigationApproach 类型，编译时逐条复制。 */
       readonly investigationApproaches?: readonly InvestigationApproach[];
     }[];
@@ -85,6 +88,7 @@ export type OpeningGenerationCandidate = {
         readonly label: string;
       }[];
     };
+    readonly consequenceBindings?: StoryConsequenceBindingsProposal;
   };
 };
 
@@ -117,6 +121,13 @@ function isLocalStoryKey(value: unknown): value is string {
   return isNonEmptyString(value)
     && /^[a-z][a-z0-9_]*$/.test(value)
     && !/^(?:loc|npc|item|quest|enemy|fact|ending)_\d+$/.test(value);
+}
+
+function isConsequenceBindings(value: unknown): value is StoryConsequenceBindingsProposal {
+  return Array.isArray(value) && value.length <= 8 && value.every((entry) => {
+    if (!isRecord(entry) || typeof entry.kind !== "string") return false;
+    return ["bind_goal_resolution", "bind_investigation", "bind_talk_completion", "bind_npc_cooperation"].includes(entry.kind);
+  });
 }
 
 function parseDeliveryContract(value: unknown): StoryDeliveryContract | null {
@@ -186,18 +197,25 @@ export function parseOpeningGenerationCandidate(
   const parsedPublicFacts: {
     key: string;
     text: string;
+    investigationLabel?: string;
     investigationApproaches?: readonly InvestigationApproach[];
   }[] = [];
   for (const fact of world.publicFacts) {
     if (!isRecord(fact) || typeof fact.key !== "string" || typeof fact.text !== "string") {
       return { ok: false, code: "INVALID_FACT" };
     }
+    const investigationLabel = fact.investigationLabel === undefined
+      ? undefined
+      : typeof fact.investigationLabel === "string" && fact.investigationLabel.trim() !== ""
+        ? fact.investigationLabel
+        : null;
+    if (investigationLabel === null) return { ok: false, code: "INVALID_FACT" };
     if (fact.investigationApproaches !== undefined) {
       const approaches = parseInvestigationApproaches(fact.investigationApproaches);
       if (approaches === null) return { ok: false, code: "INVALID_FACT" };
-      parsedPublicFacts.push({ key: fact.key, text: fact.text, investigationApproaches: approaches });
+      parsedPublicFacts.push({ key: fact.key, text: fact.text, ...(investigationLabel === undefined ? {} : { investigationLabel }), investigationApproaches: approaches });
     } else {
-      parsedPublicFacts.push({ key: fact.key, text: fact.text });
+      parsedPublicFacts.push({ key: fact.key, text: fact.text, ...(investigationLabel === undefined ? {} : { investigationLabel }) });
     }
   }
 
@@ -339,6 +357,9 @@ export function parseOpeningGenerationCandidate(
     return { ok: false, code: "INVALID_OPENING_VARIATION_PROFILE" };
   }
   const normalizedVariationProfile = variationProfile === null ? undefined : variationProfile;
+  if (opening.consequenceBindings !== undefined && !isConsequenceBindings(opening.consequenceBindings)) {
+    return { ok: false, code: "INVALID_CONSEQUENCE_BINDINGS" };
+  }
 
   const value: OpeningGenerationCandidate = {
     world: {
@@ -392,6 +413,7 @@ export function parseOpeningGenerationCandidate(
       },
       situation,
       ...(firstScene === undefined ? {} : { firstScene }),
+      ...(opening.consequenceBindings === undefined ? {} : { consequenceBindings: opening.consequenceBindings as StoryConsequenceBindingsProposal }),
       ...(normalizedVariationProfile === undefined ? {} : { variationProfile: normalizedVariationProfile }),
     },
   };

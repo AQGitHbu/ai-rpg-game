@@ -61,6 +61,7 @@ import {
   type StoryInteractionProposal,
 } from "@/game/domain/storyInteraction";
 import { applyEntityMutations, type EntityMutation } from "@/game/gameplay/rpg/entityWorld";
+import { approveStoryConsequenceBindings } from "./approveStoryConsequenceBindings";
 
 // ---------------------------------------------------------------------------
 // Task 4：原子审批叙事生成包。
@@ -242,6 +243,13 @@ function resolveInteractionCondition(
       const npcId = resolve(String(condition.npcId));
       if (npcId === null || activeNpc(worldState, npcId) === null) return null;
       return { ...condition, npcId: asNpcId(npcId) };
+    }
+    case "investigation_observed": {
+      const npcId = resolve(String(condition.npcId));
+      const factId = resolve(String(condition.factId));
+      if (npcId === null || factId === null || activeNpc(worldState, npcId) === null
+        || getEntity(worldState.entityStore, factId)?.core.kind !== "fact") return null;
+      return { ...condition, npcId: asNpcId(npcId), factId: asFactId(factId) };
     }
   }
 }
@@ -1069,6 +1077,21 @@ export function approveNarrativeBundle(
     previewStoryState = approvedDelta.previewStoryState;
     worldEventDrafts = approvedDelta.eventDrafts;
   }
+
+  const consequenceBindings = approveStoryConsequenceBindings({
+    proposal: [
+      ...((proposal.worldDelta === null ? undefined : (proposal.worldDelta as WorldDeltaProposal).consequenceBindings) ?? []),
+      ...(proposal.consequenceBindings ?? []),
+    ],
+    worldState: previewWorldState,
+    storyState: previewStoryState,
+    symbols: sceneSymbolBindings(previewWorldState, approvedDelta, undefined),
+  });
+  if (!consequenceBindings.ok) {
+    return { ok: false, code: "bundle_invalid_reference", detail: `${consequenceBindings.code}:${consequenceBindings.path}` };
+  }
+  previewWorldState = consequenceBindings.worldState;
+  previewStoryState = consequenceBindings.storyState;
 
   // Interaction definitions are compiled against the candidate preview, then
   // installed through the same atomic entity mutation language as all runtime

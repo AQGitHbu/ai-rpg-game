@@ -37,6 +37,7 @@ import {
   validateNpcSpeechReferences,
 } from "./npcSpeechAuthority";
 import { installStoryInteractionProposals, validateNarrativeSceneExpressions } from "./approveNarrativeBundle";
+import { approveStoryConsequenceBindings } from "./approveStoryConsequenceBindings";
 import {
   candidateReviewMatches,
   hashNarrativeCandidate,
@@ -464,8 +465,26 @@ export async function createGame(
         gameLength: input.gameLength,
         initialNarrative: narrative,
       });
-      const installed = installStoryInteractionProposals({
+      const openingSymbols = new Map<string, string>([
+        ["@new.location", "loc_0"],
+        ["@new.npc", String(OPENING_NPC_ID)],
+        ["@new.quest", "quest_0"],
+        ...(preview.worldState.items[0] === undefined ? [] : [["@new.item", String(preview.worldState.items[0].id)] as const]),
+      ]);
+      for (const [index, fact] of candidate.world.publicFacts.entries()) {
+        openingSymbols.set(fact.key, `fact_${index}`);
+      }
+      const consequenceBindings = approveStoryConsequenceBindings({
+        proposal: candidate.opening.consequenceBindings ?? [],
         worldState: preview.worldState,
+        storyState: preview.storyState,
+        symbols: openingSymbols,
+      });
+      if (!consequenceBindings.ok) {
+        return { ok: false, retryable: true, reason: { attempt, reason: "approval_rejected", detail: `${consequenceBindings.code}:${consequenceBindings.path}` } };
+      }
+      const installed = installStoryInteractionProposals({
+        worldState: consequenceBindings.worldState,
         proposals: generatedProposal.interactionProposals ?? [],
         jobId,
         focusNpcId: String(OPENING_NPC_ID),
@@ -535,7 +554,7 @@ export async function createGame(
           novelty,
           attempt: openingAttempt,
           worldState: installed.worldState,
-          storyState: preview.storyState,
+          storyState: consequenceBindings.storyState,
         },
       };
     },

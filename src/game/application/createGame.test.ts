@@ -7,6 +7,7 @@ import { asEndingId } from "@/game/domain/worldEntity";
 import { createOpeningNoveltyRecord } from "@/game/domain/openingNovelty";
 import type { NarrativeBundleSourceContext } from "./narrativeBundleSource";
 import type { NarrativeCandidateReviewer } from "./narrativeCandidateReview";
+import type { NpcEntityRecord } from "@/game/domain/entity";
 
 function createInMemoryRepo(): { repo: GameRepository; getRecord: () => GameRecord | null } {
   let record: GameRecord | null = null;
@@ -87,6 +88,55 @@ function structuralSignature(record: GameRecord) {
 }
 
 describe("createGame", () => {
+  it("installs opening goal bindings before the initial save", async () => {
+    const { repo, getRecord } = createInMemoryRepo();
+    const fixture = createFixtureOpeningSource();
+    const source = {
+      async generate(input: Parameters<typeof fixture.generate>[0]) {
+        const result = await fixture.generate(input);
+        if (!result.ok || result.kind !== "opening") return result;
+        const candidate = result.proposal.opening;
+        const opening = candidate.opening;
+        return {
+          ...result,
+          proposal: {
+            ...result.proposal,
+            opening: {
+              ...candidate,
+              world: {
+                ...candidate.world,
+              },
+              opening: {
+                ...opening,
+                consequenceBindings: [{
+                  kind: "bind_goal_resolution" as const,
+                  npcRef: "npc_0",
+                  goalOrdinal: 0,
+                  resolution: {
+                    completeWhen: [{ kind: "knows_fact" as const, actorId: "player_0", factId: "fact_inn" }],
+                    blockWhen: [{ kind: "knows_fact" as const, actorId: "npc_0", factId: "fact_inn" }],
+                  },
+                }],
+              },
+            },
+          },
+        };
+      },
+    };
+
+    const result = await createGame(
+      { gameId: asGameId("opening-investigation-binding"), gameType: "wuxia", gameLength: "short", seed: "opening-investigation-binding" },
+      { repository: repo, source, now: () => "2026-01-01" },
+    );
+
+    expect(result.ok).toBe(true);
+    const npc = getRecord()?.worldState.entityStore.records.find((record) => record.core.id === "npc_0");
+    expect(npc?.core.kind === "npc" ? (npc as NpcEntityRecord).dynamicState.goals[0]?.resolution : undefined).toEqual({
+      completeWhen: [{ kind: "knows_fact", actorId: "player_0", factId: "fact_0" }],
+      blockWhen: [{ kind: "knows_fact", actorId: "npc_0", factId: "fact_0" }],
+    });
+  });
+
   it("records the published opening scene and shown choices in narrative history", async () => {
     const record = await createPersistedGame({ seed: "opening-history" });
     expect(record.storyState.history?.entries.map((entry) => entry.kind)).toEqual([

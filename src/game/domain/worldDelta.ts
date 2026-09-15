@@ -16,6 +16,7 @@ import type {
   NpcIdentityAnchors,
   NpcRelationshipSeedProposal,
 } from "./entity/npcComponents";
+import type { StoryConsequenceBindingsProposal } from "./storyConsequenceBindings";
 
 // ---------------------------------------------------------------------------
 // 故事演化状态与需求：运行时按需具象化的推进账本。
@@ -98,6 +99,7 @@ export type WorldDeltaProposal = {
   };
   readonly nextMainQuest: null | DynamicQuestProposal;
   readonly endingPair: null | readonly [DynamicEndingProposal, DynamicEndingProposal];
+  readonly consequenceBindings?: StoryConsequenceBindingsProposal;
 };
 
 /** 应用边界明确传入的关系种子可见实体闭包；不是全量世界实体列表。 */

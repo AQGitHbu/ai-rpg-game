@@ -20,7 +20,9 @@ import {
 import type { NpcInteraction, WorldState } from "@/game/domain/worldState";
 import { PLAYER_ENTITY_ID, type EnemyId, type FactId, type ItemId, type LocationId, type NpcId, type QuestId } from "@/game/domain/worldEntity";
 import type { EventId } from "@/game/domain/events";
-import type { StoryInteraction } from "@/game/domain/storyInteraction";
+import type { NpcCooperationDefinition, StoryCondition, StoryInteraction } from "@/game/domain/storyInteraction";
+import type { InvestigationApproach } from "@/game/domain/worldEntries";
+import type { NpcGoalResolution } from "@/game/domain/entity/npcComponents";
 import {
   applyRelationshipCommitment,
   applyRelationshipSignalToComponent,
@@ -76,7 +78,12 @@ export type EntityMutation =
   /** 承诺操作：只接受封闭六类操作名，且不建边（目标边必须已存在）。 */
   | { readonly kind: "apply_relationship_commitment"; readonly fromNpcId: NpcId; readonly targetId: RelationshipTargetId; readonly operation: RelationshipCommitmentOperation; readonly source: RelationshipMutationSource; readonly supportingEventId: EventId }
   | { readonly kind: "transfer_item"; readonly itemId: ItemId; readonly owner: PossessionComponent["owner"] }
-  | { readonly kind: "discover_fact"; readonly factId: FactId }
+  | {
+    readonly kind: "discover_fact";
+    readonly factId: FactId;
+    /** 仅规则层在通过主动调查方法后写入；provider/候选事件不得伪造。 */
+    readonly investigationSource?: Readonly<{ approachId: string }>;
+  }
   /**
    * 知识写入：一支只写「某 NPC 知道某 Fact」这一条 entry。
    * 载荷里没有整块组件、没有 entries 数组、没有兼容 memory——那三样都在类型层被
@@ -91,6 +98,10 @@ export type EntityMutation =
   | { readonly kind: "set_npc_lifecycle"; readonly npcId: NpcId; readonly lifecycle: "active" | "inactive" }
   /** NPC 目标只允许按状态窄更新；描述、优先级与目标集合不在运行时动作语言内。 */
   | { readonly kind: "set_npc_goal_status"; readonly npcId: NpcId; readonly goalId: string; readonly status: NpcDynamicStateComponent["goals"][number]["status"]; readonly source: Extract<RelationshipMutationSource, { readonly kind: "action" }>; readonly supportingEventId: EventId }
+  | { readonly kind: "bind_npc_goal_resolution"; readonly npcId: NpcId; readonly goalId: string; readonly resolution: NpcGoalResolution }
+  | { readonly kind: "bind_fact_investigation"; readonly factId: FactId; readonly approaches: readonly InvestigationApproach[] }
+  | { readonly kind: "bind_quest_talk_completion"; readonly questId: QuestId; readonly npcId: NpcId; readonly conditions: readonly StoryCondition[] }
+  | { readonly kind: "bind_npc_cooperation"; readonly npcId: NpcId; readonly definitions: readonly NpcCooperationDefinition[] }
   /**
    * 交互历史追加：载荷就是「存下来的那条 NpcInteraction 减去两个由实体层盖章的字段」。
    * 少写的两支正好是 `relationshipDelta` 与 `summary`（R5-2）：整批里唯一知道裁剪后真实
@@ -178,6 +189,7 @@ export type EntityMutationErrorCode =
   | "duplicate_entity_id"
   | "wrong_entity_kind"
   | "invalid_reference"
+  | "invalid_investigation_source"
   | "invalid_lifecycle_transition"
   | "structure_invalid"
   // 关系 mutation 专用：与 RelationshipPolicyErrorCode 一一映射，逐个可判别，绝不折叠成消息字符串。
@@ -209,6 +221,8 @@ export type EntityMutationErrorCode =
   | "unknown_npc_goal"
   | "invalid_npc_goal_status"
   | "illegal_npc_goal_transition"
+  | "binding_conflict"
+  | "invalid_binding"
   // met 的唯一合法取值就是 true：false / 非布尔都表达「撤销初遇」，而这条通道刻意不存在。
   // 同样不能借 structure_invalid 表达——那是「数据形状不对」，这是「这个意图没有写入语言」。
   | "invalid_npc_met_value";
@@ -690,6 +704,16 @@ function applyOne(records: readonly EntityRecord[], mutation: EntityMutation, ba
     case "discover_fact": {
       const fact = recordOfKind(records, mutation.factId, "fact");
       if (!fact.ok) return fact;
+      const discoveryMode = fact.record.fact.discoveryMode ?? "automatic";
+      if (discoveryMode === "investigation") {
+        const approachId = mutation.investigationSource?.approachId;
+        if (approachId === undefined
+          || fact.record.fact.investigationApproaches?.some((entry) => entry.approachId === approachId) !== true) {
+          return failure("invalid_investigation_source", mutation.factId);
+        }
+      } else if (mutation.investigationSource !== undefined) {
+        return failure("invalid_investigation_source", mutation.factId);
+      }
       const player = recordOfKind(records, PLAYER_ENTITY_ID, "player_character");
       if (!player.ok) return player;
       const knownFactIds = player.record.knowledge.knownFactIds.includes(mutation.factId)
@@ -817,6 +841,85 @@ function applyOne(records: readonly EntityRecord[], mutation: EntityMutation, ba
         records: replaceRecord(records, mutation.npcId, {
           ...subject.npc,
           dynamicState: { ...subject.npc.dynamicState, goals },
+        }),
+      };
+    }
+    case "bind_npc_goal_resolution": {
+      const subject = activeNpcSubject(records, mutation.npcId);
+      if (!subject.ok) return failure(subject.code, subject.entityId);
+      const goal = subject.npc.dynamicState.goals.find((entry) => entry.goalId === mutation.goalId);
+      if (goal === undefined) return failure("unknown_npc_goal", mutation.goalId);
+      if (goal.status === "completed" || goal.status === "abandoned") return failure("invalid_binding", mutation.goalId);
+      if (goal.resolution !== undefined) {
+        return JSON.stringify(goal.resolution) === JSON.stringify(mutation.resolution)
+          ? { ok: true, records }
+          : failure("binding_conflict", mutation.goalId);
+      }
+      return {
+        ok: true,
+        records: replaceRecord(records, mutation.npcId, {
+          ...subject.npc,
+          dynamicState: {
+            ...subject.npc.dynamicState,
+            goals: subject.npc.dynamicState.goals.map((entry) => entry.goalId === mutation.goalId
+              ? { ...entry, resolution: mutation.resolution }
+              : entry),
+          },
+        }),
+      };
+    }
+    case "bind_fact_investigation": {
+      const fact = recordOfKind(records, mutation.factId, "fact");
+      if (!fact.ok) return fact;
+      const existing = fact.record.fact;
+      if (existing.discovered) return failure("invalid_binding", mutation.factId);
+      if (existing.discoveryMode === "investigation") {
+        return JSON.stringify(existing.investigationApproaches ?? []) === JSON.stringify(mutation.approaches)
+          ? { ok: true, records }
+          : failure("binding_conflict", mutation.factId);
+      }
+      if (existing.investigationLabel === undefined || existing.investigationLabel.trim() === ""
+        || mutation.approaches.length < 2 || mutation.approaches.length > 3) return failure("invalid_binding", mutation.factId);
+      return {
+        ok: true,
+        records: replaceRecord(records, mutation.factId, {
+          ...fact.record,
+          fact: { ...existing, discoveryMode: "investigation", investigationApproaches: [...mutation.approaches] },
+        }),
+      };
+    }
+    case "bind_quest_talk_completion": {
+      const quest = recordOfKind(records, mutation.questId, "quest");
+      if (!quest.ok) return quest;
+      const matches = quest.record.quest.objectives
+        .map((objective, index) => ({ objective, index }))
+        .filter((entry) => entry.objective.kind === "talk_to_npc" && String(entry.objective.npcId) === String(mutation.npcId));
+      if (matches.length !== 1) return failure("invalid_binding", mutation.questId);
+      const { objective, index } = matches[0]!;
+      if (objective.kind !== "talk_to_npc") return failure("invalid_binding", mutation.questId);
+      if (objective.completionConditions !== undefined) {
+        return JSON.stringify(objective.completionConditions) === JSON.stringify(mutation.conditions)
+          ? { ok: true, records }
+          : failure("binding_conflict", mutation.questId);
+      }
+      const objectives = quest.record.quest.objectives.map((entry, entryIndex) => entryIndex === index
+        ? { ...entry, completionConditions: [...mutation.conditions] }
+        : entry);
+      return { ok: true, records: replaceRecord(records, mutation.questId, { ...quest.record, quest: { ...quest.record.quest, objectives } }) };
+    }
+    case "bind_npc_cooperation": {
+      const subject = activeNpcSubject(records, mutation.npcId);
+      if (!subject.ok) return failure(subject.code, subject.entityId);
+      if (subject.npc.cooperationDefinitions !== undefined) {
+        return JSON.stringify(subject.npc.cooperationDefinitions) === JSON.stringify(mutation.definitions)
+          ? { ok: true, records }
+          : failure("binding_conflict", mutation.npcId);
+      }
+      return {
+        ok: true,
+        records: replaceRecord(records, mutation.npcId, {
+          ...subject.npc,
+          cooperationDefinitions: [...mutation.definitions],
         }),
       };
     }

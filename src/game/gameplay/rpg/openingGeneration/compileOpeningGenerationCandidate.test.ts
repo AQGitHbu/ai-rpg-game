@@ -175,6 +175,24 @@ describe("compileOpeningGenerationCandidate", () => {
     );
   });
 
+  it("显式把开局事实标记为 automatic，不从旧调查方式元数据猜模式", () => {
+    const base = validCandidate();
+    const compiled = compile({
+      ...base,
+      world: {
+        ...base.world,
+        publicFacts: base.world.publicFacts.map((fact, index) => index === 0 ? {
+          ...fact,
+          investigationApproaches: [
+            { approachId: "look", label: "查看痕迹", evidenceQuality: "clean", tensionDelta: 0 },
+            { approachId: "ask", label: "询问掌柜", evidenceQuality: "noisy", tensionDelta: 1 },
+          ],
+        } : fact),
+      },
+    });
+    expect(compiled.worldState.worldFacts[0]?.discoveryMode).toBe("automatic");
+  });
+
   it.each(["ally", "rival"] as const)("seeds the %s relationship from the rule policy without evidence or commitments", (stance) => {
     const candidate = makeOpeningQualityCandidate();
     const compiled = compile({
@@ -326,8 +344,8 @@ describe("compileOpeningGenerationCandidate", () => {
     const { worldState } = compile();
     const facts = worldState.worldFacts;
     expect(facts).toEqual([
-      { factId: asFactId("fact_0"), text: "沈掌柜守着通往青石古道的消息。", source: "generated", discovered: true },
-      { factId: asFactId("fact_1"), text: "旧盟书库藏着一份盟誓印谱。", source: "generated", discovered: false },
+      { factId: asFactId("fact_0"), text: "沈掌柜守着通往青石古道的消息。", source: "generated", discoveryMode: "automatic", discovered: true },
+      { factId: asFactId("fact_1"), text: "旧盟书库藏着一份盟誓印谱。", source: "generated", discoveryMode: "automatic", discovered: false },
     ]);
     const npc = worldState.npcs[0]!;
     // 新契约下 memory 由 knowledge 组件重建：knownFactIds 是全部 entry，
@@ -427,13 +445,14 @@ describe("compileOpeningGenerationCandidate", () => {
         factId: asFactId("fact_0"),
         text: "沈掌柜守着通往青石古道的消息。",
         source: "generated",
+        discoveryMode: "automatic",
         discovered: true,
         investigationApproaches: [
           { approachId: "a", label: "沿痕迹追查", evidenceQuality: "clean", tensionDelta: 2 },
           { approachId: "b", label: "向摊贩打听", evidenceQuality: "noisy", tensionDelta: 4 },
         ],
       },
-      { factId: asFactId("fact_1"), text: "旧盟书库藏着一份盟誓印谱。", source: "generated", discovered: false },
+      { factId: asFactId("fact_1"), text: "旧盟书库藏着一份盟誓印谱。", source: "generated", discoveryMode: "automatic", discovered: false },
     ]);
   });
 

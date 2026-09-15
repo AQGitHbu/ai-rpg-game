@@ -330,6 +330,30 @@ function actBoundaryFixture(overrides: WorldStateFixtureOverrides = {}) {
 }
 
 describe("approveNarrativeBundle", () => {
+  it("applies decision consequence bindings to the same atomic bundle preview", () => {
+    const proposal: NarrativeBundleProposal = {
+      ...currentSceneProposal(),
+      consequenceBindings: [{
+        kind: "bind_talk_completion",
+        questRef: String(questId),
+        npcRef: String(npcDyn1),
+        conditions: [{ kind: "knows_fact", actorId: String(npcDyn1), factId: String(factTracks) }],
+      }],
+    };
+    const result = approveNarrativeBundle(baseInput({
+      proposal,
+      worldState: directTalkWorld(),
+      transition: transition(0),
+    }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const quest = result.approved.nextWorldState.quests.find((entry) => entry.id === questId)!;
+    expect(quest.objectives[0]).toMatchObject({
+      kind: "talk_to_npc",
+      completionConditions: [{ kind: "knows_fact", actorId: npcDyn1, factId: factTracks }],
+    });
+  });
+
   it("rejects a semantic pass whose candidate version or hash is stale", () => {
     const result = approveNarrativeBundle(baseInput({
       candidateVersion: 2,
