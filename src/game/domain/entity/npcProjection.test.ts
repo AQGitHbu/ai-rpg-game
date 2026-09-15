@@ -30,7 +30,7 @@ import {
  */
 type NpcRecordKeys = keyof NpcEntityRecord;
 type LayeredRecordLock = NpcRecordKeys extends
-  "core" | "identity" | "position" | "dynamicState" | "knowledge" | "relationships" | "history" | "interactions"
+  "core" | "identity" | "position" | "dynamicState" | "knowledge" | "relationships" | "history" | "interactions" | "cooperationDefinitions"
   ? ("" extends NpcRecordKeys ? false : true)
   : false;
 const layeredRecord: LayeredRecordLock = true;

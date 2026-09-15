@@ -263,7 +263,7 @@ function tamperStore(store: unknown, mutate: (records: TamperRecord[]) => void):
 describe("entity store identity 与结构", () => {
   it("accepts one record per kind with globally unique IDs", () => {
     const store = createEntityStore(fullStoreRecords());
-    expect(store.version).toBe(3);
+    expect(store.version).toBe(4);
     expect(store.records).toHaveLength(9);
   });
 
@@ -281,7 +281,7 @@ describe("entity store identity 与结构", () => {
 
   it("reports duplicate_entity_id as a structure issue without throwing", () => {
     const issues = validateEntityStoreStructure(
-      untrusted({ version: 3, records: [...fullStoreRecords(), itemRecord("npc_0")] }),
+      untrusted({ version: 4, records: [...fullStoreRecords(), itemRecord("npc_0")] }),
     );
     expect(issues.some((issue) => issue.code === "duplicate_entity_id")).toBe(true);
   });
@@ -354,6 +354,23 @@ describe("entity store identity 与结构", () => {
     ).toContain("kind_id_mismatch");
   });
 
+  it("rejects malformed explicit investigation definitions at the store boundary", () => {
+    const store = untrusted(createEntityStore(fullStoreRecords()));
+    const issues = tamperStore(store, (records) => {
+      const fact = records.find((record) => record.core.kind === "fact")!;
+      fact.fact = {
+        ...(fact.fact as object),
+        discoveryMode: "investigation",
+        investigationLabel: "",
+        investigationApproaches: [
+          { approachId: "", label: "", evidenceQuality: "clean", tensionDelta: 0 },
+          { approachId: "same", label: "询问", evidenceQuality: "noisy", tensionDelta: 1 },
+        ],
+      };
+    });
+    expect(issueCodesOf(issues)).toContain("invalid_component_value");
+  });
+
   it("拒绝指向自身的NPC关系边", () => {
     const store = untrusted(createEntityStore(fullStoreRecords()));
     const issues = tamperStore(store, (records) => {
@@ -364,17 +381,17 @@ describe("entity store identity 与结构", () => {
   });
 
   it("requires exactly one player record", () => {
-    const withoutPlayer = untrusted({ version: 3, records: fullStoreRecords().filter((r) => r.core.kind !== "player_character") });
+    const withoutPlayer = untrusted({ version: 4, records: fullStoreRecords().filter((r) => r.core.kind !== "player_character") });
     expect(issueCodesOf(withoutPlayer)).toContain("missing_player");
 
-    const withTwo = untrusted({ version: 3, records: [...fullStoreRecords(), playerRecord({ id: asLocationId("dup_player") })] });
+    const withTwo = untrusted({ version: 4, records: [...fullStoreRecords(), playerRecord({ id: asLocationId("dup_player") })] });
     const codes = issueCodesOf(withTwo);
     expect(codes).toContain("multiple_players");
   });
 
-  it("rejects a store version other than 3", () => {
-    expect(issueCodesOf(untrusted({ version: 1, records: fullStoreRecords() }))).toContain("invalid_store_version");
-    expect(issueCodesOf(untrusted({ version: 4, records: fullStoreRecords() }))).toContain("invalid_store_version");
+  it("rejects a store version other than 4", () => {
+    expect(issueCodesOf(untrusted({ version: 3, records: fullStoreRecords() }))).toContain("invalid_store_version");
+    expect(issueCodesOf(untrusted({ version: 5, records: fullStoreRecords() }))).toContain("invalid_store_version");
   });
 });
 
@@ -566,7 +583,7 @@ describe("entity store 读取与序列化", () => {
   });
 
   it("parseEntityStore reports the same issues and yields no store", () => {
-    const result = parseEntityStore({ version: 3, records: "not-an-array" });
+    const result = parseEntityStore({ version: 4, records: "not-an-array" });
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.issues.length).toBeGreaterThan(0);

@@ -14,6 +14,7 @@ import type { NarrativeEmotion } from "./narrative";
 import type { DialogueAct, StructuredDialogueTopic } from "./action";
 import type { TownRuntimeState } from "./townState";
 import type { EventId } from "./events";
+import type { StoryCondition } from "./storyInteraction";
 
 export type PlayerState = {
   readonly name: string;
@@ -96,6 +97,10 @@ export type InvestigationApproach = {
   readonly evidenceQuality: "clean" | "noisy";
   /** 本方式声明的额外张力，合法范围 -5..20；越界由生成审批校验层拒绝。 */
   readonly tensionDelta: number;
+  /** 只有显式调查动作满足的前提；每次执行时由规则重新评估。 */
+  readonly requirements?: readonly import("./storyInteraction").StoryCondition[];
+  /** 真实在场且 active 的见证 NPC；空数组表示不要求见证者。 */
+  readonly witnessNpcIds?: readonly NpcId[];
 };
 
 export type WorldFactEntry = {
@@ -103,16 +108,18 @@ export type WorldFactEntry = {
   readonly text: string;
   readonly source: FactSource;
   readonly discovered: boolean;
+  /** 未声明时按 automatic 解释；新生产事实必须显式写出该模式。 */
+  readonly discoveryMode?: "automatic" | "investigation";
   readonly locationId?: LocationId;
   /** 未发现事实在任务/调查入口中使用的安全提示，不等于事实正文。 */
   readonly investigationLabel?: string;
-  /** 已审批的调查方式（2–3 条）；缺省 = 无选项，事实按自动揭示处理。 */
+  /** 已审批的调查方式（2–3 条）；仅显式 investigation 事实消费，缺省模式仍按 automatic 处理。 */
   readonly investigationApproaches?: readonly InvestigationApproach[];
 };
 
 export type QuestObjective =
   | { readonly kind: "visit_location"; readonly locationId: LocationId }
-  | { readonly kind: "talk_to_npc"; readonly npcId: NpcId }
+  | { readonly kind: "talk_to_npc"; readonly npcId: NpcId; readonly completionConditions?: readonly StoryCondition[] }
   | { readonly kind: "obtain_item"; readonly itemId: ItemId; /** 规则批准的 NPC 对话赠予；缺省为场景拾取。 */ readonly giftFromNpcId?: NpcId }
   | { readonly kind: "discover_fact"; readonly factId: FactId }
   | { readonly kind: "defeat_enemy"; readonly enemyId: EnemyId };

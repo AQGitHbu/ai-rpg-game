@@ -7,7 +7,8 @@ export type StoryCondition =
   | Readonly<{ kind: "has_item"; itemId: ItemId; ownerId: EntityId }>
   | Readonly<{ kind: "knows_fact"; actorId: EntityId; factId: FactId }>
   | Readonly<{ kind: "promise_status"; npcId: NpcId; promiseId: string; status: "open" | "fulfilled" | "broken" | "released" }>
-  | Readonly<{ kind: "goal_status"; npcId: NpcId; goalId: string; status: "active" | "blocked" | "completed" | "abandoned" }>;
+  | Readonly<{ kind: "goal_status"; npcId: NpcId; goalId: string; status: "active" | "blocked" | "completed" | "abandoned" }>
+  | Readonly<{ kind: "investigation_observed"; npcId: NpcId; factId: FactId; evidenceQuality: "clean" | "noisy" }>;
 
 export const STORY_INTERACTION_OPERATIONS = [
   "promise_confidentiality",
@@ -21,6 +22,14 @@ export type ConfidentialityTerms = Readonly<{
   protectedFactIds: readonly FactId[];
   allowedAudienceIds: readonly EntityId[];
   fulfillment: Readonly<{ kind: "story_delivery" }>;
+}>;
+
+/** A server-installed, bounded permission set for evidence-dependent NPC cooperation. */
+export type NpcCooperationDefinition = Readonly<{
+  operation: "request_introduction" | "request_verification";
+  requirements: readonly StoryCondition[];
+  allowedFactIds: readonly FactId[];
+  allowedAudienceIds: readonly EntityId[];
 }>;
 
 export type StoryInteraction = Readonly<{
@@ -48,7 +57,7 @@ export type StoryInteractionProposalParseResult =
   | Readonly<{ ok: false; code: StoryConditionValidationCode; path: string }>;
 
 type UnknownRecord = Record<string, unknown>;
-const CONDITION_KINDS = ["has_item", "knows_fact", "promise_status", "goal_status"] as const;
+const CONDITION_KINDS = ["has_item", "knows_fact", "promise_status", "goal_status", "investigation_observed"] as const;
 const PROMISE_STATUSES = ["open", "fulfilled", "broken", "released"] as const;
 const GOAL_STATUSES = ["active", "blocked", "completed", "abandoned"] as const;
 
@@ -80,6 +89,10 @@ export function parseStoryCondition(value: unknown): StoryCondition | null {
       ? { kind: "promise_status", npcId: value.npcId as NpcId, promiseId: value.promiseId, status: value.status as "open" | "fulfilled" | "broken" | "released" } : null;
     case "goal_status": return exactKeys(value, ["kind", "npcId", "goalId", "status"]) && nonEmptyString(value.npcId) && nonEmptyString(value.goalId) && GOAL_STATUSES.includes(value.status as typeof GOAL_STATUSES[number])
       ? { kind: "goal_status", npcId: value.npcId as NpcId, goalId: value.goalId, status: value.status as "active" | "blocked" | "completed" | "abandoned" } : null;
+    case "investigation_observed": return exactKeys(value, ["kind", "npcId", "factId", "evidenceQuality"])
+      && nonEmptyString(value.npcId) && nonEmptyString(value.factId)
+      && (value.evidenceQuality === "clean" || value.evidenceQuality === "noisy")
+      ? { kind: "investigation_observed", npcId: value.npcId as NpcId, factId: value.factId as FactId, evidenceQuality: value.evidenceQuality } : null;
   }
   return null;
 }
@@ -135,6 +148,32 @@ export function parseStoryInteractionProposal(
   if (!parsed.ok) return parsed;
   const { id: _id, ...proposal } = parsed.value;
   return { ok: true, value: { ...proposal, proposalKey } };
+}
+
+/** Strict parser for server-installed cooperation permissions. */
+export function parseNpcCooperationDefinition(value: unknown): NpcCooperationDefinition | null {
+  if (!isRecord(value) || !exactKeys(value, ["operation", "requirements", "allowedFactIds", "allowedAudienceIds"])) return null;
+  if (value.operation !== "request_introduction" && value.operation !== "request_verification") return null;
+  if (!Array.isArray(value.requirements) || value.requirements.length === 0 || value.requirements.length > 4) return null;
+  if (value.requirements.some((condition) => parseStoryCondition(condition) === null)) return null;
+  if (!stringArray(value.allowedFactIds) || value.allowedFactIds.length === 0) return null;
+  if (!stringArray(value.allowedAudienceIds) || value.allowedAudienceIds.length === 0) return null;
+  if (new Set(value.allowedFactIds).size !== value.allowedFactIds.length
+    || new Set(value.allowedAudienceIds).size !== value.allowedAudienceIds.length) return null;
+  return {
+    operation: value.operation,
+    requirements: value.requirements.map((condition) => parseStoryCondition(condition)!).filter((condition): condition is StoryCondition => condition !== null),
+    allowedFactIds: value.allowedFactIds as FactId[],
+    allowedAudienceIds: value.allowedAudienceIds as EntityId[],
+  };
+}
+
+export function parseNpcCooperationDefinitions(value: unknown): readonly NpcCooperationDefinition[] | null {
+  if (!Array.isArray(value) || value.length > 2) return null;
+  const parsed = value.map(parseNpcCooperationDefinition);
+  if (parsed.some((definition) => definition === null)) return null;
+  const definitions = parsed as NpcCooperationDefinition[];
+  return new Set(definitions.map((definition) => definition.operation)).size === definitions.length ? definitions : null;
 }
 
 export type StoryInteractionTargetId = PlayerEntityId | NpcId;

@@ -130,6 +130,28 @@ function itemPossession(ws: WorldState, itemId: ItemEntry["id"]): PossessionComp
   return record.possession;
 }
 
+describe("P3 consequence binding mutations", () => {
+  it("installs an investigation binding atomically and is idempotent only for the same definition", () => {
+    const current = world({
+      worldFacts: [{ ...FACT_1_ENTRY, discoveryMode: "automatic", investigationLabel: "查验古井", investigationApproaches: undefined }],
+    });
+    const approaches = [
+      { approachId: "clean", label: "逐页查验", evidenceQuality: "clean" as const, tensionDelta: 0 },
+      { approachId: "noisy", label: "仓促翻阅", evidenceQuality: "noisy" as const, tensionDelta: 1 },
+    ];
+    const first = applyEntityMutations(current, [{ kind: "bind_fact_investigation", factId: FACT_1, approaches }]);
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    const fact = getEntity(first.worldState.entityStore, FACT_1);
+    expect(fact?.core.kind === "fact" ? (fact as Extract<EntityRecord, { core: { kind: "fact" } }>).fact : undefined)
+      .toMatchObject({ discoveryMode: "investigation", investigationLabel: "查验古井" });
+    const same = applyEntityMutations(first.worldState, [{ kind: "bind_fact_investigation", factId: FACT_1, approaches }]);
+    expect(same.ok).toBe(true);
+    const changed = applyEntityMutations(first.worldState, [{ kind: "bind_fact_investigation", factId: FACT_1, approaches: [{ ...approaches[0]!, label: "改写方法" }, approaches[1]!] }]);
+    expect(changed).toMatchObject({ ok: false, code: "binding_conflict" });
+  });
+});
+
 function npcRecord(ws: WorldState, npcId: NpcEntry["id"]) {
   const record = entitiesOfKind(ws.entityStore, "npc").find((r) => r.core.id === npcId);
   if (record === undefined) throw new Error(`missing npc ${npcId}`);
@@ -348,6 +370,40 @@ describe("applyEntityMutations — 物品归属", () => {
 });
 
 describe("applyEntityMutations — NPC 记忆、事实、任务与敌人", () => {
+  it("investigation fact cannot be discovered through a direct mutation without its method source", () => {
+    const fact: WorldFactEntry = {
+      ...FACT_1_ENTRY,
+      discoveryMode: "investigation",
+      investigationLabel: "查验密道痕迹",
+      investigationApproaches: [
+        { approachId: "quiet", label: "安静查验", evidenceQuality: "clean", tensionDelta: 1 },
+        { approachId: "loud", label: "公开翻查", evidenceQuality: "noisy", tensionDelta: 4 },
+      ],
+    };
+    const result = applyEntityMutations(world({ worldFacts: [fact] }), [{ kind: "discover_fact", factId: FACT_1 }]);
+    expect(result).toEqual({ ok: false, code: "invalid_investigation_source", entityId: FACT_1 });
+  });
+
+  it("investigation mutation accepts only an approved approach id", () => {
+    const fact: WorldFactEntry = {
+      ...FACT_1_ENTRY,
+      discoveryMode: "investigation",
+      investigationLabel: "查验密道痕迹",
+      investigationApproaches: [
+        { approachId: "quiet", label: "安静查验", evidenceQuality: "clean", tensionDelta: 1 },
+        { approachId: "loud", label: "公开翻查", evidenceQuality: "noisy", tensionDelta: 4 },
+      ],
+    };
+    const invalid = applyEntityMutations(world({ worldFacts: [fact] }), [{
+      kind: "discover_fact", factId: FACT_1, investigationSource: { approachId: "forged" },
+    }]);
+    expect(invalid).toEqual({ ok: false, code: "invalid_investigation_source", entityId: FACT_1 });
+    const valid = applyEntityMutations(world({ worldFacts: [fact] }), [{
+      kind: "discover_fact", factId: FACT_1, investigationSource: { approachId: "quiet" },
+    }]);
+    expect(valid.ok).toBe(true);
+  });
+
   it("discover_fact 幂等：重复发现不改变 store", () => {
     const once = okApply(world(), [{ kind: "discover_fact", factId: FACT_1 }]);
     const twice = okApply(once, [{ kind: "discover_fact", factId: FACT_1 }]);
@@ -1912,6 +1968,6 @@ describe("NPC 组件与历史写入通道唯一性", () => {
         return /\bdynamicState\s*[:,}]/.test(body.slice(entry.at, next === undefined ? body.length : next.at));
       })
       .map((entry) => entry.name);
-    expect(writers.sort()).toEqual(["set_npc_emotion", "set_npc_goal_status", "set_npc_met"]);
+    expect(writers.sort()).toEqual(["bind_npc_goal_resolution", "set_npc_emotion", "set_npc_goal_status", "set_npc_met"]);
   });
 });

@@ -11,7 +11,7 @@ import type {
   NpcIdentityAnchors, NpcKnowledgeComponent, NpcKnowledgeDisclosure, NpcKnowledgeEntry,
   NpcKnowledgeSource, NpcRelationshipComponent,
 } from "./npcComponents";
-import type { StoryInteraction } from "../storyInteraction";
+import type { NpcCooperationDefinition, StoryInteraction } from "../storyInteraction";
 
 // ---------------------------------------------------------------------------
 // NPC 分层组件 ↔ legacy NpcEntry 的唯一投影通道（Plan 3 / Task 2）。
@@ -43,6 +43,7 @@ export type NpcImportedLayers = Readonly<{
   relationships: NpcRelationshipComponent;
   history: NpcHistoryComponent;
   interactions?: readonly StoryInteraction[];
+  cooperationDefinitions?: readonly NpcCooperationDefinition[];
 }>;
 
 // ---------------------------------------------------------------------------

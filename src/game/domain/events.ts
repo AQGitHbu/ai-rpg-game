@@ -306,6 +306,15 @@ export type NpcRelationshipChangedPayload = Readonly<{
   readonly signal: RelationshipSignal;
 }>;
 
+export type NpcGoalStatusChangedPayload = Readonly<{
+  readonly type: "npc_goal_status_changed";
+  readonly npcId: NpcId;
+  readonly goalId: string;
+  readonly from: "active" | "blocked";
+  readonly to: "active" | "blocked" | "completed" | "abandoned";
+  readonly evidenceEventIds: readonly EventId[];
+}>;
+
 export type StoryInteractionResolvedPayload = Readonly<{
   readonly type: "story_interaction_resolved";
   readonly interactionId: string;
@@ -354,6 +363,7 @@ export type NarrativeEventPayload =
   | NpcInteractionRecordedPayload
   | NpcKnowledgeChangedPayload
   | NpcRelationshipChangedPayload
+  | NpcGoalStatusChangedPayload
   | StoryInteractionResolvedPayload;
 
 // ---------------------------------------------------------------------------
@@ -437,6 +447,7 @@ const PAYLOAD_TYPE_KEYS: ReadonlySet<string> = new Set<NarrativeEventPayload["ty
   "npc_interaction_recorded",
   "npc_knowledge_changed",
   "npc_relationship_changed",
+  "npc_goal_status_changed",
   "story_interaction_resolved",
 ]);
 

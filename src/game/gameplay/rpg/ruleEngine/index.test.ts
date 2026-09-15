@@ -8,7 +8,7 @@ import {
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { asLocationId, asNpcId, asGenerationId, asEnemyId, asQuestId, asFactId, type GenerationMetadata, type QuestId, type EndingId, type FactId } from "@/game/domain/worldEntity";
 import { asTurnId } from "@/game/domain/events";
-import type { NpcEntityRecord } from "@/game/domain/entity";
+import { createEntityStore, getEntity, projectEntityStore, type NpcEntityRecord } from "@/game/domain/entity";
 import { makeCommittedEvent } from "@/game/domain/testing/committedEventFactory";
 import {
   createWorldStateFixtureWith,
@@ -54,6 +54,39 @@ describe("ruleEngine facade", () => {
       expect(result.resolvedEvent.status).toBe("success");
       expect(result.resolvedEvent.eventKind).toBe("travel");
     }
+  });
+
+  it("reconciles a witnessed investigation goal in the same real rule result", () => {
+    const witness: NpcEntry = {
+      id: asNpcId("npc_witness_goal"), name: "见证人", role: "记录者", description: "", locationId: LOC_1.id,
+      isCompanion: false, tags: [], met: true,
+      memory: { npcId: asNpcId("npc_witness_goal"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: ["守住账册"] },
+    };
+    const fact: import("@/game/domain/worldEntries").WorldFactEntry = {
+      factId: asFactId("fact_goal_record"), text: "账册记载了失踪者的来路", source: "generated", discovered: false,
+      discoveryMode: "investigation", locationId: LOC_1.id, investigationLabel: "查验账册",
+      investigationApproaches: [
+        { approachId: "clean", label: "逐页查验", evidenceQuality: "clean", tensionDelta: 0, witnessNpcIds: [witness.id] },
+        { approachId: "noisy", label: "仓促翻阅", evidenceQuality: "noisy", tensionDelta: 1 },
+      ],
+    };
+    const base = makeWorld({ npcs: [witness], worldFacts: [fact] });
+    const record = getEntity(base.entityStore, witness.id);
+    if (record?.core.kind !== "npc") throw new Error("missing witness");
+    const npc = record as NpcEntityRecord;
+    const store = createEntityStore(base.entityStore.records.map((entry) => entry.core.id === witness.id
+      ? { ...npc, dynamicState: { ...npc.dynamicState, goals: [{ ...npc.dynamicState.goals[0]!, resolution: {
+        completeWhen: [{ kind: "investigation_observed", npcId: witness.id, factId: fact.factId, evidenceQuality: "clean" }],
+        blockWhen: [{ kind: "investigation_observed", npcId: witness.id, factId: fact.factId, evidenceQuality: "noisy" }],
+      } }] } }
+      : entry));
+    const prepared = { ...base, entityStore: store, ...projectEntityStore(store) };
+    const result = resolveTurn(prepared, ss, { type: "investigate", factId: fact.factId, approachId: "clean" }, "goal_investigation", 0, asTurnId("goal:turn"), "fixed_choice", deps);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const nextNpc = getEntity(result.resolution.nextWorldState.entityStore, witness.id);
+    expect(nextNpc?.core.kind === "npc" ? (nextNpc as NpcEntityRecord).dynamicState.goals[0]?.status : undefined).toBe("completed");
+    expect(result.resolution.domainEvents.some((event) => event.payload.type === "npc_goal_status_changed")).toBe(true);
   });
 
   it("returns failure for unknown location", () => {

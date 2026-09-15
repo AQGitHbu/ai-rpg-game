@@ -7,6 +7,7 @@ import { PLAYER_ENTITY_ID, type FactId, type NpcId, type PlayerEntityId } from "
 import type { WorldState } from "@/game/domain/worldState";
 import type { ResolveDeps, ResolveResult } from "../ruleEngine/resolveByType";
 import type { StoryCondition, StoryInteraction } from "@/game/domain/storyInteraction";
+import { canRevealFactWithoutInvestigation } from "@/game/gameplay/rpg/investigation";
 
 function npcOf(worldState: WorldState, npcId: NpcId): NpcEntityRecord | undefined {
   const record = getEntity(worldState.entityStore, npcId);
@@ -73,6 +74,27 @@ export function evaluateStoryCondition(worldState: WorldState, condition: StoryC
       return commitmentStatus(worldState, String(condition.npcId), condition.promiseId) === condition.status;
     case "goal_status":
       return goalStatus(worldState, String(condition.npcId), condition.goalId) === condition.status;
+    case "investigation_observed": {
+      const discoveries = new Map<string, { readonly factId: string; readonly evidenceQuality: "clean" | "noisy" }>();
+      for (const event of worldState.eventLedger) {
+        if (event.payload.type === "fact_discovered" && event.payload.evidenceQuality !== undefined) {
+          discoveries.set(String(event.eventId), { factId: String(event.payload.factId), evidenceQuality: event.payload.evidenceQuality });
+        }
+      }
+      return worldState.eventLedger.some((event) => {
+        if (event.payload.type === "fact_discovered") {
+          return String(event.payload.factId) === String(condition.factId)
+            && event.payload.evidenceQuality === condition.evidenceQuality
+            && (event.payload.witnessNpcIds ?? []).some((npcId) => String(npcId) === String(condition.npcId));
+        }
+        if (event.payload.type !== "story_interaction_resolved" || event.payload.operation !== "share_known_fact") return false;
+        if (!(event.payload.audienceIds ?? []).some((audienceId) => String(audienceId) === String(condition.npcId))) return false;
+        return event.payload.evidenceEventIds.some((sourceEventId) => {
+          const source = discoveries.get(String(sourceEventId));
+          return source !== undefined && source.factId === String(condition.factId) && source.evidenceQuality === condition.evidenceQuality;
+        });
+      });
+    }
   }
 }
 
@@ -86,6 +108,19 @@ function interactionFor(worldState: WorldState, action: TalkAction): StoryIntera
   return npc?.interactions?.find((entry) => entry.id === action.interactionId);
 }
 
+function cooperationDefinitionFor(
+  npc: NpcEntityRecord,
+  operation: StoryInteraction["operation"],
+) {
+  if (operation !== "request_introduction" && operation !== "request_verification") return undefined;
+  return npc.cooperationDefinitions?.find((definition) => definition.operation === operation);
+}
+
+function subsetOf(values: readonly string[], allowed: readonly string[]): boolean {
+  const permitted = new Set(allowed.map(String));
+  return values.every((value) => permitted.has(String(value)));
+}
+
 function knownFacts(worldState: WorldState, npcId: NpcId, factIds: readonly FactId[]): boolean {
   return factIds.every((factId) => knowsFact(worldState, String(npcId), String(factId)));
 }
@@ -96,6 +131,8 @@ function canDiscloseFactToAudience(
   factId: FactId,
   audienceId: EntityId,
 ): boolean {
+  const fact = worldState.worldFacts.find((entry) => entry.factId === factId);
+  if (fact === undefined || !canRevealFactWithoutInvestigation({ worldState, factId })) return false;
   const npc = npcOf(worldState, npcId);
   if (npc === undefined) return false;
   return canNpcDiscloseFact(npc, factId, audienceId, worldState.eventLedger);
@@ -221,6 +258,19 @@ export function resolveStoryInteraction(
   }
   if (interaction.condition.some((entry) => !evaluateStoryCondition(worldState, entry))) {
     return blockedResult(worldState, "当前条件不满足。");
+  }
+  const cooperation = cooperationDefinitionFor(npc, interaction.operation);
+  if ((interaction.operation === "request_introduction" || interaction.operation === "request_verification")
+    && npc.cooperationDefinitions !== undefined) {
+    if (cooperation === undefined) return { ok: false, feedback: "该角色未批准这类合作。" };
+    if (cooperation.requirements.some((entry) => !evaluateStoryCondition(worldState, entry))) {
+      return blockedResult(worldState, "合作前提尚未满足。");
+    }
+    if (interaction.factIds.length === 0 || interaction.audienceIds.length === 0
+      || !subsetOf(interaction.factIds, cooperation.allowedFactIds)
+      || !subsetOf(interaction.audienceIds, cooperation.allowedAudienceIds)) {
+      return { ok: false, feedback: "合作范围不在角色批准的边界内。" };
+    }
   }
   if (!interaction.factIds.every((factId) => entityExists(worldState, factId))) {
     return { ok: false, feedback: "互动引用了未知事实。" };

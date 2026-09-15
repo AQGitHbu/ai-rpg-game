@@ -195,7 +195,7 @@ function tamperRecord(
     mutate(copy as Record<string, unknown>);
     return copy as typeof record;
   });
-  return { version: 3, records };
+  return { version: 4, records };
 }
 
 function inactiveNpcRecord(id: string, order: number, createdAtTurn: number): EntityStore["records"][number] {
@@ -220,7 +220,7 @@ function inactiveNpcRecord(id: string, order: number, createdAtTurn: number): En
 }
 
 function withRecords(store: EntityStore, extra: EntityStore["records"]): EntityStore {
-  return { version: 3, records: [...store.records, ...extra] };
+  return { version: 4, records: [...store.records, ...extra] };
 }
 
 /** 强类型取 record：嵌套判别式不收窄联合，组件字段只能经 entitiesOfKind 读取。 */
@@ -559,6 +559,39 @@ describe("entity 兼容投影：legacy → store → legacy", () => {
 });
 
 describe("entity 兼容投影：非法输入返回稳定 issue", () => {
+  it("requires explicit investigation facts to be safe, scene-bound and witness-referential", () => {
+    const approaches = [
+      { approachId: "look", label: "查看痕迹", evidenceQuality: "clean" as const, tensionDelta: 0 },
+      { approachId: "ask", label: "询问在场者", evidenceQuality: "noisy" as const, tensionDelta: 1, witnessNpcIds: [NPC_0] },
+    ];
+    const valid = compile(baseProjection({
+      worldFacts: [fact("fact_1", {
+        locationId: LOC_0,
+        discoveryMode: "investigation",
+        investigationLabel: "现场查验",
+        investigationApproaches: approaches,
+      }), fact("fact_2", { locationId: LOC_1 })],
+    }));
+    expect(valid.records.find((record) => record.core.id === asFactId("fact_1"))).toBeDefined();
+    expect(codesOf(validateEntityReferences(tamperRecord(valid, asFactId("fact_1"), (record) => {
+      record.fact = { ...(record.fact as object), investigationApproaches: [
+        ...approaches.slice(0, 1),
+        { ...approaches[1]!, witnessNpcIds: [asNpcId("npc_missing")] },
+      ] };
+    })))).toContain("unknown_investigation_witness_ref");
+
+    const town = baseProjection({
+      locations: BASE_LOCATIONS.map((entry) => entry.id === LOC_0 ? { ...entry, scale: "town" as const } : entry),
+      worldFacts: [fact("fact_1", {
+        locationId: LOC_0,
+        discoveryMode: "investigation",
+        investigationLabel: "现场查验",
+        investigationApproaches: approaches,
+      }), fact("fact_2", { locationId: LOC_1 })],
+    });
+    expect(() => compile(town)).toThrowError(EntityProjectionInvariantError);
+  });
+
   it("normalizes a legacy active NPC omitted from every location roster", () => {
     const projection = baseProjection({
       locations: BASE_LOCATIONS.map((entry) => ({ ...entry, npcIds: [] })),

@@ -1,6 +1,7 @@
 import type { WorldState } from "@/game/domain/worldState";
 import type { ItemId, NpcId } from "@/game/domain/worldEntity";
 import { findNpc, findLocation, findItem } from "@/game/domain/worldState";
+import { evaluateStoryCondition } from "@/game/gameplay/rpg/storyInteraction";
 
 // 内部共享规则：目标满足判定与稳定展示标签（与 ruleEngine/reconcileQuests 语义一致）。
 
@@ -15,6 +16,8 @@ export function isObjectiveSatisfied(ws: WorldState, objective: QuestObjective):
   switch (objective.kind) {
     case "visit_location": return ws.visitedLocationIds.includes(objective.locationId);
     case "talk_to_npc": {
+      if (objective.completionConditions !== undefined
+        && !objective.completionConditions.every((condition) => evaluateStoryCondition(ws, condition))) return false;
       const completed = ws.eventLedger.some((event) =>
         event.kind === "npc_dialogue_completed" && (event.payload as { npcId: NpcId }).npcId === objective.npcId);
       if (completed) return true;

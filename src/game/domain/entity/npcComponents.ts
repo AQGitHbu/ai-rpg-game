@@ -1,4 +1,4 @@
-import { parseConfidentialityTerms, type ConfidentialityTerms } from "../storyInteraction";
+import { parseConfidentialityTerms, parseStoryCondition, type ConfidentialityTerms, type StoryCondition } from "../storyInteraction";
 import { DIALOGUE_ACTS } from "../action";
 import type { StructuredDialogueTopic } from "../action";
 import { NARRATIVE_EMOTIONS } from "../narrative";
@@ -170,6 +170,13 @@ export type NpcGoal = Readonly<{
   priority: NpcGoalPriority;
   status: NpcGoalStatus;
   reason: string;
+  /** Optional P3 evidence clauses; omitted goals remain narrative guidance only. */
+  resolution?: NpcGoalResolution;
+}>;
+
+export type NpcGoalResolution = Readonly<{
+  completeWhen: readonly StoryCondition[];
+  blockWhen: readonly StoryCondition[];
 }>;
 
 /** AI 创建 NPC 时可提交的部分目标；goalId/status 始终由服务端补齐。 */
@@ -466,8 +473,8 @@ function hasExactKeys(value: UnknownRecord, required: readonly string[], allowed
   return required.every((key) => key in value);
 }
 
-function isComponent(value: unknown, keys: readonly string[]): value is UnknownRecord {
-  return isRecord(value) && hasExactKeys(value, keys, keys);
+function isComponent(value: unknown, keys: readonly string[], allowedKeys = keys): value is UnknownRecord {
+  return isRecord(value) && hasExactKeys(value, keys, allowedKeys);
 }
 
 /** 必填文本字段：非字符串或全空白都算非法值。 */
@@ -547,9 +554,20 @@ export function validateNpcIdentityAnchors(
 
 const DYNAMIC_STATE_KEYS = ["isCompanion", "met", "emotion", "goals"] as const;
 const GOAL_KEYS = ["goalId", "horizon", "description", "priority", "status", "reason"] as const;
+const GOAL_ALLOWED_KEYS = [...GOAL_KEYS, "resolution"] as const;
+
+function validGoalResolution(value: unknown): value is NpcGoalResolution {
+  if (!isRecord(value) || !hasExactKeys(value, ["completeWhen", "blockWhen"], ["completeWhen", "blockWhen"])) return false;
+  const conditions = (raw: unknown): raw is readonly StoryCondition[] => Array.isArray(raw)
+    && raw.length > 0 && raw.length <= 4 && raw.every((condition) => {
+      const parsed = parseStoryCondition(condition);
+      return parsed !== null && parsed.kind !== "goal_status";
+    });
+  return conditions(value.completeWhen) && conditions(value.blockWhen);
+}
 
 function validateGoal(issues: Issues, raw: unknown, path: string): void {
-  if (!isComponent(raw, GOAL_KEYS)) {
+  if (!isComponent(raw, GOAL_KEYS, GOAL_ALLOWED_KEYS)) {
     issues.push(issue("invalid_component_shape", path));
     return;
   }
@@ -559,6 +577,9 @@ function validateGoal(issues: Issues, raw: unknown, path: string): void {
   checkClosedSet(issues, raw.horizon, `${path}.horizon`, NPC_GOAL_HORIZONS);
   checkClosedSet(issues, raw.status, `${path}.status`, NPC_GOAL_STATUSES);
   checkNumberClosedSet(issues, raw.priority, `${path}.priority`, NPC_GOAL_PRIORITIES);
+  if (raw.resolution !== undefined && !validGoalResolution(raw.resolution)) {
+    issues.push(issue("invalid_field_value", `${path}.resolution`));
+  }
 }
 
 export function validateNpcDynamicState(

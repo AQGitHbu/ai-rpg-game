@@ -5,13 +5,14 @@ import { describe, expect, it } from "vitest";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { asQuestId } from "@/game/domain/worldEntity";
 import {
-  baseWorld, quest, withQuest, withMet, LOC_1_ID, LOC_2_ID, NPC_1_ID, NPC_2_ID, ITEM_SEAL_ID, ENEMY_WOLF_ID, withNextAct,
+  baseWorld, quest, withQuest, withMet, withInventoryItem, LOC_1_ID, LOC_2_ID, NPC_1_ID, NPC_2_ID, ITEM_SEAL_ID, ENEMY_WOLF_ID, withNextAct,
   makeNpc, withAddedNpc, withEntityProjection,
 } from "./narrativeContext.testutil";
 import type { LocationEntry, WorldState } from "@/game/domain/worldState";
 import { deriveObjectiveTransition, currentObjectiveOf } from "./deriveObjectiveTransition";
 import { objectiveLabel } from "./objectiveRules";
-import { asItemId } from "@/game/domain/worldEntity";
+import { asItemId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
+import { isObjectiveSatisfied } from "./objectiveRules";
 
 function story() {
   return createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(),
@@ -21,6 +22,16 @@ function story() {
 }
 
 describe("deriveObjectiveTransition（Task 4）", () => {
+  it("带 completionConditions 的交谈目标不被普通 met 或对白计数越过", () => {
+    const objective = {
+      kind: "talk_to_npc" as const,
+      npcId: NPC_1_ID,
+      completionConditions: [{ kind: "has_item" as const, itemId: ITEM_SEAL_ID, ownerId: PLAYER_ENTITY_ID }],
+    };
+    expect(isObjectiveSatisfied(withMet(baseWorld()), objective)).toBe(false);
+    expect(isObjectiveSatisfied(withMet(withInventoryItem(baseWorld())), objective)).toBe(true);
+  });
+
   it("authoritative 目标 = 当前幕第一个 active 主线任务的首个未完成目标", () => {
     const ws = withQuest(baseWorld(), quest([{ kind: "talk_to_npc", npcId: NPC_1_ID }]));
     expect(currentObjectiveOf(ws, story())).toEqual({

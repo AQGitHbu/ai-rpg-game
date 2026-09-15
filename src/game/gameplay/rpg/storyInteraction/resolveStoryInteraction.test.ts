@@ -10,7 +10,7 @@ import {
 import { asEventId } from "@/game/domain/events";
 import { createWorldStateFixture, emptyProjection } from "@/game/domain/testing/worldStateFixture.testutil";
 import { createEntityStore, getEntity, projectEntityStore, type EntityRecord, type NpcEntityRecord, type PlayerEntityRecord } from "@/game/domain/entity";
-import type { StoryInteraction } from "@/game/domain/storyInteraction";
+import type { NpcCooperationDefinition, StoryInteraction } from "@/game/domain/storyInteraction";
 import type { WorldState } from "@/game/domain/worldState";
 import { resolveStoryInteraction } from "./resolveStoryInteraction";
 
@@ -41,7 +41,7 @@ function interaction(overrides: Partial<StoryInteraction> = {}): StoryInteractio
   };
 }
 
-function world(definition: StoryInteraction = interaction(), options: { readonly secret?: boolean } = {}): WorldState {
+function world(definition: StoryInteraction = interaction(), options: { readonly secret?: boolean; readonly explicit?: boolean; readonly cooperationDefinitions?: readonly NpcCooperationDefinition[] } = {}): WorldState {
   const base = createWorldStateFixture({
     generation: {
       generationId: asGenerationId("gen-1"),
@@ -82,7 +82,7 @@ function world(definition: StoryInteraction = interaction(), options: { readonly
             interactionHistory: [],
             relationship: { affinity: 0 },
             emotion: "neutral",
-            goals: [],
+          goals: options.cooperationDefinitions === undefined ? [] : ["守住事实"],
           },
         },
         {
@@ -109,14 +109,24 @@ function world(definition: StoryInteraction = interaction(), options: { readonly
       inventory: [ITEM],
       worldFacts: [
         { factId: FACT, text: "信件来自旧友", source: "generated", discovered: false, locationId: LOCATION },
-        ...(options.secret ? [{ factId: SECRET_FACT, text: "信使知道渡口暗号", source: "generated" as const, discovered: false, locationId: LOCATION }] : []),
+        ...(options.secret ? [{
+          factId: SECRET_FACT, text: "信使知道渡口暗号", source: "generated" as const, discovered: false, locationId: LOCATION,
+          ...(options.explicit ? {
+            discoveryMode: "investigation" as const,
+            investigationLabel: "查验渡口记录",
+            investigationApproaches: [
+              { approachId: "look", label: "查看记录", evidenceQuality: "clean" as const, tensionDelta: 0 },
+              { approachId: "ask", label: "询问见证人", evidenceQuality: "noisy" as const, tensionDelta: 1 },
+            ],
+          } : {}),
+        }] : []),
       ],
     },
   });
   const npc = getEntity(base.entityStore, MESSENGER);
   if (npc?.core.kind !== "npc") throw new Error("missing messenger fixture");
   const store = createEntityStore(base.entityStore.records.map((record) => record.core.id === MESSENGER
-    ? { ...npc, interactions: [definition] }
+    ? { ...npc, interactions: [definition], ...(options.cooperationDefinitions === undefined ? {} : { cooperationDefinitions: options.cooperationDefinitions }) }
     : record));
   return { ...base, entityStore: store, ...projectEntityStore(store) };
 }
@@ -129,6 +139,43 @@ const deps = {
 };
 
 describe("resolveStoryInteraction", () => {
+  it("requires an installed cooperation definition in addition to the interaction condition", () => {
+    const definition: NpcCooperationDefinition = {
+      operation: "request_introduction",
+      requirements: [{ kind: "goal_status", npcId: MESSENGER, goalId: `${MESSENGER}_goal_1`, status: "active" }],
+      allowedFactIds: [FACT],
+      allowedAudienceIds: [PLAYER_ENTITY_ID, WITNESS],
+    };
+    const current = world(interaction(), { cooperationDefinitions: [definition] });
+    const result = resolveStoryInteraction(current, {
+      type: "talk", npcId: MESSENGER, interactionId: "interaction:share", dialogueAct: "ask",
+    }, deps);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.status).toBe("success");
+  });
+
+  it("blocks cooperation when the NPC goal-bound requirement is unmet and rejects undeclared operations", () => {
+    const definition: NpcCooperationDefinition = {
+      operation: "request_introduction",
+      requirements: [
+        { kind: "goal_status", npcId: MESSENGER, goalId: `${MESSENGER}_goal_1`, status: "active" },
+        { kind: "has_item", itemId: ITEM, ownerId: WITNESS },
+      ],
+      allowedFactIds: [FACT],
+      allowedAudienceIds: [PLAYER_ENTITY_ID, WITNESS],
+    };
+    const blocked = resolveStoryInteraction(world(interaction(), { cooperationDefinitions: [definition] }), {
+      type: "talk", npcId: MESSENGER, interactionId: "interaction:share", dialogueAct: "ask",
+    }, deps);
+    expect(blocked).toMatchObject({ ok: true, status: "blocked", drafts: [] });
+
+    const undeclared = world(interaction({ id: "interaction:verify", operation: "request_verification" }), { cooperationDefinitions: [definition] });
+    const rejected = resolveStoryInteraction(undeclared, {
+      type: "talk", npcId: MESSENGER, interactionId: "interaction:verify", dialogueAct: "ask",
+    }, deps);
+    expect(rejected).toMatchObject({ ok: false, feedback: "该角色未批准这类合作。" });
+  });
+
   it("fails a condition without changing state or emitting an event", () => {
     const current = world(interaction({
       id: "interaction:needs-key",
@@ -247,6 +294,18 @@ describe("resolveStoryInteraction", () => {
       dialogueAct: "ask",
     }, deps);
 
+    expect(result).toEqual({ ok: false, feedback: "角色没有足够的披露权限。" });
+  });
+
+  it("does not let a known NPC disclose an undiscovered explicit-investigation fact", () => {
+    const current = world(interaction({
+      id: "interaction:explicit-secret",
+      factIds: [SECRET_FACT],
+      audienceIds: [WITNESS],
+    }), { secret: true, explicit: true });
+    const result = resolveStoryInteraction(current, {
+      type: "talk", npcId: MESSENGER, interactionId: "interaction:explicit-secret", dialogueAct: "ask",
+    }, deps);
     expect(result).toEqual({ ok: false, feedback: "角色没有足够的披露权限。" });
   });
 

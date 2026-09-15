@@ -185,6 +185,7 @@ export function commitEventDrafts(input: {
       "npc_interaction_recorded",
       "npc_knowledge_changed",
       "npc_relationship_changed",
+      "npc_goal_status_changed",
       "story_interaction_resolved",
     ]);
     if (

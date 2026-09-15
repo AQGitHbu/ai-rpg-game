@@ -180,6 +180,11 @@ export const EVENT_POLICY = {
     defaultSalience: 65,
     summaryKeys: ["relationship_changed"],
   },
+  npc_goal_status_changed: {
+    defaultOutcome: "success" as const,
+    defaultSalience: 70,
+    summaryKeys: ["npc_goal_status_changed"],
+  },
   story_interaction_resolved: {
     defaultOutcome: "success" as const,
     defaultSalience: 60,

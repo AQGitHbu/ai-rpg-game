@@ -10,6 +10,7 @@ import type {
 import type {
   NpcDynamicStateComponent, NpcHistoryComponent, NpcKnowledgeComponent, NpcRelationshipComponent,
 } from "./npcComponents";
+import type { NpcCooperationDefinition } from "../storyInteraction";
 
 // ---------------------------------------------------------------------------
 // EntityRecord 是 8 分支判别联合：每个分支只携带该 kind 合法的组件。
@@ -33,6 +34,8 @@ export type NpcEntityRecord = Readonly<{
   history: NpcHistoryComponent;
   /** Optional for legacy-compatible NPC records; present when story choices are installed. */
   interactions?: NpcInteractionsComponent;
+  /** Optional bounded P3 cooperation permissions; absent preserves legacy NPC behavior. */
+  cooperationDefinitions?: readonly NpcCooperationDefinition[];
 }>;
 
 export type LocationEntityRecord = Readonly<{

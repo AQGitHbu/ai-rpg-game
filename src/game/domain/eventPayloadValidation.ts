@@ -10,6 +10,7 @@ const finite: Check = (value) => typeof value === "number" && Number.isFinite(va
 const oneOf = (values: readonly string[]): Check => (value) => typeof value === "string" && values.includes(value);
 const arrayOf = (check: Check): Check => (value) => Array.isArray(value) && value.every(check);
 const ids = arrayOf(id);
+const eventIds = arrayOf((value) => id(value) && typeof value === "string" && value.includes(":"));
 
 function shape(required: Readonly<Record<string, Check>>, optional: Readonly<Record<string, Check>> = {}): Check {
   return (value) => {
@@ -80,6 +81,10 @@ const PAYLOAD_CHECKS = {
   npc_interaction_recorded: shape({ type: text, npcId: id, dialogueAct: (value) => oneOf([...DIALOGUE_ACTS, "freeform"])(value) }),
   npc_knowledge_changed: shape({ type: text, npcId: id, factId: id, change: oneOf(["learned", "certainty_upgraded", "disclosure_changed"]) }),
   npc_relationship_changed: shape({ type: text, fromNpcId: id, targetId: id, signal: (value) => oneOf(RELATIONSHIP_SIGNALS)(value) }),
+  npc_goal_status_changed: shape({
+    type: text, npcId: id, goalId: id,
+    from: oneOf(["active", "blocked"]), to: oneOf(["active", "blocked", "completed", "abandoned"]), evidenceEventIds: eventIds,
+  }),
   story_interaction_resolved: shape({
     type: text, interactionId: id, npcId: id,
     operation: oneOf(["promise_confidentiality", "request_introduction", "request_verification", "share_known_fact"]),

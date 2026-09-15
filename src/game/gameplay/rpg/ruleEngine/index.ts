@@ -28,6 +28,7 @@ import { advanceStoryThreads } from "@/game/gameplay/rpg/storyThreads";
 import { reconcileConfidentialityPromises } from "@/game/gameplay/rpg/storyInteraction";
 import { unresolvedStoryThreadIds } from "@/game/domain/storyThreads";
 import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
+import { reconcileNpcGoals } from "@/game/gameplay/rpg/npcGoals";
 
 const DIALOGUE_REQUIRED_TURNS = 2;
 
@@ -220,13 +221,40 @@ export function resolveTurn(
   });
   const propagatedWs = propagated.worldState;
 
+  // NPC goal clauses consume the same ordered event identities that will be
+  // committed below. This is a non-persisting preview: the final CAS still
+  // appends every draft exactly once, while goal mutations are already part of
+  // the one rule result.
+  const goalPreview = commitEventDrafts({
+    ledger: propagatedWs.eventLedger,
+    drafts: [...resolved.drafts, ...propagated.drafts],
+    source: {
+      turnId,
+      turnNumber: storyState.turnNumber + 1,
+      committedAt: deps.now(),
+      actionId,
+    },
+    entityStore: propagatedWs.entityStore,
+  });
+  if (!goalPreview.ok) {
+    return { ok: false, code: "INVALID_RESOLUTION", feedback: `目标证据预览失败: ${goalPreview.code}` };
+  }
+  const goalReconciled = reconcileNpcGoals({
+    worldState: propagatedWs,
+    triggerEvents: goalPreview.appended,
+    actionId,
+    turnId,
+    turnNumber: storyState.turnNumber + 1,
+  });
+  const goalWorldState = goalReconciled.worldState;
+
   // Spec §13.1 固定顺序：resolve → propagate → reconcile quests → advance act/
   // derive endingAllowed → approve candidate events → update tension/progress →
   // resolve ending（最后，禁止在 endingAllowed 更新前调用）→ reconcile view。
   // 领域事件严格按 resolver → quest → ending 顺序聚合；ledger 对齐由此保证。
 
   // Step 1: 任务推进（使用传播后的 WS）
-  const dialogueStoryState = advanceDialogueSession(propagatedWs, storyState, action);
+  const dialogueStoryState = advanceDialogueSession(goalWorldState, storyState, action);
   const previousDialogueSession = storyState.narrative.dialogueSession;
   const dialogueSession = dialogueStoryState.narrative.dialogueSession;
   const dialogueEvents: NarrativeEventDraft[] = dialogueSession !== undefined
@@ -241,7 +269,7 @@ export function resolveTurn(
   // 当前会话是 talk_to_npc 是否完成的权威游标。即使本回合不是正式回应，
   // 也要持续传入；否则 ask 写入的 met=true 或随后一次移动/探索会让通用
   // objective 判定绕过两轮会话，直接完成当前 NPC 目标。
-  const quests = reconcileQuests(propagatedWs, { now: deps.now }, dialogueSession === undefined
+  const quests = reconcileQuests(goalWorldState, { now: deps.now }, dialogueSession === undefined
     ? undefined
     : {
         talkToNpcSession: {
@@ -262,6 +290,7 @@ export function resolveTurn(
   const domainEvents: NarrativeEventDraft[] = [
     ...resolved.drafts,
     ...propagated.drafts,
+    ...goalReconciled.drafts,
     ...dialogueEvents,
     ...quests.drafts,
   ];
@@ -308,7 +337,7 @@ export function resolveTurn(
     questEvents = [...questEvents, ...automatic.drafts, ...after.drafts];
   }
   const allQuestEvents = questEvents;
-  domainEvents.splice(0, domainEvents.length, ...resolved.drafts, ...propagated.drafts, ...dialogueEvents, ...allQuestEvents);
+  domainEvents.splice(0, domainEvents.length, ...resolved.drafts, ...propagated.drafts, ...goalReconciled.drafts, ...dialogueEvents, ...allQuestEvents);
 
   // Step 2: 幕推进 + storyProgress + endingAllowed 推导（§13.1 在 resolveEnding 之前）
   const progression = advanceStoryProgression(

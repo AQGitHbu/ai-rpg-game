@@ -1,5 +1,5 @@
 import { PLAYER_ENTITY_ID, asFactionId } from "../worldEntity";
-import type { EnemyId, ItemId, LocationId, NpcId } from "../worldEntity";
+import { locationScaleOf, type EnemyId, type ItemId, type LocationId, type NpcId } from "../worldEntity";
 import type {
   EnemyEntry, FactionEntry, ItemEntry, LocationEntry, NpcEntry, PlayerState, QuestEntry,
   QuestObjective, WorldFactEntry,
@@ -13,7 +13,7 @@ import type {
 import { createEntityStore, entitiesOfKind, type EntityStore } from "./entityStore";
 import { normalizeLegacyNpcEntry, projectNpcEntry } from "./npcProjection";
 import type { NpcImportedLayers } from "./npcProjection";
-import { parseStoryInteraction } from "../storyInteraction";
+import { parseNpcCooperationDefinitions, parseStoryInteraction } from "../storyInteraction";
 import {
   validateNpcDynamicState,
   validateNpcHistory,
@@ -57,7 +57,11 @@ export type EntityReferenceIssueCode =
   | "unknown_town_npc_ref"
   | "town_npc_location_mismatch"
   | "duplicate_location_order"
-  | "duplicate_owner_order";
+  | "duplicate_owner_order"
+  | "invalid_investigation_definition"
+  | "unknown_investigation_witness_ref"
+  | "invalid_cooperation_definition"
+  | "unknown_story_condition_ref";
 
 export type EntityReferenceIssue = Readonly<{
   code: EntityReferenceIssueCode;
@@ -209,6 +213,7 @@ function factEntryOf(record: FactEntityRecord): WorldFactEntry {
     text: fact.text,
     source: fact.source,
     discovered: fact.discovered,
+    ...(fact.discoveryMode === undefined ? {} : { discoveryMode: fact.discoveryMode }),
     ...(fact.locationId === undefined ? {} : { locationId: fact.locationId }),
     ...(fact.investigationLabel === undefined ? {} : { investigationLabel: fact.investigationLabel }),
     ...(fact.investigationApproaches === undefined
@@ -297,14 +302,15 @@ function previousOfKind<K extends EntityKind>(
 function validNpcCreationComponents(value: unknown): value is NpcImportedLayers {
   if (!isRecord(value)) return false;
   const keys = ["anchors", "dynamicState", "knowledge", "relationships", "history"];
-  const allowed = new Set([...keys, "interactions"]);
+  const allowed = new Set([...keys, "interactions", "cooperationDefinitions"]);
   if (Object.keys(value).some((key) => !allowed.has(key)) || keys.some((key) => !(key in value))) return false;
   return validateNpcIdentityAnchors(value.anchors).length === 0
     && validateNpcDynamicState(value.dynamicState).length === 0
     && validateNpcKnowledge(value.knowledge).length === 0
     && validateNpcRelationships(value.relationships).length === 0
     && validateNpcHistory(value.history).length === 0
-    && (!('interactions' in value) || (Array.isArray(value.interactions) && value.interactions.every((entry) => parseStoryInteraction(entry).ok)));
+    && (!('interactions' in value) || (Array.isArray(value.interactions) && value.interactions.every((entry) => parseStoryInteraction(entry).ok)))
+    && (!('cooperationDefinitions' in value) || parseNpcCooperationDefinitions(value.cooperationDefinitions) !== null);
 }
 
 function coreOf<Id extends EntityId, Kind extends EntityKind>(input: {
@@ -494,6 +500,9 @@ function compileNpcs(
       ...(previous?.interactions === undefined && layers?.interactions === undefined
         ? {}
         : { interactions: [...(previous?.interactions ?? layers?.interactions ?? [])] }),
+      ...(previous?.cooperationDefinitions === undefined && layers?.cooperationDefinitions === undefined
+        ? {}
+        : { cooperationDefinitions: [...(previous?.cooperationDefinitions ?? layers?.cooperationDefinitions ?? [])] }),
     };
   });
 }
@@ -619,6 +628,7 @@ function compileFacts(
         text: entry.text,
         source: entry.source,
         discovered: entry.discovered,
+        ...(entry.discoveryMode === undefined ? {} : { discoveryMode: entry.discoveryMode }),
         ...(entry.locationId === undefined ? {} : { locationId: entry.locationId }),
         ...(entry.investigationLabel === undefined ? {} : { investigationLabel: entry.investigationLabel }),
         ...(entry.investigationApproaches === undefined
@@ -774,6 +784,47 @@ function knownIds(store: EntityStore): KnownEntityIds {
   };
 }
 
+function conditionReferenceValid(
+  store: EntityStore,
+  condition: import("../storyInteraction").StoryCondition,
+  ownerNpcId?: string,
+): boolean {
+  const known = knownIds(store);
+  switch (condition.kind) {
+    case "has_item":
+      return known.items.has(String(condition.itemId))
+        && (String(condition.ownerId) === String(PLAYER_ENTITY_ID)
+          || known.npcs.has(String(condition.ownerId))
+          || known.locations.has(String(condition.ownerId)));
+    case "knows_fact":
+      return known.facts.has(String(condition.factId))
+        && (String(condition.actorId) === String(PLAYER_ENTITY_ID) || known.npcs.has(String(condition.actorId)));
+    case "promise_status":
+      return known.npcs.has(String(condition.npcId));
+    case "goal_status": {
+      const npc = entitiesOfKind(store, "npc").find((record) => String(record.core.id) === String(condition.npcId));
+      return npc !== undefined && npc.dynamicState.goals.some((goal) => goal.goalId === condition.goalId);
+    }
+    case "investigation_observed":
+      return known.npcs.has(String(condition.npcId)) && known.facts.has(String(condition.factId))
+        && (ownerNpcId === undefined || String(ownerNpcId) === String(condition.npcId));
+  }
+}
+
+function validateConditionReferences(
+  store: EntityStore,
+  conditions: readonly import("../storyInteraction").StoryCondition[],
+  entityId: string,
+  issues: EntityReferenceIssue[],
+  ownerNpcId?: string,
+): void {
+  for (const condition of conditions) {
+    if (!conditionReferenceValid(store, condition, ownerNpcId)) {
+      issues.push({ code: "unknown_story_condition_ref", entityId, referencedId: condition.kind });
+    }
+  }
+}
+
 function ownerKeyOf(owner: ItemOwner): string {
   if (owner.kind === "player") return `player:${owner.playerId}`;
   if (owner.kind === "location") return `location:${owner.locationId}`;
@@ -823,6 +874,26 @@ export function validateEntityReferences(store: EntityStore): readonly EntityRef
     const locationId = record.fact.locationId;
     if (locationId !== undefined && !known.locations.has(locationId)) {
       issues.push({ code: "unknown_location_ref", entityId: record.core.id, referencedId: locationId });
+    }
+    if (record.fact.discoveryMode === "investigation") {
+      const location = locationId === undefined ? undefined : locations.get(locationId);
+      const approaches = record.fact.investigationApproaches;
+      if (record.fact.investigationLabel?.trim() === undefined
+        || record.fact.investigationLabel.trim() === ""
+        || location === undefined
+        || locationScaleOf(location.location) !== "scene"
+        || approaches === undefined
+        || approaches.length < 2
+        || approaches.length > 3) {
+        issues.push({ code: "invalid_investigation_definition", entityId: record.core.id });
+      }
+      for (const approach of approaches ?? []) {
+        for (const witnessNpcId of approach.witnessNpcIds ?? []) {
+          if (!known.npcs.has(witnessNpcId)) {
+            issues.push({ code: "unknown_investigation_witness_ref", entityId: record.core.id, referencedId: witnessNpcId });
+          }
+        }
+      }
     }
   }
 
@@ -883,6 +954,40 @@ export function validateEntityReferences(store: EntityStore): readonly EntityRef
     for (const entry of record.knowledge.entries) {
       if (!known.facts.has(entry.factId)) {
         issues.push({ code: "unknown_npc_fact_ref", entityId: record.core.id, referencedId: entry.factId });
+      }
+    }
+  }
+
+  for (const record of entitiesOfKind(store, "npc")) {
+    for (const goal of record.dynamicState.goals) {
+      if (goal.resolution === undefined) continue;
+      validateConditionReferences(store, [...goal.resolution.completeWhen, ...goal.resolution.blockWhen], record.core.id, issues, record.core.id);
+    }
+    for (const definition of record.cooperationDefinitions ?? []) {
+      const hasOwnGoalClause = definition.requirements.some((condition) =>
+        condition.kind === "goal_status" && String(condition.npcId) === String(record.core.id));
+      if (!hasOwnGoalClause) {
+        issues.push({ code: "invalid_cooperation_definition", entityId: record.core.id, referencedId: definition.operation });
+      }
+      validateConditionReferences(store, definition.requirements, record.core.id, issues, record.core.id);
+      for (const factId of definition.allowedFactIds) {
+        if (!known.facts.has(String(factId))) issues.push({ code: "unknown_story_condition_ref", entityId: record.core.id, referencedId: String(factId) });
+      }
+      for (const audienceId of definition.allowedAudienceIds) {
+        if (String(audienceId) !== String(PLAYER_ENTITY_ID) && !known.npcs.has(String(audienceId))) {
+          issues.push({ code: "unknown_story_condition_ref", entityId: record.core.id, referencedId: String(audienceId) });
+        }
+      }
+    }
+    for (const interaction of record.interactions ?? []) {
+      validateConditionReferences(store, interaction.condition, record.core.id, issues, record.core.id);
+    }
+  }
+
+  for (const record of entitiesOfKind(store, "quest")) {
+    for (const objective of record.quest.objectives) {
+      if (objective.kind === "talk_to_npc" && objective.completionConditions !== undefined) {
+        validateConditionReferences(store, objective.completionConditions, record.core.id, issues);
       }
     }
   }

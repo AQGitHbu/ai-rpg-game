@@ -14,7 +14,7 @@ import {
   validateNpcRelationships,
   type NpcComponentValidationIssue,
 } from "./npcComponents";
-import { parseStoryInteraction } from "../storyInteraction";
+import { parseNpcCooperationDefinitions, parseStoryCondition, parseStoryInteraction } from "../storyInteraction";
 import { PLAYER_ENTITY_ID } from "../worldEntity";
 import { isWellFormedEventId } from "../events";
 import type { CommittedNarrativeEvent, EventId } from "../events";
@@ -27,7 +27,7 @@ import type { NpcEntityRecord } from "./entityRecord";
 // ---------------------------------------------------------------------------
 
 export type EntityStore = Readonly<{
-  version: 3;
+  version: 4;
   records: readonly EntityRecord[];
 }>;
 
@@ -88,6 +88,7 @@ const QUEST_KINDS: readonly QuestComponent["kind"][] = ["main", "side"];
 const QUEST_STATUSES: readonly QuestComponent["status"][] = ["locked", "active", "completed", "failed", "closed"];
 const QUEST_OUTCOMES: readonly QuestOutcome["kind"][] = ["advance_story", "resolve_story", "closed"];
 const EVIDENCE_QUALITIES: readonly InvestigationApproach["evidenceQuality"][] = ["clean", "noisy"];
+const DISCOVERY_MODES = ["automatic", "investigation"] as const;
 const TOWN_BUILDING_SLOT_TYPES: readonly TownBuildingSlotType[] = [
   "tavern", "blacksmith", "house", "guild", "clinic", "market",
 ];
@@ -150,6 +151,10 @@ function isRecord(value: unknown): value is UnknownRecord {
 
 function isString(value: unknown): value is string {
   return typeof value === "string";
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return isString(value) && value.trim() !== "";
 }
 
 function isBoolean(value: unknown): value is boolean {
@@ -286,6 +291,9 @@ function npcComponentIssues(record: UnknownRecord, entityId: string | undefined)
     else interactions.forEach((entry, index) => {
       if (!parseStoryInteraction(entry, `interactions[${index}]`).ok) push(`interactions[${index}]`);
     });
+  }
+  if ("cooperationDefinitions" in record && !isNpcCooperationDefinitionsValue(record.cooperationDefinitions)) {
+    push("cooperationDefinitions");
   }
   return issues;
 }
@@ -426,9 +434,19 @@ function isObjectiveValue(value: unknown): boolean {
   const kind = value.kind;
   if (!matchesEnum(kind, OBJECTIVE_KINDS)) return false;
   const idField = OBJECTIVE_ID_FIELDS[kind];
-  return component(value, ["kind", idField], kind === "obtain_item" ? ["kind", idField, "giftFromNpcId"] : ["kind", idField])
+  const allowed = kind === "obtain_item"
+    ? ["kind", idField, "giftFromNpcId"]
+    : kind === "talk_to_npc"
+      ? ["kind", idField, "completionConditions"]
+      : ["kind", idField];
+  const validCompletionConditions = kind !== "talk_to_npc" || value.completionConditions === undefined
+    || (Array.isArray(value.completionConditions) && value.completionConditions.length > 0
+      && value.completionConditions.length <= 4
+      && value.completionConditions.every((condition) => parseStoryCondition(condition) !== null));
+  return component(value, ["kind", idField], allowed)
     && isString(value[idField])
-    && (kind !== "obtain_item" || value.giftFromNpcId === undefined || (isString(value.giftFromNpcId) && value.giftFromNpcId.trim().length > 0));
+    && (kind !== "obtain_item" || value.giftFromNpcId === undefined || (isString(value.giftFromNpcId) && value.giftFromNpcId.trim().length > 0))
+    && validCompletionConditions;
 }
 
 function isOutcomeValue(value: unknown): boolean {
@@ -465,20 +483,26 @@ function isApproachValue(value: unknown): boolean {
     !component(
       value,
       ["approachId", "label", "evidenceQuality", "tensionDelta"],
-      ["approachId", "label", "hint", "evidenceQuality", "tensionDelta"],
+      ["approachId", "label", "hint", "evidenceQuality", "tensionDelta", "requirements", "witnessNpcIds"],
     )
   ) {
     return false;
   }
   return (
-    isString(value.approachId) &&
-    isString(value.label) &&
+    isNonEmptyString(value.approachId) &&
+    isNonEmptyString(value.label) &&
     matchesEnum(value.evidenceQuality, EVIDENCE_QUALITIES) &&
     isNumber(value.tensionDelta) &&
     value.tensionDelta >= MIN_INVESTIGATION_TENSION_DELTA &&
     value.tensionDelta <= MAX_INVESTIGATION_TENSION_DELTA &&
-    optionalIs(value, "hint", isString)
+    optionalIs(value, "hint", isNonEmptyString) &&
+    optionalIs(value, "requirements", (raw) => Array.isArray(raw) && raw.every((condition) => parseStoryCondition(condition) !== null)) &&
+    optionalIs(value, "witnessNpcIds", isStringArray)
   );
+}
+
+function isNpcCooperationDefinitionsValue(value: unknown): boolean {
+  return parseNpcCooperationDefinitions(value) !== null;
 }
 
 function isFactValue(value: unknown): boolean {
@@ -486,13 +510,23 @@ function isFactValue(value: unknown): boolean {
     !component(
       value,
       ["text", "source", "discovered"],
-      ["text", "source", "discovered", "locationId", "investigationLabel", "investigationApproaches"],
+      ["text", "source", "discovered", "discoveryMode", "locationId", "investigationLabel", "investigationApproaches"],
     )
   ) {
     return false;
   }
   if (!isString(value.text) || !matchesEnum(value.source, FACT_SOURCES) || !isBoolean(value.discovered)) return false;
+  if (value.discoveryMode === "investigation") {
+    if (!isNonEmptyString(value.investigationLabel)
+      || !Array.isArray(value.investigationApproaches)
+      || value.investigationApproaches.length < 2
+      || value.investigationApproaches.length > 3) return false;
+    const approachIds = value.investigationApproaches.map((approach) => isRecord(approach) ? approach.approachId : undefined);
+    if (approachIds.some((approachId) => !isNonEmptyString(approachId))
+      || new Set(approachIds).size !== approachIds.length) return false;
+  }
   return (
+    optionalIs(value, "discoveryMode", (raw) => matchesEnum(raw, DISCOVERY_MODES)) &&
     optionalIs(value, "locationId", isString) &&
     optionalIs(value, "investigationLabel", isString) &&
     optionalIs(value, "investigationApproaches", (raw) => Array.isArray(raw) && raw.every(isApproachValue))
@@ -504,7 +538,8 @@ const COMPONENT_CHECKS: Readonly<Partial<Record<EntityKind, (raw: UnknownRecord)
     && isPlayerKnowledgeValue(raw.knowledge)
     && isPositionValue(raw.position),
   npc: (raw) => isNpcIdentityValue(raw.identity) && isPositionValue(raw.position)
-    && (!('interactions' in raw) || (Array.isArray(raw.interactions) && raw.interactions.every((entry) => parseStoryInteraction(entry).ok))),
+    && (!('interactions' in raw) || (Array.isArray(raw.interactions) && raw.interactions.every((entry) => parseStoryInteraction(entry).ok)))
+    && (!('cooperationDefinitions' in raw) || isNpcCooperationDefinitionsValue(raw.cooperationDefinitions)),
   location: (raw) => isLocationValue(raw.location),
   item: (raw) => isPresentationValue(raw.presentation) && isPossessionValue(raw.possession),
   enemy: (raw) => isEnemyValue(raw.enemy) && isPositionValue(raw.position),
@@ -579,7 +614,8 @@ function validateRecord(record: unknown): readonly EntityStoreValidationIssue[] 
     .sort();
   const required = REQUIRED_COMPONENTS[kind];
   const npcShape = kind === "npc"
-    && (signatureOf(present) === signatureOf(required) || signatureOf(present) === signatureOf([...required, "interactions"]));
+    && ([required, [...required, "interactions"], [...required, "cooperationDefinitions"], [...required, "interactions", "cooperationDefinitions"]]
+      .some((shape) => signatureOf(present) === signatureOf(shape)));
   if (!npcShape && signatureOf(present) !== signatureOf(required)) {
     // 组件集合与声明 kind 不符时：整套恰好命中另一个 kind 的签名、且含本 kind 不合法的
     // 组件名，才算 kind 说错；只是缺成员（present ⊆ 本 kind 组件集）算 record shape 问题。
@@ -689,7 +725,7 @@ export function validateEntityStoreProvenance(
 export function validateEntityStoreStructure(value: unknown): readonly EntityStoreValidationIssue[] {
   if (!component(value, ["version", "records"])) return [issue("invalid_record_shape")];
   const issues: EntityStoreValidationIssue[] = [];
-  if (value.version !== 3) issues.push(issue("invalid_store_version"));
+  if (value.version !== 4) issues.push(issue("invalid_store_version"));
   if (!Array.isArray(value.records)) return [...issues, issue("invalid_record_shape")];
   const seen = new Set<string>();
   let playerCount = 0;
@@ -708,7 +744,7 @@ export function validateEntityStoreStructure(value: unknown): readonly EntitySto
 }
 
 export function createEntityStore(records: readonly EntityRecord[]): EntityStore {
-  const store: EntityStore = { version: 3, records: [...records] };
+  const store: EntityStore = { version: 4, records: [...records] };
   const [first] = validateEntityStoreStructure(store);
   if (first !== undefined) throw new EntityStoreInvariantError(first);
   return store;
@@ -717,10 +753,10 @@ export function createEntityStore(records: readonly EntityRecord[]): EntityStore
 export function parseEntityStore(value: unknown): ParseEntityStoreResult {
   const issues = validateEntityStoreStructure(value);
   if (issues.length > 0) return { ok: false, issues };
-  // 通过全量 exact-key/值域检查后，value 的形状必为 { version: 3, records: 合法 record }；
+  // 通过全量 exact-key/值域检查后，value 的形状必为 { version: 4, records: 合法 record }；
   // 这里只做公开类型收敛，不跳过任何一项校验。
   const { records } = value as Readonly<{ records: readonly EntityRecord[] }>;
-  return { ok: true, store: { version: 3, records } };
+  return { ok: true, store: { version: 4, records } };
 }
 
 export function getEntity(store: EntityStore, id: string): EntityRecord | undefined {
