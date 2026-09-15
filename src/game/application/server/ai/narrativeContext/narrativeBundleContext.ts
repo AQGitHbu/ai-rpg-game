@@ -408,6 +408,11 @@ export function buildDecisionNarrativeContextBlocks(
   const worldDeltaContract = structuralEvolutionNeed.kind === "none"
     ? "- 本回合 worldDelta 必须为 null；不生成 beatSummary，也不输出世界增量对象。"
     : `- 若要求 worldDelta，严格使用 {\"beatSummary\":\"...\",\"newLocation\":{\"name\":\"...\",\"description\":\"...\",\"scale\":\"scene\",\"placement\":\"world\",\"connectFromLocationId\":\"现有地点 ID\"},\"newNpc\":{\"name\":\"...\",\"role\":\"...\",\"description\":\"...\",\"locationRef\":{\"kind\":\"new_location\"},\"anchors\":{\"selfConcept\":\"...\",\"values\":[\"...\"],\"speechStyle\":\"...\",\"capabilityBoundaries\":[\"...\"],\"taboos\":[]},\"goals\":[{\"horizon\":\"short\",\"description\":\"...\",\"priority\":3,\"reason\":\"...\"}],\"relationshipSeeds\":[{\"targetNpcId\":\"既有 active NPC ID\",\"stance\":\"ally|protective_of|indebted_to|rival|wary\",\"reason\":\"...\"}]},\"newItem\":null或{\"name\":\"...\",\"description\":\"...\",\"locationRef\":\"new_location\"},\"newEnemy\":null或{\"name\":\"...\",\"tier\":\"normal\",\"locationRef\":\"new_location\"},\"newFact\":null或{\"text\":\"...\",\"visibility\":\"public或private\",\"investigationLabel\":\"可选\",\"investigationApproaches\":[{\"approachId\":\"...\",\"label\":\"...\",\"hint\":\"可选\",\"evidenceQuality\":\"clean或noisy\",\"tensionDelta\":-5到20}]},\"nextMainQuest\":{\"name\":\"...\",\"description\":\"...\",\"objectiveText\":\"...\"},\"endingPair\":null或[{\"themeKey\":\"trust\",\"name\":\"...\",\"description\":\"...\"},{\"themeKey\":\"doubt\",\"name\":\"...\",\"description\":\"...\"}]}；anchors 五个字段都必需，goals 至少 1 条且最多 4 条；relationshipSeeds 最多 4 条，每项只能包含 targetNpcId、stance、reason，targetNpcId 只能引用实体规则闭包中的既有 active NPC，stance 只能使用上述定性枚举，reason 必须非空且≤200字；不得提交 affinity、stage、evidence 或 actionId；goalId/status 由服务端生成，禁止输出。未要求字段必须为 null。`;
+  const p3SceneInvestigationContract = structuralEvolutionNeed.kind === "next_act"
+    && storyState.currentAct === 1
+    && worldState.generation.setup?.storyOpening.includes("consequenceBindings.bind_investigation") === true
+    ? "P3 首幕调查：本回合必须同时输出独立 scene 的 newLocation，以及 worldDelta.newFact 与 worldDelta.consequenceBindings；newFact 必须有 investigationLabel 和 2–3 条 investigationApproaches，binding 必须使用 factRef=\"@new.fact\"、discoveryMode=investigation，并逐项复制这些 methods。至少一条 witnessNpcIds=[]，至少一条 witnessNpcIds=[\"@new.npc\"]；不能只输出新地点/NPC/任务，不能用 automatic 事实或仅写 approaches 代替。"
+    : "";
   const blocks: NarrativeContextBlock[] = [
     block({
       id: "bundle:progress-contract", slot: "system_rules", title: "推进与有限收束",
@@ -574,6 +579,12 @@ export function buildDecisionNarrativeContextBlocks(
       source: { kind: "narrative_bundle_schema", refs: [] },
       content: "若 worldDelta.newFact 非 null，investigationApproaches 必须恰好包含 2–3 条合法条目；若无法提供完整列表就输出 newFact:null，绝不能输出只有 1 条或不完整的列表。若当前主线要求玩家先选择主动调查方法时，必须创建未发现、可主动调查的事实，并在 worldDelta.consequenceBindings（或顶层 consequenceBindings）提供 bind_investigation，factRef 使用 @new.fact，discoveryMode 固定为 investigation，并复制同一组 methods；不能用 automatic 事实或仅在文字中提供 approaches 代替。仅提供 investigationApproaches 不会开启调查，事实抵达时仍会按 automatic 路径揭示。",
     }),
+    ...(p3SceneInvestigationContract === "" ? [] : [block({
+      id: "bundle:p3-scene-investigation", slot: "output_contract", title: "P3 首幕调查",
+      authority: "rule", retention: "mandatory", priority: 1000,
+      source: { kind: "narrative_bundle_schema", refs: [] },
+      content: p3SceneInvestigationContract,
+    })]),
   ];
 
   if (openingHandoff !== null) {

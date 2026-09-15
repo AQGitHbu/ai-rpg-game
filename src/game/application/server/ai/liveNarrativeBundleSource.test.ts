@@ -700,6 +700,47 @@ describe("createNarrativeBundleSource", () => {
     expect(systemPrompt).not.toContain('terminal: {"kind":"ending"}');
   });
 
+  it("rejects a P3 first-act bundle without an executable scene investigation", async () => {
+    const complete = vi.fn().mockResolvedValue({
+      ok: true,
+      content: JSON.stringify(validBundleResponse),
+    });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete), allowLegacyDecisionDto: true });
+    const base = makeWorldState();
+    const worldState: WorldState = {
+      ...base,
+      generation: {
+        ...base.generation,
+        setup: {
+          characterName: "沈砚",
+          characterIdentity: "受托保管旧契的旅人",
+          characterProfile: "谨慎、守信。",
+          personalityTags: ["谨慎"],
+          worldPremise: "渡口保存一份需要核验的旧契，见证方式会影响交付。",
+          storyOpening: "第一幕推进时必须实际创建 scene 调查事实，并用 consequenceBindings.bind_investigation 激活方法。",
+          narrativeStyle: "novel",
+          contentIntensity: "normal",
+        },
+      },
+    };
+    const storyState: StoryState = {
+      ...makeStoryState(),
+      currentAct: 1,
+      evolution: { ...makeStoryState().evolution, status: "needs_next_act" },
+    };
+
+    const result = await source.generate({ worldState, storyState, job: makeJob(), kind: "decision" });
+
+    expect(result).toMatchObject({
+      ok: false,
+      repairReason: "invalid_schema",
+      repairDetail: "p3_scene_investigation_missing",
+    });
+    const prompt = (complete.mock.calls[0]![1] as readonly AiMessage[])[0]!.content as string;
+    expect(prompt).toContain("P3 首幕调查");
+    expect(prompt).toContain("worldDelta.newFact 与 worldDelta.consequenceBindings");
+  });
+
   it("把已占用实体名称交给 provider，新实体撞名会让整包被服务端拒绝", async () => {
     const complete = vi.fn().mockResolvedValue({
       ok: true,

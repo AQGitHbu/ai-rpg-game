@@ -15,6 +15,7 @@ import type { RpgAiClient } from "./rpgAiClient";
 import type { NarrativeRequestClient } from "./narrativeRequestClient";
 import type { ProviderJsonMode } from "./providerRequestOptions";
 import type { WorldState } from "@/game/domain/worldState";
+import type { WorldDeltaProposal } from "@/game/domain/worldDelta";
 import type { StoryState } from "@/game/domain/storyState";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import { buildNarrativeBundleDescriptors } from "@/game/gameplay/rpg/narrativeBundle";
@@ -329,6 +330,28 @@ type ParseOpeningBundleResult =
   | { readonly ok: true; readonly proposal: OpeningNarrativeBundleProposal }
   | { readonly ok: false; readonly reason: string };
 
+function p3FirstActInvestigationRequired(context: Extract<NarrativeBundleSourceContext, { readonly kind: "decision" }>): boolean {
+  return context.storyState.currentAct === 1
+    && context.storyState.evolution.status === "needs_next_act"
+    && context.worldState.generation.setup?.storyOpening.includes("consequenceBindings.bind_investigation") === true;
+}
+
+function hasP3FirstActInvestigation(worldDelta: WorldDeltaProposal | null): boolean {
+  if (worldDelta === null || worldDelta.newLocation === null || worldDelta.newLocation.scale !== "scene"
+    || worldDelta.newLocation.placement !== "world" || worldDelta.newFact === null || worldDelta.newNpc === null
+    || worldDelta.newNpc.locationRef.kind !== "new_location") return false;
+  const factApproaches = worldDelta.newFact.investigationApproaches;
+  if (worldDelta.newFact.investigationLabel?.trim() === "" || factApproaches === undefined
+    || factApproaches.length < 2 || factApproaches.length > 3) return false;
+  const binding = worldDelta.consequenceBindings?.find((candidate) => candidate.kind === "bind_investigation"
+    && candidate.factRef === "@new.fact" && candidate.discoveryMode === "investigation");
+  if (binding === undefined || binding.kind !== "bind_investigation" || binding.approaches.length !== factApproaches.length
+    || binding.approaches.some((approach, index) => approach.approachId !== factApproaches[index]?.approachId)) return false;
+  const hasUnwitnessed = binding.approaches.some((approach) => (approach.witnessNpcIds ?? []).length === 0);
+  const hasSceneWitness = binding.approaches.some((approach) => approach.witnessNpcIds?.includes("@new.npc") === true);
+  return hasUnwitnessed && hasSceneWitness;
+}
+
 function parseOpeningBundleProposal(value: unknown, targetActs: 3 | 5): ParseOpeningBundleResult {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return { ok: false, reason: "root_not_object" };
   const response = value as Record<string, unknown>;
@@ -537,6 +560,13 @@ export function createNarrativeBundleSource(
               ...(proposalResult.stepKey === undefined ? {} : { stepKey: proposalResult.stepKey }),
             });
             return { ...failBundle("invalid_schema", "invalid_schema", detail), rejectedDraft: parsed.value };
+          }
+          if (p3FirstActInvestigationRequired(context) && !hasP3FirstActInvestigation(parsedWorldDelta?.proposal ?? null)) {
+            logger?.warn("narrative_bundle_p3_scene_investigation_missing");
+            return {
+              ...failBundle("invalid_schema", "invalid_schema", "p3_scene_investigation_missing"),
+              rejectedDraft: parsed.value,
+            };
           }
           return { ok: true, kind: "decision", proposal: proposalResult.proposal };
         }
