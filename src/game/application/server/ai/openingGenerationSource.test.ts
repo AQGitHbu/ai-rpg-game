@@ -242,7 +242,7 @@ describe("createOpeningGenerationSource", () => {
     expect(prompt).toContain("bind_investigation");
   });
 
-  it("when setup requires active investigation, rejects an automatic-only opening for retry", async () => {
+  it("when setup requests first-act investigation, accepts an automatic town opening", async () => {
     const transport = {
       complete: async () => ({ ok: true, content: JSON.stringify(validCandidate()), latencyMs: 1 }),
     } as unknown as AiTransport;
@@ -250,7 +250,7 @@ describe("createOpeningGenerationSource", () => {
 
     await expect(source.generate({
       gameType: "wuxia", seed: "requires-active-investigation", gameLength: "short", setup: executableInvestigationSetup,
-    })).rejects.toMatchObject({ kind: "AI_RESPONSE_INVALID", phase: "opening" });
+    })).resolves.toMatchObject({ opening: { location: { scale: "town" } } });
   });
 
   it("provider-shaped opening without anchors or typed goals stays an invalid response", async () => {

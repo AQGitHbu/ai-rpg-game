@@ -28,9 +28,10 @@ describe("narrative P3 live journey protocol", () => {
 
   it("freezes an executable investigation requirement instead of a descriptive approach", () => {
     expect(NARRATIVE_P3_INPUT.storyOpening).toContain("未发现、可主动调查的事实");
+    expect(NARRATIVE_P3_INPUT.storyOpening).toContain("第一幕推进");
     expect(NARRATIVE_P3_INPUT.storyOpening).toContain("bind_investigation");
     expect(NARRATIVE_P3_INPUT.storyOpening).toContain("至少一条不需要额外见证");
-    expect(NARRATIVE_P3_INPUT.storyOpening).toContain("至少一条由开场 NPC 在场见证");
+    expect(NARRATIVE_P3_INPUT.storyOpening).toContain("至少一条由该 scene 的新 NPC 在场见证");
     expect(NARRATIVE_P3_INPUT.storyOpening).toContain("仅写 investigationApproaches 或使用 automatic 事实不满足");
   });
 

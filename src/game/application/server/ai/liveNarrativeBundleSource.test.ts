@@ -1355,9 +1355,10 @@ describe("createNarrativeBundleSource", () => {
     expect(prompt).toContain("opening.consequenceBindings");
     expect(prompt).toContain("bind_investigation");
     expect(prompt).toContain("witnessNpcIds");
+    expect(prompt).not.toContain('"consequenceBindings":[{"kind":"bind_investigation"');
   });
 
-  it("rejects an automatic-only opening when setup requires executable investigation", async () => {
+  it("accepts an automatic opening and defers investigation to first-act scene evolution", async () => {
     const opening = await createFixtureOpeningCandidateSource().generate({
       gameType: "wuxia", gameLength: "short", seed: "opening-required-investigation",
     });
@@ -1391,7 +1392,7 @@ describe("createNarrativeBundleSource", () => {
       },
     });
 
-    expect(result).toMatchObject({ ok: false, repairReason: "invalid_schema", repairDetail: "opening_required_investigation_missing" });
+    expect(result).toMatchObject({ ok: true, kind: "opening" });
   });
 
   it("preserves structurally valid opening interaction proposals and candidate bindings", async () => {

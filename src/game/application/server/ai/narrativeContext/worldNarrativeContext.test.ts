@@ -241,6 +241,8 @@ describe("worldNarrativeContext", () => {
     for (const field of ["newLocation", "newNpc", "newItem", "newEnemy", "newFact", "nextMainQuest"]) {
       expect(prompt).toContain(field);
     }
+    expect(prompt).toContain("consequenceBindings");
+    expect(prompt).toContain("独立 scene");
     expect(prompt).toContain('必须输出一个 placement="world" 的 newLocation');
     expect(prompt).toContain("这是最终幕");
     expect(prompt).toContain("实际处理中心冲突");

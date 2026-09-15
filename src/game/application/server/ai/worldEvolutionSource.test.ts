@@ -291,6 +291,47 @@ describe("parseWorldDeltaProposal", () => {
     expect(parsed?.logCategories).toEqual([]);
   });
 
+  it("保留 scene worldDelta 的 investigation consequenceBindings 及见证者", () => {
+    const parsed = parseWorldDeltaProposal({
+      beatSummary: "旧契抵达独立查验现场",
+      newLocation: {
+        name: "渡口账房",
+        description: "渡口旁可独立查验旧契的账房。",
+        scale: "scene",
+        placement: "world",
+        connectFromLocationId: "loc_a",
+      },
+      newFact: {
+        text: "旧契背面的封记曾被人拆开又重新压合。",
+        visibility: "public",
+        investigationLabel: "查验旧契封记",
+        investigationApproaches: [
+          { approachId: "quiet", label: "独自比对封痕", evidenceQuality: "clean", tensionDelta: 0 },
+          { approachId: "witnessed", label: "请在场者共同验看", evidenceQuality: "noisy", tensionDelta: 2 },
+        ],
+      },
+      consequenceBindings: [{
+        kind: "bind_investigation",
+        factRef: "@new.fact",
+        discoveryMode: "investigation",
+        approaches: [
+          { approachId: "quiet", label: "独自比对封痕", evidenceQuality: "clean", tensionDelta: 0, witnessNpcIds: [] },
+          { approachId: "witnessed", label: "请在场者共同验看", evidenceQuality: "noisy", tensionDelta: 2, witnessNpcIds: ["@new.npc"] },
+        ],
+      }],
+    });
+
+    expect(parsed?.proposal.consequenceBindings).toEqual([{
+      kind: "bind_investigation",
+      factRef: "@new.fact",
+      discoveryMode: "investigation",
+      approaches: [
+        { approachId: "quiet", label: "独自比对封痕", evidenceQuality: "clean", tensionDelta: 0, witnessNpcIds: [] },
+        { approachId: "witnessed", label: "请在场者共同验看", evidenceQuality: "noisy", tensionDelta: 2, witnessNpcIds: ["@new.npc"] },
+      ],
+    }]);
+  });
+
   it("允许调查方式复用事实中的地点或 NPC 关键词", () => {
     const parsed = parseWorldDeltaProposal({
       beatSummary: "追查黑剑客去向",
