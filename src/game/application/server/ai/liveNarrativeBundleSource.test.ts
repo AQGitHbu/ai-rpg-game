@@ -1354,6 +1354,43 @@ describe("createNarrativeBundleSource", () => {
     expect(prompt).toContain("situation.responses 或同包 interactionProposals");
   });
 
+  it("rejects an automatic-only opening when setup requires executable investigation", async () => {
+    const opening = await createFixtureOpeningCandidateSource().generate({
+      gameType: "wuxia", gameLength: "short", seed: "opening-required-investigation",
+    });
+    const complete = vi.fn().mockResolvedValue({
+      ok: true,
+      content: JSON.stringify({
+        opening,
+        currentScene: {
+          segments: [{ beatId: "opening", text: "渡口的风压过旧纸。" }],
+          npcLine: { npcId: "npc_0", text: "先把规矩说清。", emotion: "guarded", answeredBeatIds: [], usedFactIds: [], usedEventIds: [] },
+          objectiveLink: null,
+          choices: opening.opening.situation.responses.map((response) => ({ candidateId: response.key, label: response.key })),
+        },
+        continuationScenes: [],
+        terminal: { kind: "next_decision", target: { kind: "current_scene" } },
+      }),
+    });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+
+    const result = await source.generate({
+      kind: "opening",
+      jobId: asNarrativeJobId("job-opening-required-investigation"),
+      input: {
+        gameType: "wuxia", gameLength: "short", seed: "opening-required-investigation",
+        setup: {
+          characterName: "陆遥", characterIdentity: "流浪剑客", characterProfile: "谨慎守诺。",
+          personalityTags: ["谨慎"], worldPremise: "渡口保存需要核验的旧契，见证方式会影响交付。",
+          storyOpening: "请先选择查验方法。本协议要求实际创建可主动调查的事实，并用 consequenceBindings.bind_investigation 激活方法；仅写 investigationApproaches 不满足。",
+          narrativeStyle: "novel", contentIntensity: "normal",
+        },
+      },
+    });
+
+    expect(result).toMatchObject({ ok: false, repairReason: "invalid_schema", repairDetail: "opening_required_investigation_missing" });
+  });
+
   it("preserves structurally valid opening interaction proposals and candidate bindings", async () => {
     const opening = await createFixtureOpeningCandidateSource().generate({
       gameType: "wuxia", gameLength: "short", seed: "opening-interaction-source",

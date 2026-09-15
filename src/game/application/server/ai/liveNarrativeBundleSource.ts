@@ -17,12 +17,13 @@ import type { ProviderJsonMode } from "./providerRequestOptions";
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
+import type { GameSetup } from "@/game/domain/newGame";
 import { buildNarrativeBundleDescriptors } from "@/game/gameplay/rpg/narrativeBundle";
 import { resolveOpeningResponses } from "@/game/gameplay/rpg/openingGeneration";
 import type { OpeningNarrativeBundleProposal } from "../../narrativeBundleSource";
 import { compileDecisionNarrativeContext } from "./narrativeContext";
 import { parseWorldDeltaProposal } from "./liveWorldEvolutionSource";
-import { hasOnlyKnownOpeningCandidateKeys } from "./openingGenerationSource";
+import { hasExecutableInvestigation, hasOnlyKnownOpeningCandidateKeys, setupRequiresExecutableInvestigation } from "./openingGenerationSource";
 import { buildOpeningNarrativePrompt } from "./openingNarrativePrompt";
 import { compileNarrativeDraft } from "./narrativeDraftProjection";
 
@@ -329,7 +330,7 @@ type ParseOpeningBundleResult =
   | { readonly ok: true; readonly proposal: OpeningNarrativeBundleProposal }
   | { readonly ok: false; readonly reason: string };
 
-function parseOpeningBundleProposal(value: unknown, targetActs: 3 | 5): ParseOpeningBundleResult {
+function parseOpeningBundleProposal(value: unknown, targetActs: 3 | 5, setup?: GameSetup): ParseOpeningBundleResult {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return { ok: false, reason: "root_not_object" };
   const response = value as Record<string, unknown>;
   const allowedResponseKeys = new Set(["opening", "interactionProposals", "npcOutwardProposals", "currentScene", "continuationScenes", "terminal"]);
@@ -338,6 +339,9 @@ function parseOpeningBundleProposal(value: unknown, targetActs: 3 | 5): ParseOpe
   const raw = normalizeOpeningCandidateShape(value, targetActs) as Record<string, unknown>;
   const opening = parseOpeningGenerationCandidate(raw.opening);
   if (!opening.ok) return { ok: false, reason: `opening_${opening.code}` };
+  if (setupRequiresExecutableInvestigation(setup) && !hasExecutableInvestigation(opening.value)) {
+    return { ok: false, reason: "opening_required_investigation_missing" };
+  }
   const narrative = parseNarrativeBundleProposal({
     worldDelta: null,
     interactionProposals: response.interactionProposals,
@@ -540,7 +544,7 @@ export function createNarrativeBundleSource(
           }
           return { ok: true, kind: "decision", proposal: proposalResult.proposal };
         }
-        const openingResult = parseOpeningBundleProposal(parsed.value, context.input.gameLength === "medium" ? 5 : 3);
+        const openingResult = parseOpeningBundleProposal(parsed.value, context.input.gameLength === "medium" ? 5 : 3, context.input.setup);
         if (!openingResult.ok) {
           logger?.warn(`narrative_bundle_invalid_opening_schema_${openingResult.reason}`);
           return failBundle("invalid_schema", "invalid_schema", openingResult.reason);

@@ -39,11 +39,11 @@ function hasOnlyKeysInArray(value: unknown, allowedKeys: readonly string[]): boo
   return !Array.isArray(value) || value.every((entry) => hasOnlyKeys(entry, allowedKeys));
 }
 
-function setupRequiresExecutableInvestigation(setup: GameSetup | undefined): boolean {
+export function setupRequiresExecutableInvestigation(setup: GameSetup | undefined): boolean {
   return setup?.storyOpening.includes("consequenceBindings.bind_investigation") === true;
 }
 
-function hasExecutableInvestigation(candidate: OpeningGenerationCandidate): boolean {
+export function hasExecutableInvestigation(candidate: OpeningGenerationCandidate): boolean {
   const knownFactKeys = new Set(candidate.opening.npc.knownFactKeys);
   return candidate.world.publicFacts.some((fact) => {
     const methods = fact.investigationApproaches;
