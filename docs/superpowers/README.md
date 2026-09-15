@@ -25,3 +25,4 @@
 - [P2 独立真实记忆诊断](reports/2026-09-15-narrative-p2-memory-diagnostic.md)：摘要选择契约失配的实际请求、未发布证据及未覆盖边界。
 
 - [P2 摘要契约修复与恢复验证](reports/2026-09-15-narrative-p2-summary-contract.md)：固定真实来源上的两批发布、原话恢复、严格回放及概览源预算边界。
+- [P2 三项收尾证据](reports/2026-09-15-narrative-p2-closeout.md)：有限概览容量、同源摘要对照和实际 UI 接续；区分运行结果与质量收益。
