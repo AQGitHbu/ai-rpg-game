@@ -4,6 +4,7 @@ import type { ApprovedEventCandidate } from "./approveCandidateEvents";
 import type { ProposedEffect } from "@/game/domain/candidateEvent";
 import { applyEntityMutations, EntityMutationInvariantError } from "@/game/gameplay/rpg/entityWorld";
 import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
+import { canRevealFactWithoutInvestigation } from "@/game/gameplay/rpg/investigation";
 
 // ---------------------------------------------------------------------------
 // 纯候选事件编译（Spec §11.2 / Task 19）
@@ -29,7 +30,7 @@ export type CompileCandidateEventResult = {
   readonly dropReason?: CompileCandidateEventDropReason;
 };
 
-export type CompileCandidateEventDropReason = "stale_effect_kind";
+export type CompileCandidateEventDropReason = "stale_effect_kind" | "investigation_required";
 
 export function compileCandidateEvent(
   worldState: WorldState,
@@ -94,6 +95,9 @@ function applyEffect(
   };
   switch (effect.kind) {
     case "npc_reveals_fact": {
+      if (!canRevealFactWithoutInvestigation({ worldState: ws, factId: effect.factId })) {
+        return { dropReason: "investigation_required" };
+      }
       const draft: NarrativeEventDraft = {
         eventKey: `fact_discovered:${effect.factId}`,
         episodeKey: "turn",

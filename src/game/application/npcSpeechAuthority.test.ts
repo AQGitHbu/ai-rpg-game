@@ -24,6 +24,14 @@ const FACT_PUBLIC = asFactId("fact_public");
 const FACT_SECRET = asFactId("fact_secret");
 const FACT_ORPHAN = asFactId("fact_orphan");
 
+function isFactRecord(record: EntityRecord): record is Extract<EntityRecord, { readonly core: { readonly kind: "fact" } }> {
+  return record.core.kind === "fact";
+}
+
+function isNpcRecord(record: EntityRecord): record is NpcEntityRecord {
+  return record.core.kind === "npc";
+}
+
 const ANCHORS: NpcIdentityAnchors = {
   selfConcept: "守夜人",
   values: ["守诺", "克制"],
@@ -133,7 +141,7 @@ function records(): readonly EntityRecord[] {
 
 function authority(): NpcSpeechAuthority {
   return buildNpcSpeechAuthority({
-    store: { version: 3, records: records() },
+    store: { version: 4, records: records() },
     speakerNpcId: NPC_A,
     sceneVisibleFactIds: [FACT_PUBLIC, FACT_PUBLIC, FACT_SECRET],
     targetContext: { targetId: PLAYER_ENTITY_ID, interactionEventIds: [asEventId("evt:test:action_2:2")] },
@@ -164,6 +172,29 @@ describe("NpcSpeechAuthority", () => {
     expect(JSON.stringify(result)).not.toContain("守夜人隐瞒了旧案");
   });
 
+  it("does not authorize an undiscovered explicit-investigation fact even if the NPC knows it", () => {
+    const store = {
+      version: 4 as const,
+      records: records().map((record) => {
+        if (isFactRecord(record) && record.core.id === FACT_SECRET) {
+          return { ...record, fact: { ...record.fact, discovered: false, discoveryMode: "investigation" as const } };
+        }
+        if (isNpcRecord(record) && record.core.id === NPC_A) {
+          return { ...record, knowledge: { ...record.knowledge, entries: record.knowledge.entries.map((entry) => entry.factId === FACT_SECRET ? { ...entry, disclosure: "public" as const } : entry) } };
+        }
+        return record;
+      }),
+    };
+    const result = buildNpcSpeechAuthority({
+      store,
+      speakerNpcId: NPC_A,
+      sceneVisibleFactIds: [FACT_SECRET],
+      targetContext: { targetId: PLAYER_ENTITY_ID },
+    });
+    expect(result?.allowedFactIds).not.toContain(FACT_SECRET);
+    expect(result?.allowedFactCards).not.toContainEqual(expect.objectContaining({ factId: FACT_SECRET }));
+  });
+
   it("keeps stable ordering and removes duplicate fact and interaction IDs", () => {
     const first = authority();
     const second = authority();
@@ -178,7 +209,7 @@ describe("NpcSpeechAuthority", () => {
 
   it("does not read a legacy memory block because the input is the entity store", () => {
     const result = buildNpcSpeechAuthority({
-    store: { version: 3, records: records() },
+    store: { version: 4, records: records() },
       speakerNpcId: NPC_A,
       sceneVisibleFactIds: [FACT_PUBLIC],
     })!;
@@ -189,7 +220,7 @@ describe("NpcSpeechAuthority", () => {
 
   it("crops relations and evidence to an explicitly requested NPC target", () => {
     const result = buildNpcSpeechAuthority({
-    store: { version: 3, records: records() },
+    store: { version: 4, records: records() },
       speakerNpcId: NPC_A,
       sceneVisibleFactIds: [FACT_PUBLIC],
       targetContext: { targetId: NPC_B },
@@ -202,7 +233,7 @@ describe("NpcSpeechAuthority", () => {
 
   it("returns no relation or evidence when target is absent", () => {
     const result = buildNpcSpeechAuthority({
-      store: { version: 3, records: records() },
+      store: { version: 4, records: records() },
       speakerNpcId: NPC_A,
       sceneVisibleFactIds: [FACT_PUBLIC],
     })!;
@@ -219,7 +250,7 @@ describe("NpcSpeechAuthority", () => {
       relationships: { outgoing: [edge(unknownTarget), edge(NPC_B), edge(PLAYER_ENTITY_ID)] },
     };
     const result = buildNpcSpeechAuthority({
-    store: { version: 3, records: records().map((record) => record.core.id === NPC_A ? speaker : record) },
+    store: { version: 4, records: records().map((record) => record.core.id === NPC_A ? speaker : record) },
       speakerNpcId: NPC_A,
       sceneVisibleFactIds: [FACT_PUBLIC],
       targetContext: { targetId: unknownTarget },
@@ -238,7 +269,7 @@ describe("NpcSpeechAuthority", () => {
       },
     };
     const result = buildNpcSpeechAuthority({
-    store: { version: 3, records: records().map((record) => record.core.id === NPC_A ? speaker : record) },
+    store: { version: 4, records: records().map((record) => record.core.id === NPC_A ? speaker : record) },
       speakerNpcId: NPC_A,
       sceneVisibleFactIds: [FACT_PUBLIC],
       targetContext: { targetId: PLAYER_ENTITY_ID },
@@ -250,13 +281,13 @@ describe("NpcSpeechAuthority", () => {
   it("keeps empty history empty and returns null for an unknown speaker", () => {
     const speaker = { ...npcRecord(), history: { interactions: [] } };
     const result = buildNpcSpeechAuthority({
-    store: { version: 3, records: records().map((record) => record.core.id === NPC_A ? speaker : record) },
+    store: { version: 4, records: records().map((record) => record.core.id === NPC_A ? speaker : record) },
       speakerNpcId: NPC_A,
       sceneVisibleFactIds: [FACT_PUBLIC],
     })!;
     expect(result.recentInteractions).toEqual([]);
     expect(buildNpcSpeechAuthority({
-    store: { version: 3, records: records() },
+    store: { version: 4, records: records() },
       speakerNpcId: asNpcId("npc_missing"),
       sceneVisibleFactIds: [],
     })).toBeNull();
@@ -273,7 +304,7 @@ describe("NpcSpeechAuthority", () => {
       },
     };
     const result = buildNpcSpeechAuthority({
-      store: { version: 3, records: records().map((record) => record.core.id === NPC_A ? speaker : record) },
+      store: { version: 4, records: records().map((record) => record.core.id === NPC_A ? speaker : record) },
       speakerNpcId: NPC_A,
       sceneVisibleFactIds: [FACT_PUBLIC, FACT_ORPHAN, asFactId("fact_scene_unknown")],
       targetContext: { targetId: PLAYER_ENTITY_ID },
@@ -306,7 +337,7 @@ describe("NpcSpeechAuthority", () => {
       targetIds: [PLAYER_ENTITY_ID],
     });
     const result = buildNpcSpeechAuthority({
-    store: { version: 3, records: records() },
+    store: { version: 4, records: records() },
       speakerNpcId: NPC_A,
       sceneVisibleFactIds: [FACT_PUBLIC],
       eventLedger: [validInteraction, unrelatedEvent],
@@ -334,7 +365,7 @@ describe("NpcSpeechAuthority", () => {
       targetIds: [PLAYER_ENTITY_ID],
     });
     const authority = buildNpcSpeechAuthority({
-      store: { version: 3, records: records() },
+      store: { version: 4, records: records() },
       speakerNpcId: NPC_A,
       sceneVisibleFactIds: [FACT_PUBLIC],
       eventLedger: [unrelatedEvent],
@@ -352,7 +383,7 @@ describe("NpcSpeechAuthority", () => {
 
   it("rejects a private disclosure and invalid evidence before creating an outward projection", () => {
     const rejectedFact = authorizeNpcDeliberationOutward({
-      store: { version: 3, records: records() },
+      store: { version: 4, records: records() },
       speakerNpcId: NPC_A,
       sceneVisibleFactIds: [FACT_PUBLIC, FACT_SECRET],
       targetContext: { targetId: PLAYER_ENTITY_ID },
@@ -367,7 +398,7 @@ describe("NpcSpeechAuthority", () => {
     expect(rejectedFact).toEqual({ ok: false, code: "invalid_fact_disclosure" });
 
     const rejectedEvidence = authorizeNpcDeliberationOutward({
-      store: { version: 3, records: records() },
+      store: { version: 4, records: records() },
       speakerNpcId: NPC_A,
       sceneVisibleFactIds: [FACT_PUBLIC],
       targetContext: { targetId: PLAYER_ENTITY_ID },
@@ -384,7 +415,7 @@ describe("NpcSpeechAuthority", () => {
 
   it("returns only approved outward fields and never forwards private context or goals", () => {
     const result = authorizeNpcDeliberationOutward({
-      store: { version: 3, records: records() },
+      store: { version: 4, records: records() },
       speakerNpcId: NPC_A,
       sceneVisibleFactIds: [FACT_PUBLIC],
       targetContext: { targetId: PLAYER_ENTITY_ID },
@@ -415,7 +446,7 @@ describe("NpcSpeechAuthority", () => {
 
   it("does not let an interaction proposal bypass audience-specific disclosure authority", () => {
     const result = authorizeNpcDeliberationOutward({
-      store: { version: 3, records: records() },
+      store: { version: 4, records: records() },
       speakerNpcId: NPC_A,
       sceneVisibleFactIds: [FACT_PUBLIC, FACT_SECRET],
       targetContext: { targetId: PLAYER_ENTITY_ID },
@@ -443,7 +474,7 @@ describe("NpcSpeechAuthority", () => {
 
   it("rejects goal references that are not current goals of the deliberating NPC", () => {
     const result = authorizeNpcDeliberationOutward({
-      store: { version: 3, records: records() },
+      store: { version: 4, records: records() },
       speakerNpcId: NPC_A,
       sceneVisibleFactIds: [FACT_PUBLIC],
       targetContext: { targetId: PLAYER_ENTITY_ID },
@@ -461,7 +492,7 @@ describe("NpcSpeechAuthority", () => {
 
   it("applies current-goal ownership checks to nested interaction proposals", () => {
     const result = authorizeNpcDeliberationOutward({
-      store: { version: 3, records: records() },
+      store: { version: 4, records: records() },
       speakerNpcId: NPC_A,
       sceneVisibleFactIds: [FACT_PUBLIC],
       targetContext: { targetId: PLAYER_ENTITY_ID },
@@ -489,7 +520,7 @@ describe("NpcSpeechAuthority", () => {
 
   it("keeps verification and fact-sharing operation requirements at the NPC boundary", () => {
     const result = authorizeNpcDeliberationOutward({
-      store: { version: 3, records: records() },
+      store: { version: 4, records: records() },
       speakerNpcId: NPC_A,
       sceneVisibleFactIds: [FACT_PUBLIC],
       targetContext: { targetId: PLAYER_ENTITY_ID },
@@ -534,7 +565,7 @@ it("accepts the diagnostic npc_met companion evidence through deliberation and s
     dynamicState: { ...original.dynamicState, goals: proposal.goalIds.map((goalId: string) => ({ ...original.dynamicState.goals[0]!, goalId })) },
     history: { interactions: [{ ...interaction(actionId, 1), eventId: talked.eventId }] },
   };
-  const store = { version: 3 as const, records: [...records().filter(record => record.core.id !== NPC_A), speaker] };
+  const store = { version: 4 as const, records: [...records().filter(record => record.core.id !== NPC_A), speaker] };
   const input = { store, speakerNpcId: npcId, sceneVisibleFactIds: [FACT_PUBLIC],
     eventLedger: [met, talked], targetContext: { targetId: PLAYER_ENTITY_ID }, proposal };
   expect(authorizeNpcDeliberationOutward(input).ok).toBe(true);
@@ -550,7 +581,7 @@ it("only accepts explicit current events with ledger proof and NPC participation
   const event = makeCommittedEvent({ type: "npc_met", npcId: NPC_A }, {
     eventId: asEventId("current:npc_met:npc_a"), actorIds: [PLAYER_ENTITY_ID], targetIds: [NPC_A],
   });
-  const input = { store: { version: 3 as const, records: records() }, speakerNpcId: NPC_A, sceneVisibleFactIds: [],
+  const input = { store: { version: 4 as const, records: records() }, speakerNpcId: NPC_A, sceneVisibleFactIds: [],
     targetContext: { targetId: PLAYER_ENTITY_ID, currentEventIds: [event.eventId] } };
   expect(buildNpcSpeechAuthority({ ...input, eventLedger: [event] })?.allowedEventIds).toContain(event.eventId);
   expect(buildNpcSpeechAuthority(input)?.allowedEventIds).not.toContain(event.eventId);
@@ -569,7 +600,7 @@ describe("committed confidentiality disclosure boundary", () => {
       description: "relationship.promise.confidentiality", source: { kind: "action", actionId: "pledge_action", turnNumber: 1 },
       confidentiality: { protectedFactIds: [FACT_SECRET], allowedAudienceIds: [PLAYER_ENTITY_ID, NPC_A], fulfillment: { kind: "story_delivery" } },
     }] }] } };
-    return { store: { version: 3 as const, records: records().map(record => record.core.id === NPC_A ? pledged : record) },
+    return { store: { version: 4 as const, records: records().map(record => record.core.id === NPC_A ? pledged : record) },
       speakerNpcId: NPC_A, sceneVisibleFactIds: [FACT_PUBLIC], targetContext: { targetId: PLAYER_ENTITY_ID }, eventLedger: [pledgeEvent] };
   }
   const proposal = { response: "offer_condition" as const, evidenceEventIds: [], discloseFactIds: [], interactionProposals: [{

@@ -5,6 +5,7 @@ import { isExpiredCandidate } from "@/game/domain/candidateEvent";
 import { budgetAllowsExpansion, consumeExpansion } from "@/game/domain/storyBudget";
 import type { NarrativeEventDraft } from "@/game/domain/events";
 import { asFactId } from "@/game/domain/worldEntity";
+import { canRevealFactWithoutInvestigation } from "@/game/gameplay/rpg/investigation";
 
 // ---------------------------------------------------------------------------
 // 纯候选事件审批（Spec §11.2 / Task 19）
@@ -216,7 +217,12 @@ function validateCandidateEntities(
     switch (effect.kind) {
       case "npc_reveals_fact":
         if (!ws.npcs.some((n) => n.id === effect.npcId)) return "entity_missing";
-        if (!ws.worldFacts.some((f) => f.factId === effect.factId)) return "entity_missing";
+        {
+          const fact = ws.worldFacts.find((entry) => entry.factId === effect.factId);
+          if (fact === undefined) return "entity_missing";
+          if (fact.discovered) return "fact_already_discovered";
+          if (!canRevealFactWithoutInvestigation({ worldState: ws, factId: effect.factId })) return "investigation_required";
+        }
         break;
       case "hostile_force_acts":
         if (!ws.locations.some((l) => l.id === effect.locationId)) return "entity_missing";

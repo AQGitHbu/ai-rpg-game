@@ -80,14 +80,23 @@ export function emptyProjection(input: Readonly<{
 
 /** 缺省值固定：createdAtTurn=0、battle={status:"idle"}、endings=[]、ending=null、eventLedger=[]。 */
 export function createWorldStateFixture(input: WorldStateFixtureInput): WorldState {
+  const normalizedProjection: EntityCompatibilityProjection = {
+    ...input.projection,
+    // Test fixtures represent newly constructed ordinary facts.  Explicit
+    // investigation remains opt-in and must be stated by the fixture itself.
+    worldFacts: input.projection.worldFacts.map((fact) => ({
+      ...fact,
+      discoveryMode: fact.discoveryMode ?? "automatic",
+    })),
+  };
   const npcCreationComponentsById = npcCreationComponentsForProjection(
-    input.projection,
+    normalizedProjection,
     input.previousStore,
     input.createdAtTurn ?? 0,
   );
   return createWorldStateFromProjection({
     generation: input.generation,
-    projection: input.projection,
+    projection: normalizedProjection,
     createdAtTurn: input.createdAtTurn ?? 0,
     ...(input.previousStore === undefined ? {} : { previousStore: input.previousStore }),
     npcCreationComponentsById,

@@ -51,8 +51,8 @@ export type EndingState = { readonly endingId: EndingId; readonly outcome: "succ
 
 // ── World State ──
 
-/** 世界存档 schema 版本唯一来源：v7 正式持久化战前 History 快照；v6 及更早一律按不支持处理。 */
-export const WORLD_STATE_SCHEMA_VERSION = 7 as const;
+/** 世界存档 schema 版本唯一来源：v8 持久化事实发现模式；v7 及更早一律按不支持处理。 */
+export const WORLD_STATE_SCHEMA_VERSION = 8 as const;
 
 export type WorldStateSchemaVersionErrorCode =
   | "UNSUPPORTED_RECORD"
@@ -64,7 +64,7 @@ export type WorldStateSchemaVersionClassification =
 
 /**
  * 只分类存档 schema，不执行迁移。DB revision 与回合号由各自契约维护。
- * v1–v6 均按旧 record 分类，不提供迁移或兼容读取。
+ * v1–v7 均按旧 record 分类，不提供迁移或兼容读取。
  */
 export function classifyWorldStateSchemaVersion(
   version: unknown,
@@ -72,7 +72,7 @@ export function classifyWorldStateSchemaVersion(
   if (version === WORLD_STATE_SCHEMA_VERSION) {
     return { ok: true, version: WORLD_STATE_SCHEMA_VERSION };
   }
-  if (version === 1 || version === 2 || version === 3 || version === 4 || version === 5 || version === 6) {
+  if (version === 1 || version === 2 || version === 3 || version === 4 || version === 5 || version === 6 || version === 7) {
     return { ok: false, code: "UNSUPPORTED_RECORD" };
   }
   return { ok: false, code: "UNSUPPORTED_WORLD_STATE_VERSION" };

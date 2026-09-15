@@ -76,6 +76,7 @@ const BASE_PROJECTION: EntityCompatibilityProjection = {
     text: "泥地里留着半枚旧令牌。",
     source: "generated",
     discovered: false,
+    discoveryMode: "investigation",
     locationId: origin,
     investigationLabel: "泥地上的痕迹",
     investigationApproaches: [{

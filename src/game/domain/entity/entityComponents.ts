@@ -100,6 +100,8 @@ export type FactComponent = Readonly<{
   text: string;
   source: FactSource;
   discovered: boolean;
+  /** 未声明的旧兼容投影按 automatic 读取；新事实由生产者显式声明。 */
+  discoveryMode?: "automatic" | "investigation";
   locationId?: LocationId;
   investigationLabel?: string;
   investigationApproaches?: readonly InvestigationApproach[];

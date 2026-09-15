@@ -114,6 +114,32 @@ describe("compileCandidateEvent 每种 kind 至少编译为真实领域事件", 
     expect(fact?.discovered).toBe(true);
   });
 
+  it("候选事件不能绕过显式调查事实的来源门槛", () => {
+    const input = createWorldStateFixture({
+      generation: GENERATION,
+      projection: {
+        ...emptyProjection({ player: PLAYER, locations: [LOC_1, LOC_2], currentLocationId: LOC_1.id }),
+        npcs: [NPC_1],
+        worldFacts: [FACT_1, {
+          ...FACT_2,
+          discoveryMode: "investigation",
+          investigationLabel: "查验密道痕迹",
+          investigationApproaches: [
+            { approachId: "look", label: "查看", evidenceQuality: "clean", tensionDelta: 0 },
+            { approachId: "ask", label: "询问", evidenceQuality: "noisy", tensionDelta: 1 },
+          ],
+        }],
+      },
+    });
+    const result = compileCandidateEvent(input, {
+      ...approved("npc_reveals_fact"),
+      proposedEffects: [{ kind: "npc_reveals_fact", npcId: asNpcId("npc_1"), factId: asFactId("fact_2") }],
+    }, DEPS);
+    expect(result.worldState).toBe(input);
+    expect(result.dropReason).toBe("investigation_required");
+    expect(result.drafts[0]?.payload.type).toBe("candidate_event_rejected");
+  });
+
   it("hostile_force_acts → 张力/威胁结构事件，World 不被任意修改", () => {
     const c: ApprovedEventCandidate = {
       ...approved("hostile_force_acts"),

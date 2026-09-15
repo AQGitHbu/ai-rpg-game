@@ -999,7 +999,11 @@ export function approveWorldDelta(input: {
       factId: ids.factId,
       text: p.newFact.text,
       source: "generated",
-      // public 只表示可在发现后进入玩家事实卡，不能跳过调查动作。
+      // Existing world-delta facts keep the ordinary observation path.  A
+      // provider cannot opt into investigation merely by supplying legacy
+      // approach metadata; Task 3 owns the new proposal contract.
+      discoveryMode: "automatic",
+      // public 只表示可在发现后进入玩家事实卡，不改变本条事实的自动观察模式。
       discovered: false,
       investigationLabel: p.newFact.investigationLabel,
       // 审批通过才落盘：非法列表已在 validateInvestigationApproaches 内降级为空。

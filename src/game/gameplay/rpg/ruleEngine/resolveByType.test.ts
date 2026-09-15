@@ -590,6 +590,11 @@ describe("resolveByType — investigate approaches", () => {
   };
   const deps = { now: () => "2026-01-01", actionId: "act_x", turnNumber: 1 , turnId: asTurnId("test:turn:1") };
   const APPROACH_BASE = emptyProjection({ player: PLAYER, locations: [approachLoc], currentLocationId: approachLoc.id });
+  const WITNESS: NpcEntry = {
+    id: asNpcId("witness"), name: "见证者", role: "在场者", description: "", locationId: approachLoc.id,
+    isCompanion: false, tags: [], met: true,
+    memory: { npcId: asNpcId("witness"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+  };
 
   function worldWithApproaches(): WorldState {
     return createWorldStateFixtureWith({ generation: GENERATION, base: APPROACH_BASE }, {
@@ -598,7 +603,9 @@ describe("resolveByType — investigate approaches", () => {
         text: "车轮印",
         source: "generated",
         discovered: false,
+        discoveryMode: "investigation",
         locationId: asLocationId("loc_1"),
+        investigationLabel: "查验车轮印",
         investigationApproaches: [
           { approachId: "careful", label: "沿痕迹追查", evidenceQuality: "clean", tensionDelta: 4 },
           { approachId: "risky", label: "翻查附近杂物", evidenceQuality: "noisy", tensionDelta: 12 },
@@ -638,6 +645,37 @@ describe("resolveByType — investigate approaches", () => {
       // drafts not yet committed to eventLedger at this layer
     }
   });
+
+  it("writes the same fact-discovery source to declared active witnesses only", () => {
+    const ws = createWorldStateFixtureWith({
+      generation: GENERATION,
+      base: {
+        ...APPROACH_BASE,
+        npcs: [WITNESS],
+        locations: [{ ...approachLoc, npcIds: [WITNESS.id] }],
+      },
+    }, {
+      worldFacts: [{
+        factId: FACT_1_ID, text: "车轮印", source: "generated", discovered: false,
+        discoveryMode: "investigation", locationId: approachLoc.id, investigationLabel: "查验车轮印",
+        investigationApproaches: [
+          { approachId: "careful", label: "沿痕迹追查", evidenceQuality: "clean", tensionDelta: 4, witnessNpcIds: [WITNESS.id] },
+          { approachId: "risky", label: "翻查附近杂物", evidenceQuality: "noisy", tensionDelta: 12 },
+        ],
+      }],
+    });
+    const result = resolveByType(ws, { type: "investigate", factId: FACT_1_ID, approachId: "careful" }, deps);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.drafts[0]).toMatchObject({
+      actorIds: [PLAYER_ENTITY_ID, WITNESS.id],
+      targetIds: [PLAYER_ENTITY_ID, WITNESS.id],
+      payload: { type: "fact_discovered", witnessNpcIds: [WITNESS.id] },
+    });
+    const witness = result.nextWorldState.npcs.find((npc) => npc.id === WITNESS.id);
+    expect(witness?.memory.knownFactIds).toContain(FACT_1_ID);
+    expect(witness?.memory.interactionHistory).toEqual([]);
+  });
 });
 
 describe("autoResolveCurrentInvestigation", () => {
@@ -653,7 +691,9 @@ describe("autoResolveCurrentInvestigation", () => {
     text: "车轮印",
     source: "generated",
     discovered: false,
+    discoveryMode: "investigation",
     locationId: asLocationId("loc_1"),
+    investigationLabel: "查验车轮印",
     investigationApproaches: [
       { approachId: "careful", label: "沿痕迹追查", evidenceQuality: "clean", tensionDelta: 4 },
       { approachId: "risky", label: "翻查附近杂物", evidenceQuality: "noisy", tensionDelta: 12 },
@@ -734,10 +774,14 @@ describe("autoResolveCurrentInvestigation", () => {
     expect(result.drafts).toEqual([]);
   });
 
-  it("automatically discovers the current fact even when it has approved approaches", () => {
-    const ws = worldWithApproaches({ quests: [QUEST_FACT] });
+  it("does not automatically discover a fact whose mode is explicit investigation", () => {
+    const ws = worldWithApproaches({
+      quests: [QUEST_FACT],
+      worldFacts: [{ ...FACT_WITH_APPROACHES, discoveryMode: "investigation" }],
+    });
     const result = autoResolveCurrentInvestigation(ws, storyWithDiscoverFact());
-    expect(result.drafts).toContainEqual(expect.objectContaining({ payload: { type: "fact_discovered", factId: FACT_1_ID } } as unknown as CommittedNarrativeEvent));
-    expect(result.nextWorldState).not.toBe(ws);
+    expect(result.drafts).toHaveLength(0);
+    expect(result.nextWorldState).toBe(ws);
+    expect(result.nextWorldState.worldFacts.find((fact) => fact.factId === FACT_1_ID)?.discovered).toBe(false);
   });
 });

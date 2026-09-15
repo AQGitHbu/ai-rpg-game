@@ -919,6 +919,7 @@ describe("approveWorldDelta · investigationApproaches", () => {
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
+    expect(result.approved.newFacts[0]?.discoveryMode).toBe("automatic");
     expect(result.approved.newFacts[0]?.investigationApproaches).toEqual(approaches);
     expect(result.approved.logCategories).toBeUndefined();
   });

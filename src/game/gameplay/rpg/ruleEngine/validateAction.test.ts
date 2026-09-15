@@ -232,6 +232,7 @@ describe("validateAction — investigate", () => {
         text: "车轮印",
         source: "generated",
         discovered: false,
+        discoveryMode: "investigation",
         locationId: asLocationId("loc_1"),
         investigationApproaches: [
           { approachId: "careful", label: "沿痕迹追查", evidenceQuality: "clean", tensionDelta: 4 },
@@ -279,7 +280,7 @@ describe("validateAction — investigate", () => {
     const ws: WorldState = {
       ...worldWithApproaches(),
       worldFacts: [{
-        factId: FACT_1_ID, text: "车轮印", source: "generated", discovered: true,
+        factId: FACT_1_ID, text: "车轮印", source: "generated", discovered: true, discoveryMode: "investigation",
         locationId: asLocationId("loc_1"),
         investigationApproaches: worldWithApproaches().worldFacts[0]?.investigationApproaches,
       }],

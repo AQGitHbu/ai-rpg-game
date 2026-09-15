@@ -187,7 +187,7 @@ describe("WorldState 层 Entity 引用校验", () => {
   it("战败恢复用的快照不得引用未知 enemy", () => {
     const issues = validateWorldStateEntityReferences(fixture({
       battle: activeBattle({
-        preBattleSnapshot: { entityStore: { version: 3, records: [] }, eventLedger: [] },
+        preBattleSnapshot: { entityStore: { version: 4, records: [] }, eventLedger: [] },
       }),
     }));
     expect(issues.map((issue) => issue.code)).toEqual(["invalid_battle_snapshot"]);

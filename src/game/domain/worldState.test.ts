@@ -62,10 +62,10 @@ describe("WorldState", () => {
     };
   }
 
-  it("createInitialWorldState 编译 schema 7 世界与 store v2，兼容数组只是投影结果", () => {
+  it("createInitialWorldState 编译 schema 8 世界与 store v4，兼容数组只是投影结果", () => {
     const ws = createInitialWorldState(baseInput);
-    expect(ws.version).toBe(7);
-    expect(ws.entityStore.version).toBe(3);
+    expect(ws.version).toBe(8);
+    expect(ws.entityStore.version).toBe(4);
     expect(ws.player.name).toBe("测试侠客");
     expect(ws.currentLocationId).toBe(asLocationId("loc_1"));
     expect(ws.locations).toHaveLength(1); // 起始地点必须在 locations 内，currentLocationId 不指向不存在的地点

@@ -5,6 +5,8 @@ import type { StoryState } from "@/game/domain/storyState";
 import { DIALOGUE_ACTS } from "@/game/domain/action";
 import { getEntity, type EntityRecord, type NpcEntityRecord } from "@/game/domain/entity";
 import { isStoryDeliveryComplete } from "@/game/gameplay/rpg/storyDelivery";
+import { isExplicitInvestigation } from "@/game/domain/investigation";
+import { isInvestigationActionAvailable } from "@/game/gameplay/rpg/investigation";
 
 function isNpcRecord(record: EntityRecord | undefined): record is NpcEntityRecord {
   return record?.core.kind === "npc";
@@ -67,9 +69,10 @@ export function validateAction(ws: WorldState, action: Action, storyState?: Stor
       const fact = ws.worldFacts.find((f) => f.factId === action.factId);
       if (fact === undefined) return { ok: false, code: "UNKNOWN_FACT", params: { factId: String(action.factId) } };
       if (fact.discovered) return { ok: false, code: "FACT_ALREADY_DISCOVERED", params: {} };
-      // 只可调查当前地点的事实；无 investigationApproaches 的事实属于规则自动揭示
-      // 路径（FACT_NOT_INVESTIGABLE），玩家不得直接调查。
-      if (fact.locationId !== ws.currentLocationId) return { ok: false, code: "FACT_NOT_INVESTIGABLE", params: {} };
+      // 只有显式 investigation 事实才有玩家方法；automatic 事实只能由规则边界发现。
+      if (!isExplicitInvestigation(fact) || fact.locationId !== ws.currentLocationId) {
+        return { ok: false, code: "FACT_NOT_INVESTIGABLE", params: {} };
+      }
       const approaches = fact.investigationApproaches ?? [];
       if (approaches.length < 2) return { ok: false, code: "FACT_NOT_INVESTIGABLE", params: {} };
       if (action.approachId === undefined) {
@@ -77,6 +80,9 @@ export function validateAction(ws: WorldState, action: Action, storyState?: Stor
       }
       if (!approaches.some((entry) => entry.approachId === action.approachId)) {
         return { ok: false, code: "UNKNOWN_INVESTIGATION_APPROACH", params: { factId: String(action.factId), approachId: action.approachId } };
+      }
+      if (!isInvestigationActionAvailable({ worldState: ws, factId: action.factId, approachId: action.approachId })) {
+        return { ok: false, code: "FACT_NOT_INVESTIGABLE", params: { factId: String(action.factId) } };
       }
       return { ok: true };
     }

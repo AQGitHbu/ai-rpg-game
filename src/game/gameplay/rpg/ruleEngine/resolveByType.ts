@@ -13,6 +13,8 @@ import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 import { applyEntityMutations, type EntityMutation } from "@/game/gameplay/rpg/entityWorld";
 import { PLAYER_ENTITY_ID, RETURN_REQUIRED_ITEM_TAG } from "@/game/domain/worldEntity";
 import { resolveStoryInteraction } from "../storyInteraction";
+import { isExplicitInvestigation } from "@/game/domain/investigation";
+import { isInvestigationActionAvailable } from "@/game/gameplay/rpg/investigation";
 
 export type ResolveResult = {
   readonly ok: true;
@@ -194,7 +196,11 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
       const source: FactDiscoverySource = action.approachId === undefined
         ? { kind: "automatic" }
         : { kind: "player", approachId: action.approachId };
-      return resolveFactDiscovery(ws, action, source);
+      return resolveFactDiscovery(ws, action, source, {
+        actionId: deps.actionId,
+        turnNumber: deps.turnNumber,
+        turnId: deps.turnId,
+      });
     }
     case "take_item": {
       const draft: NarrativeEventDraft = {
@@ -399,6 +405,12 @@ export type FactDiscoverySource =
   | { readonly kind: "player"; readonly approachId: string }
   | { readonly kind: "automatic" };
 
+export type FactDiscoveryDeps = Readonly<{
+  readonly actionId: string;
+  readonly turnNumber: number;
+  readonly turnId: TurnId;
+}>;
+
 /**
  * 纯规则的事实发现结算：更新 discovered、追加 fact_discovered 事件、产生 StateChange，
  * 与 resolveByType 相同返回形状，绝不执行持久化。
@@ -409,21 +421,33 @@ export function resolveFactDiscovery(
   ws: WorldState,
   action: Extract<Action, { readonly type: "investigate" }>,
   source: FactDiscoverySource,
+  deps?: FactDiscoveryDeps,
 ): ResolveResult {
   const fact = ws.worldFacts.find((f) => f.factId === action.factId);
   if (fact === undefined) return { ok: false, feedback: "未知线索。" };
   if (fact.discovered) return { ok: false, feedback: "这条线索已经调查过了。" };
+  if (source.kind === "automatic" && isExplicitInvestigation(fact)) {
+    return { ok: false, feedback: "这条线索需要玩家选择调查方式。" };
+  }
+  if (source.kind === "player" && !isExplicitInvestigation(fact)) {
+    return { ok: false, feedback: "这条线索不接受主动调查方式。" };
+  }
 
   const approach = source.kind === "player"
     ? fact.investigationApproaches?.find((entry) => entry.approachId === source.approachId)
     : undefined;
   if (source.kind === "player" && approach === undefined) return { ok: false, feedback: "未知的调查方式。" };
+  if (source.kind === "player" && !isInvestigationActionAvailable({
+    worldState: ws,
+    factId: action.factId,
+    approachId: source.approachId,
+  })) return { ok: false, feedback: "当前无法以该方式调查线索。" };
 
   const draft: NarrativeEventDraft = {
     eventKey: `fact_discovered:${action.factId}`,
     episodeKey: "turn",
-    actorIds: [PLAYER_ENTITY_ID],
-    targetIds: [PLAYER_ENTITY_ID],
+    actorIds: [PLAYER_ENTITY_ID, ...(approach?.witnessNpcIds ?? [])],
+    targetIds: [PLAYER_ENTITY_ID, ...(approach?.witnessNpcIds ?? [])],
     locationId: ws.currentLocationId,
     causeKeys: [],
     factIds: [action.factId],
@@ -433,6 +457,7 @@ export function resolveFactDiscovery(
     payload: {
       type: "fact_discovered",
       factId: action.factId,
+      ...(approach?.witnessNpcIds === undefined ? {} : { witnessNpcIds: approach.witnessNpcIds }),
       ...(approach === undefined
         ? {}
         : {
@@ -442,7 +467,25 @@ export function resolveFactDiscovery(
           }),
     },
   };
-  const mutated = applyRuleMutations(ws, [{ kind: "discover_fact", factId: action.factId }]);
+  const knowledgeMutations = approach?.witnessNpcIds?.flatMap((npcId) => deps === undefined ? [] : [{
+    kind: "record_npc_knowledge" as const,
+    npcId,
+    factId: action.factId,
+    certainty: "known" as const,
+    disclosure: "public" as const,
+    source: {
+      kind: "action" as const,
+      actionId: deps.actionId,
+      turnNumber: deps.turnNumber,
+      eventId: eventIdFor(deps.turnId, `fact_discovered:${action.factId}`),
+      mode: "scene_witness" as const,
+    },
+  }]) ?? [];
+  const mutated = applyRuleMutations(ws, [{
+    kind: "discover_fact",
+    factId: action.factId,
+    ...(source.kind === "player" ? { investigationSource: { approachId: source.approachId } } : {}),
+  }, ...knowledgeMutations]);
   if (mutated === null) return { ok: false, feedback: "世界状态不一致。" };
   const stateChanges: StateChange[] = [
     { path: `worldFacts[${String(action.factId)}].discovered`, description: `发现线索`, operation: "set" },
@@ -487,6 +530,7 @@ export function autoResolveCurrentInvestigation(
   if (target === undefined || target.kind !== "discover_fact") return noOp;
   const fact = worldState.worldFacts.find((f) => f.factId === target.factId);
   if (fact === undefined || fact.discovered) return noOp;
+  if (isExplicitInvestigation(fact)) return noOp;
   // 旧档案事实可能缺 locationId（Task 6 线性模式 legacy_fact 兼容）：视为当前地点。
   if (fact.locationId !== undefined && String(fact.locationId) !== String(worldState.currentLocationId)) return noOp;
   const action: Extract<Action, { readonly type: "investigate" }> = { type: "investigate", factId: fact.factId };

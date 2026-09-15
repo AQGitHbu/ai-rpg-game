@@ -21,6 +21,7 @@ import {
   isWellFormedNpcSpeechReferenceId,
 } from "@/game/domain/npcSpeechReferences";
 import { parseStoryInteractionProposal, type StoryInteractionProposal } from "@/game/domain/storyInteraction";
+import { isExplicitInvestigation } from "@/game/domain/investigation";
 import type {
   NpcDeliberationProposal,
   NpcDeliberationResponse,
@@ -423,6 +424,10 @@ export function buildNpcSpeechAuthority(input: NpcSpeechAuthorityInput): NpcSpee
     ? (playerRecord as import("@/game/domain/entity").PlayerEntityRecord).knowledge.knownFactIds : [];
   const allowedEntries = speakerRecord.knowledge.entries.filter((entry) =>
     factRecords.has(String(entry.factId))
+      && (() => {
+        const fact = factRecords.get(String(entry.factId));
+        return fact !== undefined && (!isExplicitInvestigation(fact.fact) || fact.fact.discovered);
+      })()
       && visibleFactIds.has(String(entry.factId))
       && (entry.disclosure !== "secret" || playerKnownFactIds.includes(entry.factId))
       && (canNpcDiscloseFact(speakerRecord, entry.factId, targetId, input.eventLedger)
