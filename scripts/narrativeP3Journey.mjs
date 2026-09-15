@@ -85,6 +85,21 @@ function findOperationChoice(input, operation) {
     && !input.performedActions.has(JSON.stringify(input.actionMap.get(choice.choiceToken))));
 }
 
+function investigationApproachForAction(input, action) {
+  if (action?.type !== "investigate") return undefined;
+  const fact = input.state?.record?.worldState?.worldFacts?.find((entry) => String(entry.factId) === String(action.factId));
+  return fact?.investigationApproaches?.find((approach) => approach.approachId === action.approachId);
+}
+
+function investigationMatchesRoute(input, action, route, legacyApproachId) {
+  const approach = investigationApproachForAction(input, action);
+  if (approach !== undefined) {
+    const hasWitness = (approach.witnessNpcIds ?? []).length > 0;
+    return route === "public" ? hasWitness : !hasWitness;
+  }
+  return action?.approachId === legacyApproachId;
+}
+
 function fallbackP3Choice(input) {
   const selected = selectProductionChoice(input.view, "complete", input.actionMap, input.interactions,
     input.performed, input.performedActions, input.state.record.storyState.delivery, input.actionCount);
@@ -102,7 +117,7 @@ export function selectNarrativeP3ProductionChoice(input) {
     && event.payload?.type === "fact_discovered" && event.payload.evidenceQuality !== undefined);
   const investigation = choices.find((choice) => {
     const action = context.actionMap.get(choice.choiceToken);
-    return action?.type === "investigate" && action.approachId === approachId
+    return investigationMatchesRoute(context, action, route, approachId)
       && !context.performedActions.has(JSON.stringify(action));
   });
   if (!hasInvestigationEvidence) {

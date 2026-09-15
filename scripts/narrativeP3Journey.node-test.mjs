@@ -37,7 +37,7 @@ function productionView(choices) {
   };
 }
 
-function policyInput(route, view, actions, events = []) {
+function policyInput(route, view, actions, events = [], worldFacts = []) {
   return {
     route: { routeId: route },
     view,
@@ -46,7 +46,7 @@ function policyInput(route, view, actions, events = []) {
       { id: "interaction:quiet", operation: "share_known_fact" },
       { id: "interaction:witnessed", operation: "request_verification" },
     ],
-    state: { record: { worldState: { eventLedger: events }, storyState: { delivery: undefined, currentObjectiveChoiceToken: null } } },
+    state: { record: { worldState: { eventLedger: events, worldFacts }, storyState: { delivery: undefined, currentObjectiveChoiceToken: null } } },
     performed: new Set(),
     performedActions: new Set(),
     delivery: undefined,
@@ -86,6 +86,26 @@ test("P3 production policy reports capability coverage instead of falling back t
   ]));
   assert.equal(selected, undefined);
   assert.equal(createNarrativeP3RoutePolicy().actionLimit, 32);
+});
+
+test("P3 production policy matches arbitrary investigation ids by witness semantics", () => {
+  const view = productionView([
+    { choiceToken: "stealth", label: "沿纸档暗记查验" },
+    { choiceToken: "public", label: "请船户当面见证" },
+  ]);
+  const worldFacts = [{
+    factId: "fact_dynamic",
+    investigationApproaches: [
+      { approachId: "stealth_scan", label: "沿纸档暗记查验", evidenceQuality: "clean", witnessNpcIds: [] },
+      { approachId: "public_check", label: "请船户当面见证", evidenceQuality: "clean", witnessNpcIds: ["npc_witness"] },
+    ],
+  }];
+  const actions = [
+    { choiceToken: "stealth", action: { type: "investigate", factId: "fact_dynamic", approachId: "stealth_scan" } },
+    { choiceToken: "public", action: { type: "investigate", factId: "fact_dynamic", approachId: "public_check" } },
+  ];
+  assert.equal(selectNarrativeP3ProductionChoice(policyInput("private", view, actions, [], worldFacts)).choiceToken, "stealth");
+  assert.equal(selectNarrativeP3ProductionChoice(policyInput("public", view, actions, [], worldFacts)).choiceToken, "public");
 });
 
 test("P3 CLI registers a fixed denominator without transport and keeps route statuses", async () => {
