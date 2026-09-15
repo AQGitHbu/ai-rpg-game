@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 在正式短篇与五幕中篇中，让玩家准确回忆旧人旧话、NPC 按自己的经历回应，并验证带来源的摘要能保持连续性而不破坏规则、权限和恢复。
+**Goal:** 在现有短篇与五幕中篇范围内，验证旧事召回、按视角上下文组装、带来源摘要、正式调用及恢复的工程正确性，为模型提供合法且充分的必要材料。
 
 **Architecture:** 保留 P1 的唯一整场作者、角色判断、现有审阅、场景槽编译及 A/B 提交。先贯通原始证据的可见性与 mandatory 传递，再在独立派生缓存中实现分批摘录摘要/概览；所有消费者使用同一来源可追溯的记忆包，事实与当前状态始终回到 Entity/Event。
 
@@ -13,13 +13,13 @@
 - 唯一总设计：[架构 Spec](../specs/2026-09-12-narrative-architecture-design.md)。范围及代码核查证据：[P2 范围核查](../reports/2026-09-14-narrative-p2-scope-review.md)。先读上述核查结论和本节，再按当前 Task 阅读对应章节。
 - 从 `codex/narrative-architecture` / `.worktrees/narrative-architecture` 的 **dfb567b1** 继续；不重新从 main 建分支，不合并 main，不修改旧 staged，不改变 `current-phase.json`。本 Plan 是独立任务入口。
 - P1 已满足收敛后的最小准入；旧保密/核验样本和未执行矩阵保持原结论。不重派 P1 建设任务、不以 P1 旧 Plan 未勾选的历史失败项阻止本 Plan。
-- “质量与游戏性优先于 token、调用数和耗时。”摘要减少输入量只是观测指标；准确回忆、人物动机、真实后果和完整收束才是验收结果。
+- “质量与游戏性优先于 token、调用数和耗时。”摘要减少输入量只是观测指标；P2 工程验收以 Task 7 的规则、来源、上下文和恢复契约为准，剧情评分及模型对材料的发挥另作观察。
 - “规则已结算结果不可被后续循环改写”；“原文永不因摘要删除”。摘要不得写 Event、Entity、Thread、Quest、delivery、ending、History 或 gameplay revision。
 - 不增加 Action/互动操作/Entity 组件、通用规划器、reviewer、润色器、向量数据库、图数据库、层级 Arc、长篇模式或世界模拟。已支持的五幕中篇不是开放式长篇。
 - 权威 schema 保持 **EntityStore3 / World7 / Story12**；摘要缓存使用独立 formatVersion=1。不得把 schema11 文档或旧 P1 初版 schema10 当代码基准。
 - 所有原文按 speaker/audience/实际事件权限投影；玩家选项表示所选行动，不自动等于说出口的台词。未选选项、未消费续接及条件结局都不能成为已发生经历。
 - P2 只消费 foundation 公开接口；不修改 `.foundation`、公共 package 或 `docs/共同规范/`。新增逻辑均有 RPG 语义。
-- Task 1–6 已有代码与离线证据，具体覆盖见 [准入修复验收](../reports/2026-09-14-narrative-p2-readiness-fixes.md)；真实调用与 UI 验收仍在 Task 7。真实调用必须先冻结协议，不追加或替换失败样本。
+- Task 1–6 已有代码与离线证据，具体覆盖见 [准入修复验收](../reports/2026-09-14-narrative-p2-readiness-fixes.md)；真实调用与 UI 证据见[三项收尾报告](../reports/2026-09-15-narrative-p2-closeout.md)。当前只执行 Task 7 工程封板；如发现调用链缺陷而需新实跑，必须另行冻结，不替换旧失败样本。
 
 ---
 
@@ -29,7 +29,7 @@
 | --- | --- | --- | --- |
 | P2-A 旧事真正进入当前互动 | 1–2 | 有权限、有来源、有原话的统一记忆包及作者/NPC 消费接口 | 长间隔、错误指代、未选项、秘密与旧状态覆盖通过真实 prompt 构造断言；生产 generator 装配由 Task 5 验证 |
 | P2-B 安全的派生摘要 | 3–5 | 50/10 分批、可重建概览、独立缓存、失败无断档、并发不影响 A/B | 原始来源与覆盖水位可验证；摘要关闭/失败时故事仍可用原文运行 |
-| P2-C 完整短/中篇验证 | 6–7 | 离线完整中篇、两条新 live 完整路线、同状态摘要对照和实机追问 | 完成性、回忆、权限和全文质量分别通过 |
+| P2-C 正式工程闭环 | 6–7 | 现有离线完整旅程、真实摘要/调用、同源对照和 UI 回想至终局 | 规则、来源、组装、调用与恢复成立；文学评分及模型回答收益不阻塞 |
 
 先完成当前 gate，再进入下一段。若较长经历错误来自检索或权限投影，修对应 Task；若出现新的通用行动/世界模拟需求，记录为 P3，不在 P2 扩充规则来“救”某段文案。
 
@@ -391,51 +391,45 @@ expect(result.itemGivenEventCount).toBe(1);
 - [ ] 新磁带记录缓存初态/发布结果、attempt 计数与固定包/哈希、所有 memory/author/NPC/review 请求、identity/domainTime、每次正式状态。replay 检查 prompt 哈希、响应完全消费、game状态、cache指纹/水位及 preparedHash 一致；重放逻辑尝试计数应一致，真实 HTTP 为零，两者分栏。恢复场景必须复现已固定包，不能再次请求摘要；包含原文的固定包按专用审计权限保存。不能删除摘要请求使磁带“匹配”。抽取 helper 的兼容验证用 P1 协议/磁带单元契约，保持其严格匹配规则。P2 已有意改变生产 prompt，不能要求旧 P1 live 磁带在新 prompt 下通过；完整旧故事回放只能在其对应冻结实现下进行，本 Plan 不另开该项实跑。
 - [ ] 运行 node 脚本测试、离线P2旅程及 P1 协议/回放测试、typecheck/boundaries；更新协议并提交 `test: cover complete medium stories and traceable memory experiments`。
 
-## Task 7：冻结、实跑、全文阅读与 P2 判定
+## Task 7：工程封板与 P2 判定（当前执行入口）
 
-**Files:** Create: `docs/superpowers/reports/2026-09-14-narrative-p2-acceptance.md`；Modify: 本 Plan gates、需要纠正的实际系统事实。原始产物使用 `artifacts/narrative-p2/<runId>/` 独立目录，不编辑旧P1产物。
+**Goal:** 按用户确认的工程范围，验证规则约束、正常召回、实际调用与上下文组装；不再以剧情评分、摘要使回答更精彩或与 main 的叙事比较阻塞 P2。
 
-**Interfaces:** 消费 Task 6 协议与正式 driver，输出完成性/回忆/权限/质量四类结论；不新增生产接口。
+**Files:** 本 Plan、[记忆覆盖计划](2026-09-14-narrative-p2-memory-coverage.md)、总 Spec §11.3，以及 `docs/superpowers/reports/2026-09-15-narrative-p2-engineering-acceptance.md`。仅在发现程序缺陷时修改对应实现和同目录回归，不预设新增生产功能。
 
-**执行证据：** `p2-01` 已冻结、实跑、严格回放并阅读全文，见 [验收报告](../reports/2026-09-14-narrative-p2-acceptance.md)。两路线通关，记忆覆盖与质量门槛未通过；两臂及UI因预定checkpoint未产生而未执行。以下保留未满足的验收条件，不以通关替代它们。
+**Interfaces:** 消费现有 production request、SQLite、固定包、预算、来源投影与正式旅程测试；输出工程验收矩阵和验证结果，不新增 adapter、角色或运行平台。
 
-**后续实施入口：** 按 [记忆覆盖重规划](2026-09-14-narrative-p2-memory-coverage.md) 先验证紧凑正式链，再登记独立真实记忆诊断。p2-05 已完成短篇但质量未过；不再反复短篇修正后才允许检查记忆。独立 v3 入口已实现；首次真实记忆诊断因摘要选择超限未发布而封存失败，详见记忆覆盖计划。不能复用 v1 命令或解锁失败 v2 的 B 声称通过。
+### 验收边界
 
-- [x] 先完成一次完整验收：lint、typecheck、boundaries、`npm test -- --minWorkers=1 --maxWorkers=2`、check:docs；涉及 production build 的本 Plan 再执行 `npm run build`。不能用P1旧成绩替代本版本结果。冻结代码与协议后运行：
+- 剧情五维评分、措辞、重复表达、模型是否充分发挥所给材料作为观察，不作为工程通过门槛。
+- 漏送必需来源、错误知识投影、静默截断必要上下文、接受非法引用、重复结算、状态污染、过期写入和无界调用仍是程序缺陷，必须修复。
+- 模型非法 ID 被拒绝、旧缓存与原文路径保留，属于正常失败处理；不要求模型永不犯错。
+- 确定性离线 fixture 可以证明概览省略后召回和实际请求组装；真实调用证明正式适配与持久化可用。两类证据分别标注，不把 fixture 答复算作真实模型表现。
+- 沿用真实摘要连续发布、两臂回放、实际 UI 回想/刷新/唯一交付/终局证据。不要求重新创建两条故事、严格逐字两臂因果实验或补建 UI transport 回放作为封板前置。
+- 旧 v1/v2/v3 协议与失败记录保持原结论；新的工程范围完成不解锁旧质量 gate，也不改变旧 CLI 的冻结协议语义。
+- 不修改 main、旧 staged、共享模块或 `current-phase.json`；本独立任务的工程结论不替换仓库另一条已配置阶段。
 
-```powershell
-npm run journey:narrative:p2 -- --mode=register --run-id=p2-01 --protocol=artifacts/narrative-p2/p2-01/protocol.json --output=artifacts/narrative-p2/p2-01
-$env:RUN_REAL_AI_JOURNEY='1'
-npm run journey:narrative:p2 -- --mode=live --run-id=p2-01 --protocol=artifacts/narrative-p2/p2-01/protocol.json --output=artifacts/narrative-p2/p2-01
-```
+### 执行步骤
 
-`journey:narrative:p2` 在 Task 6 定义为 `node scripts/narrativeP2Journey.mjs`。模型值必须来自实际可用配置，register 不生成正文、不检查/输出 key；输入长度上限需与所用模型配置的能力核对后再实跑。
+- [x] 原位更新本 Plan、覆盖计划和总 Spec 的 P2 工程边界，旧实验成绩保留在原报告。
+- [x] 核查下表 M1–M7 的实现与测试断言，重点确认最终请求而非仅检索中间结果；未发现新增阻断缺陷，无需修改生产代码或新增测试。
+- [x] 运行 `npm test -- --minWorkers=1 --maxWorkers=2`、`npm run typecheck`、`npm run lint`、`npm run test:narrative-p2-script`、`npm run check:docs`、`git diff --check`。全量 Vitest 已包含 boundaries，不重复跑同一套；无 production build 变更不额外 build。调用链未变，沿用已有真实调用证据。
+- [x] 在[工程验收报告](../reports/2026-09-15-narrative-p2-engineering-acceptance.md)记录逐项证据与限制，工程范围满足完成定义；本轮只提交文档，不制造功能修改。
 
-- [ ] 两条路线都必须全新正式创建并到合法成功终局/ready，中途关闭重开并比较状态；中篇必须实际有两次摘要与满足间隔的回忆触发，缺失则报告“通关但P2覆盖未通过”。初次失败、有限修订成功与任何显式人工重试分栏，不能混成连续成功。
-- [ ] 两条新流分别严格零网络 replay，所有原文/状态与摘要维护一致。读取逐步完整 History、有效 summary、recalled source 和所有未通过候选，确认原文保留、无条件/否定改写、未知角色不冒领经历、旧状态未覆盖当前 owner/承诺。
-- [ ] 执行两臂诊断，记录原文覆盖、精确旧话命中、歧义/拒答、事实错误、请求长度与调用数。摘要臂至少不丢失指定必需来源且无新增硬错误；若无摘要更完整而摘要遗漏核心动机，P2摘要效果不通过，不能以省token抵消。
-- [ ] 在真实 UI 使用本次一条 live 的合法存档，执行旧事追问→刷新→继续至终局；记录实际输入、响应与reload状态。该操作可以承担预定路线的对应段，必须归入同一协议/产物，不能另外隐形计费或只展示已录制结局截图。
-- [x] 人工阅读全文并记录评分（已执行，门槛未通过），按局部衔接、人物动机、因果/悬念、选择后果可感知、结局收束各1–5分：**每条均分≥4、单维≥3、没有确认事实/权限/行动硬错误**。分别说明哪次旧事真正影响后续问答或决策；模型重复旧句但无关当前问题，不算回忆收益。
-- [x] 失败仅按检索、权限投影、摘要选编/覆盖、规则可完成性、创作/审阅、运行层归因，封存原批；有新实现再开新冻结批需单独明确范围。不得按失败句子增设规则、reviewer或继续重采到通过。
-- [x] 完成 `npm run check:docs`、新增文档链接人工核查、`git diff --check`，提交 `docs: record P2 memory and complete-story acceptance`；P2通过不自动合并 main，也不宣称本分支整体叙事优于 main。
+## 工程验收矩阵
 
-## 验收矩阵与执行记录
-
-| 编号 | 必须成立 | 负责 Task |
+| 编号 | 必须成立 | 主要代码/测试入口 |
 | --- | --- | --- |
-| M1 | 较早NPC/事件/原话可双向找到，摘要/近期引用可发起一次旧事补充，mandatory贯穿真实请求 | 1、2、5、6 |
-| M2 | 显示选项、隐藏名字、私密听众、代词歧义不制造错误知识；真实作者/NPC 调用不串包 | 1、2、5、6 |
-| M3 | 50/10以有效History计数；source/sequence与Event/turn分离 | 3 |
-| M4 | 概览从原始叶来源重建，文字逐字对应、当前状态仍读Entity | 3、5 |
-| M5 | 摘要失败水位不动、所有未覆盖原文可读，溢出明确失败 | 3、5 |
-| M6 | cache写入不改变游戏revision/token，竞争/重载/回滚不串史 | 4–6 |
-| M7 | 同 job/epoch 候选及崩溃接管共享固定包；过期租约不能占额度，所有 HTTP/缓存/固定包严格回放 | 5–7 |
-| M8 | 新短篇与五幕中篇均完成，中篇真实触发摘要/较长间隔回忆 | 6、7 |
-| M9 | 两臂诊断来源不回退，全文质量及实机流程通过 | 7 |
+| M1 召回 | 人物/别名/事件描述/对话指代可找正确来源；概览省略的旧话进入最终作者请求 | `gameplay/rpg/narrativeMemory`、`narrativeP2Journey.integration.test.ts` |
+| M2 权限 | 隐藏名字、私密听众、未选选项、未来续接不制造知识；当前 Entity 状态不被旧史覆盖 | `projectObserverEvidence`、`retrieveStoryEvidence`、`buildNarrativeMemoryContext` 及其测试 |
+| M3 摘要 | 50/10有效记录；叶与概览同批发布；来源可追溯；失败旧水位和未覆盖原文保留 | `narrativeMemorySummary`、`prepareNarrativeMemory`、`liveNarrativeMemorySummarySource` |
+| M4 请求 | 当前行动/约束/必要证据贯穿完整请求；optional 有界裁剪，mandatory 溢出在 HTTP 前明确失败 | `narrativeContext`、`narrativeRequestClient`、live source/review 测试 |
+| M5 持久化 | 缓存独立于 gameplay revision；损坏/回滚/换局/并发不串史；过期 writer 不能发布 | `sqliteNarrativeMemorySummaryRepository.test.ts`、恢复回归 |
+| M6 调用恢复 | 同 job/epoch 固定包；持久额度不重置；失效或缺包显式失败；A 不重复结算 | `generatePendingNarrativeBundle.test.ts`、SQLite attempt 测试、正式旅程 |
+| M7 正式闭环 | 真实维护与调用可用；实际 UI 回想、刷新、正式唯一交付到合法终局 | [三项收尾报告](../reports/2026-09-15-narrative-p2-closeout.md)及其原始产物 |
 
-执行各 gate 时原位替换下列结论并链接验收报告，不往系统索引追加成绩：
+代码路径均相对 `src/game/`，除已链接报告。M1–M6 的确定性回归与 M7 的真实证据组合验收，不要求单个随机故事证明所有边界。
 
-- **P2-A：** 原文召回、Event 引用、权限及作者/NPC 请求路径已实现并有离线回归；摘要省略旧话后的真实请求命中另经完整五幕旅程验证，见 [准入修复验收](../reports/2026-09-14-narrative-p2-readiness-fixes.md)。
-- **P2-B：** 摘要、缓存、固定包、预留及完整输入边界已实现；成功/失败/关闭故事、真实 SQLite 来源变更/回滚/接管及生产请求回放有离线证据，详见同一报告。原任务清单中的组合场景不能因单层测试通过而推定全部实测。
-- **P2-C：** `p2-01` 不通过：真实短篇/中篇均通关且严格回放通过，但中篇49条有效History、零摘要，旧话追问/两臂/UI checkpoint未触发；两路线全文评分2.4/2.6，中篇出现已接受结局移动越权。见 [真实验收报告](../reports/2026-09-14-narrative-p2-acceptance.md)。
-- **P2 总结论：** 工程与离线准入通过，真实批次已执行并封存，整体P2不通过；未执行的两臂和UI明确保留缺口。后续以记忆覆盖计划为执行入口，优先补真实跨摘要证据；质量缺口独立保留，不宣称优于main。上述未勾选的历史步骤不表示代码完全缺失，具体执行与未覆盖项以报告为准。
+**完成定义：** M1–M7 均有可重复的代码/测试或实跑证据，相关检查通过，没有已知阻断工程缺陷，即可认定 P2 工程完成。模型文学质量、回答充分性及收益比较留作观察，不宣称整个叙事架构已经优于 main。
+
+**当前结论：P2 工程验收通过。** M1–M7 核查无已知阻断缺陷；2,956项Vitest及31项P2脚本测试通过，typecheck、lint、docs与diff检查通过，详见[工程验收报告](../reports/2026-09-15-narrative-p2-engineering-acceptance.md)。本次没有生产代码或调用链变化。历史 Task 1–6 的未勾选组合清单用于追溯原规划，不再单独驱动新的任务；旧质量分数与批次失败保持原结论，不代表模型文学质量或优于main已经通过。

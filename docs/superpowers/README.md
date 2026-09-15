@@ -26,3 +26,4 @@
 
 - [P2 摘要契约修复与恢复验证](reports/2026-09-15-narrative-p2-summary-contract.md)：固定真实来源上的两批发布、原话恢复、严格回放及概览源预算边界。
 - [P2 三项收尾证据](reports/2026-09-15-narrative-p2-closeout.md)：有限概览容量、同源摘要对照和实际 UI 接续；区分运行结果与质量收益。
+- [P2 工程验收](reports/2026-09-15-narrative-p2-engineering-acceptance.md)：按规则、召回、上下文组装、调用和恢复核查；文学评分与旧实验判定单独保留。
