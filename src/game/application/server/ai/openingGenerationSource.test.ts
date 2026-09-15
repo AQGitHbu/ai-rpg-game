@@ -6,6 +6,18 @@ import type { OpeningGenerationCandidate } from "@/game/domain/openingGeneration
 import type { AiTransport } from "@ai-game/ai-transport";
 import { buildStylePolicy } from "../../stylePolicy";
 import { createFixtureOpeningCandidateSource } from "../../createGame";
+import type { GameSetup } from "@/game/domain/newGame";
+
+const executableInvestigationSetup: GameSetup = {
+  characterName: "陆遥",
+  characterIdentity: "流浪剑客",
+  characterProfile: "谨慎守诺。",
+  personalityTags: ["谨慎"],
+  worldPremise: "渡口保存一份需要核验的旧契，见证方式会影响交付。",
+  storyOpening: "请先选择查验方法。本协议要求开局实际创建可主动调查的事实，并用 consequenceBindings.bind_investigation 激活方法；仅写 investigationApproaches 不满足。",
+  narrativeStyle: "novel",
+  contentIntensity: "normal",
+};
 
 function validCandidate(): OpeningGenerationCandidate {
   return {
@@ -228,6 +240,17 @@ describe("createOpeningGenerationSource", () => {
     expect(prompt).toContain("opening.item");
     expect(prompt).toContain("consequenceBindings");
     expect(prompt).toContain("bind_investigation");
+  });
+
+  it("when setup requires active investigation, rejects an automatic-only opening for retry", async () => {
+    const transport = {
+      complete: async () => ({ ok: true, content: JSON.stringify(validCandidate()), latencyMs: 1 }),
+    } as unknown as AiTransport;
+    const source = createOpeningGenerationSource({ transport, config: { baseUrl: "x", apiKey: "k", model: "m" } });
+
+    await expect(source.generate({
+      gameType: "wuxia", seed: "requires-active-investigation", gameLength: "short", setup: executableInvestigationSetup,
+    })).rejects.toMatchObject({ kind: "AI_RESPONSE_INVALID", phase: "opening" });
   });
 
   it("provider-shaped opening without anchors or typed goals stays an invalid response", async () => {

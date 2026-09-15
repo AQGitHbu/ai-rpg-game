@@ -39,6 +39,24 @@ function hasOnlyKeysInArray(value: unknown, allowedKeys: readonly string[]): boo
   return !Array.isArray(value) || value.every((entry) => hasOnlyKeys(entry, allowedKeys));
 }
 
+function setupRequiresExecutableInvestigation(setup: GameSetup | undefined): boolean {
+  return setup?.storyOpening.includes("consequenceBindings.bind_investigation") === true;
+}
+
+function hasExecutableInvestigation(candidate: OpeningGenerationCandidate): boolean {
+  const knownFactKeys = new Set(candidate.opening.npc.knownFactKeys);
+  return candidate.world.publicFacts.some((fact) => {
+    const methods = fact.investigationApproaches;
+    if (knownFactKeys.has(fact.key) || fact.investigationLabel?.trim() === ""
+      || methods === undefined || methods.length < 2 || methods.length > 3) return false;
+    return candidate.opening.consequenceBindings?.some((binding) => binding.kind === "bind_investigation"
+      && binding.factRef === fact.key
+      && binding.discoveryMode === "investigation"
+      && binding.approaches.length === methods.length
+      && binding.approaches.every((approach, index) => approach.approachId === methods[index]?.approachId)) === true;
+  });
+}
+
 /**
  * Opening candidates are a closed creation contract. Keep this check structural
  * and separate from the semantic parser so repair can still normalize malformed
@@ -372,6 +390,10 @@ export function createOpeningGenerationSource(
         });
         throw failOpening("invalid_schema");
       }
+      if (setupRequiresExecutableInvestigation(input.setup) && !hasExecutableInvestigation(validated.validated)) {
+        logger?.warn("opening_generation_required_investigation_missing");
+        throw failOpening("invalid_schema");
+      }
       // 玩家开局配置是权威输入；实体名、地点和任务仍来自本次 AI 候选，
       // 不在服务端用另一套硬编码内容覆盖候选。
       if (input.setup !== undefined) {
@@ -431,7 +453,7 @@ ${input.novelty.recent.map((record) => `- ${record.summary}`).join("\n")}
 种子：${input.seed}
 ${setupSection}${noveltySection}
 要求：
-1. world：summary/tone/themes/publicFacts（key 必须形如 fact_xxx，且全局唯一）。若要把某条事实作为玩家可主动调查的线索，给它提供非空 investigationLabel 和恰好 2–3 个 investigationApproaches，并在 opening.consequenceBindings 用同一个 fact key 绑定 discoveryMode=investigation；不要把该 fact key 放进 opening.npc.knownFactKeys，否则开局已发现而不能调查。privateFactKeys 可以保留 NPC 的私密先验，但不能替代玩家的实际调查。
+1. world：summary/tone/themes/publicFacts（key 必须形如 fact_xxx，且全局唯一）。若要把某条事实作为玩家可主动调查的线索，给它提供非空 investigationLabel 和恰好 2–3 个 investigationApproaches，并在 opening.consequenceBindings 用同一个 fact key 绑定 discoveryMode=investigation；不要把该 fact key 放进 opening.npc.knownFactKeys，否则开局已发现而不能调查。privateFactKeys 可以保留 NPC 的私密先验，但不能替代玩家的实际调查。若故事开端要求区分无额外见证与现场见证，绑定 methods 中至少一条 witnessNpcIds=[]，至少一条 witnessNpcIds=["@new.npc"]；world.publicFacts 中的 approaches 只放展示字段。
 2. player：name/identity/backgroundSummary；战斗属性由服务端规则配置，禁止生成 baseStats
 3. prologue：故事序幕（2-3 句），聚焦故事钩子、主角动机和背景冲突：说明主角为什么会来到这条故事线上、什么未解事件或危险正在逼近、以及为什么值得继续行动。它可以提及已确定的世界背景，但不是当前地点的感官镜头；不要描写雨声、光线、气味、脚步、材质等即时细节，不要写 NPC 台词、玩家选项或完整场景表演
 4. storyContract：version=1、targetActs=${targetActs}（必须与档位一致）、centralConflict、endingDirections 恰好两个（key 分别为 "trust" 与 "doubt"）。递送型开局可增加 delivery={itemKey,recipientKey,verificationFactKeys}；这些都是本地 key，verificationFactKeys 必须来自 publicFacts。
