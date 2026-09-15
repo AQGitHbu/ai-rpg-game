@@ -1352,6 +1352,9 @@ describe("createNarrativeBundleSource", () => {
     expect(prompt).toContain('"targetActs": 3');
     expect(prompt).toContain('"scale": "town"');
     expect(prompt).toContain("situation.responses 或同包 interactionProposals");
+    expect(prompt).toContain("opening.consequenceBindings");
+    expect(prompt).toContain("bind_investigation");
+    expect(prompt).toContain("witnessNpcIds");
   });
 
   it("rejects an automatic-only opening when setup requires executable investigation", async () => {
