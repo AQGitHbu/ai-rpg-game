@@ -11,6 +11,10 @@ export function offeredProductionChoices(view) {
     ...(view.worldMap?.locations ?? []).flatMap(location => location.travelChoice ? [location.travelChoice] : []),
     ...(view.obtainableItems ?? []).map(item => item.choice),
     ...(view.currentLocation.npcs ?? []).flatMap(npc => npc.talkChoice ? [npc.talkChoice] : []),
+    ...(view.currentLocation.investigations ?? []).flatMap(investigation => (investigation.choices ?? []).map(choice => ({
+      ...choice,
+      presentation: "investigate",
+    }))),
     ...(view.currentLocation.town?.interactiveBuildings ?? []).flatMap(building => building.arrivalChoiceToken ? [{
       choiceToken: building.arrivalChoiceToken, label: building.displayName,
     }] : []),

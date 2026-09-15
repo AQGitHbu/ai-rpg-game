@@ -73,3 +73,28 @@ it("uses a real authored opening response when the requested operation is not ye
   expect(authored).toContainEqual(selected);
   expect(selected?.choiceToken).not.toBe(view.story.currentObjectiveChoiceToken);
 });
+
+it("exposes projected investigation methods as executable production choices", () => {
+  const view = {
+    worldMap: { locations: [] },
+    obtainableItems: [],
+    currentLocation: {
+      npcs: [],
+      town: null,
+      actions: [],
+      investigations: [{
+        label: "泥地上的异常痕迹",
+        choices: [{ choiceToken: "opaque-investigation", label: "沿痕迹追查", hint: "保持低调" }],
+      }],
+    },
+    narrative: { choices: [], npcDialogues: [] },
+    battle: null,
+  };
+
+  expect(offeredProductionChoices(view)).toContainEqual({
+    choiceToken: "opaque-investigation",
+    label: "沿痕迹追查",
+    hint: "保持低调",
+    presentation: "investigate",
+  });
+});
