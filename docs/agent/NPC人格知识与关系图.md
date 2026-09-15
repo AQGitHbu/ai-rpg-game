@@ -8,7 +8,7 @@ NPC 的人格锚点、动态目标、知识、关系、承诺与结构化交互�
 
 - `EntityStore` 的 NPC record 必须包含 `identity`、`position`、`dynamicState`、`knowledge`、`relationships`、`history` 六类组件，并可带服务端安装的 `interactions` 定义。组件 exact-key、值域、实体 ID、生命周期和事件 provenance 均在解析期校验。
 - 人格 `identity.anchors` 包含 self concept、values、speech style、capability boundaries 和 taboos；goalId、关系 commitment ID 等由服务端按实体和序号铸造，AI 不能自定义权威 ID 或完成状态。
-- NPC goal 可声明 `resolution.completeWhen` 与 `resolution.blockWhen`；只有本人可观察且对应条件实体的本批调查、告知、持物或承诺变化满足条件时，`npcGoals` facade 才通过窄 mutation 改为 completed/blocked/active，并写入带 `evidenceEventIds` 的 `npc_goal_status_changed`。私下调查不会凭空改变未见证 NPC 的目标；重复回放不重复写目标事件。
+- NPC goal 可声明 `resolution.completeWhen` 与 `resolution.blockWhen`，每组最多四个条件；空组不触发对应状态，非空组须全部满足。只有本人可观察且对应条件实体的本批调查、告知、持物或承诺变化满足条件时，`npcGoals` facade 才通过窄 mutation 改为 completed/blocked/active，并写入带 `evidenceEventIds` 的 `npc_goal_status_changed`。私下调查不会凭空改变未见证 NPC 的目标；重复回放不重复写目标事件。
 - knowledge 按 FactId 去重，记录 certainty、disclosure 与 initial_world 或真实 Event 来源；关系边有方向，记录 affinity/trust/fear/hostility、stage/trend、evidence 和 commitments。封闭 signal 表与限速规则决定关系变化和相邻 stage 迁移；事实仅向显式 audience 传播，关系不自动反向成立。AI 不提交数值 delta 或任意 patch。NPC 故事互动由四种封闭 operation 与五类条件组成，缺少来源、依据、实际听众或条件不满足时不结算；目标状态只能由窄 mutation 改写。
 - `cooperationDefinitions` 只保存 `request_introduction`/`request_verification` 的条件、允许事实和允许听众范围，不是 permission 或目标状态副本。实际互动仍须有合法 evidence/knowledge 和当前场景受众，并叠加这些定义；定义只能通过有限 consequence binding 首次安装，不能覆盖已有条款或把安装本身当作一次合作。
 - `promise_confidentiality` 必须携带 `confidentiality`：非空 `protectedFactIds`、非空 `allowedAudienceIds` 和 `fulfillment: { kind: "story_delivery" }`。引用经审批绑定到已有事实与听众，条款随 promise 持久化；未来接应人由故事递送绑定按需确定，不提前建立 NPC。许诺只开启承诺；换取引荐必须再选择 `request_introduction`，其 `promise_status` 条件引用真实已成立的 open promise。
@@ -19,6 +19,7 @@ NPC 的人格锚点、动态目标、知识、关系、承诺与结构化交互�
 - `projectNpcDeliberation` 的私密关系上下文只读取本人 outgoing edges；openCommitments 与 resolvedCommitments 均保留 status 和 confidentiality 条款，供本人判断持续义务及已发生违约，不把其他 NPC 私密关系或该私密 envelope 传给作者。`NpcDeliberationSource` 的 proposal 只允许返回 response、目标引用、依据事件、事实披露引用和结构化互动提议；live source 复用 `narrative_bundle` AI role，但审计 purpose 单独记为 `npc_deliberation`。服务端再按实际 audience 运行 authority，拒绝秘密、失效依据、非当前目标和越权互动。
 - 生产 `prepareNpcNarrativeContext` 只在当前同场焦点需要条件/承诺/互动判断时调用该 source；开局和普通问候跳过。私密输入不进入作者上下文，获准 outward 投影进入同版作者与审阅，HTTP 使用同一 job 的预算与取消信号。
 - 每条 NPC line/dialogue 必须提供 `usedFactIds` 与 `usedEventIds`；缺失、重复、非 speaker 所有或不在 allowlist 的引用会拒绝整包。
+- B 仅对当前场景显式 `expressions` 中的合法 NPC 听众预览持久知识，按实际说话行与 speaker 写入 `npc_revealed` 来源和 `npc_knowledge_changed`；玩家、自身、远处或未激活角色不会成为新增 NPC 听众。新听众继承说话人的披露限制，已有听众保留自身限制；获知不等于获得公开传播许可。legacy `npcLine` 仍面向玩家，不据此猜测其他听众，未来续接也不提前授知。
 - 私下判断 prompt 不带其他 NPC 私密正文、其他 NPC history、无关玩家自由文本历史或裸关系数字；本轮选择/发言只从当前 actionId、player speaker 与焦点匹配的正式 History 读取，并保留 label 与 spoken 的表达类型。focus context 投影最近五条结构化交互、active goals、关系 stage/trend/open commitments 和有限 evidence。当前 job 的已提交事件须经过 ledger 存在性与 NPC 参与校验；私下判断、outward、作者和当前/预备场景审批使用一致的明确允许 Event ID 集合，不以缺少兼容 history 行拒绝真实核验事件。
 - 新 NPC 的正式 focus scene 未准备好时，read model 只开放单一 `ask`；不合成问候、不开放自由输入、不投影默认 support/challenge。
 - 动态新 NPC 只从获批的显式既有事实声明和同批新事实建立创建期知识；既有事实声明仅允许当前上下文闭包内、另一 NPC 以 `known + public + initial_world` 权威条目公开初始化的事实。语义审阅按候选每个场景、说话人和实际受众使用预检物化状态投影权限；当前 focus NPC 的权限不能套给续接新 NPC，同场较早的合法披露仍只对实际听众形成该场景后续权限。

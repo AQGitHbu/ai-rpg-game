@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - 总设计：[架构 Spec](../specs/2026-09-12-narrative-architecture-design.md)。必须先读 [P3 代码与范围核查](../reports/2026-09-15-narrative-p3-scope-review.md)，再读当前 Task 对应系统；本 Plan 不重新派发已完成的 P1/P2 建设任务。
-- 在 `codex/narrative-architecture` / `.worktrees/narrative-architecture` 的 **7ccfa57d** 上继续。本轮只写 Plan，不执行代码或 live；后续按 Task 实施。不另建分支，不修改 main/staged，不合并，不改 `current-phase.json`。
+- 在 `codex/narrative-architecture` / `.worktrees/narrative-architecture` 上继续；本次四项收尾基准为 **af70f83a**。用户已授权实施及必要真实 API/UI 验收，不另建分支，不修改 main/staged，不合并，不改 `current-phase.json`。
 - 用户已确认：有后果的选择、主动调查、NPC 目标与合作优先；自由输入继续“提出策略→选项确认→规则结算”；允许调查结果和变化回访进入同一生成链。
 - “质量与游戏性优先于 token、调用数和耗时。”“规则已结算结果不可被后续循环改写。”“原文永不因摘要删除。”生产失败显式重试，不以确定性剧情替代。
 - 暂缓直接自然语言行动、完整谎言/错误信念、离场 NPC 自主模拟、开放世界、组织经济、交易/装备、通用分支图和层级 Arc。P3 不增加新的互动 operation、reviewer、润色器或常驻调度器。
@@ -451,10 +451,10 @@ function reconcileStoryConsequences(input: {
 - [ ] 用生产 prepare→NPC→author→review 装配捕获 requests；运行 `npx vitest run src/game/application/storyConsequenceContext.test.ts src/game/application/prepareNpcNarrativeContext.test.ts src/game/application/server/ai/liveNarrativeBundleSource.test.ts src/game/application/testing/narrativeP2Journey.integration.test.ts --minWorkers=1 --maxWorkers=2` RED。
 - [ ] 将新目标变化及调查/告知来源作为现有 mandatory/contextEntityIds/contextEventIds 的输入，继续 P2 单轮有限检索。当前 goal/owner/knowledge 状态优先，旧摘要中“愿意引荐”不能恢复已失效许可；缺少 mandatory 或超64,000则显式失败，不另加摘要层。
 - [ ] 更新 observer 对新 Event 的判定，只有实际角色可见来源才能进入其包。goal Event 的 evidenceEventIds 不自动授权整个因果链；分享某一来源只开放已明确告知的证据，不能把原事件所有私密听众/附带事实一并展开。
-- [ ] A 的调查/分享与 B 的本场实际 NPC 知识变化共用上述后果函数。B 先校验实际披露与受众、完成后果预览，再用最终任务游标核对本候选正文、continuation、terminal 和 choices；不能只改 goal 与 choices 而留下旧 Quest/reveal。作者/审阅针对同一版本的预览，只有 B 成功才一并提交；不得 ready 后补状态。
-- [ ] 将 `compileNarrativeDraft` 的处理次序拆为：原始 sceneDrafts 的结构/唯一 current 检查→当前场景引用、披露及同候选实体规则预检→调用共享有界后果预览→按预览计算 slots、choiceCount、terminal/evolutionNeed→完整编译。先前的固定 slots 不能在预览前以 unknown_slot 拒绝新增必需内容；预览只依结构化且合法的本场效果，不从正文猜状态。`liveNarrativeBundleSource` 与最终 `approveNarrativeBundle` 复用或确定性复算同一纯预览，以当前 job/epoch、状态来源指纹和候选 hash 核对；不匹配即拒绝，不通过改 memory 快照或先写入世界取得一致。
-- [ ] 若 B 完成当前幕最后目标，重新计算同候选的 evolutionNeed 和合法内容范围；需要的下一幕/终局准备必须由本候选获批内容覆盖，缺少则给出修订依据并拒绝发布 ready，沿原有限候选循环处理。最多推进当前这一幕，不继续结算新幕的未执行目标，不再创建另一 job 或第三类生成入口。未来续接和未选分支不进入本场后果预览。
-- [ ] RED→GREEN：经正式 `source→compileNarrativeDraft→approveNarrativeBundle→B CAS` 装配，令 B 披露完成普通条件目标及本幕最后目标，分别验证 goal/Quest/reveal/阶段/choices 一致；带完整下一幕内容的候选不能被旧 slots 阻断，覆盖缺失必须保持 pending/failed。B 失败零新增后果，重试/并发不重复事件、赠物、关系或玩家 Action；终局仍等待玩家实际选择。
+- [x] A 的调查/分享与 B 的本场实际 NPC 知识变化共用上述后果函数。B 先校验实际披露与受众、完成后果预览，再用最终任务游标核对本候选正文、continuation、terminal 和 choices；不能只改 goal 与 choices 而留下旧 Quest/reveal。作者/审阅针对同一版本的预览，只有 B 成功才一并提交；不得 ready 后补状态。
+- [x] 将 `compileNarrativeDraft` 的处理次序拆为：原始 sceneDrafts 的结构/唯一 current 检查→当前场景引用、披露及同候选实体规则预检→调用共享有界后果预览→按预览计算 slots、choiceCount、terminal/evolutionNeed→完整编译。先前的固定 slots 不能在预览前以 unknown_slot 拒绝新增必需内容；预览只依结构化且合法的本场效果，不从正文猜状态。`liveNarrativeBundleSource` 与最终 `approveNarrativeBundle` 复用或确定性复算同一纯预览，以当前 job/epoch、状态来源指纹和候选 hash 核对；不匹配即拒绝，不通过改 memory 快照或先写入世界取得一致。
+- [x] 若 B 完成当前幕最后目标，重新计算同候选的 evolutionNeed 和合法内容范围；需要的下一幕/终局准备必须由本候选获批内容覆盖，缺少则给出修订依据并拒绝发布 ready，沿原有限候选循环处理。最多推进当前这一幕，不继续结算新幕的未执行目标，不再创建另一 job 或第三类生成入口。未来续接和未选分支不进入本场后果预览。
+- [x] RED→GREEN：经正式 `source→compileNarrativeDraft→approveNarrativeBundle→B CAS` 装配，令 B 披露完成普通条件目标及本幕最后目标，分别验证 goal/Quest/reveal/阶段/choices 一致；带完整下一幕内容的候选不能被旧 slots 阻断，覆盖缺失必须保持 pending/failed。B 失败零新增后果，重试/并发不重复事件、赠物、关系或玩家 Action；终局仍等待玩家实际选择。
 - [ ] fixed-memory 来源 fingerprint 纳入影响当前权限/准入的新增条款与状态；同 job 内固定，下一实际行动产生新包。摘要缓存仍派生；新增 goal Event 不计为 History 文字条目，不调低50/10阈值，不补对白凑数量。
 - [ ] 作者/现有审阅获得同一“已结算后果+当前可做事情+仍未解决条件”投影。NPC 私密判断可以解释取舍，但其 cooperate/refuse 不替代规则 gate；新目标条款/实际 goal 变化应触发当前焦点判断，保留最多一个角色，不增离场判断。
 - [ ] 终局沿原 endingOutcomes 发布；至少引用本路线已提交的调查方式、知情范围、合作变化或承诺后果，不能把最后 support 当作取消先前代价。Task 7 断言状态，真实文本由 Task 8 阅读；不另加评价器保证文学质量。
@@ -508,7 +508,8 @@ expect(privateRoute.publicWitnessFactIds).not.toEqual(publicRoute.publicWitnessF
 - [x] 运行 `npx vitest run src/game/application/testing/narrativeP3Journey.test.ts --minWorkers=1 --maxWorkers=2` RED；实现双场景 fixture source 同时覆盖 opening/decision。source 可以提供确定性 AI 内容，不能 runner 写入 History、goal、Quest 或 owner 来推进。
 - [ ] 私下路线：方法前提→真实查阅→回访→实际告知→目标/合作改变→合法引荐/核验→显式交付。公开路线：真实见证→不同目标/合作可用性→已声明替代方法→显式交付。现有双路线已覆盖调查、合作分化、告知/核验、显式交付和调查后重载，尚未把实际回访接入同一完整故事。独立 SQLite 回访恢复测试不替代本项完整故事要求。
 - [x] 在条件变化后读取同一 NPC 的正式候选，证明两路至少有一项可用/不可用 Action 不同，并继续两次有效行动验证后果仍存在。不同张力数字或一句不同 label 单独不足以证明合作分化。
-- [ ] 另用 Task 3 匠人材料场景跑最小“查证→告知→开放另一方法”片段，防止依赖递送、人名或道具名硬编码。主动退出、死锁拒绝、未选方法零影响、重复 ensure/调查、旧 token、回访故障、NPC 无来源不可反应均覆盖。
+- [x] 另用 Task 3 匠人材料场景跑最小“查证→告知→开放另一方法”片段：`narrativeP3CraftJourney.test.ts` 经正式绑定审批、互动安装与 `resolveTurn`，证明告知错误对象不开权限，告知窑师才开放指导试烧，重复行动不重复产生目标/发现事件。不含递送依赖；SQLite 与完整故事由本 Task 其他旅程覆盖。
+- [ ] 汇总主动退出、死锁拒绝、未选方法零影响、重复 ensure/调查、旧 token、回访故障、NPC 无来源不可反应的实际回归证据。
 - [x] 不重复建设旧 P2 集成；在既有测试上确保新增 schema/事件不会破坏 memory 固定包和权限；运行相关 tests/typecheck/boundaries 后提交 `test: complete divergent evidence and cooperation journeys`。
 
 **验收：** 两路不仅能 ending，还能从事件、真实 Action 集合、知识与原话解释为什么过程不同。
@@ -559,12 +560,21 @@ npm run journey:narrative:p3 -- --mode=live --protocol=artifacts/narrative-p3/p3
 
 ## 执行记录
 
+### 四项收尾顺序
+
+沿用 Task 6–8 的接口与全局约束，不新增剧情润色任务。以下每项先完成针对性失败回归，再实现、复核与提交；真实调用在离线模块验证完成后登记新批次。
+
+1. **Task 6：B 披露后果预览。** 修改 `approveNarrativeBundle.ts`、`generatePendingNarrativeBundle.ts`、`server/ai/narrativeDraftProjection.ts` 及对应 source；纯披露规则放现有 gameplay facade，输入为当前场景结构化引用与实际听众，不从正文抽取知识。以正式编译/审批/SQLite 测试验证普通目标与幕末目标、缺少后续内容拒绝、未来场景零授知、失败/重试零重复。断言 `published.currentAct === reviewed.currentAct`，以及知识/目标事件只在成功 CAS 后出现。
+2. **Task 7：同一故事的真实回访。** 修改 `application/testing/narrativeP3Journey.testutil.ts` 和测试，使用正式 move 离场、获取相关新证据、返回并继续告知/合作/交付；保留 `reloadAfterInvestigation`，另断言 `privateRoute.revisited === true`，不能通过改名、直接写 ledger 或扩大普通移动生成边界通过。
+3. **Task 3/7：另一题材最小复用。** 新增 `application/testing/narrativeP3CraftJourney.test.ts`，在匠人材料场景通过正式 Action 验证 `调查前方法不可用 → 查证并实际告知 → 新方法可用`，错误对象、未告知和重复调用零越权；复用现有审批与规则，不增加 production fixture 或新互动类型。
+4. **Task 8：有界 live/UI。** 先跑类型、完整测试、脚本和 build，提交后用新 runId register/live/replay；同一次初始化在首个双方法调查 ready 分叉，保留两路分母与原预算。至少一路在实际 UI 完成调查、策略确认、回访、刷新及终局，并保存对应请求与数据库证据。只有明确程序根因修复才允许重新冻结批次，不按文学评分重抽；更新验收矩阵与系统事实。
+
 - **范围确认：** 用户已确认本 Plan 的玩法范围、自由输入方式、两类生成边界和验收口径，详见“Global Constraints”与范围核查；其余均是待实现契约。
 - **设计审阅：** [独立审阅与修订](../reports/2026-09-15-narrative-p3-plan-review.md)记录目标引用、合作门槛、调查来源、B 后果与现场范围的核查依据；不作为实现通过证据。
-- **P3-A：** 主动调查、目标结算、有限后果绑定已落地；代码审阅修复来源匹配、追溯绑定和有限依赖死锁。另一题材的正式复用片段仍待验证，不将 Task 1–3 全部标为完成。
-- **P3-B：** 结果边界、真实选项和固定记忆已接入 A/B 链；独立 SQLite 测试覆盖历史证据触发回访及失败后重开重试成功。Task 6 所规划的“本场 B 披露产生 NPC 知识事件，并在同候选编译/审阅前预览后果”尚无完整生产链，不将 Task 4–6 全部标为完成。
-- **P3-C：** Task 7 离线双路线证明调查、合作分化与交付，但没有同故事实际回访；另一题材片段待执行。Task 8 已有协议/runner、零网络测试及历史 `p3-01` 登记/live/replay；两路均 `blocked/ROUTE_POLICY_UNSUPPORTED`，没有 UI 证据。代码审阅修正分叉位置与完成门槛，尚未重跑真实批次。
+- **P3-A：** 主动调查、目标结算、有限后果绑定已落地；代码审阅修复来源匹配、追溯绑定和有限依赖死锁。另一题材的正式规则复用片段已通过；其规则验证不替代完整故事与真实调用验收。
+- **P3-B：** 结果边界、真实选项和固定记忆已接入 A/B 链；独立 SQLite 测试覆盖历史证据触发回访及失败后重开重试成功。本场 B 披露的知识事件与同候选编译/审阅前后果预览已接通，普通条件和幕末条件经正式 SQLite 链验证；不将本切片通过等同于 Task 4–6 所有记忆与故事验收项完成。
+- **P3-C：** Task 7 离线双路线证明调查、合作分化与交付，但没有同故事实际回访；另一题材片段已通过正式规则与独立复核。Task 8 已有协议/runner、零网络测试及历史 `p3-01` 登记/live/replay；两路均 `blocked/ROUTE_POLICY_UNSUPPORTED`，没有 UI 证据。代码审阅修正分叉位置与完成门槛，尚未重跑真实批次。
 - **代码审阅：** [P3 规则与模块审阅修复](../reports/2026-09-15-narrative-p3-code-review.md)记录独立审阅、可复现缺陷、修复及验证边界。
-- **P3 总结论：** 已有核心规则和离线模块证据，但仍有 B 披露预览链、同故事回访、另一题材复用及真实 live/UI 验收缺口；不能宣称整个 P3 完成，也不能用严格 replay 通过替代玩法完成。
+- **P3 总结论：** 已有核心规则和离线模块证据，但仍有同故事回访及真实 live/UI 验收缺口；不能宣称整个 P3 完成，也不能用严格 replay 通过替代玩法完成。
 
 后续若发现缺口属于直接意图解析、错误信念、离场行为或更复杂世界系统，记录新的具体用例再与用户确认，不以“总 Spec 的 P3 曾提到”自动扩大本 Plan。

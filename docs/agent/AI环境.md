@@ -29,6 +29,7 @@
 ## 运行与测试入口
 
 - 本地离线回归：`npm run journey:foundation`
+- P3 同源 UI/API 验收先按 P3 协议 register，再在当前进程设置 `RUN_REAL_AI_JOURNEY=1`，以相同 `--mode=live --run-id --protocol --output` 运行 `npm run journey:narrative:p3:ui -- ...`。执行器在初始化前冻结为 private UI/public API；UI 使用 `http://127.0.0.1:3017`，复用原调用/行动/截止预算和独立路线 SQLite。按 `private.ui.json` 的当前待操作记录通过实际页面提交，中途 ready 刷新并核对状态；终局截图后由验收者在输出目录创建 `private.ui-reviewed` 释放页面。该文件只允许结束取证等待，不覆盖 driver 的规则或刷新判定。规则证据、执行器指纹和浏览器证据均须保留，不把 UI 操作自动称为严格回放通过。
 - P2 独立记忆诊断：`node scripts/narrativeP2Memory.mjs register <run-id>` 零网络冻结 v3；同一进程授权 `RUN_REAL_AI_JOURNEY=1` 后用 `live <run-id>`，每次议题暂停需阅读全文并用 `resume <run-id> <议题审阅文件>` 接续。`replay <run-id>` 在独立目录严格回放。复用既有预算与来源记录，满足交付前覆盖时优先执行一次 API 旧事追问；结果始终不代表整体 P2 通过。UI 和两臂仍须独立取得证据，旧 v2 的 A/B 门禁不变。
 - P2 v2 登记：`npm run journey:narrative:p2 -- --mode=register --run-id=p2-v2 --protocol=artifacts/narrative-p2/p2-v2/protocol.json --output=artifacts/narrative-p2/p2-v2` 零网络冻结完整协议、代码/配置与 Node 身份；要求模型别名 `ai-slg-game-model`、64,000 输入估算上限，拒绝不可读取的 Git 身份和覆盖登记。v1 产物必须使用原冻结实现，不由 v2 重解释。
 - P2 分阶段执行：保留上述 run-id/protocol/output 参数，使用 `--mode=live --stage=A`，当前进程须设置 `RUN_REAL_AI_JOURNEY=1`。A 到终局暂停后，用 `--mode=review --stage=A --review=<审阅文件>` 接收[固定人工审阅](AI文本审计.md#p2-终局审阅)。仅封存通过后，`--mode=live --stage=B` 才会再次核验 A 的实际数据库、产物、审阅和完整严格回放，然后首次初始化 B。每路只有一次初始化和绝对截止时间；审阅等待与重启不续期，失败保留两路分母和 B 的 `not_executed`。

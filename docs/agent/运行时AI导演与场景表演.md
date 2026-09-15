@@ -19,7 +19,7 @@
 - `generatePendingNarrativeBundle` 每个持久化 epoch 最多三个不可复用的候选版本。后续版本携带稳定解析、引用或审批拒绝原因；仍失败则保留同一 `jobId` 的 `provider_failed`，由显式 `{ "retry": true }` 手动重试。候选版本、候选 hash、lease 和 HTTP 预算均随 pending job 落盘，恢复 worker 先抢 10 分钟 lease；旧 worker 的完整 attempt predicate 不匹配时只能得到 stale。
 - 正式手动 retry 在同一次零 revision CAS 中，先从已提交 Quest/Event 重新归约终幕 Thread、`endingAllowed` 与演化状态，再把原 failed job 提升到下一 epoch；不重执行玩家 Action，不改 World/Event ledger，也不直接授予结局。已有两条结局定义时，作者和 world-delta 审批共享的结构演化需求均为 none；终幕回应使用 `worldDelta=null` 的 choice-free ending handoff，规则立场随后由 read model 提供。
 - 成功路径是审批生成包、提交场景事件、重建记忆，再调用 `repository.applyState`。世界增量、ready scene、choice registry、bundle 和记忆在同一次 scene CAS 中写回。
-- A 的规则后果和 B 发布前的后果核对共用 `reconcileStoryConsequences`；后果事件无法按账本顺序提交时，B 保持失败。当前 B 审批产生蓝图/场景事件，尚未形成“本场 NPC 披露→持久化知识事件→同候选编译与审阅前后果预览”的完整链路；场景内临时披露权限不等于 NPC 已持久获知。不得用事后首次绑定条件追溯完成已有交谈，令发布状态偏离已审批场景。公共上下文不携带带 `resolution` 的 NPC goal 正文或私密理由。
+- B 先解析并校验 current_scene 的结构化披露与实际听众，再由 `ruleEngine.previewSceneDisclosure` 预览知识和 `reconcileStoryConsequences` 后果；编译槽、任务游标与审阅均使用该版本，最终同次追加事件并 CAS。幕末披露可要求同候选提供下一幕内容，缺少时按原有限候选循环修订，不能 ready 后推进状态。未来续接不进入本场预览，不执行新幕目标或自动选择终局。不得用事后首次绑定追溯完成旧交谈；固定记忆包不改写为候选已经发生，公共上下文不带私密 goal 正文。
 - 已审批终局对的正式立场行动若在本次规则提交产生 `ending_reached`，直接原子保存结局与玩家历史，不再创建下一轮 NPC 生成任务；准备终局对仍需 AI，主动退出仍使用 `story_exit` 生成退出场景。
 - bundle step 必须由服务端 descriptor 投影；stepKey 唯一、无环、最多 12 步。非终点没有 choices，`next_decision` 终点恰好两个选项，`ending` 终点没有 choices 且没有 continuation scenes。
 - 决策 prompt 为每个已有 `candidateId` 同时投影服务端 Action；对话候选包含目标 NPC、dialogueAct 和结构化 topic。新增互动须提交封闭的 `interactionProposals` 并经预览审批，才能绑定相应候选；不能按选项数组位置把一个 label 改绑到另一种 Action，也不能根据裸 candidateId 猜测行动语义或改写 registry。
