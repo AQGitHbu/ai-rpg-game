@@ -332,6 +332,44 @@ describe("parseWorldDeltaProposal", () => {
     }]);
   });
 
+  it("接受事实方法中重复的 witness 元数据，但只在 binding 中保留见证权威", () => {
+    const parsed = parseWorldDeltaProposal({
+      beatSummary: "旧契抵达独立查验现场",
+      newFact: {
+        text: "旧契背面的封记曾被人拆开又重新压合。",
+        visibility: "public",
+        investigationLabel: "查验旧契封记",
+        investigationApproaches: [
+          { approachId: "quiet", label: "独自比对封痕", evidenceQuality: "clean", tensionDelta: 0, witnessNpcIds: [] },
+          { approachId: "witnessed", label: "请在场者共同验看", evidenceQuality: "noisy", tensionDelta: 2, witnessNpcIds: ["@new.npc"] },
+        ],
+      },
+      consequenceBindings: [{
+        kind: "bind_investigation",
+        factRef: "@new.fact",
+        discoveryMode: "investigation",
+        approaches: [
+          { approachId: "quiet", label: "独自比对封痕", evidenceQuality: "clean", tensionDelta: 0, witnessNpcIds: [] },
+          { approachId: "witnessed", label: "请在场者共同验看", evidenceQuality: "noisy", tensionDelta: 2, witnessNpcIds: ["@new.npc"] },
+        ],
+      }],
+    });
+
+    expect(parsed?.proposal.newFact?.investigationApproaches).toEqual([
+      { approachId: "quiet", label: "独自比对封痕", evidenceQuality: "clean", tensionDelta: 0 },
+      { approachId: "witnessed", label: "请在场者共同验看", evidenceQuality: "noisy", tensionDelta: 2 },
+    ]);
+    expect(parsed?.proposal.consequenceBindings?.[0]).toEqual({
+      kind: "bind_investigation",
+      factRef: "@new.fact",
+      discoveryMode: "investigation",
+      approaches: [
+        { approachId: "quiet", label: "独自比对封痕", evidenceQuality: "clean", tensionDelta: 0, witnessNpcIds: [] },
+        { approachId: "witnessed", label: "请在场者共同验看", evidenceQuality: "noisy", tensionDelta: 2, witnessNpcIds: ["@new.npc"] },
+      ],
+    });
+  });
+
   it("允许调查方式复用事实中的地点或 NPC 关键词", () => {
     const parsed = parseWorldDeltaProposal({
       beatSummary: "追查黑剑客去向",

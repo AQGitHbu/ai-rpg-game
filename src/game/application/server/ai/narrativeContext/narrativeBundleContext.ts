@@ -411,7 +411,7 @@ export function buildDecisionNarrativeContextBlocks(
   const p3SceneInvestigationContract = structuralEvolutionNeed.kind === "next_act"
     && storyState.currentAct === 2
     && worldState.generation.setup?.storyOpening.includes("consequenceBindings.bind_investigation") === true
-    ? "P3 首幕调查：本回合必须同时输出独立 scene 的 newLocation，以及 worldDelta.newFact 与 worldDelta.consequenceBindings；newFact 必须有 investigationLabel 和 2–3 条 investigationApproaches，binding 必须使用 factRef=\"@new.fact\"、discoveryMode=investigation，并逐项复制这些 methods。至少一条 witnessNpcIds=[]，至少一条 witnessNpcIds=[\"@new.npc\"]；不能只输出新地点/NPC/任务，不能用 automatic 事实或仅写 approaches 代替。"
+    ? "P3 首幕调查：本回合必须同时输出独立 scene 的 newLocation，以及 worldDelta.newFact 与 worldDelta.consequenceBindings；newFact 必须有 investigationLabel 和 2–3 条 investigationApproaches（事实方法只写 approachId/label/hint/evidenceQuality/tensionDelta，不写 witnessNpcIds），binding 必须使用 factRef=\"@new.fact\"、discoveryMode=investigation，并逐项复制这些 methods，见证信息只在 binding.approaches 中补 witnessNpcIds。至少一条 witnessNpcIds=[]，至少一条 witnessNpcIds=[\"@new.npc\"]；不能只输出新地点/NPC/任务，不能用 automatic 事实或仅写 approaches 代替。"
     : "";
   const blocks: NarrativeContextBlock[] = [
     block({

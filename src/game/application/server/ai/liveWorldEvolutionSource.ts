@@ -225,6 +225,8 @@ export type ParsedInvestigationApproaches = {
  * - 非数组或缺省 = 自动揭示，不产生日志；
  * - 逐条拒绝：approachId/label/hint 非空、quality 枚举、张力在界内、id 唯一、
  *   硬泄漏（完整正文子串）；
+ * - provider 可能把 binding 的 witnessNpcIds 重复带到事实方法中；该元数据
+ *   只在 binding 中具有权威，事实方法解析时校验后剥离；其他未知字段仍拒绝；
  * - label/hint 可以复用事实中的地点、人物和线索关键词；只有完整事实正文
  *   出现在 label/hint 中时才拒绝，避免把正常的调查入口误判为泄漏。
  */
@@ -240,7 +242,9 @@ export function parseFactInvestigationApproaches(
   for (const item of raw) {
     if (typeof item !== "object" || item === null || Array.isArray(item)) return null;
     const entry = item as Record<string, unknown>;
-    if (!hasNoUnknownKeys(entry, ["approachId", "label", "hint", "evidenceQuality", "tensionDelta"])) return null;
+    if (!hasNoUnknownKeys(entry, ["approachId", "label", "hint", "evidenceQuality", "tensionDelta", "witnessNpcIds"])) return null;
+    if (entry.witnessNpcIds !== undefined
+      && (!isStringArray(entry.witnessNpcIds) || entry.witnessNpcIds.some((id) => id.trim() === ""))) return null;
     const approachId = typeof entry.approachId === "string" ? entry.approachId.trim() : "";
     const label = typeof entry.label === "string" ? entry.label.trim() : "";
     const hint = entry.hint === undefined ? undefined : typeof entry.hint === "string" ? entry.hint.trim() : "";
