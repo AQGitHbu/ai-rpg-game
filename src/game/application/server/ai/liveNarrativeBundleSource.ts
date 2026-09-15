@@ -64,15 +64,35 @@ function normalizeFlatOpeningResponseShape(value: unknown): unknown {
   const raw = asRecord(value);
   const candidate = asRecord(raw?.opening);
   if (raw === null || candidate === null
-    || candidate.opening !== undefined
     || !("world" in candidate) || !("player" in candidate)
     || !("prologue" in candidate) || !("storyContract" in candidate)) return value;
-  const allowedKeys = new Set([
+  const candidateKeys = new Set([
     "world", "player", "prologue", "storyContract",
+    "opening",
     "location", "npc", "item", "quest", "situation", "firstScene",
     "consequenceBindings", "variationProfile",
   ]);
-  if (Object.keys(candidate).some((key) => !allowedKeys.has(key))) return value;
+  const responseKeys = new Set(["currentScene", "continuationScenes", "terminal", "interactionProposals", "npcOutwardProposals"]);
+  const wrappedResponse = candidate.opening !== undefined
+    && Object.keys(candidate).some((key) => responseKeys.has(key));
+  if (wrappedResponse) {
+    if (Object.keys(candidate).some((key) => !candidateKeys.has(key) && !responseKeys.has(key))) return value;
+    const {
+      world, player, prologue, storyContract, opening: openingDetail,
+      currentScene, continuationScenes, terminal, interactionProposals, npcOutwardProposals,
+    } = candidate;
+    if (asRecord(openingDetail) === null) return value;
+    return {
+      opening: { world, player, prologue, storyContract, opening: openingDetail },
+      ...(interactionProposals === undefined ? {} : { interactionProposals }),
+      ...(npcOutwardProposals === undefined ? {} : { npcOutwardProposals }),
+      ...(currentScene === undefined ? {} : { currentScene }),
+      ...(continuationScenes === undefined ? {} : { continuationScenes }),
+      ...(terminal === undefined ? {} : { terminal }),
+    };
+  }
+  if (candidate.opening !== undefined) return value;
+  if (Object.keys(candidate).some((key) => !candidateKeys.has(key))) return value;
   const {
     world, player, prologue, storyContract,
     location, npc, item, quest, situation, firstScene, consequenceBindings, variationProfile,
