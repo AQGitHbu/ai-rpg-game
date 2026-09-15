@@ -572,7 +572,7 @@ export function buildDecisionNarrativeContextBlocks(
       id: "bundle:world-delta-investigation-contract", slot: "output_contract", title: "事实调查方式契约",
       authority: "rule", retention: "mandatory", priority: 1000,
       source: { kind: "narrative_bundle_schema", refs: [] },
-      content: "若 worldDelta.newFact 非 null，investigationApproaches 必须恰好包含 2–3 条合法条目；若无法提供完整列表就输出 newFact:null，绝不能输出只有 1 条或不完整的列表。若这些方法要成为玩家可主动执行的调查，必须同时在 worldDelta.consequenceBindings（或顶层 consequenceBindings）提供 bind_investigation，factRef 使用 @new.fact，discoveryMode 固定为 investigation，并复制同一组 methods；仅提供 investigationApproaches 不会开启调查，事实抵达时仍会按 automatic 路径揭示。",
+      content: "若 worldDelta.newFact 非 null，investigationApproaches 必须恰好包含 2–3 条合法条目；若无法提供完整列表就输出 newFact:null，绝不能输出只有 1 条或不完整的列表。若当前主线要求玩家先选择主动调查方法时，必须创建未发现、可主动调查的事实，并在 worldDelta.consequenceBindings（或顶层 consequenceBindings）提供 bind_investigation，factRef 使用 @new.fact，discoveryMode 固定为 investigation，并复制同一组 methods；不能用 automatic 事实或仅在文字中提供 approaches 代替。仅提供 investigationApproaches 不会开启调查，事实抵达时仍会按 automatic 路径揭示。",
     }),
   ];
 

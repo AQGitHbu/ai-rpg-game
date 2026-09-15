@@ -26,6 +26,12 @@ describe("narrative P3 live journey protocol", () => {
     expect(JSON.stringify(protocol)).not.toContain("fixture-secret");
   });
 
+  it("freezes an executable investigation requirement instead of a descriptive approach", () => {
+    expect(NARRATIVE_P3_INPUT.storyOpening).toContain("未发现、可主动调查的事实");
+    expect(NARRATIVE_P3_INPUT.storyOpening).toContain("bind_investigation");
+    expect(NARRATIVE_P3_INPUT.storyOpening).toContain("仅写 investigationApproaches 或使用 automatic 事实不满足");
+  });
+
   it("selects an actual action reference by route policy, never by its label", () => {
     const actions = [
       { choiceToken: "opaque-quiet", action: { type: "investigate" as const, factId: "fact_dyn_2", approachId: "quiet" }, label: "现场核对" },
