@@ -375,8 +375,12 @@ export function parseWorldDeltaProposal(
     const f = rec.newFact as Record<string, unknown>;
     if (!hasNoUnknownKeys(f, ["text", "visibility", "investigationLabel", "investigationApproaches"])) return null;
     if (!validText(f.text)) return null;
-    const visibility = f.visibility;
-    if (visibility !== "public" && visibility !== "npc_private") return null;
+    const visibility = f.visibility === "public"
+      ? "public"
+      : f.visibility === "npc_private" || f.visibility === "private"
+        ? "npc_private"
+        : null;
+    if (visibility === null) return null;
     const investigationLabel = f.investigationLabel;
     if (investigationLabel !== undefined && !validName(investigationLabel)) return null;
     const rawApproaches = f.investigationApproaches;

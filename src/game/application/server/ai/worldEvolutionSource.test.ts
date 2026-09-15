@@ -291,6 +291,18 @@ describe("parseWorldDeltaProposal", () => {
     expect(parsed?.logCategories).toEqual([]);
   });
 
+  it("将 provider 使用的 private 事实可见性归一化为 npc_private", () => {
+    const parsed = parseWorldDeltaProposal({
+      beatSummary: "补充一条仅供知情者核对的线索",
+      newFact: {
+        text: "旧档中的散记没有进入正账。",
+        visibility: "private",
+      },
+    });
+
+    expect(parsed?.proposal.newFact?.visibility).toBe("npc_private");
+  });
+
   it("保留 scene worldDelta 的 investigation consequenceBindings 及见证者", () => {
     const parsed = parseWorldDeltaProposal({
       beatSummary: "旧契抵达独立查验现场",
