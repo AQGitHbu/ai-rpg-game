@@ -23,3 +23,27 @@ describe("P2 complete production story with observer memory", () => {
       oldQuoteInActualAuthorRequest: true, oldQuoteLeakedToUninformedNpc: false, itemGivenEventCount: 1, reloadEqual: true });
   }, 30_000);
 });
+
+
+describe("P2 compact history coverage", () => {
+  it("recovers an omitted old source before delivery after two distinct publications", async () => {
+    const result = await runOfflineP2Story({ gameLength: "medium", summaries: "enabled", compact: true });
+    expect(result).toMatchObject({ completed: true, finalAct: 5, topicsPreservedProgress: true,
+      memoryCoveragePassed: true, oldQuoteOmittedFromOverview: true, oldQuoteLeakedToUninformedNpc: false,
+      itemGivenEventCount: 1, reloadEqual: true, questionPreservedDecision: true });
+    expect(result.recallSource).toMatchObject({ inRecalledSourcesAndRequest: true });
+    expect(result.recallSource.recallCount).toBeGreaterThan(0);
+    expect(result.queryTurn - result.oldQuoteTurn).toBeGreaterThanOrEqual(8);
+    expect(new Set(result.topicIds).size).toBe(result.topicIds.length);
+    expect(result.topicIds.length).toBeLessThanOrEqual(15);
+    expect(new Set(result.publications.filter(item => item.beforeDelivery).map(item => item.jobId)).size).toBeGreaterThanOrEqual(2);
+    expect(result.publications.every(item => item.sourceFingerprint.length > 0)).toBe(true);
+  }, 30_000);
+
+  it("preserves coverage failure when two acts have no applicable topics, without topping up", async () => {
+    const result = await runOfflineP2Story({ gameLength: "medium", summaries: "enabled", compact: true, skipTopicActs: [2, 3] });
+    expect(result).toMatchObject({ completed: true, memoryCoveragePassed: false, queried: false, itemGivenEventCount: 1 });
+    expect(result.topicIds.some(id => id.startsWith("2-") || id.startsWith("3-"))).toBe(false);
+    expect(result.topicIds.length).toBeLessThanOrEqual(9);
+  }, 30_000);
+});

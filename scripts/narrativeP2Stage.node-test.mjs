@@ -212,3 +212,30 @@ test('resume independently rejects changed SQLite, and public production remains
   const blocked = await createNarrativeP2StageRunner(env);
   await assert.rejects(blocked({ protocol, stage: 'A', directory: join(directory, 'blocked') }), /LIVE_REQUIRES_RUN_REAL_AI_JOURNEY/);
 });
+
+
+test('v3 independently diagnoses memory through API without relabeling v2 or UI', { timeout: 600000 }, async () => {
+  const { createNarrativeP2MemoryProtocol } = await import('../src/game/application/testing/narrativeP2Journey.ts');
+  const diagnostic = createNarrativeP2MemoryProtocol('memory-fixture', { environment: protocol.environment, codeFingerprint: protocol.codeFingerprint });
+  assert.equal(diagnostic.plannedRoutes, 1);
+  assert.equal(protocol.protocolVersion, 'narrative-p2/v2');
+  const root = mkdtempSync(join(tmpdir(), 'p2-memory-v3-'));
+  const directory = join(root, 'live');
+  const run = await createNarrativeP2StageRunner(env, { offlineTransport, pollIntervalMs: 1 });
+  await assert.rejects(run({ protocol: diagnostic, stage: 'A', directory }), /CONFIGURATION/);
+  let result = await run({ protocol: diagnostic, stage: 'B', directory });
+  let questions = 0, recalls = [];
+  while (result.pauseReason === 'topic') {
+    assert.ok(++questions <= 15);
+    result = await run({ protocol: diagnostic, stage: 'B', directory, resume: true, review: reviewFor(result) });
+    recalls.push(...result.steps.filter(s => s.recall));
+  }
+  assert.equal(result.completed, true);
+  assert.equal(result.coveragePassed, true);
+  assert.equal(result.memoryIntegration, 'api_diagnostic_ui_not_executed');
+  assert.equal(recalls.length, 1);
+  assert.ok(recalls[0].recallCoverage.eligible);
+  assert.ok(recalls[0].recall.requests.some(r => r.oracleTextInRequest));
+  const replay = await (await import('./narrativeP2Quality.mjs')).replayP2Stage(diagnostic, 'B', directory, join(root, 'replay'));
+  assert.equal(replay.strictReplayPassed, true);
+});

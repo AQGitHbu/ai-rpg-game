@@ -29,6 +29,7 @@
 ## 运行与测试入口
 
 - 本地离线回归：`npm run journey:foundation`
+- P2 独立记忆诊断：`node scripts/narrativeP2Memory.mjs register <run-id>` 零网络冻结 v3；同一进程授权 `RUN_REAL_AI_JOURNEY=1` 后用 `live <run-id>`，每次议题暂停需阅读全文并用 `resume <run-id> <议题审阅文件>` 接续。`replay <run-id>` 在独立目录严格回放。复用既有预算与来源记录，满足交付前覆盖时优先执行一次 API 旧事追问；结果始终不代表整体 P2 通过。UI 和两臂仍须独立取得证据，旧 v2 的 A/B 门禁不变。
 - P2 v2 登记：`npm run journey:narrative:p2 -- --mode=register --run-id=p2-v2 --protocol=artifacts/narrative-p2/p2-v2/protocol.json --output=artifacts/narrative-p2/p2-v2` 零网络冻结完整协议、代码/配置与 Node 身份；要求模型别名 `ai-slg-game-model`、64,000 输入估算上限，拒绝不可读取的 Git 身份和覆盖登记。v1 产物必须使用原冻结实现，不由 v2 重解释。
 - P2 分阶段执行：保留上述 run-id/protocol/output 参数，使用 `--mode=live --stage=A`，当前进程须设置 `RUN_REAL_AI_JOURNEY=1`。A 到终局暂停后，用 `--mode=review --stage=A --review=<审阅文件>` 接收[固定人工审阅](AI文本审计.md#p2-终局审阅)。仅封存通过后，`--mode=live --stage=B` 才会再次核验 A 的实际数据库、产物、审阅和完整严格回放，然后首次初始化 B。每路只有一次初始化和绝对截止时间；审阅等待与重启不续期，失败保留两路分母和 B 的 `not_executed`。
 - P2 议题暂停：`--mode=resume --stage=B --review=<议题审阅文件>` 使用同一 output、协议、数据库与原截止时间接续；议题引用与所需 identity 在上次输出的 steps/identity 中。必须提供实际新增 History 引文和已发布候选 ID，不能用通过标记替代。终局等待不能经此入口接续。当前 B 在交付前的 `recall_integration` 保持关闭，召回/UI 与两臂诊断尚未接入 v2，不代表摘要覆盖或整批通过。

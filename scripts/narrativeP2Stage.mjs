@@ -7,7 +7,7 @@ import { createNarrativeP2SegmentRuntime } from './narrativeP2SegmentRuntime.mjs
 import { hashP2Snapshot, readP2MemoryState } from './narrativeP2Production.mjs';
 import { projectNarrativeP1GameSetup, waitForNarrativeP1Generation, hasCompletedCoreStory } from './narrativeP1Journey.mjs';
 import { selectProductionChoice, currentStoryInteractions } from './narrativeP1Choices.mjs';
-import { freezeP2OpeningOracle, inspectP2RecallCoverage, isP2RecallWindow, p2TextHash } from './narrativeP2Recall.mjs';
+import { freezeP2OpeningOracle, inspectP2RecallCoverage, isP2RecallWindow, inspectP2RecallAnswer, p2TextHash } from './narrativeP2Recall.mjs';
 const fail = code => { throw Error(`P2_STAGE_${code}`); };
 const read = path => JSON.parse(readFileSync(path, 'utf8'));
 const write = (path, value) => { const fd = openSync(path, 'wx'); try { writeFileSync(fd, JSON.stringify(value, null, 2)); fsyncSync(fd); } finally { closeSync(fd); } return hashReplayValue(value); };
@@ -67,11 +67,12 @@ export async function createNarrativeP2StageRunner(runtimeEnv, options = {}) {
   const { createSqliteClient } = await import('../src/game/application/server/persistence/sqliteClient.ts');
   const { buildChoiceMap } = await import('../src/game/application/buildChoiceMap.ts');
   const { isStoryDeliveryComplete } = await import('../src/game/gameplay/rpg/storyDelivery/index.ts');
-  const { createNarrativeP2Protocol } = await import('../src/game/application/testing/narrativeP2Journey.ts');
+  const { createNarrativeP2Protocol, createNarrativeP2MemoryProtocol } = await import('../src/game/application/testing/narrativeP2Journey.ts');
   const { selectNarrativeP2Topic, commitNarrativeP2Topic, stopNarrativeP2Topics } = await import('../src/game/application/testing/narrativeP2Topics.ts');
   return async function run({ protocol, stage, directory, resume = false, review, mode = 'live', sourceDirectory = directory, replaySegment = 0 }) {
-    if (protocol.protocolVersion !== 'narrative-p2/v2' || !['A', 'B'].includes(stage)) fail('CONFIGURATION');
-    if (canonical(protocol) !== canonical(createNarrativeP2Protocol(protocol.runId, { environment: protocol.environment, codeFingerprint: protocol.codeFingerprint }))) fail('FROZEN_CONFIGURATION_MISMATCH');
+    const memoryDiagnostic = protocol.protocolVersion === 'narrative-p2/v3';
+    if ((!memoryDiagnostic && protocol.protocolVersion !== 'narrative-p2/v2') || !['A', 'B'].includes(stage) || (memoryDiagnostic && stage !== 'B')) fail('CONFIGURATION');
+    if (canonical(protocol) !== canonical((memoryDiagnostic ? createNarrativeP2MemoryProtocol : createNarrativeP2Protocol)(protocol.runId, { environment: protocol.environment, codeFingerprint: protocol.codeFingerprint }))) fail('FROZEN_CONFIGURATION_MISMATCH');
     if (mode === 'live' && !options.offlineTransport) {
       if (process.env.RUN_REAL_AI_JOURNEY !== '1') fail('LIVE_REQUIRES_RUN_REAL_AI_JOURNEY');
       const { freezeP2CodeIdentity } = await import('./narrativeP2Journey.mjs');
@@ -79,7 +80,7 @@ export async function createNarrativeP2StageRunner(runtimeEnv, options = {}) {
         || protocol.environment.inputMaxEstimatedTokens !== 64000 || runtimeEnv.AI_MODEL?.trim() !== protocol.environment.model
         || runtimeEnv.AI_API_BASE_URL?.trim() !== protocol.environment.apiBaseUrl
         || Number(runtimeEnv.AI_NARRATIVE_INPUT_MAX_ESTIMATED_TOKENS ?? '64000') !== 64000) fail('FROZEN_CONFIGURATION_MISMATCH');
-      if (stage === 'B') await (await import('./narrativeP2Quality.mjs')).admitP2StageB(protocol, directory);
+      if (stage === 'B' && !memoryDiagnostic) await (await import('./narrativeP2Quality.mjs')).admitP2StageB(protocol, directory);
     }
     if (!['live', 'replay'].includes(mode)) fail('CONFIGURATION');
     const route = protocol.routes.find(r => r.routeId === protocol.stages.routeByStage[stage]);
@@ -168,6 +169,7 @@ export async function createNarrativeP2StageRunner(runtimeEnv, options = {}) {
       await ready();
       const oracle = prefix[0]?.oracle ?? freezeP2OpeningOracle(latest);
       let recallCoverage = null, recallFocus = null;
+      let recallDone = prefix.some(e => e.steps.some(s => s.recall));
       while (true) {
         const record = active(latest);
         if (current.view.ending !== null) {
@@ -181,7 +183,7 @@ export async function createNarrativeP2StageRunner(runtimeEnv, options = {}) {
         let choice = { kind: 'formal' };
         // Physical travel/handoff is not a dialogue window. The previous NPC's
         // completed session can persist until arrival at the new public focus.
-        if (stage === 'B' && (focus || !formal || ['talk', 'give_item'].includes(map.get(formal.choiceToken)?.type))) {
+        if (stage === 'B' && !recallDone && (focus || !formal || ['talk', 'give_item'].includes(map.get(formal.choiceToken)?.type))) {
           choice = selectNarrativeP2Topic({ currentAct: record.storyState.currentAct,
             formalResponseCount: dialogue(record)?.npcId === focus?.npcId ? dialogue(record).turnCount : 0,
             focus: current.view.narrative.npcDialogues }, topicState);
@@ -191,14 +193,16 @@ export async function createNarrativeP2StageRunner(runtimeEnv, options = {}) {
           topicFailures.push(failure); failures.push(failure);
           topicState = { ...topicState, stoppedActs: [...topicState.stoppedActs, failure.act] };
         }
-        const selected = choice.kind === 'topic' ? null : formal;
-        if (stage === 'B' && choice.kind !== 'topic') {
+        let selected = choice.kind === 'topic' ? null : formal;
+        if (stage === 'B' && !recallDone && (memoryDiagnostic || choice.kind !== 'topic')) {
           const tapes = Array.from({ length: segment + 1 }, (_, index) => read(resolve(mode === 'live' ? directory : sourceDirectory, `${stage}.segment-${index}.json`)).tape);
           recallCoverage = inspectP2RecallCoverage({ snapshot: latest, oracle, tapes, publications: manifest.read().publications });
           if (isP2RecallWindow({ snapshot: latest, oracle, coverage: recallCoverage, topicState, focus, actionCount,
             budget: route.budget, transportCount: mode === 'live' ? manifest.read().counters.transport : tapes.reduce((sum, tape) => sum + tape.calls.length, 0),
-            deadline: mode === 'live' ? manifest.read().deadline : Number.MAX_SAFE_INTEGER, now: Date.now() })) {
-            recallFocus = focus; pauseReason = 'recall_ui'; break;
+            deadline: mode === 'live' ? manifest.read().deadline : Number.MAX_SAFE_INTEGER, now: Date.now(), requireCompletedTopics: !memoryDiagnostic })) {
+            recallFocus = focus;
+            if (!memoryDiagnostic) { pauseReason = 'recall_ui'; break; }
+            choice = { kind: 'recall' }; selected = null;
           }
           if (selected && map.get(selected.choiceToken)?.type === 'give_item'
             && !failures.some(f => f.code === 'P2_MEMORY_COVERAGE_FAILED')) {
@@ -206,8 +210,8 @@ export async function createNarrativeP2StageRunner(runtimeEnv, options = {}) {
             failures.push(failure); topicFailures.push(failure);
           }
         }
-        if (choice.kind !== 'topic' && !selected) fail('NO_LEGAL_POLICY_ACTION');
-        const interaction = choice.kind === 'topic' ? { kind: 'free_text', targetNpcId: choice.npcId, text: choice.topic.text } : { kind: 'fixed_choice', choiceToken: selected.choiceToken };
+        if (!['topic', 'recall'].includes(choice.kind) && !selected) fail('NO_LEGAL_POLICY_ACTION');
+        const interaction = choice.kind === 'recall' ? { kind: 'free_text', targetNpcId: recallFocus.npcId, text: protocol.recall } : choice.kind === 'topic' ? { kind: 'free_text', targetNpcId: choice.npcId, text: choice.topic.text } : { kind: 'fixed_choice', choiceToken: selected.choiceToken };
         if (actionCount >= route.budget.actions) fail('ACTION_BUDGET_EXHAUSTED');
         if (mode === 'live') change({ type: 'checkpoint', gameRevision: record.revision, sourceHash: hashP2Snapshot(latest), artifacts: { [`ready-${actionCount}`]: hashP2Snapshot(latest) } });
         const actionId = mode === 'live' ? change({ type: 'reserve_action', interaction }).pendingAction.actionId : expected.steps[steps.length]?.command.actionId;
@@ -241,6 +245,11 @@ export async function createNarrativeP2StageRunner(runtimeEnv, options = {}) {
             evidence.acceptedCandidates.push({ callId: accepted.request.callId, jobId, historyIds: historyDelta.filter(h => h.jobId === jobId && texts.includes(h.text)).map(h => h.id) });
           }
         }
+        if (choice.kind === 'recall') {
+          evidence.recall = inspectP2RecallAnswer({ before, after: latest, command, oracle, calls });
+          evidence.recallCoverage = recallCoverage;
+          recallDone = true;
+        }
         steps.push(evidence);
         if (mode === 'live') change({ type: 'commit_action', actionId, gameRevision: after.revision, sourceHash: hashP2Snapshot(latest), evidence: { historyHash: evidence.historyHash, historyIds: historyDelta.map(h => h.id), candidateCallIds: evidence.candidateCallIds, jobIds: evidence.jobIds, topic, effectiveHistoryDelta: evidence.effectiveHistoryDelta } });
         if (topic) {
@@ -263,7 +272,7 @@ export async function createNarrativeP2StageRunner(runtimeEnv, options = {}) {
       }));
       const qualityFailures = [...failures, ...prefix.flatMap(e => e.review && e.review.verdict !== 'grounded' ? [{ act: Number(e.review.topicId.split('-')[0]), code: e.review.verdict }] : []), ...(reviewForSegment && reviewForSegment.verdict !== 'grounded' ? [{ act: Number(reviewForSegment.topicId.split('-')[0]), code: reviewForSegment.verdict }] : [])];
       const stageEvidence = { stage, segment, qualityFailures, candidateIndex, oracle, recallCoverage, review: reviewForSegment, steps, topicFailures, topicState, pauseReason, completed,
-        coveragePassed: stage === 'A' && completed, memoryIntegration: stage === 'B' ? 'ui_pending' : 'not_required', terminal: finalSnapshot, history: historyOf(finalSnapshot) };
+        coveragePassed: stage === 'A' ? completed : memoryDiagnostic && recallDone, memoryIntegration: stage === 'B' ? (memoryDiagnostic ? 'api_diagnostic_ui_not_executed' : 'ui_pending') : 'not_required', terminal: finalSnapshot, history: historyOf(finalSnapshot) };
       if (mode === 'replay') {
         if (hashP2Snapshot(stageEvidence) !== hashP2Snapshot(expected)) fail('REPLAY_EVIDENCE_MISMATCH');
         const replay = runtime.finish();

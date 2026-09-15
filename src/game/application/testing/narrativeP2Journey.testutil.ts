@@ -1,3 +1,4 @@
+import { NARRATIVE_P2_TOPICS } from "./narrativeP2Topics";
 import { fixtureNarrativeReviewPass } from "../server/ai/testing/narrativeReviewFixture.testutil";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -44,7 +45,7 @@ export async function buildOfflineP2Opening(context: Opening) {
 }
 
 /** Scripted prose for offline testing; production still owns the graph and approvals. */
-export function buildOfflineP2Draft(context: Decision) {
+export function buildOfflineP2Draft(context: Decision, compactReply?: string) {
   const { storyState, job } = context;
     const projection = projectNarrativeDraft(context);
     const next = projection.nextActProjection;
@@ -86,7 +87,7 @@ export function buildOfflineP2Draft(context: Decision) {
     ][stage - 1]!;
     const expressions = [
       ...scene.segments.map(segment => ({ kind: "narration", ...segment, referencedEntityIds: [] })),
-      ...[scene.npcLine.text, ...concerns].map((text, index) => ({ kind: "npc_line", ...scene.npcLine!, audienceIds: [String(PLAYER_ENTITY_ID)], text,
+      ...(compactReply === undefined ? [scene.npcLine.text, ...concerns] : [slotKey === "current" ? compactReply : scene.npcLine.text]).map((text, index) => ({ kind: "npc_line", ...scene.npcLine!, audienceIds: [String(PLAYER_ENTITY_ID)], text,
         answeredBeatIds: index === 0 ? scene.npcLine!.answeredBeatIds : [] })),
     ];
     return { slotKey, scene: { expressions, objectiveLink: scene.objectiveLink, choices: scene.choices } };
@@ -99,7 +100,7 @@ function visibleTokens(value: unknown): string[] {
   return Object.entries(value).flatMap(([key, child]) => key === "choiceToken" && typeof child === "string" ? [child] : visibleTokens(child));
 }
 
-export async function runOfflineP2Story(input: { gameLength: "short" | "medium"; summaries: "enabled" | "disabled" | "fail" }) {
+export async function runOfflineP2Story(input: { gameLength: "short" | "medium"; summaries: "enabled" | "disabled" | "fail"; compact?: boolean; skipTopicActs?: readonly number[] }) {
   const directory = mkdtempSync(join(tmpdir(), "rpg-p2-offline-"));
   const dbPath = join(directory, "journey.sqlite");
   const clientFactory = () => createSqliteClient(dbPath);
@@ -109,6 +110,19 @@ export async function runOfflineP2Story(input: { gameLength: "short" | "medium";
   const now = () => "2026-09-14T00:00:00.000Z";
   let currentContext: NarrativeBundleSourceContext | undefined;
   let queryInFlight = false;
+  let compactReply = "乡亲约定由渡口值守人收信，我只能说明本地的安排。";
+  const topicIds: string[] = [];
+  const publications: { jobId: string; watermark: number; act: number; beforeDelivery: boolean; sourceFingerprint: string }[] = [];
+  let topicsPreservedProgress = true;
+  let pendingTopic: { act: number; turns: number; npcId: string } | undefined;
+  let preDeliveryHistory = 0;
+  const replies = [
+    "我想让家中知道在外的乡亲平安，送信能免去空等。", "等信的家人会继续担心；其他影响我不清楚。", "是否回信要由收信人决定，你不必代他答应。",
+    "我是这段村道的值守人，负责说明当地交接安排。", "我赞成亲手交接，因为路过不等于收信人已收到。", "我的依据是本地公开约定，远处的情况我没有亲见。",
+    "收信人按原约定不变，我的意见不能代替他的确认。", "交给旁人就无法由约定收信人当面确认；我没有别的可靠办法。", "我能说明本地去向，不能保证远处的人如何回应。",
+    "我没有已知的新风险可报告，不能把猜测当作事实。", "我能核对的是公开交接约定，没有其他亲见证据。", "是否回复家书要由接收人回答，送达本身不能代他决定。",
+    "送到这里能结束递送人的奔波，但家人的回应仍要另外安排。", "我愿按约定收信，其他人的回信意愿不能由我承诺。", "送达不等于家人已经读信，之后的回应仍未确定。",
+  ];
   let oldQuoteInActualAuthorRequest = false;
   let oldQuoteLeakedToUninformedNpc = false;
   let npcRequestCount = 0;
@@ -122,6 +136,9 @@ export async function runOfflineP2Story(input: { gameLength: "short" | "medium";
   let actionsTaken = 0;
   let quoteTurn = 0;
   let queryTurn = 0;
+  let oldQuoteId = "";
+  let recallAudit: AiTextAuditContext | undefined;
+  let recalledSourceVerified = false;
   let oldQuoteCoveredAtQuery = false;
   let oldQuoteOmittedFromOverview = false;
   const memoryAudits: AiTextAuditContext[] = [];
@@ -149,8 +166,13 @@ export async function runOfflineP2Story(input: { gameLength: "short" | "medium";
       }
       if (currentContext === undefined) throw new Error("missing provider context");
       if (currentContext.kind === "opening") return { ok: true, content: JSON.stringify(await buildOfflineP2Opening(currentContext)), latencyMs: 0 };
-      if (queryInFlight) oldQuoteInActualAuthorRequest ||= prompt.includes(P2_OLD_QUOTE);
-      return { ok: true, content: JSON.stringify(buildOfflineP2Draft(currentContext)), latencyMs: 0 };
+      if (queryInFlight) {
+        oldQuoteInActualAuthorRequest ||= prompt.includes(P2_OLD_QUOTE);
+        recallAudit = audit;
+        recalledSourceVerified = currentContext.memoryContext?.recalled.some(entry => entry.id === oldQuoteId
+          && entry.text === P2_OLD_QUOTE) === true && prompt.includes(oldQuoteId) && prompt.includes(P2_OLD_QUOTE);
+      }
+      return { ok: true, content: JSON.stringify(buildOfflineP2Draft(currentContext, input.compact ? compactReply : undefined)), latencyMs: 0 };
     },
   };
   const requestClient = createNarrativeRequestClient({ aiClient });
@@ -179,17 +201,29 @@ export async function runOfflineP2Story(input: { gameLength: "short" | "medium";
         const generated = await generatePendingNarrativeBundle({ repository, source, npcDeliberationSource: npcSource, reviewer, now,
           memorySummaryRepository: memoryRepository,
           prepareMemoryPackage: createNarrativeMemoryPackagePreparer({ repository: memoryRepository, source: summarySource,
+            hooks: { reserve: async reservation => async settlement => {
+              if (reservation.kind === "summary_batch" && reservation.observerId === String(PLAYER_ENTITY_ID)
+                && settlement.published && settlement.state !== undefined) publications.push({ jobId: reservation.jobId,
+                  watermark: settlement.state.coveredThroughSequence, act: record.storyState.currentAct,
+                  beforeDelivery: !isStoryDeliveryComplete(record.worldState, record.storyState), sourceFingerprint: reservation.sourceFingerprint });
+            } },
             policy: DEFAULT_NARRATIVE_MEMORY_POLICY, summaries: input.summaries === "disabled" ? "disabled" : "enabled" }),
         });
         record = await read();
         if (!generated.ok || record.storyState.narrative.status !== "ready") throw new Error(`generation failed act ${record.storyState.currentAct}: ${JSON.stringify({ generated, narrative: record.storyState.narrative })}`);
+        if (pendingTopic !== undefined) {
+          topicsPreservedProgress &&= record.storyState.currentAct === pendingTopic.act
+            && record.storyState.narrative.dialogueSession?.npcId === pendingTopic.npcId
+            && record.storyState.narrative.dialogueSession.turnCount === pendingTopic.turns;
+          pendingTopic = undefined;
+        }
         if (queryInFlight) {
           const questionView = projectGameSessionView(record.worldState, record.storyState, record.revision, "p2-offline");
           const questionMap = buildChoiceMap(record.worldState, record.storyState, record.revision);
           questionPreservedDecision = record.storyState.currentAct === questionAct
             && record.storyState.narrative.dialogueSession?.turnCount === questionSessionTurns
             && questionView.narrative.npcDialogues.some(entry => entry.freeInputEnabled)
-            && visibleTokens(questionView).some(token => { const action = questionMap.get(token); return action?.type === "talk" && action.dialogueAct !== "ask"; });
+            && visibleTokens(questionView).some(token => { const action = questionMap.get(token); return (action?.type === "talk" && action.dialogueAct !== "ask") || action?.type === "give_item"; });
         }
         queryInFlight = false;
         await observeSummary(record);
@@ -202,6 +236,7 @@ export async function runOfflineP2Story(input: { gameLength: "short" | "medium";
       if (!queried && record.storyState.currentAct >= 3 && dialogue !== undefined && enoughSummary && !isStoryDeliveryComplete(record.worldState, record.storyState)) {
         const oldEntry = record.storyState.history.entries.find(entry => entry.text === P2_OLD_QUOTE);
         const summary = await memoryRepository.load({ gameId: record.gameId, generationId: record.worldState.generation.generationId, observerId: PLAYER_ENTITY_ID });
+        oldQuoteId = oldEntry?.id ?? "";
         oldQuoteCoveredAtQuery = oldEntry !== undefined && summary.state !== null && oldEntry.sequence <= summary.state.coveredThroughSequence;
         oldQuoteOmittedFromOverview = oldEntry !== undefined && summary.state !== null && !summary.state.overview.historyIds.includes(oldEntry.id);
         const before = record;
@@ -220,6 +255,7 @@ export async function runOfflineP2Story(input: { gameLength: "short" | "medium";
         questionSessionTurns = record.storyState.narrative.dialogueSession?.npcId === dialogue.npcId
           ? record.storyState.narrative.dialogueSession.turnCount : 0;
         queryInFlight = true;
+        compactReply = "我没有亲历最初的委托，请按你当时听到的交付条件决定，不要把我的猜测当作原话。";
         queryTurn = record.storyState.turnNumber;
         actionsTaken += 1;
         continue;
@@ -231,6 +267,23 @@ export async function runOfflineP2Story(input: { gameLength: "short" | "medium";
         ?? actions.find(entry => entry.action.type === "move" && activeMoveIds.includes(entry.action.locationId))
         ?? actions.find(entry => entry.action.type === "talk" && entry.action.dialogueAct === (turn % 2 === 0 ? "support" : "challenge"))
         ?? actions.find(entry => entry.action.type === "talk");
+      if (input.compact && !queried && dialogue !== undefined && chosen?.action.type !== "move"
+        && !isStoryDeliveryComplete(record.worldState, record.storyState)
+        && !input.skipTopicActs?.includes(record.storyState.currentAct)) {
+        const topicIndex = NARRATIVE_P2_TOPICS.findIndex(topic => topic.act === record.storyState.currentAct && !topicIds.includes(topic.topicId));
+        if (topicIndex >= 0) {
+          const topic = NARRATIVE_P2_TOPICS[topicIndex]!;
+          pendingTopic = { act: record.storyState.currentAct, npcId: dialogue.npcId,
+            turns: record.storyState.narrative.dialogueSession?.npcId === dialogue.npcId ? record.storyState.narrative.dialogueSession.turnCount : 0 };
+          const asked = await performTurn({ gameId: record.gameId, actionId: `p2_topic_${turn}`, expectedRevision: record.revision,
+            choiceMap: map, interaction: { kind: "free_text", text: topic.text, targetNpcId: asNpcId(dialogue.npcId) } }, { repository, now });
+          if (!asked.ok) throw new Error(`topic failed: ${JSON.stringify(asked)}`);
+          topicIds.push(topic.topicId); compactReply = replies[topicIndex]!; actionsTaken += 1;
+          continue;
+        }
+      }
+      if (chosen?.action.type === "give_item") preDeliveryHistory = record.storyState.history.entries.filter(entry => entry.kind !== "shown_choice").length;
+      compactReply = "乡亲约定由渡口值守人收信，我只能说明本地的安排。";
       if (chosen === undefined) throw new Error(`no legal story action: ${JSON.stringify(view.narrative)}`);
       const result = await performTurn({ gameId: record.gameId, actionId: `p2_${turn}`, interaction: { kind: "fixed_choice", choiceToken: chosen.token }, expectedRevision: record.revision, choiceMap: map }, { repository, now });
       if (!result.ok) throw new Error(`action failed: ${JSON.stringify(result)}`);
@@ -251,6 +304,12 @@ export async function runOfflineP2Story(input: { gameLength: "short" | "medium";
       && left.memory?.preparedHash !== undefined && left.memory.preparedHash === right.memory?.preparedHash
       && left.memory.sourceFingerprint === right.memory?.sourceFingerprint;
     return {
+      topicIds, topicsPreservedProgress, publications, preDeliveryHistory,
+      recallSource: { historyId: oldQuoteId, jobId: recallAudit?.jobId, observerId: recallAudit?.memory?.observerId,
+        inRecalledSourcesAndRequest: recalledSourceVerified,
+        recallCount: recallAudit?.memory?.recallCount ?? 0, sourceFingerprint: recallAudit?.memory?.sourceFingerprint },
+      memoryCoveragePassed: queried && oldQuoteCoveredAtQuery && oldQuoteInActualAuthorRequest && recalledSourceVerified
+        && new Set(publications.filter(item => item.beforeDelivery).map(item => item.jobId)).size >= 2,
       completed: final.worldState.ending !== null && final.storyState.narrative.status === "ready",
       questionPreservedDecision,
       stateVersions: { entity: final.worldState.entityStore.version, world: final.worldState.version, story: final.storyState.version },

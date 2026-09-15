@@ -1,46 +1,78 @@
 # Narrative P2 Memory Coverage Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. 按当前任务执行，不额外拆出验收基础设施项目。
 
-**Goal:** 在完整小故事的质量门禁通过后，以有限、有具体目的的玩家追问形成自然经历，验证交付前的两批摘要、旧事召回、权限与终局质量。
+**Goal:** 验证自然互动形成摘要后，旧经历仍可追溯、按权限恢复，并帮助理解人物与后续决定。
 
-**Architecture:** 复用正式 create/performTurn/ensure、SQLite、摘要与严格回放；驱动增加有界议题日程和阶段门禁。自由追问不代替正式推进，不通过扩大模型输出 fixture 获得覆盖。
+**Architecture:** 复用正式 create/performTurn/ensure、SQLite、摘要和严格回放。先做紧凑生产链覆盖验证，再独立执行真实记忆诊断，最后补齐 UI 和整体质量验收。
 
 **Tech Stack:** TypeScript、Vitest、Node.js SQLite、现有 P2 register/live/replay 与 UI 入口。
 
 ## Global Constraints
 
-- 首要产物是一篇真实生成的三幕小故事及全文质量结论。现有 A 驱动已通过生产链离线验证，收尾当前修改后即可冻结并执行 A；Task 2 的两臂/UI 接续和 Task 3 的紧凑记忆覆盖不再作为 A 的前置条件，仅在 A 质量通过后按收益决定继续。
-- 保持 EntityStore3 / World7 / Story12、整场作者、现有单次 reviewer 和生产失败策略。不动 main、staged、`.foundation` 或阶段指针。
-- 原 p2-01 产物与协议保持。新行为登记 `narrative-p2/v2`，拒绝用新代码重解释 v1 磁带；需要检查旧证据时使用原冻结实现。
-- 摘要阈值 50、每批 10、每 job 最多两批/8 次摘要 HTTP；三版候选与24次叙事 HTTP保持。不能改变有效 History 定义、拆段计数、注入 History、重复问题或强制长回答凑量。
-- 保持模型别名 `ai-slg-game-model`、64,000 输入估算上限及原 transport 参数。实际上游 DeepSeek v4.1 Flash/1M 是用户确认的部署信息，不宣称 `/models` 已验证容量。
-- 两阶段合计计划两条完整路线，各一次；失败保留分母，不换种子补跑。两臂诊断不计入完整路线。阶段状态与未执行项必须明确。每条路线从首次初始化起使用登记的绝对截止时间；服务/UI 重启和人工等待都继续消耗该路线的 wall-clock 预算，不能暂停、续期或重新起算。A 的全文审阅发生在 B 初始化之前，因此等待 A 审阅时 B 尚未开始计时。
+- 保持 EntityStore3 / World7 / Story12、整场作者及现有审阅/失败策略；不新增 Entity 类别、Action、交互操作或剧情分支系统。不动 main、staged、`.foundation` 或阶段指针。
+- 摘要阈值 50、每批 10、每 job 最多两批/8 次摘要 HTTP；同一 observer 每次 preparation 最多发布一批。保持三个作者候选及每 job 24 次叙事 HTTP。不能改有效 History 定义、拆段、注入记录、重复提问或强制长回答凑覆盖。
+- 保持 `ai-slg-game-model`、64,000 输入估算上限和原 transport 参数。DeepSeek v4.1 Flash/1M 为用户确认的部署信息，不宣称已通过 `/models` 核实容量。
+- p2-01 至 p2-05 的冻结协议、失败和未执行项不改。现有 v2 仍要求 A 质量通过才允许 B；本计划不授权解锁旧 B 或把失败改成通过。
+- 下一次独立记忆诊断登记为 `narrative-p2/v3`，已提供独立登记/实跑/接续/回放入口。它不以重新跑过短篇为前置，也不等于整体 P2 验收通过。新批次单独保存代码/配置/输入指纹和所有尝试，沿用已有记录、预算与严格回放能力，不建设新的运行平台。
+- 真实主路线至多五幕、48 次行动、500 次 HTTP、180 分钟；从初始化起使用固定绝对 deadline，人工等待和重启不续期。两臂各最多一个 job、50 次 HTTP、45 分钟，单列预算及失败，不能算作完整路线。
 
-## 规划依据与完成定义
+## 当前证据与缺口
 
-p2-01 短篇10次行动形成32条有效 History；中篇16次行动形成49条，交付前后记录分别仍不足以形成预定两批摘要，详见 [真实验收](../reports/2026-09-14-narrative-p2-acceptance.md)。中篇正式驱动此前只选择最快完成路线，摘要尚未形成就结束；离线 fixture 的158条不能代表真实互动密度。
+P2 的原文召回、来源引用、observer 投影、摘要缓存与固定包已有代码和离线证据，详见 [P2 总计划](2026-09-14-narrative-architecture-p2.md)。现有议题驱动和 v2 门禁也已实现；紧凑覆盖 fixture 已通过正式链验证；真实跨摘要记忆、两臂和 UI 完整接续仍未完成。
 
-另一个结构问题是自由文本被转换为 `talk/ask/utterance` 后也消耗两轮对话计数。前置剧情修复将追问和正式回应分开，首次追问仍建立会话以防 `met=true` 绕过任务条件；本页必须用真实生产路径确认该前提，不能靠驱动改 StoryState 暂停换幕。
+[p2-05 完整短篇](../reports/2026-09-14-narrative-p2-complete-story.md) 完成三幕并严格回放，质量 3.6，未通过 4 分门槛；没有摘要。它证明一个可运行短故事样本，不证明长时记忆或整体剧情优于 main。当前不再把具体选择后果修正、再次短篇实跑排在记忆诊断之前。
 
-计数式摘要在常见无长度提前触发路径上需要累计至少60条**可选编**原文，才可能先后形成两个10条批次；这只是路线容量估算，不保证在同一 job 内形成两批。`prepareNarrativeMemory` 每个 observer 在一次 job 准备中最多发布一批，因此 player 的两批必须由至少两个不同 preparation job 分别成功发布；当前 job 受保护原文不计入候选，NPC observer 也不能代替 player 覆盖。70条仅作路线容量估算，实际准入看两个不同 player preparation job 的有效发布、水位和旧来源覆盖。至多15次独立追问若各产生玩家和 NPC 两条有效原文，能增加约30条经历；这个估算不保证模型输出、批次发布或实际覆盖成功。
+只读容量复核使用 p2-01 中篇正式记录顺序和 `planMemorySummary`，每次追问假定增加玩家与 NPC 两条记录、不使用长度提前触发、假定摘要发布成功。各幕抵达后有效记录为 2/11/20/29/38；最后一项是交付前窗口，不是结局总量 49。
 
-| 阶段 | 路线与预算 | 目的与门禁 |
-| --- | --- | --- |
-| A | S-short，3幕，24动作/200 HTTP/90分钟 | 一次完整小故事，正式选项优先；不要求摘要。阅读全文、无事实/权限/行动硬错误，五维均分≥4且单维≥3，严格回放通过。 |
-| B | M-medium，5幕，48动作/500 HTTP/180分钟 | 仅在A通过后执行；在既有正式推进间插入下表15个有限议题。交付前形成两批 player 摘要并完成旧事追问，然后唯一真实交付和合法结局；同样阅读全文评分。 |
+| 各幕追问数 | 交付前记录估算 | 预计两个发布 job | 解释 |
+| --- | --- | --- | --- |
+| 0/0/0/0/0 | 38 | 无 | 原正式路线不足。 |
+| 3/3/3/3/3 | 68 | 第四幕第3问、第五幕第1问 | 容量允许，仍须正式链验证。 |
+| 3/3/0/3/3 | 62 | 第四幕后正式行动、第五幕第3问 | 此顺序下可以，余量很小。 |
+| 3/0/0/3/3 | 56 | 只有第五幕第1问的一批 | 两幕无合适追问时可能不足。 |
 
-A 未通过时保留短篇失败与中篇“计划但未执行”，整批不通过。不能把未执行中篇算成成功，也不为缺少记忆覆盖跳过短篇质量问题。
+投影产物：`artifacts/narrative-p2/memory-feasibility/capacity.json`。这是反事实容量计算，没有生成真实故事或发布缓存；不能替代两个不同 player preparation job 成功发布的证据。当前 job 的受保护原文不能算进自己的选编候选，也不能用终局后摘要补交付前覆盖。
 
-## Task 1：升级协议和议题选择器
+## Task 1：紧凑生产链验证（已完成）
 
-**Files:** `src/game/application/testing/narrativeP2Journey.ts`、`scripts/narrativeP2Journey.mjs`、`scripts/narrativeP2Production.mjs`；新增有界议题选择器及各自测试。
+**Files:** `src/game/application/testing/narrativeP2Journey.integration.test.ts`、`src/game/application/testing/narrativeP2Journey.testutil.ts`；消费 `scripts/narrativeP2Recall.mjs` 的既有覆盖口径，不修改生产阈值。
 
-**Interfaces:** v2 登记输入、代码/配置 hash、阶段顺序、议题表与选择规则、总/分支预算、固定 recall 文本、oracle 选择规则、UI 接续计划。`register` 仍零网络；阶段结果与质量审阅产物需绑定同一协议、磁带和代码 hash。B 读取显式 A 审阅通过证据，不凭一个可随意传入的 `passed:true` 参数执行。运行身份和接续状态只写入现有 v2 journey 输出目录中的 route manifest，不引入通用运行子系统：manifest 至少含协议/代码/输入/来源 hash、不可复用的 routeAttemptId、阶段与生命周期状态、初始化时间和绝对 deadline、已用 action/logical/transport/summary HTTP/批更新计数、tape cursor、revision、pending actionId、审计流和产物 hash。每次动作、HTTP 预留、摘要批更新与状态切换先原子持久化再执行；resume 校验 hash/revision/cursor 和未消费 actionId 后以 CAS 前进，任何缺项、回退、重复初始化、过期 deadline 或已消费 actionId 都 fail closed。
+**输入/产物：** 使用正式 create→追问→正式选项→摘要→recall→give_item→ending。输出实际 History、两个不同 preparation job 的 player 发布批/水位/来源、作者实际请求和终局断言。
 
-- [x] 分开 A/B 执行入口与结果文件，防止阶段暂停被当作可覆盖既有输出；同一阶段只允许一次初始化。实现 route manifest 的 `registered → running → awaiting_review|awaiting_ui → running → sealed_pass|sealed_fail` 单向转换；A review 等待不启动 B，B 的绝对 deadline 一旦初始化即包含 UI 操作和人工等待。机器门禁读取运行/回放结果，人工质量记录附候选/History引用与分维理由。
-- [x] A 审阅产物采用固定 schema：`routeAttemptId`、protocol/code/input hash、terminal state/tape/完整 History hash、审阅者与时间、五个已命名维度分数、每维候选/History ID 引文、确认硬错误列表和 verdict。B 入口重新计算机器结果、严格回放及上述 hash，只接受均分≥4、每维≥3、硬错误为空且 verdict=pass 的未篡改产物；失败审阅封存 A 并保持 B `not_executed`，不能改写审阅或重跑 A 解锁。
-- [x] 选择器只读当前 act、合法焦点、公开状态、已提交议题清单；每幕按下表顺序各问一次，在第一次正式推进回应前完成。焦点必须来自当前 view 的 `freeInputEnabled`，不得直接指定未来 NPC ID、隐藏名字或私密信息。
+- [x] 新增紧凑五幕 fixture，每问只有必要回应、不同且有依据的答复和必要叙述；既有 158 条 fixture 保留为检索回归，不作为自然容量证明。
+- [x] 验证至多15题、每题一次，追问不独自消耗正式推进计数；交付前两个不同 player preparation job 成功发布，固定旧来源已覆盖，recall 实际进入作者请求并保持来源权限，最终唯一交付且合法收束。
+- [x] 验证问题不适用而早停时不替换、不补数量；未达到覆盖明确失败，通关不能覆盖这个结论。覆盖只形成一批、发布失败的情况，复用已有拒绝测试，避免重建接续测试矩阵。
+- [x] 运行该 integration suite 及受影响的 memory/脚本测试。若真实路径与投影不同，报告记录密度或触发窗口原因；不调低阈值让 fixture 通过，也不立即新增玩法。
+
+完成定义：得到正式链的两批发布和旧原文恢复证据，或得到明确的容量不足结论。离线答复由 fixture 提供，因此不能宣称自然回答质量或真实 API 效果已验证。Task 1 失败时先修订覆盖方案，不启动真实诊断。
+
+**执行证据：** `narrativeP2Journey.integration.test.ts` 的紧凑模式保留每场单条 NPC 答复和必要叙述，复用正式 SQLite、请求适配、审批、摘要发布 hooks 与行动链。12题后在第四幕由 `job_p2_topic_18` / `job_p2_21` 发布 player 批次，水位分别15/31（sequence包含展示选项位置，不是有效条数）；第五幕 `job_p2_query_22` 的 recalled 来源及实际作者请求同时含开局原文与 History ID。原话被概览省略，未泄露到未亲历 NPC 请求；交付前73条有效记录，唯一交付后终局成立、重载一致。
+
+两幕无适用议题的用例仅问9题，交付前61条但只有一批；第二批在交付后发布，因此明确 `memoryCoveragePassed=false`。它不补问题，也不以终局成功掩盖覆盖失败。实际紧凑 fixture 含必要旁白，密度高于上面的每问两条投影，两者不能等同。人工答复适用性由既有议题单测验证，旅程中的跳幕为显式测试输入，不冒充真实人工审阅。
+
+详细结果：`artifacts/narrative-p2/memory-feasibility/compact-production.json`。18项相关 Vitest、typecheck、131项边界检查通过；此证据只证明编排、来源与权限路径，NPC答复和审阅均由离线 fixture 提供，尚不证明真实模型回答保真或故事质量。
+
+## Task 2：独立真实记忆诊断（当前执行入口）
+
+**Files:** `src/game/application/testing/narrativeP2Journey.ts`、`scripts/narrativeP2Journey.mjs`、`scripts/narrativeP2Stage.mjs`、`scripts/narrativeP2Production.mjs`、`scripts/narrativeP2Recall.mjs` 及对应现有测试。
+
+**输入/产物：** 新 v3 登记读取固定模型配置、五幕输入、下面的有限议题和 oracle 规则；输出独立诊断结果，不读取失败 A 作为通过证据，不修改 v2 的 A/B 依赖。采用现有磁带、manifest 和计数能力。
+
+- [x] 先覆盖协议区分测试：v2 的失败 A 仍拒绝 B；v3 允许独立记忆诊断但不输出整体 P2 通过。实现最小入口和结果区分，不另造恢复框架。
+- [x] 将 recall 窗口改为首次满足实际覆盖条件的合法 ready，不强制当前幕问满三题。达到两批覆盖、oracle 被覆盖、act≥3、距开局≥2幕或≥8行动、未交付且有合法 free input 时，停止剩余议题并召回。停止议题不能伪造完成记录。
+- [ ] 冻结新批次后只跑一次主路线。开局即固定第一条玩家可见 NPC History 的 ID、原文 hash、speaker/audience 和时序；若缺少可评估信息，记录样本限制，不换 oracle 或种子。
+- [ ] 固定输入“最初委托人对这封信说过什么？我想先回想原话，再决定是否交付。”，不能夹带原文答案。主路线在正式 API 提交一次并继续至有限终局；本次记为 API 证据，UI 仍未完成，不使用旧 v2 的 UI 独占 checkpoint 冒充完成。
+- [ ] 在提交前保存同一 ready 来源快照，两臂使用其独立副本和相同追问，唯一变量为摘要启用/关闭。记录 oracle 经 raw/overview/recall/mandatory/absent 哪一路进入实际请求，核对动机和条件保真、来源及当前 NPC 的知识边界。关闭臂不必失败；不能只凭字符串命中或请求更短宣布收益。
+- [ ] 没达到覆盖时停止加问题，记录覆盖失败并在预算内完成正式路线。严格回放主路线与两臂，阅读全文，分别报告运行、记忆正确性、对理解/决定的实际帮助、故事质量和 UI 未执行。若 oracle 未被概览省略，明确未实证“省略后恢复”，不改摘要制造结果。
+
+**真实诊断结果：** [独立 API 诊断](../reports/2026-09-15-narrative-p2-memory-diagnostic.md) 的 `p2-memory-01` 在第四幕安全点提前结束并封存失败：18行动/59 HTTP、56条有效经历，4次player摘要均返回超限ID且未发布，召回/两臂/UI未执行。没有完成整条五幕路线，以上未满足项保持未勾选。
+
+**摘要选择契约已修复：** 提示与解析共用批次4/4、概览8/8限制及选编目的。固定来源回归用3行动/16 HTTP实现两批真实发布、旧话恢复与严格回放，详见 [契约修复验证](../reports/2026-09-15-narrative-p2-summary-contract.md)。旧失败批次不变；本次不是完整新故事，不能勾选整路线、两臂或UI。第三批受概览源6,000预算限制未发布，但保留旧水位与原文，作为剩余容量事项记录，不继续扩展剧情细节。
+
+### 有限议题池
+
+每幕抵达合法 NPC 后、正式推进前，按顺序最多三问。实际回答重复、缺乏故事依据或确无可回答内容时，人工记录引文并停止该幕剩余问题，不替换、不挪幕。已满足召回条件则优先召回，不为凑15题继续问。未知、无风险或不同意都是合法答复；不能将完成议题数量当作游戏性提升。
 
 | 幕/议题ID | 固定输入文本 |
 | --- | --- |
@@ -60,59 +92,16 @@ A 未通过时保留短篇失败与中篇“计划但未执行”，整批不通
 | 5-responsibility | 你收到信后愿意承担哪部分责任？哪些仍需要其他人同意？ |
 | 5-unresolved | 即使这次交付完成，我们刚才谈到的问题里还有哪些没有解决？ |
 
-议题不预置冲突答案，不暗示一定有反派、秘密或新事件；NPC 必须可以说明无此风险或不知道。不同意见的实际内容由故事产生，验收人员检查这些回答是否具有新增信息，不能仅按完成15个请求认定玩法改善。
 
-- [x] 每次正式 `performTurn` 成功后登记 `(act, topicId, actionId, npcId)`，reload 从已提交步骤恢复；失败不把议题标为已完成，也不生成新 actionId 隐形重试。每幕至多按表中顺序问三次、全程至多15个不同议题，问完再使用原正式选项策略；不因 History 少而追加第4次问题或替换已跳过的问题。
-- [x] 每个回答由登记路线的人工质量审阅记录 story-grounded 引文和判断，不增加 provider/judge 调用，也不使用关键词或长度规则。若回答与已问内容实质重复、没有故事依据或该故事确实无可回答内容，则停止该幕剩余议题并记录适用性/质量失败；剩余议题不替换、不挪到别幕，路线继续原正式选择至有限终局并保留失败分母。
-- [x] 议题前后验证 currentAct、当前任务与 dialogueSession：追问可以写真实交互，但不会独自完成 talk 目标；两个正式回应仍可换幕。缺少合法焦点或必需议题窗口直接报告路线适用性/覆盖失败，禁止构造 token、回滚剧情或修改计数。
-- [x] 选择器不向模型提交完成位和计数提示，不要求指定字数、段数或引用早话；步骤证据单独记录有效 History 增量、摘要水位、候选次数和所有用途 HTTP。
+## Task 3：补齐 UI 与整体 P2 判定
 
-## Task 2：有界追问、同源诊断和 UI 接续
+**Files:** 现有正式 UI/API 入口、P2 接续 adapter 与对应测试；验收事实写入报告和 [P2 总计划](2026-09-14-narrative-architecture-p2.md) gates。
 
-**Files:** `scripts/narrativeP2Production.mjs`、P2覆盖/回放 helper及测试、现有 UI 调用的验收 adapter。
+- [ ] API 记忆诊断后再实施最小 UI 接续。复用预登记的召回前快照建立独立验收副本，固定其来源、revision 和动作身份，由实际 UI 输入旧事、刷新/重新载入并继续到终局。它不与 API 主路线混算，也不修改其磁带；若复制来源或预算无有效登记则保持未执行。
+- [ ] 记录正式 UI 命令、刷新前后游戏与记忆状态及后续请求，确认不重复消费动作，保存/重载后仍能恢复同一旧来源。截图仅辅助，API 成功不能替代 UI 操作。
+- [ ] 统一评估原 P2 完成条件：短篇与中篇完整故事、真实两批摘要与旧事恢复、同源两臂、权限、UI 和严格回放。全文质量仍要求五维均分≥4、单维≥3且无确认硬错误；p2-05 的 3.6 不会因新诊断通过而转为合格。
+- [ ] 对仍未通过的质量项按跨场景结构性原因决定是否需要修复；新增玩法能力归后续阶段，不先围绕某段剧情反复修改。没有证据的项保持缺口，不宣称优于 main，不自动合并。
 
-- [ ] 开局后固定 oracle 为第一条玩家可见的开场 NPC History，保存其 ID、speaker/audience、原文 hash、turn/act。不后选更容易命中的句子；若该条没有可评估的信息则记录样本限制，不改 oracle 或再抽开局。
-- [ ] 完成本幕预登记议题后，第一次满足以下全部条件的合法 ready 才触发一次 recall：act≥3，未交付；至少两个不同 preparation job 已分别为 player 发布有效摘要批；oracle.sequence≤coveredThroughSequence；距开局≥2幕或≥8次实际行动；当前焦点 `freeInputEnabled=true`；该次新 job 在预算和绝对 deadline 内。保存两个 preparation job ID、覆盖批 ID/水位/来源指纹，不仅检查缓存行存在。p2-01 M-medium 的只读投影已验证 act5 的 `ready:12` 在交付前仍有 `npc_dyn_4.freeInputEnabled=true`，即使 `currentScene.choices=0`；因此最终幕问题只依赖真实 free-input 权限，问完后再使用既有 give choice，不额外要求两条正式 talk choice。
-- [ ] 固定 recall 文本沿用“最初委托人对这封信说过什么？我想先回想原话，再决定是否交付。”不将 oracle 正文、答案、隐藏事实或旧 speaker 的知识注入输入。核查实际作者请求原话命中与输出中动机/条件保真，当前 NPC 可以承认未亲历。
-- [ ] 达到第5幕最后可用的交付前窗口仍不满足时，以 `P2_MEMORY_COVERAGE_FAILED` 记录失败；继续既有正式选择至有限预算内的终局以收集质量，不追加问题或扩大预算。不能把结局之后产生的摘要用于证明交付前覆盖。
-- [ ] 从同一 ready SQLite/source hash 复制两臂，各最多1 job/50 HTTP/45分钟，唯一变量 summary enabled/disabled；真实请求需包含相同旧事输入，保持规则、原始来源、检索与权限相同。每臂固定记录 prepared history/event ID 与 source kind、oracle 进入作者请求的路径（raw/overview/recall/mandatory/absent）、回答中的 claim 与所引 evidence ID、动机/条件保真判断、权限错误及请求长度。两臂真实且无权限错误是正确性门槛；enabled 臂另须证明已覆盖来源可恢复且回答保真，长度只作测量、不能抵消内容损害。不能只比较字符串出现即宣布效果通过，也不能要求 disabled 臂失败来制造收益。
-- [ ] 记录 oracle 是否被 overview 省略。若没有省略，这次实跑只能证明跨摘要覆盖的旧话可用；“概览省略仍能召回”的必要性由已有明确省略的离线回归证明，不能事后改概览或换 oracle 冒充实跑证据。
-- [ ] 主路线在 checkpoint 写盘后立即进入 `awaiting_ui` 并停止，不能在 driver/API 代交 recall；两臂只读同一 checkpoint 的独立副本，不能改变主库或主路线 tape cursor。真实 UI 独占主路线的旧事输入、刷新和继续至终局：首个 UI 命令必须匹配预登记的 actionId、revision、targetNpcId 与 recall 文本 hash，resume 读取已记录 UI/API 命令后继续。接续须校验协议、数据库/source hash、revision、tape cursor、未消费 actionId、累计计数和绝对 deadline；服务重启及人工等待不得重置或暂停预算。重复提交、driver 替代提交、过期接续或缺失证据均封存失败；没有该能力就保持 UI 项未执行，不能另跑未登记路线或重复计算已提交行动。
-- [ ] 两臂使用独立副本，不能污染主路线；主路线提交与消费各一次。记录 UI 事件、正式API命令、刷新前后状态和终局，截图只是辅助。route manifest 同时记录实际运行与人工等待区间，但两者都计入从 B 初始化时间起的同一个绝对 deadline；不能冻结时暂停、实跑中延长或重启后重算。
+## 收敛边界
 
-## Task 3：稀疏自然回应的离线准入
-
-**Files:** `src/game/application/testing/narrativeP2Journey.integration.test.ts` / `narrativeP2Journey.testutil.ts`、`scripts/narrativeP2Journey.node-test.mjs`，相关规则/回放测试。
-
-- [ ] 新建紧凑响应 fixture：每次仅生成契约必要的玩家回应、NPC直接答复和必要叙述；每个议题答案不同且有原因/边界，不复制长段正文扩增 History。既有158条 fixture 保留为检索回归，不能用它充当新覆盖可行性证据。
-- [ ] 用正式 create→追问→正式选项→摘要→recall→give_item→ending，验证至多15个不同议题各不超过一次、追问不耗尽正式会话、至少两个不同 preparation job 在交付前分别发布 player 批次并覆盖 oracle，源与实际请求一致。fixture 的正常路径让15题都有不同且有依据的回答；另覆盖人工引文判定早停后的未问议题不替换、路线保留失败。若最小响应路径达不到覆盖，先承认方案失败并修订玩法日程设计，不修改计数阈值救测试。
-- [ ] 覆盖焦点缺失、仅一个 player preparation job、已交付才达水位、摘要失败、绝对 deadline 在 UI 等待中耗尽、计数/cursor 回退、重复恢复/执行、A质量未过或审阅 hash/引文不匹配、不同代码/协议、缺审阅证据、driver 代交 recall、未执行UI等拒绝用例；确认终局合法不掩盖覆盖失败。
-- [ ] 完整严格 replay 必须消费全部响应且验证正式状态、cache水位与preparedHash；UI暂停与两臂流同样纳入记录。篡改议题顺序、oracle、文本、当前状态或预算恢复不得通过。
-- [ ] 执行受影响测试、typecheck、P2脚本测试、check:docs、生产 build；协议和报告明确技术回归与语义质量的证明边界。
-
-## Task 4：新冻结批次与 P2 判定
-
-**Files:** 新批次的协议/磁带/报告，原 P2 Plan 的验收 gate。
-
-执行证据见 [p2-02 短篇实跑](../reports/2026-09-14-narrative-p2-short-story.md)：A 在第二次行动后的生成失败，未形成完整故事、未完成严格回放；B 未执行。下列完整验收项保持未完成。当前先处理真实文本暴露的当前事实与未来续接边界，Task 2/3 暂缓。
-
-### 当前聚焦修正：同包内容的生效时点
-
-只修改 `narrativeContext/narrativeBundleContext.ts` 的共享上下文与 `narrativeExecutionChecks.test.ts`，在运行时 AI 系统文档维护契约。已有 `compileDecisionNarrativeContext` 为 author/reviewer 提供同一 mandatory 时序块：当前 Action/地点约束 currentScene 和 beatSummary；续接正文仅在对应 trigger 成功后成立；条件结局仅在对应立场行动后成立。不改 DTO、存档、候选预算或校验门禁。
-
-- [x] 回归普通换幕（没有 endingResolutions）也向 author/reviewer 提供相同的当前行动与摘要范围；同一未来抵达抽取在续接槽通过、在摘要处被拒绝。
-- [x] 实现上述共享时序块，并删除条件结局块中重复的摘要规则；运行相关测试、typecheck、boundaries 和 docs 检查。
-- [x] 冻结新批次，执行一次 A，读取实际全文；失败保留原始证据，不推进 B。只有完整故事成立才恢复记忆任务。见 [p2-03 时序修正实跑](../reports/2026-09-14-narrative-p2-temporal-scope.md)：越过换幕，第四次行动后的审阅失败，完整故事仍未成立。
-
-### 当前聚焦修正：审阅响应可靠性与具体利害
-
-仅在 `liveNarrativeCandidateReview.ts` 对 decision 的无效 pass 进行一次同候选响应修复，沿用 requestClient 的取消、输入与 HTTP 预算；有效缺陷立即返回作者，不重新审阅求通过，二次仍无效则失败。`narrativeProgressContract.ts` 明确首场可见的具体受影响者/后果，以及中幕主张的自身利害与依据；不新增状态字段或模型角色。当前用户授权这一有界响应修复，取代本 Plan 早期“一次审阅调用”的限制，有效审阅结论与候选绑定保持。
-
-- [x] 回归引文错位→同候选修复、重复无效→有限失败、真实行动缺陷→直接拒绝；运行相关测试、typecheck、boundaries。
-- [x] 共用具体利害契约并维护系统说明；保持三个作者候选及每 job 24 次叙事 HTTP 总上限。
-- [x] 新冻结 A，全文审阅实际故事与结局，保存未通过证据；B 和记忆建设继续暂缓。p2-04 暴露普通对话增量指令矛盾，修正并新增回归后 p2-05 完成三幕和严格回放，质量均分 3.6 未过。详见 [完整短篇评审](../reports/2026-09-14-narrative-p2-complete-story.md)。下一重点是一个实际选择后果，不展开新的记忆任务。
-
-- [ ] 固定同一代码、模型/配置、A/B输入及议题、oracle规则、预算、route manifest schema、绝对 deadline 和 UI 接续口径，优先运行A并严格回放、按固定 hash-bound schema 独立阅读全文；A 不等待完整中篇、两臂或 UI 接续实现；不通过则封存，B保持未执行且尚未启动 deadline。
-- [ ] A通过后按登记执行B、两臂与UI，不修改配置或追加议题；按完整History核查明确利害、具体分歧、选择回应与有限收束。游戏通关与未解决的社会问题分别记录。
-- [ ] 报告分别给出运行正确性、故事质量、记忆覆盖/准确性、UI完成性：每条质量均分≥4、单维≥3且无确认硬错误；摘要臂保留必需来源、无新增事实/权限错误，不能用省token抵消损害。
-- [ ] 描述哪次早期经历实际帮助理解人物或决定如何交付；仅复述正确原句不能单独证明游戏性提升。未覆盖项与失败留在结果中，不宣称已经优于main或自动合并。
+紧凑正式链已具备覆盖证据；下一份真实产物是一段有来源的跨摘要旧事回答及其作用结论。只有阻断它们或使结论失真的问题才进入当前修复范围。新增调度、通用审阅平台、更多 Entity 类型、向量检索或逐句措辞优化均不属于当前任务。

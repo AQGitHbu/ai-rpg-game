@@ -107,3 +107,14 @@ export async function runNarrativeP2Journey(input: NarrativeP2JourneyInput, deps
   // Admission remains closed until durable runtime and review gate are connected.
   throw new Error("P2_STAGE_RUNTIME_NOT_IMPLEMENTED");
 }
+
+/** Independent memory diagnosis; never changes the sealed v2 A/B verdict. */
+export function createNarrativeP2MemoryProtocol(runId: string, deps: NarrativeP2JourneyDeps) {
+  const { protocolHash: _previousHash, ...base } = createNarrativeP2Protocol(runId, deps);
+  const body = { ...base, protocolVersion: "narrative-p2/v3", plannedRoutes: 1,
+    stages: { ...base.stages, order: ["B"], admission: "independent memory diagnosis; overall P2 remains unqualified",
+      topicPolicy: "up to three ordered topics per act; first eligible recall takes priority; stop on human quality failure",
+      ui: "API recall on main route; UI remains separately unexecuted",
+      totalRouteBudget: NARRATIVE_P2_ROUTES[1]!.budget }, routes: [NARRATIVE_P2_ROUTES[1]!] };
+  return { ...body, protocolHash: hashP2(body) };
+}

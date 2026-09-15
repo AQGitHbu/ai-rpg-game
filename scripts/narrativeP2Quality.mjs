@@ -20,8 +20,8 @@ export function p2StageManifest(protocol, stage, directory) {
 
 /** Reads the actual same-path database and every closed artifact. No caller's passed bit is consumed. */
 export async function inspectP2Quality(protocol, stage, directory) {
-  const { createNarrativeP2Protocol } = await import('../src/game/application/testing/narrativeP2Journey.ts');
-  if (!['A', 'B'].includes(stage) || canonical(protocol) !== canonical(createNarrativeP2Protocol(protocol.runId, { environment: protocol.environment, codeFingerprint: protocol.codeFingerprint }))) fail('PROTOCOL_MISMATCH');
+  const { createNarrativeP2Protocol, createNarrativeP2MemoryProtocol } = await import('../src/game/application/testing/narrativeP2Journey.ts');
+  if (!['A', 'B'].includes(stage) || canonical(protocol) !== canonical((protocol.protocolVersion === "narrative-p2/v3" ? createNarrativeP2MemoryProtocol : createNarrativeP2Protocol)(protocol.runId, { environment: protocol.environment, codeFingerprint: protocol.codeFingerprint }))) fail('PROTOCOL_MISMATCH');
   const manifest = p2StageManifest(protocol, stage, directory), head = manifest.read();
   if (manifest.interrupted) fail('INTERRUPTED');
   const artifacts = inspectP2StageArtifacts(directory, head), last = artifacts.evidence.at(-1);

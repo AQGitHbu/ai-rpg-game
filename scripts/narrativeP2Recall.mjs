@@ -44,13 +44,13 @@ export function inspectP2RecallCoverage({ snapshot, oracle, tapes, publications 
     oracleOmittedFromOverview: state ? !state.overview.historyIds.includes(oracle.history.id) : null };
 }
 
-export function isP2RecallWindow({ snapshot, oracle, coverage, topicState, focus, actionCount, budget, deadline, now, transportCount = 0 }) {
+export function isP2RecallWindow({ snapshot, oracle, coverage, topicState, focus, actionCount, budget, deadline, now, transportCount = 0, requireCompletedTopics = true }) {
   const record = snapshot.game.record, act = record.storyState.currentAct;
   const delivered = record.worldState.eventLedger.some(e => e.payload.type === 'item_given'
     && e.payload.itemId === record.storyState.delivery?.itemId && e.payload.npcId === record.storyState.delivery?.recipientNpcId);
   return act >= 3 && !delivered && coverage.eligible && !!focus?.freeInputEnabled
-    && topicState.committed.filter(t => t.act === act).length === 3
-    && !topicState.stoppedActs.includes(act)
+    && (!requireCompletedTopics || (topicState.committed.filter(t => t.act === act).length === 3
+    && !topicState.stoppedActs.includes(act)))
     && (act - oracle.openingAct >= 2 || actionCount >= 8)
     && actionCount < budget.actions && transportCount < budget.http && now < deadline;
 }

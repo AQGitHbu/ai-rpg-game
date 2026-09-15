@@ -29,3 +29,18 @@ describe("liveNarrativeMemorySummarySource", () => {
     expect(result).toMatchObject({ ok: false, repairReason: "invalid_reference" });
   });
 });
+
+
+it.each([['batch', 4], ['overview', 8]] as const)("communicates and enforces %s selection limits without truncating", async (kind, limit) => {
+  const history = Array.from({ length: 10 }, (_, i) => ({ ...entry, id: `history:${i}`, sequence: i }));
+  const client = request(JSON.stringify({ historyIds: history.map(h => h.id), eventIds: [] }));
+  const source = createLiveNarrativeMemorySummarySource({ requestClient: client });
+  const result = await source.select({ kind, observerId: PLAYER, history, events: [], signal: new AbortController().signal, reserveHttpAttempt: vi.fn(async () => true) });
+  expect(result.ok).toBe(false);
+  const sent = vi.mocked(client.completeNarrativeRequest).mock.calls[0]![0];
+  expect(sent.messages[0]!.content).toContain(`historyIds 最多 ${limit} 条`);
+  expect(sent.messages[0]!.content).toContain(`eventIds 最多 ${limit} 条`);
+  expect(sent.messages[0]!.content).toContain("不是必须填满");
+  const valid = createLiveNarrativeMemorySummarySource({ requestClient: request(JSON.stringify({ historyIds: history.slice(0, limit).map(h => h.id), eventIds: [] })) });
+  expect(await valid.select({ kind, observerId: PLAYER, history, events: [], signal: new AbortController().signal, reserveHttpAttempt: vi.fn(async () => true) })).toMatchObject({ ok: true });
+});

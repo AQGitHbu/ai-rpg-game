@@ -17,7 +17,11 @@
 - [P2 准入缺口修复 Plan](plans/2026-09-14-narrative-p2-readiness-fixes.md)：组织实现核查后的 R1–R6 修复；对应 [离线验收报告](reports/2026-09-14-narrative-p2-readiness-fixes.md) 与 [验证协议](reports/2026-09-14-narrative-p2-protocol.md)。
 - [P2 真实 API 与剧情质量验收](reports/2026-09-14-narrative-p2-acceptance.md)：冻结批次的通关、严格回放、记忆覆盖与全文质量证据，区分实际执行和未覆盖项目。
 - [P2 剧情修复 Plan](plans/2026-09-14-narrative-p2-story-repair.md)：行动核查、具体冲突推进、追问与正式回应分离、有限委托的真实收束；对应 [修复验收报告](reports/2026-09-14-narrative-p2-story-repair.md)。
-- [P2 记忆覆盖重规划](plans/2026-09-14-narrative-p2-memory-coverage.md)：先短篇质量门禁，再以有界议题形成自然经历；规定后续驱动、摘要追问、两臂与 UI 接续任务。
+- [P2 记忆覆盖重规划](plans/2026-09-14-narrative-p2-memory-coverage.md)：以有界议题验证摘要后的旧事恢复，独立安排真实记忆诊断、两臂与 UI；整体故事质量另保留门槛。
 - [P2 三幕短篇实跑](reports/2026-09-14-narrative-p2-short-story.md)：p2-02 的实际正文范围、生成失败依据与后续收敛方向。
 - [P2 时序边界修正实跑](reports/2026-09-14-narrative-p2-temporal-scope.md)：p2-03 的换幕证据、审阅阻断与实际剧情判断。
 - [P2 完整短篇评审](reports/2026-09-14-narrative-p2-complete-story.md)：p2-04/05 的运行证据、完整三幕故事与选择后果缺口。
+
+- [P2 独立真实记忆诊断](reports/2026-09-15-narrative-p2-memory-diagnostic.md)：摘要选择契约失配的实际请求、未发布证据及未覆盖边界。
+
+- [P2 摘要契约修复与恢复验证](reports/2026-09-15-narrative-p2-summary-contract.md)：固定真实来源上的两批发布、原话恢复、严格回放及概览源预算边界。

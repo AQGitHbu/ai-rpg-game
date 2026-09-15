@@ -17,7 +17,7 @@ const project = (value, at = "") => Array.isArray(value) ? value.map((x, i) => p
 export function createNarrativeP2SegmentRuntime({ mode, directory, sourceDirectory = directory, stage, segment,
   binding, manifest, checkpoint, routeAttemptId, resolveAttempt, diagnosticPair, auditFiles = () => [] }) {
   if (!["live", "replay"].includes(mode) || !["A", "B"].includes(stage) || !Number.isSafeInteger(segment) || segment < 0
-    || binding?.protocolVersion !== "narrative-p2/v2" || (mode === "replay" && !routeAttemptId)) fail("CONFIGURATION");
+    || !["narrative-p2/v2", "narrative-p2/v3"].includes(binding?.protocolVersion) || (mode === "replay" && !routeAttemptId)) fail("CONFIGURATION");
   if (mode === "live") {
     const registered = manifest.read();
     if (stage !== registered.stage || canonical(binding) !== canonical(registered.binding)
@@ -32,7 +32,7 @@ export function createNarrativeP2SegmentRuntime({ mode, directory, sourceDirecto
   const read = index => {
     let envelope;
     try { envelope = JSON.parse(readFileSync(resolve(root, filename(index)), "utf8")); } catch { fail("MISSING"); }
-    if (envelope.hash !== hashReplayValue(envelope.tape) || envelope.tape.version !== "narrative-p2/v2"
+    if (envelope.hash !== hashReplayValue(envelope.tape) || envelope.tape.version !== binding.protocolVersion
       || envelope.tape.routeAttemptId !== routeAttemptId || envelope.tape.segment !== index || envelope.tape.stage !== stage || !envelope.tape.closed
       || canonical(envelope.tape.binding) !== canonical(binding)) fail("BINDING");
     return envelope;
@@ -44,7 +44,7 @@ export function createNarrativeP2SegmentRuntime({ mode, directory, sourceDirecto
       || current.tape.startCursor !== (previous?.tape.endCursor ?? 0)) fail("CHAIN");
     previous = current;
   }
-  let tape = { version: "narrative-p2/v2", stage, segment, binding, routeAttemptId, previousHash: previous?.hash ?? null,
+  let tape = { version: binding.protocolVersion, stage, segment, binding, routeAttemptId, previousHash: previous?.hash ?? null,
     startCursor: previous?.tape.endCursor ?? 0, endCursor: previous?.tape.endCursor ?? 0,
     identities: previous?.tape.identities ?? {}, times: previous?.tape.times ?? {}, usedIdentities: [], usedTimes: [],
     events: [], calls: [], states: [], closed: false };

@@ -17,7 +17,7 @@ export function p2ManifestGuard(state) {
 }
 
 function configuration(input) {
-  if (!["A", "B"].includes(input.stage) || input.binding?.protocolVersion !== "narrative-p2/v2"
+  if (!["A", "B"].includes(input.stage) || !["narrative-p2/v2", "narrative-p2/v3"].includes(input.binding?.protocolVersion)
     || !nonempty(input.binding.codeFingerprint) || ["protocolHash", "inputHash", "sourceHash"].some(key => !digest(input.binding[key]))
     || !["actions", "http", "wallClockMs"].every(key => integer(input.budget?.[key]) && input.budget[key] > 0)) fail("MANIFEST_CONFIGURATION");
   if (input.diagnostic && (input.stage !== 'B' || input.budget.actions !== 1 || input.budget.http !== 50 || input.budget.wallClockMs !== 2700000
