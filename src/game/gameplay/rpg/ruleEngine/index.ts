@@ -20,15 +20,14 @@ import { updateStoryMetrics } from "./updateStoryMetrics";
 import { propagateKnownFactsWithDrafts } from "./propagateKnownFacts";
 import { advanceStoryProgression } from "./advanceStoryProgression";
 export { advanceStoryProgression } from "./advanceStoryProgression";
+export { reconcileStoryConsequences } from "./reconcileStoryConsequences";
 import { approveCandidateEvents, compileCandidateEvent } from "@/game/gameplay/rpg/candidateEvents";
 import { advanceStoryReveal } from "@/game/gameplay/rpg/worldEvolution";
 import { validateEntityStoreProvenance } from "@/game/domain/entity";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
-import { advanceStoryThreads } from "@/game/gameplay/rpg/storyThreads";
-import { reconcileConfidentialityPromises } from "@/game/gameplay/rpg/storyInteraction";
-import { unresolvedStoryThreadIds } from "@/game/domain/storyThreads";
 import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import { reconcileNpcGoals } from "@/game/gameplay/rpg/npcGoals";
+import { reconcileStoryConsequences } from "./reconcileStoryConsequences";
 
 const DIALOGUE_REQUIRED_TURNS = 2;
 
@@ -405,23 +404,37 @@ export function resolveTurn(
     committedEvents = commitResult.appended;
     nextWorldState = { ...ending.nextWorldState, eventLedger: commitResult.ledger };
   }
-  nextWorldState = reconcileConfidentialityPromises(nextWorldState, ending.nextStoryState);
+  const consequences = reconcileStoryConsequences({
+    worldState: nextWorldState,
+    storyState: ending.nextStoryState,
+    triggerEvents: committedEvents,
+    source: {
+      actionId,
+      turnId,
+      turnNumber: storyState.turnNumber + 1,
+    },
+  });
+  nextWorldState = consequences.worldState;
+  if (consequences.drafts.length > 0) {
+    const consequenceCommit = commitEventDrafts({
+      ledger: nextWorldState.eventLedger,
+      drafts: consequences.drafts,
+      source: commitSource,
+      entityStore: nextWorldState.entityStore,
+    });
+    if (!consequenceCommit.ok) {
+      return { ok: false, code: "INVALID_RESOLUTION", feedback: `后果事件提交失败: ${consequenceCommit.code}` };
+    }
+    committedEvents = [...committedEvents, ...consequenceCommit.appended];
+    nextWorldState = { ...nextWorldState, eventLedger: consequenceCommit.ledger };
+  }
   const provenanceIssue = validateEntityStoreProvenance(nextWorldState.entityStore, nextWorldState.eventLedger)[0];
   if (provenanceIssue !== undefined) {
     return { ok: false, code: "INVALID_RESOLUTION", feedback: `NPC 事件证据无效: ${provenanceIssue.entityId ?? "unknown"}` };
   }
 
-  // Threads are advanced only from the events that actually entered the ledger;
-  // tentative drafts and unsaved provider output cannot close a story concern.
-  const threads = advanceStoryThreads({
-    worldState: nextWorldState,
-    threads: ending.nextStoryState.threads,
-    eventIds: committedEvents.map((event) => event.eventId),
-  });
   const finalStoryState: StoryState = updateDialogueFocus({
-    ...ending.nextStoryState,
-    threads,
-    unresolvedThreads: unresolvedStoryThreadIds(threads),
+    ...consequences.storyState,
   }, action, committedEvents.map((event) => event.eventId));
 
   // 构建最终 ResolvedEvent（作为 TurnResolution.primaryResult）

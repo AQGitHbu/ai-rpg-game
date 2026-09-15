@@ -27,6 +27,7 @@ import {
   type CandidateReviewResult,
   type NarrativeCandidateReviewer,
 } from "./narrativeCandidateReview";
+import { reconcileStoryConsequences } from "@/game/gameplay/rpg/ruleEngine";
 
 // A next-act package contains five independently unique world entities. A
 // provider repair may correct one named collision at a time, so leave room for
@@ -768,7 +769,34 @@ export async function generatePendingNarrativeBundle(
     lastRepair = { attempt: 1, reason: "invalid_schema", detail: "event_commit_failed" };
     return failPendingJob();
   }
-  const nextWorldState = { ...approvedWorldState, eventLedger: eventCommit.ledger };
+  const committedApprovalWorldState = { ...approvedWorldState, eventLedger: eventCommit.ledger };
+  const consequences = reconcileStoryConsequences({
+    worldState: committedApprovalWorldState,
+    storyState: approved.nextStoryStatePreview,
+    triggerEvents: eventCommit.appended,
+    source: {
+      actionId: job.actionId,
+      turnId: job.turnId,
+      turnNumber: job.turnNumber,
+    },
+  });
+  const consequenceCommit = commitEventDrafts({
+    ledger: consequences.worldState.eventLedger,
+    drafts: consequences.drafts,
+    source: {
+      turnId: job.turnId,
+      actionId: job.actionId,
+      turnNumber: job.turnNumber,
+      committedAt: deps.domainTime?.(`consequences:${job.jobId}:${job.attempt?.epoch ?? 0}`) ?? deps.now(),
+    },
+    entityStore: consequences.worldState.entityStore,
+  });
+  if (!consequenceCommit.ok) {
+    deps.logger?.warn("narrative_bundle_consequence_commit_rejected", { code: consequenceCommit.code });
+    lastRepair = { attempt: 1, reason: "invalid_schema", detail: "consequence_commit_failed" };
+    return failPendingJob();
+  }
+  const nextWorldState = { ...consequences.worldState, eventLedger: consequenceCommit.ledger };
 
   const history = storyState.history ?? { entries: [] };
   const nextHistory = appendHistory(history, narrativeSceneHistoryEntries({
@@ -789,12 +817,12 @@ export async function generatePendingNarrativeBundle(
   // The scene event is committed in this same CAS, so memory must be rebuilt
   // from that final ledger before persistence validation.
   const nextStoryState: StoryState = {
-    ...approved.nextStoryStatePreview,
+    ...consequences.storyState,
     history: nextHistory,
     narrative: readyNarrative,
     memory: reconcileCommittedMemory({
-      previous: approved.nextStoryStatePreview.memory,
-      ledger: eventCommit.ledger,
+      previous: consequences.storyState.memory,
+      ledger: consequenceCommit.ledger,
     }),
   };
 

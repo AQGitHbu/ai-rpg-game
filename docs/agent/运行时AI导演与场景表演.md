@@ -19,6 +19,7 @@
 - `generatePendingNarrativeBundle` 每个持久化 epoch 最多三个不可复用的候选版本。后续版本携带稳定解析、引用或审批拒绝原因；仍失败则保留同一 `jobId` 的 `provider_failed`，由显式 `{ "retry": true }` 手动重试。候选版本、候选 hash、lease 和 HTTP 预算均随 pending job 落盘，恢复 worker 先抢 10 分钟 lease；旧 worker 的完整 attempt predicate 不匹配时只能得到 stale。
 - 正式手动 retry 在同一次零 revision CAS 中，先从已提交 Quest/Event 重新归约终幕 Thread、`endingAllowed` 与演化状态，再把原 failed job 提升到下一 epoch；不重执行玩家 Action，不改 World/Event ledger，也不直接授予结局。已有两条结局定义时，作者和 world-delta 审批共享的结构演化需求均为 none；终幕回应使用 `worldDelta=null` 的 choice-free ending handoff，规则立场随后由 read model 提供。
 - 成功路径是审批生成包、提交场景事件、重建记忆，再调用 `repository.applyState`。世界增量、ready scene、choice registry、bundle 和记忆在同一次 scene CAS 中写回。
+- 决策 A 与 B 在提交实际场景/披露事件后使用同一个 `reconcileStoryConsequences` 预览：作者、NPC 私有判断和审阅器读取同版的已结算 Event、活跃 Thread 与当前可用互动引用；公共上下文不携带带 `resolution` 的 NPC goal 正文或私密理由。后果事件若无法按同一账本顺序提交，则整次 B 保持失败，不以 ready 后补状态。
 - 已审批终局对的正式立场行动若在本次规则提交产生 `ending_reached`，直接原子保存结局与玩家历史，不再创建下一轮 NPC 生成任务；准备终局对仍需 AI，主动退出仍使用 `story_exit` 生成退出场景。
 - bundle step 必须由服务端 descriptor 投影；stepKey 唯一、无环、最多 12 步。非终点没有 choices，`next_decision` 终点恰好两个选项，`ending` 终点没有 choices 且没有 continuation scenes。
 - 决策 prompt 为每个已有 `candidateId` 同时投影服务端 Action；对话候选包含目标 NPC、dialogueAct 和结构化 topic。新增互动须提交封闭的 `interactionProposals` 并经预览审批，才能绑定相应候选；不能按选项数组位置把一个 label 改绑到另一种 Action，也不能根据裸 candidateId 猜测行动语义或改写 registry。
@@ -33,6 +34,7 @@
 - 世界增量 schema 按当前结构演化需求提供；无演化的普通对话只允许 `worldDelta=null`，不要求 beatSummary，其结构修复提示也必须要求 null，不能反向要求补摘要。时序块仅在有演化时将摘要列为当前事实字段。
 - 审阅缺陷路径相对内部候选；允许明确请求外壳的单层 `proposal.` 或 `$.proposal.` 前缀，校验实际字段后保存候选相对路径。未知字段、错误数组索引、重复包装仍拒绝，不过滤缺陷或转为通过。
 - 生产语义审阅的 `ruleBasis` 由服务端投影当前输入、真实 Action 与候选绑定、续接 step、正式物品及事实/权限。阻断缺陷必须带可存在性校验的候选 `path` 和 `evidence={basisKey,impact,detail}`；依据必须存在、影响种类须属于该依据，detail 说明具体规则后果。物品状态影响只能引用具体正式物品或绑定该物品的 take/give 步骤，普通无效果服饰、环境或风格写入 `qualityObservations`，不改变规则 verdict。无依据、空缺陷或混入非法缺陷的 revise 整体成为显式 uncertain，不过滤后冒充 pass。服务端校验依据与路径，不以此替代模型对语义冲突的判断。
+- `story:consequences` 是作者与 reviewer 共用的 rule basis，只包含当前 job 已提交 Event、活跃 Thread 和可用互动 ID；goal description、reason、证据质量及隐藏条件仍由规则/私有 deliberation 保持隔离。
 - decision 的 pass 必须完整返回 executionChecks 与 progressChecks，按路径、引文、槽依据核查位置、参与者、流转和已完成前提。结构无效的 pass 允许一次同候选响应修复，沿用请求预算与取消控制，计入每 job 的 24 次 HTTP；不重写作者候选。二次仍无效为 uncertain；有效规则缺陷立即交回作者修订，不向审阅器重复求通过。无效 revise、网络失败不走该修复。结构正确不证明语义完整，仍需实跑。
 - 作者与审阅共用 narrativeProgressContract：首场说明谁受影响、委托人为何在意与完成/耽搁的后果；中幕主张给出自身利害、依据或能力边界，让玩家比较回应的理由与代价；终幕交代本次后果及未解决问题。同幕回应不强制新剧情，泛泛传言、重复引路/核验不算推进，选项不能承诺 Action 无法兑现的效果。推进不扩大权限，违反有依据的因果要求走 BROKEN_CAUSALITY。
 - 事实引用许可与披露正文分别投影：获准 NPC 互动提案里的事实 ID 存在且可用于对应提案，不要求出现在公开正文目录；该许可不授权当前台词说出秘密，也不代表行动已执行。秘密正文继续按 speaker authority 裁剪。

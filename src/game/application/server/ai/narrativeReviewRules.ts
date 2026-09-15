@@ -7,6 +7,7 @@ import { narrativeSlotResolution, projectNarrativeDraft } from "./narrativeDraft
 import { OPENING_SEMANTIC_CONTRACT } from "./openingSemanticContract";
 import { buildNarrativeProgressRequirements, NARRATIVE_PROGRESS_CONTRACT } from "./narrativeProgressContract";
 import { projectObserverEvidence } from "@/game/gameplay/rpg/narrativeMemory";
+import { projectStoryConsequences } from "@/game/application/storyConsequenceContext";
 
 export type NarrativeRuleBasis = Readonly<{
   key: string;
@@ -44,6 +45,17 @@ export function buildNarrativeReviewRules(input: NarrativeCandidateReviewInput):
   const { worldState, storyState, job } = context;
   add(`input:${job.actionId}`, "input", ["input_response"], { utterance: job.utterance, selectedDialogue: job.selectedDialogue });
   add(`action:${job.actionId}`, "action", ["action_binding", "interaction_effect"], { action: job.actionSummary, result: job.resolvedEvent });
+  const storyConsequences = projectStoryConsequences({
+    worldState,
+    storyState,
+    observerId: PLAYER_ENTITY_ID,
+    eventIds: job.domainEventIds,
+  });
+  add("story:consequences", "input", ["fact_claim", "interaction_effect", "step_order"], {
+    requiredEventIds: storyConsequences.requiredEventIds.map(String),
+    activeThreadIds: storyConsequences.activeThreadIds,
+    availableInteractionIds: storyConsequences.availableInteractionIds,
+  });
   const projection = projectNarrativeDraft({ worldState, storyState, job });
   for (const ending of projection.endingResolutions) {
     add(ending.basisKey, "action", ["action_binding", "interaction_effect", "step_order", "fact_claim"], ending);

@@ -10,6 +10,8 @@ export type AdvanceStoryThreadsInput = Readonly<{
   worldState: WorldState;
   threads: readonly StoryThread[];
   eventIds: readonly EventId[];
+  /** Actual same-turn events that are being previewed before ledger commit. */
+  triggerEvents?: readonly WorldState["eventLedger"][number][];
 }>;
 
 /**
@@ -17,8 +19,12 @@ export type AdvanceStoryThreadsInput = Readonly<{
  * satisfy a closure cannot resolve a thread until a relevant event is supplied.
  */
 export function advanceStoryThreads(input: AdvanceStoryThreadsInput): readonly StoryThread[] {
+  const eventById = new Map([
+    ...input.worldState.eventLedger.map((event) => [String(event.eventId), event] as const),
+    ...(input.triggerEvents ?? []).map((event) => [String(event.eventId), event] as const),
+  ]);
   const events = input.eventIds
-    .map((eventId) => input.worldState.eventLedger.find((event) => event.eventId === eventId))
+    .map((eventId) => eventById.get(String(eventId)))
     .filter((event): event is NonNullable<typeof event> => event !== undefined);
   return input.threads.map((thread) => {
     if (thread.status === "abandoned") return thread;

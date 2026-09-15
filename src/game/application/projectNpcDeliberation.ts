@@ -8,6 +8,7 @@ import type { NpcKnowledgeEntry, NpcKnowledgeSource, RelationshipCommitment } fr
 import type { NarrativeMemoryContext } from "@/game/domain/narrativeMemoryContext";
 import { buildNpcSpeechAuthority } from "./npcSpeechAuthority";
 import type { NpcDeliberationInput } from "./npcDeliberationSource";
+import { projectStoryConsequences } from "./storyConsequenceContext";
 
 type NpcPrivateFact = Readonly<{
   readonly factId: string;
@@ -245,6 +246,12 @@ export function projectNpcDeliberation(input: {
   const job = currentJobOf(input.storyState, input.jobId);
   const historicalMemory = historicalMemoryContext(input.memoryContext, input.npcId);
   const authority = outwardAuthority(input.worldState, npc, job);
+  const currentConsequences = projectStoryConsequences({
+    worldState: input.worldState,
+    storyState: input.storyState,
+    observerId: input.npcId,
+    eventIds: job.domainEventIds,
+  });
   const privateContext = JSON.stringify({
     schema: "npc_deliberation.v1",
     npc: {
@@ -261,6 +268,12 @@ export function projectNpcDeliberation(input: {
     relationships: relationshipContext(input.worldState.entityStore, npc),
     recentInteractions: interactionContext(npc),
     currentEvidence: evidenceContext(input.worldState, npc, job),
+    currentConsequences: {
+      requiredEventIds: currentConsequences.requiredEventIds.map(String),
+      activeThreadIds: currentConsequences.activeThreadIds,
+      currentGoalRefs: currentConsequences.currentGoalRefs,
+      availableInteractionIds: currentConsequences.availableInteractionIds,
+    },
     ...(historicalMemory === undefined ? {} : { historicalMemory }),
     outwardAuthority: {
       allowedDiscloseFactIds: authority?.allowedFactIds ?? [],

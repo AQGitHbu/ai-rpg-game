@@ -501,7 +501,10 @@ export function buildNpcSpeechAuthority(input: NpcSpeechAuthorityInput): NpcSpee
     recentInteractions,
     identityAnchors: speakerRecord.identity.anchors,
     activeGoals: speakerRecord.dynamicState.goals
-      .filter((goal) => goal.status === "active")
+      // Consequence-bound goals are private decision criteria. Their full
+      // descriptions remain available to projectNpcDeliberation, but public
+      // speech/author projections only expose legacy narrative guidance.
+      .filter((goal) => goal.status === "active" && goal.resolution === undefined)
       .sort((left, right) => left.priority - right.priority || compareId(left.goalId, right.goalId))
       .map((goal) => goal.description),
     relationships,

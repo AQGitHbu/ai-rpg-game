@@ -36,6 +36,7 @@ import { projectNarrativeDraft } from "../narrativeDraftProjection";
 import { deriveStructuralEvolutionNeed } from "@/game/gameplay/rpg/worldEvolution";
 import { isStoryDeliveryComplete } from "@/game/gameplay/rpg/storyDelivery";
 import { availableInvestigations } from "@/game/gameplay/rpg/investigation";
+import { projectStoryConsequences } from "@/game/application/storyConsequenceContext";
 
 // P1 live journeys may run in provider thinking mode, whose effective input
 // budget is provider-specific. Keep the compiler's bounded mode available for
@@ -281,6 +282,12 @@ export function buildDecisionNarrativeContextBlocks(
     label: opportunity.label,
     ...(opportunity.hint === undefined ? {} : { hint: opportunity.hint }),
   }));
+  const storyConsequences = projectStoryConsequences({
+    worldState,
+    storyState,
+    observerId: PLAYER_ENTITY_ID,
+    eventIds: job.domainEventIds,
+  });
   const focusNpc = job.focusNpcId === undefined
     ? undefined
     : worldState.npcs.find((npc) => String(npc.id) === String(job.focusNpcId));
@@ -437,6 +444,15 @@ export function buildDecisionNarrativeContextBlocks(
       authority: "state", retention: "mandatory", priority: 900,
       source: { kind: "story_state_projection", refs: [String(job.jobId)] },
       content: `currentAct=${storyState.currentAct}；targetActs=${storyState.targetActs}；storyProgress=${storyState.storyProgress}；tension=${storyState.tension}；nextPacingNeed=${storyState.nextPacingNeed}；remainingBudget=locations:${Math.max(0, storyState.budget.locations.max - storyState.budget.locations.expanded)},npcs:${Math.max(0, storyState.budget.npcs.max - storyState.budget.npcs.expanded)},quests:${Math.max(0, storyState.budget.quests.max - storyState.budget.quests.expanded)},events:${Math.max(0, storyState.budget.events.max - storyState.budget.events.expanded)}；unresolvedThreads=${list(storyState.unresolvedThreads)}；activeQuest=${activeQuest === undefined ? "无" : `${activeQuest.name}（${activeQuest.id}，${activeQuest.status}）：${activeQuest.description}`}`,
+    }),
+    block({
+      id: "bundle:story-consequences", slot: "current_state", title: "本轮已结算后果引用",
+      authority: "rule", retention: "mandatory", priority: 910,
+      source: { kind: "story_consequence_context", refs: [
+        ...storyConsequences.requiredEventIds.map(String),
+        ...storyConsequences.activeThreadIds,
+      ] },
+      content: `后果上下文只来自本轮已提交事件：requiredEventIds=${JSON.stringify(storyConsequences.requiredEventIds.map(String))}；activeThreadIds=${JSON.stringify(storyConsequences.activeThreadIds)}；当前可用的已批准互动 ID=${JSON.stringify(storyConsequences.availableInteractionIds)}。NPC 私密 goal 描述、理由和未授权条件不属于公开作者上下文；只能依据当前合法 Action 与公开证据表现后果，不能从引用 ID 推测秘密。`,
     }),
     block({
       id: "bundle:player", slot: "current_state", title: "玩家档案",

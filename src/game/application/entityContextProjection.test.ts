@@ -120,6 +120,7 @@ describe("buildEntityContextProjection", () => {
       "fact_public", "item_nearby", "loc_0", "loc_1", "npc_focus", "player_0", "quest_main",
     ]);
     expect(result.mandatory.find((entry) => entry.id === "npc_focus")?.summary).toContain("交互2｜交互3｜交互4｜交互5｜交互6");
+    expect(JSON.stringify(result.mandatory.find((entry) => entry.id === "npc_focus"))).not.toContain("守住证人");
     expect(result.mandatory.some((entry) => entry.id === "talk_to_npc")).toBe(false);
   });
 

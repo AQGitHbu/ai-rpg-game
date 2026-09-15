@@ -172,6 +172,31 @@ describe("NpcSpeechAuthority", () => {
     expect(JSON.stringify(result)).not.toContain("守夜人隐瞒了旧案");
   });
 
+  it("does not expose consequence-bound goal text through the public speech authority", () => {
+    const result = buildNpcSpeechAuthority({
+      store: {
+        version: 4,
+        records: records().map((record) => isNpcRecord(record) && record.core.id === NPC_A
+          ? {
+            ...record,
+            dynamicState: {
+              ...record.dynamicState,
+              goals: [{
+                ...record.dynamicState.goals[0]!,
+                description: "守住证人直到旧账被查清",
+                resolution: { completeWhen: [], blockWhen: [] },
+              }],
+            },
+          }
+          : record),
+      },
+      speakerNpcId: NPC_A,
+      sceneVisibleFactIds: [FACT_PUBLIC],
+    });
+
+    expect(result?.activeGoals).not.toContain("守住证人直到旧账被查清");
+  });
+
   it("does not authorize an undiscovered explicit-investigation fact even if the NPC knows it", () => {
     const store = {
       version: 4 as const,

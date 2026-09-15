@@ -121,6 +121,42 @@ function makeJob(): PendingNarrativeJob {
 
 
 describe("live narrative candidate reviewer", () => {
+  it("把实际事件驱动的后果引用带入作者上下文，但不公开 NPC 私密目标正文", () => {
+    const worldState = makeWorldState();
+    const trigger = worldState.eventLedger[0]!;
+    const baseStory = makeStoryState();
+    const storyState = {
+      ...baseStory,
+      threads: [{
+        ...baseStory.threads[0]!,
+        id: "thread:consequence",
+        causeEventIds: [trigger.eventId],
+        question: "调查后的公开变化",
+        goalRefs: [{ npcId: asNpcId("npc_private"), goalId: "goal_private" }],
+      }],
+    };
+    const blocks = buildDecisionNarrativeContextBlocks({
+      worldState,
+      storyState,
+      job: { ...makeJob(), domainEventIds: [trigger.eventId] },
+    });
+    const consequence = blocks.find((block) => block.id === "bundle:story-consequences");
+    expect(consequence?.content).toContain("thread:consequence");
+    expect(consequence?.content).toContain(String(trigger.eventId));
+    expect(consequence?.content).not.toContain("goal_private");
+
+    const rules = buildNarrativeReviewRules({
+      context: { kind: "decision", worldState, storyState, job: { ...makeJob(), domainEventIds: [trigger.eventId] } },
+      proposal: candidate,
+      candidateVersion: 1,
+      candidateHash: hashNarrativeCandidate(candidate),
+    });
+    expect(rules.find((rule) => rule.key === "story:consequences")).toMatchObject({
+      value: { requiredEventIds: [String(trigger.eventId)], activeThreadIds: ["thread:consequence"] },
+    });
+    expect(JSON.stringify(rules)).not.toContain("goal_private");
+  });
+
   it("gives the author the server-approved investigation methods without hidden fact text", () => {
     const initial = makeWorldState();
     const factId = asFactId("fact_sealed_record");

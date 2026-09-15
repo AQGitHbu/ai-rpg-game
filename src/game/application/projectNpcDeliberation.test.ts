@@ -178,6 +178,29 @@ function pendingStoryState(): StoryState {
 }
 
 describe("projectNpcDeliberation", () => {
+  it("把本轮实际事件关联的 Thread 与可用互动引用送入 NPC 私有判断", () => {
+    const baseStory = pendingStoryState();
+    const story = {
+      ...baseStory,
+      threads: [{
+        ...baseStory.threads[0]!,
+        id: "thread:private-consequence",
+        participantIds: [BOSS],
+        causeEventIds: [EVENT_ID],
+        goalRefs: [{ npcId: BOSS, goalId: "goal_private" }],
+        question: "调查后是否继续守密",
+      }],
+    };
+    const projected = projectNpcDeliberation({
+      worldState: worldState(), storyState: story, npcId: BOSS, jobId: JOB_ID, candidateVersion: 1,
+    });
+    const envelope = JSON.parse(projected.privateContext) as {
+      currentConsequences?: { activeThreadIds: readonly string[]; requiredEventIds: readonly string[] };
+    };
+    expect(envelope.currentConsequences?.activeThreadIds).toEqual(["thread:private-consequence"]);
+    expect(envelope.currentConsequences?.requiredEventIds).toEqual([EVENT_ID]);
+  });
+
   it("uses observer preparation to recall private old words and preserves multiple event payloads", async () => {
     const baseWorld = worldState();
     const second = { ...baseWorld.eventLedger[0]!, eventId: asEventId("old:second"), sequence: 100 };

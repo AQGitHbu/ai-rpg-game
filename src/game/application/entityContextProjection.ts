@@ -101,12 +101,9 @@ function summaryOf(record: EntityRecord, focusNpcId: string | undefined): Narrat
         .map((entry) => entry.summary.replace(/关系[+-]?\d+(?:\.\d+)?/g, "关系变化"))
         .filter((entry) => entry.trim() !== "")
       : [];
-    const goals = record.dynamicState.goals
-      .filter((goal) => goal.status === "active" || goal.status === "blocked")
-      .map((goal) => goal.description);
     return {
       id: String(record.core.id), kind: record.core.kind, name: record.core.name,
-      summary: `角色=${record.identity.role}；${record.identity.description}；目标=${goals.join("、") || "无"}${recent.length === 0 ? "" : `；最近交互=${recent.join("｜")}`}`,
+      summary: `角色=${record.identity.role}；${record.identity.description}；角色条件由私有判断上下文裁决${recent.length === 0 ? "" : `；最近交互=${recent.join("｜")}`}`,
       locationId: String(record.position.locationId),
     };
   }
