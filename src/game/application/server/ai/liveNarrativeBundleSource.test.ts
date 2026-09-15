@@ -345,6 +345,7 @@ describe("createNarrativeBundleSource", () => {
     expect(systemPrompt).toContain("nextPacingNeed=complicate");
     expect(systemPrompt).toContain("fact_discovered");
     expect(systemPrompt).toContain("本回合 worldDelta 必须为 null");
+    expect(systemPrompt).toContain("仅提供 investigationApproaches 不会开启调查");
     expect(systemPrompt).not.toContain('goals":["..."]');
     for (let index = 1; index <= 5; index += 1) {
       expect(systemPrompt).toContain(`evt:interact:${index}`);

@@ -119,6 +119,44 @@ describe("repairOpeningGenerationCandidate", () => {
     expect(result.candidate?.opening.item?.key).toBe("sealed_letter");
     expect(result.candidate?.storyContract.delivery?.recipientKey).toBe("ferry_contact");
   });
+
+  it("接受并保留开局显式调查绑定", () => {
+    const candidate: OpeningGenerationCandidate = {
+      ...validCandidate(),
+      world: {
+        ...validCandidate().world,
+        publicFacts: [
+          {
+            key: "fact_pact",
+            text: "旧盟书库藏着一份盟誓印谱。",
+            investigationLabel: "查验盟誓印谱",
+            investigationApproaches: [
+              { approachId: "quiet", label: "逐页核对印谱", evidenceQuality: "clean", tensionDelta: 0 },
+              { approachId: "witnessed", label: "请掌柜当面见证", evidenceQuality: "noisy", tensionDelta: 2 },
+            ],
+          },
+        ],
+      },
+      opening: {
+        ...validCandidate().opening,
+        npc: { ...validCandidate().opening.npc, knownFactKeys: [], privateFactKeys: ["fact_pact"] },
+        consequenceBindings: [{
+          kind: "bind_investigation",
+          factRef: "fact_pact",
+          discoveryMode: "investigation",
+          approaches: [
+            { approachId: "quiet", label: "逐页核对印谱", evidenceQuality: "clean", tensionDelta: 0 },
+            { approachId: "witnessed", label: "请掌柜当面见证", evidenceQuality: "noisy", tensionDelta: 2 },
+          ],
+        }],
+      },
+    };
+
+    expect(hasOnlyKnownOpeningCandidateKeys(candidate)).toBe(true);
+    const result = repairOpeningGenerationCandidate(candidate);
+    expect(result.repaired).toBe(false);
+    expect(result.candidate?.opening.consequenceBindings).toEqual(candidate.opening.consequenceBindings);
+  });
 });
 
 describe("sanitizeOpeningFactReferences", () => {
@@ -188,6 +226,8 @@ describe("createOpeningGenerationSource", () => {
     expect(prompt).toContain("递送型开局");
     expect(prompt).toContain("verificationFactKeys");
     expect(prompt).toContain("opening.item");
+    expect(prompt).toContain("consequenceBindings");
+    expect(prompt).toContain("bind_investigation");
   });
 
   it("provider-shaped opening without anchors or typed goals stays an invalid response", async () => {

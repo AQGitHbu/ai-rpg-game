@@ -50,7 +50,7 @@ export function hasOnlyKnownOpeningCandidateKeys(value: unknown): boolean {
   const world = value.world;
   if (isRecord(world)) {
     if (!hasOnlyKeys(world, ["summary", "tone", "themes", "publicFacts"])) return false;
-    if (!hasOnlyKeysInArray(world.publicFacts, ["key", "text", "investigationApproaches"])) return false;
+    if (!hasOnlyKeysInArray(world.publicFacts, ["key", "text", "investigationLabel", "investigationApproaches"])) return false;
     if (Array.isArray(world.publicFacts)) {
       for (const fact of world.publicFacts) {
         if (!isRecord(fact)) continue;
@@ -73,7 +73,7 @@ export function hasOnlyKnownOpeningCandidateKeys(value: unknown): boolean {
   }
 
   const opening = value.opening;
-  if (!isRecord(opening) || !hasOnlyKeys(opening, ["location", "npc", "item", "quest", "situation", "firstScene", "variationProfile"])) return false;
+  if (!isRecord(opening) || !hasOnlyKeys(opening, ["location", "npc", "item", "quest", "situation", "firstScene", "consequenceBindings", "variationProfile"])) return false;
 
   const location = opening.location;
   if (isRecord(location) && !hasOnlyKeys(location, ["name", "description", "buildingName", "scale"])) return false;
@@ -187,6 +187,7 @@ export function repairOpeningGenerationCandidate(
       endingDirections: fixArray(storyContract.endingDirections),
     },
     opening: {
+      ...opening,
       location: (() => {
         const location = isRecord(opening.location) ? opening.location : null;
         if (location === null) {
@@ -237,7 +238,6 @@ export function repairOpeningGenerationCandidate(
         };
       })(),
       situation: opening.situation,
-      ...(opening.variationProfile === undefined ? {} : { variationProfile: opening.variationProfile }),
     },
   };
 
@@ -431,7 +431,7 @@ ${input.novelty.recent.map((record) => `- ${record.summary}`).join("\n")}
 种子：${input.seed}
 ${setupSection}${noveltySection}
 要求：
-1. world：summary/tone/themes/publicFacts（key 必须形如 fact_xxx，且全局唯一）
+1. world：summary/tone/themes/publicFacts（key 必须形如 fact_xxx，且全局唯一）。若要把某条事实作为玩家可主动调查的线索，给它提供非空 investigationLabel 和恰好 2–3 个 investigationApproaches，并在 opening.consequenceBindings 用同一个 fact key 绑定 discoveryMode=investigation；不要把该 fact key 放进 opening.npc.knownFactKeys，否则开局已发现而不能调查。privateFactKeys 可以保留 NPC 的私密先验，但不能替代玩家的实际调查。
 2. player：name/identity/backgroundSummary；战斗属性由服务端规则配置，禁止生成 baseStats
 3. prologue：故事序幕（2-3 句），聚焦故事钩子、主角动机和背景冲突：说明主角为什么会来到这条故事线上、什么未解事件或危险正在逼近、以及为什么值得继续行动。它可以提及已确定的世界背景，但不是当前地点的感官镜头；不要描写雨声、光线、气味、脚步、材质等即时细节，不要写 NPC 台词、玩家选项或完整场景表演
 4. storyContract：version=1、targetActs=${targetActs}（必须与档位一致）、centralConflict、endingDirections 恰好两个（key 分别为 "trust" 与 "doubt"）。递送型开局可增加 delivery={itemKey,recipientKey,verificationFactKeys}；这些都是本地 key，verificationFactKeys 必须来自 publicFacts。
@@ -449,7 +449,7 @@ ${setupSection}${noveltySection}
 叙事职责边界：prologue 只回答“为什么要继续这段故事”，通过故事钩子、人物动机和背景冲突建立期待；不要抢写首个场景的空间氛围或即时感官体验，首个场景的 atmosphere 段由场景表演源负责。
 必须严格使用以下字段名与嵌套结构（禁止改名）：
 {
-  "world": { "summary": "...", "tone": "...", "themes": ["..."], "publicFacts": [{ "key": "fact_xxx", "text": "..." }] },
+  "world": { "summary": "...", "tone": "...", "themes": ["..."], "publicFacts": [{ "key": "fact_xxx", "text": "...", "investigationLabel": "可选调查标题", "investigationApproaches": [{ "approachId": "...", "label": "...", "hint": "...", "evidenceQuality": "clean", "tensionDelta": 0 }] }] },
   "player": { "name": "...", "identity": "...", "backgroundSummary": "..." },
   "prologue": "...",
   "storyContract": { "version": 1, "targetActs": ${targetActs}, "centralConflict": "...", "endingDirections": [{ "key": "trust", "theme": "..." }, { "key": "doubt", "theme": "..." }] },
@@ -462,6 +462,7 @@ ${setupSection}${noveltySection}
     },
     "item": { "key": "sealed_letter", "name": "...", "description": "...", "kind": "quest_item", "tags": ["return_required"] },
     "quest": { "name": "...", "description": "...", "objective": { "kind": "talk_to_opening_npc" } },
+    "consequenceBindings": [{ "kind": "bind_investigation", "factRef": "fact_xxx", "discoveryMode": "investigation", "approaches": [{ "approachId": "...", "label": "...", "hint": "...", "evidenceQuality": "clean", "tensionDelta": 0 }] }],
     "variationProfile": { "sceneFrame": "street", "npcArchetype": "witness", "leadType": "trace", "conflictMode": "concealment" }
   }
 }
