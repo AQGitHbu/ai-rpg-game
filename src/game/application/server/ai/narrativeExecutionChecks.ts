@@ -62,8 +62,9 @@ export function buildNarrativeExecutionChecks(input: NarrativeCandidateReviewInp
   const cumulative = [...prerequisiteBasisKeys];
   // Match server slot keys, never infer triggers or timing from candidate prose.
   const alternate = projectNarrativeDraft({ worldState, storyState, job, includeDeliveryReturn: true });
-  const slots = [projection, alternate].flatMap(graph => graph.slots);
-  const descriptors = [projection, alternate].flatMap(graph => graph.descriptorGraph.steps);
+  const objectiveReturn = projectNarrativeDraft({ worldState, storyState, job, includeObjectiveReturn: true });
+  const slots = [projection, alternate, objectiveReturn].flatMap(graph => graph.slots);
+  const descriptors = [projection, alternate, objectiveReturn].flatMap(graph => graph.descriptorGraph.steps);
   for (const [index, step] of proposal.continuationScenes.entries()) {
     const trigger = slots.find(slot => slot.slotKey === step.stepKey)?.resolution?.trigger;
     if (trigger !== undefined) {

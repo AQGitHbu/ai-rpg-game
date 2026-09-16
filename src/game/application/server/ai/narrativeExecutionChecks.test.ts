@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createWorldStateFixtureWith, emptyProjection } from "@/game/domain/testing/worldStateFixture.testutil";
+import { createWorldStateFixtureWith, emptyProjection, updateWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { asGenerationId, asLocationId, asNpcId, asItemId, asQuestId, asFactId } from "@/game/domain/worldEntity";
@@ -9,6 +9,7 @@ import type { NarrativeBundleProposal } from "@/game/domain/narrativeBundle";
 import { hashNarrativeCandidate, type NarrativeCandidateReviewInput } from "../../narrativeCandidateReview";
 import { buildNarrativeExecutionChecks, validateNarrativeExecutionChecks } from "./narrativeExecutionChecks";
 import { buildNarrativeProgressRequirements } from "./narrativeProgressContract";
+import { buildNarrativeReviewRules } from "./narrativeReviewRules";
 import { createLiveNarrativeCandidateReview } from "./liveNarrativeCandidateReview";
 import { fixtureNarrativeReviewPass } from "./testing/narrativeReviewFixture.testutil";
 import type { RpgAiClient } from "./rpgAiClient";
@@ -44,6 +45,35 @@ function response(value: NarrativeCandidateReviewInput) {
 function validate(value: NarrativeCandidateReviewInput, verdict: ReturnType<typeof response>) { return validateNarrativeExecutionChecks(verdict.executionChecks, verdict.progressChecks, value); }
 
 describe("server-bound narrative execution extraction", () => {
+  it("gives an approved objective return its movement basis without moving the current scene", () => {
+    const original = input(false);
+    if (original.context.kind !== "decision" || "opening" in original.proposal) throw new Error("decision expected");
+    const worldState = updateWorldStateFixture(original.context.worldState, {
+      locations: original.context.worldState.locations.map(location => ({ ...location,
+        connectedLocationIds: [asLocationId(location.id === "dock" ? "inner_hall" : "dock")] })),
+      visitedLocationIds: [asLocationId("inner_hall"), asLocationId("dock")],
+      unlockedLocationIds: [asLocationId("inner_hall"), asLocationId("dock")],
+      quests: [{ id: asQuestId("return_quest"), name: "交接", description: "返回渡口接应人处。", kind: "main", stage: 1, status: "active", tags: [],
+        objectives: [{ kind: "talk_to_npc", npcId: asNpcId("boatman") }], onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" } }],
+    });
+    const value: NarrativeCandidateReviewInput = { ...original,
+      context: { ...original.context, worldState, job: { ...original.context.job,
+        objectiveTransition: { ...original.context.job.objectiveTransition,
+          after: { questId: asQuestId("return_quest"), objectiveIndex: 0, label: "返回渡口" } } } },
+      proposal: { ...original.proposal, worldDelta: null,
+        continuationScenes: [{ stepKey: "move:dock", scene: { ...original.proposal.currentScene,
+          segments: [{ beatId: "atmosphere", text: "你回到渡口，船夫仍在岸边。" }],
+          npcLine: { ...original.proposal.currentScene.npcLine!, npcId: asNpcId("boatman") } } }],
+        terminal: { kind: "next_decision", target: { kind: "continuation_step", stepKey: "move:dock" } } },
+    };
+    const checks = buildNarrativeExecutionChecks(value);
+    expect(checks.find(check => check.path === "currentScene.segments[0].text")!.states[0]!.locationId).toBe("inner_hall");
+    const arrival = checks.find(check => check.path === "continuationScenes[0].scene.segments[0].text")!;
+    expect(arrival.states).toContainEqual(expect.objectContaining({ locationId: "dock",
+      npcLocations: expect.arrayContaining([{ npcId: "boatman", locationId: "dock" }]) }));
+    expect(arrival.prerequisiteBasisKeys).toContain("step:move:dock");
+    expect(buildNarrativeReviewRules(value)).toContainEqual(expect.objectContaining({ key: "step:move:dock", kind: "step" }));
+  });
   it("enumerates prose including both reordered ending themes and summaries, never reference arrays", () => {
     const value = input();
     const before = JSON.stringify(value);
