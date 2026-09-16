@@ -6,7 +6,7 @@ import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import { asItemId } from "@/game/domain/worldEntity";
 import { asTurnId } from "@/game/domain/events";
 import { describe, expect, it } from "vitest";
-import { approveNarrativeBundle, installStoryInteractionProposals } from "./approveNarrativeBundle";
+import { approveNarrativeBundle, installStoryInteractionProposals, previewNarrativeDisclosure } from "./approveNarrativeBundle";
 import type { ApproveNarrativeBundleInput } from "./approveNarrativeBundle";
 import type { NarrativeBundleProposal } from "@/game/domain/narrativeBundle";
 import type { ObjectiveTransition } from "@/game/domain/narrativeBeat";
@@ -1179,4 +1179,29 @@ it("accepts committed current NPC evidence without an interaction-history projec
   expect(approveNarrativeBundle({ ...input, eventContext: { ...input.eventContext!, domainEventIds: [] } }).ok).toBe(false);
   expect(approveNarrativeBundle({ ...input, worldState: { ...world, eventLedger: [] } }).ok).toBe(false);
   expect(approveNarrativeBundle({ ...input, worldState: { ...world, eventLedger: [{ ...event, targetIds: [] }] } }).ok).toBe(false);
+});
+
+
+it("resolves a revisit disclosure's current focus before teaching an explicit local listener", () => {
+  const listenerId = asNpcId("npc:local-listener");
+  const ws = buildWorld({ eventLedger: [], quests: [{ ...mainQuest, objectives: [{ kind: "talk_to_npc", npcId: npcDyn1 }] }],
+    locations: [{ ...townLocation, npcIds: [npcDyn2, listenerId] }, templeLocation],
+    npcs: [templeNpc,
+      { ...templeNpc, id: npcDyn2, locationId: locTown, memory: { ...templeNpc.memory, npcId: npcDyn2, knownFactIds: [factTracks], hiddenFactIds: [] } },
+      { ...templeNpc, id: listenerId, locationId: locTown, memory: { ...templeNpc.memory, npcId: listenerId, knownFactIds: [], hiddenFactIds: [] } }],
+    worldFacts: [{ ...tracksFact, discovered: true }],
+  });
+  const ss = { ...storyState(), narrative: { status: "provider_pending", mode: "offline", job: { focusNpcId: npcDyn2 } } } as unknown as StoryState;
+  const original = JSON.stringify(ws);
+  const result = previewNarrativeDisclosure({ worldState: ws, storyState: ss, transition: transition(0),
+    source: { actionId: "return-disclosure", turnId: asTurnId("turn:return-disclosure"), turnNumber: 4 },
+    scene: { expressions: [{ kind: "npc_line", npcId: "@current.focus_npc", audienceIds: [String(listenerId)],
+      text: "我把核验过的脚印告诉在场的人。", emotion: "guarded", answeredBeatIds: [], usedFactIds: [String(factTracks)], usedEventIds: [] }],
+      objectiveLink: null, choices: [] },
+  });
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw new Error(JSON.stringify(result));
+  expect(result.scene.expressions?.[0]).toMatchObject({ npcId: npcDyn2 });
+  expect(result.worldState.npcs.find((npc) => npc.id === listenerId)?.memory.knownFactIds).toContain(factTracks);
+  expect(JSON.stringify(ws)).toBe(original);
 });

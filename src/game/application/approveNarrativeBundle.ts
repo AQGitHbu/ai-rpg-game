@@ -995,6 +995,18 @@ function validateCurrentSceneContent(input: {
   return null;
 }
 
+/** Current-scene symbols never inherit the NPC of a future travel slot. */
+function currentSceneFocusNpcId(worldState: WorldState, storyState: StoryState, transition: ObjectiveTransition): string | undefined {
+  const narrative = storyState.narrative;
+  const jobFocus = narrative.status === "provider_pending" || narrative.status === "provider_failed" ? narrative.job.focusNpcId : undefined;
+  const present = (id: string | undefined): boolean => id !== undefined && worldState.npcs.some((npc) => String(npc.id) === id
+    && npc.locationId === worldState.currentLocationId && getEntity(worldState.entityStore, npc.id)?.core.lifecycle === "active");
+  if (present(jobFocus)) return String(jobFocus);
+  const graph = buildNarrativeBundleDescriptors({ worldState, storyState, transition });
+  const choice = graph.currentChoiceCandidates.find((candidate) => candidate.action.type === "talk" && present(String(candidate.action.npcId)));
+  return choice?.action.type === "talk" ? String(choice.action.npcId) : undefined;
+}
+
 /** Only the ordered current scene may cause knowledge changes. Future slots never enter this preview. */
 export function previewNarrativeDisclosure(input: {
   scene: BundleSceneProposal; worldState: WorldState; storyState: StoryState;
@@ -1009,9 +1021,7 @@ export function previewNarrativeDisclosure(input: {
     && line.audienceIds.some(id => id !== String(PLAYER_ENTITY_ID) && id !== line.npcId))) {
     return { ok: true as const, worldState, storyState, scene: input.scene, drafts: [] as NarrativeEventDraft[], transition: input.transition };
   }
-  const focus = input.transition.after;
-  const objective = focus === null ? undefined : worldState.quests.find(q => q.id === focus.questId)?.objectives[focus.objectiveIndex];
-  const focusNpcId = objective?.kind === "talk_to_npc" ? String(objective.npcId) : undefined;
+  const focusNpcId = currentSceneFocusNpcId(worldState, storyState, input.transition);
   // Bind rules for existing entities before applying the current scene. Rules
   // involving newly minted entities are validated after delta materialization.
   const containsNewSymbol = (value: unknown): boolean => typeof value === "string" ? value.startsWith("@new.")
@@ -1021,7 +1031,7 @@ export function previewNarrativeDisclosure(input: {
     worldState, storyState, symbols: sceneSymbolBindings(worldState, undefined, focusNpcId) });
   if (!bindings.ok) return fail(`${bindings.code}:${bindings.path}`);
   worldState = bindings.worldState;
-  const scene = resolveSceneExpressions(input.scene, worldState, undefined, objective?.kind === "talk_to_npc" ? String(objective.npcId) : undefined);
+  const scene = resolveSceneExpressions(input.scene, worldState, undefined, focusNpcId);
   if (scene === null) return fail("current_scene_reference");
   const rejection = validateBundleSceneNpcSpeech(scene, worldState, undefined,
     presentNpcIdsAtLocation(worldState, String(worldState.currentLocationId)), input.currentEventIds ?? []);
@@ -1223,13 +1233,7 @@ export function approveNarrativeBundle(
     transition: descriptorTransition,
   });
 
-  const currentFocusForSymbols = graph.currentChoiceCandidates
-    .find((candidate) => candidate.action.type === "talk")?.action;
-  const symbolFocusNpcId = currentFocusForSymbols?.type === "talk"
-    ? String(currentFocusForSymbols.npcId)
-    : graph.steps[0]?.arrivalNpc === undefined
-      ? undefined
-      : String(graph.steps[0].arrivalNpc.id);
+  const symbolFocusNpcId = currentSceneFocusNpcId(previewWorldState, previewStoryState, descriptorTransition);
   let resolvedCurrentScene = resolveSceneExpressions(
     disclosure.scene,
     previewWorldState,

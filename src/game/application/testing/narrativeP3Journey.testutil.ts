@@ -379,7 +379,10 @@ function createP3Source(onAuthorRequest: (context: DecisionContext) => void): Na
         if (returnGraph === null) return { ...generated, proposal: revisitProposal };
         const compiled = compileNarrativeDraft({ graph: "objective_return", worldDelta: null,
           interactionProposals: revisitProposal.interactionProposals,
-          sceneDrafts: [{ slotKey: "current", scene: revisitProposal.currentScene },
+          sceneDrafts: [{ slotKey: "current", scene: { objectiveLink: revisitProposal.currentScene.objectiveLink, choices: [], expressions: [
+            ...(revisitProposal.currentScene.segments ?? []).map((segment) => ({ ...segment, kind: "narration", referencedEntityIds: [] })),
+            { ...revisitProposal.currentScene.npcLine!, kind: "npc_line", npcId: "@current.focus_npc", audienceIds: [String(PLAYER_ENTITY_ID)] },
+          ] } },
             ...revisitProposal.continuationScenes.map((step) => ({ slotKey: step.stepKey, scene: step.scene }))],
         }, context);
         if (!compiled.ok) throw new Error(`P3 raw objective return failed: ${JSON.stringify(compiled)}`);
