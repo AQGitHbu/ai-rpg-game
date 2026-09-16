@@ -21,6 +21,10 @@ import { createSqliteNarrativeMemorySummaryRepository } from "@/game/application
 import { createNarrativeMemoryPackagePreparer } from "@/game/application/prepareNarrativeMemoryPackage";
 import { DEFAULT_NARRATIVE_MEMORY_POLICY } from "@/game/application/server/ai/narrativeMemoryPolicy";
 import type { NarrativeMemorySummarySource } from "@/game/application/narrativeMemorySummarySource";
+import { compileNarrativeDraft } from "@/game/application/server/ai/narrativeDraftProjection";
+import { parseNarrativeBundleProposal } from "@/game/domain/narrativeBundle";
+import { buildNarrativeBundleDescriptors } from "@/game/gameplay/rpg/narrativeBundle";
+import { projectObserverEvidence } from "@/game/gameplay/rpg/narrativeMemory";
 import { createTempleLetterBundleSource } from "./templeLetterJourney.testutil";
 
 export type P3StoryEvidence = Readonly<{
@@ -38,6 +42,12 @@ export type P3StoryEvidence = Readonly<{
   verificationAvailableAfterInvestigation: boolean;
   goalEvidenceKindsAfterFollowUps: readonly string[];
   revisited: boolean;
+  revisitSourceEventIds: readonly EventId[];
+  giverKnewBeforeTelling: boolean;
+  giverLearnedFromTelling: boolean;
+  giverVerifiedAfterTelling: boolean;
+  privateJourneyCausalOrder: readonly string[];
+  revisitChoicesOnlyPresentNpc: boolean;
 }>;
 
 const FIXED_NOW = "2026-09-15T00:00:00.000Z";
@@ -58,10 +68,10 @@ function firstChoice(proposal: NarrativeBundleProposal, candidateId: string, lab
   };
 }
 
-function firstDynamicDelta(delta: WorldDeltaProposal): WorldDeltaProposal {
+function firstDynamicDelta(delta: WorldDeltaProposal, giverNpcId: string): WorldDeltaProposal {
   if (delta.newFact === null || delta.newNpc === null || delta.newLocation === null) return delta;
   const approaches = [
-    { approachId: "quiet", label: "保持原样查验石桩", hint: "不惊动现场的人", evidenceQuality: "clean" as const, tensionDelta: 0 },
+    { approachId: "quiet", label: "保持原样查验石桩", hint: "携带信筒核对暗记，不惊动现场的人", evidenceQuality: "clean" as const, tensionDelta: 0, requirements: [{ kind: "has_item" as const, itemId: "item_0", ownerId: String(PLAYER_ENTITY_ID) }] },
     { approachId: "witnessed", label: "请接应人当面见证查验", hint: "让现场的人看见你确认的结果", evidenceQuality: "clean" as const, tensionDelta: 2, witnessNpcIds: ["@new.npc"] },
   ];
   return {
@@ -73,6 +83,10 @@ function firstDynamicDelta(delta: WorldDeltaProposal): WorldDeltaProposal {
       investigationApproaches: undefined,
     },
     consequenceBindings: [
+      { kind: "bind_goal_resolution", npcRef: giverNpcId, goalOrdinal: 0,
+        resolution: { completeWhen: [{ kind: "investigation_observed", npcId: giverNpcId, factId: "@new.fact", evidenceQuality: "clean" }], blockWhen: [] } },
+      { kind: "bind_npc_cooperation", npcRef: giverNpcId, definitions: [{ operation: "request_verification",
+        requirements: [{ kind: "goal_status", npcId: giverNpcId, goalOrdinal: 0, status: "completed" }, { kind: "knows_fact", actorId: giverNpcId, factId: "@new.fact" }], allowedFactIds: ["@new.fact"], allowedAudienceIds: [String(PLAYER_ENTITY_ID)] }] },
       {
         kind: "bind_goal_resolution",
         npcRef: "@new.npc",
@@ -167,6 +181,7 @@ function installGoalResolution(
 function hasInteraction(context: DecisionContext, operation: string, factId?: FactId): boolean {
   return context.worldState.eventLedger.some((event) => event.payload.type === "story_interaction_resolved"
     && event.payload.operation === operation
+    && event.payload.npcId === FIRST_INVESTIGATION_NPC_ID
     && (factId === undefined || event.payload.factIds.some((id) => String(id) === String(factId))));
 }
 
@@ -335,6 +350,43 @@ function createP3Source(onAuthorRequest: (context: DecisionContext) => void): Na
       if (context.job.utterance?.includes("查验")) onAuthorRequest(context);
       const generated = await base.generate(context);
       if (!generated.ok || generated.kind !== "decision") return generated;
+      const giverId = context.storyState.delivery?.giverNpcId;
+      const giver = context.worldState.npcs.find((npc) => npc.id === giverId);
+      if (evidence !== undefined && giver !== undefined && giver.locationId === context.worldState.currentLocationId) {
+        const told = context.worldState.eventLedger.some((event) => event.payload.type === "story_interaction_resolved"
+          && event.payload.npcId === giver.id && event.payload.operation === "share_known_fact"
+          && event.payload.factIds.includes(FIRST_INVESTIGATION_FACT_ID));
+        const verified = context.worldState.eventLedger.some((event) => event.payload.type === "story_interaction_resolved"
+          && event.payload.npcId === giver.id && event.payload.operation === "request_verification"
+          && event.payload.factIds.includes(FIRST_INVESTIGATION_FACT_ID));
+        const returnGraph = verified ? buildNarrativeBundleDescriptors({ worldState: context.worldState, storyState: context.storyState,
+          transition: context.job.objectiveTransition, includeObjectiveReturn: true }) : null;
+        const key = told ? "p3_giver_verify" : "p3_giver_tell";
+        const revisitProposal: NarrativeBundleProposal = { ...generated.proposal, worldDelta: null,
+          ...(returnGraph === null ? {} : { terminal: returnGraph.terminal,
+            continuationScenes: returnGraph.steps.map((step) => ({ stepKey: step.stepKey, scene: {
+              segments: [{ beatId: "arrival", text: "你回到接应人面前，继续核对信筒。" }],
+              npcLine: { npcId: String(FIRST_INVESTIGATION_NPC_ID), text: "你回来了。查验结果可以继续告诉我。", emotion: "guarded" as const, answeredBeatIds: [], usedFactIds: [], usedEventIds: [] },
+              objectiveLink: null, choices: step.choiceCandidates.map((choice) => ({ candidateId: choice.candidateId, label: "继续核对交接" })) } })) }),
+          interactionProposals: verified ? [] : [{ proposalKey: key, npcId: giver.id,
+            operation: told ? "request_verification" : "share_known_fact", condition: [], factIds: [FIRST_INVESTIGATION_FACT_ID],
+            goalIds: [], promiseId: null, audienceIds: told ? [PLAYER_ENTITY_ID] : [giver.id], evidenceEventIds: [evidence.eventId] }],
+          currentScene: { ...generated.proposal.currentScene,
+            npcLine: { npcId: String(giver.id), text: told ? "你告诉我的查验结果足以让我重新核验交接。" : "你从外面回来了。查到了什么，可以告诉我。",
+              emotion: "guarded", answeredBeatIds: context.job.mandatoryBeats.filter((beat) => beat.kind === "player_utterance").map((beat) => beat.beatId), usedFactIds: [], usedEventIds: [] },
+            choices: verified ? [] : [{ candidateId: `interaction:${key}`, label: told ? "请委托人核验查验结果" : "实际告诉委托人查验结果" }, { candidateId: "current_scene_choice_2", label: "暂不告知" }] },
+        };
+        if (returnGraph === null) return { ...generated, proposal: revisitProposal };
+        const compiled = compileNarrativeDraft({ graph: "objective_return", worldDelta: null,
+          interactionProposals: revisitProposal.interactionProposals,
+          sceneDrafts: [{ slotKey: "current", scene: revisitProposal.currentScene },
+            ...revisitProposal.continuationScenes.map((step) => ({ slotKey: step.stepKey, scene: step.scene }))],
+        }, context);
+        if (!compiled.ok) throw new Error(`P3 raw objective return failed: ${JSON.stringify(compiled)}`);
+        const parsed = parseNarrativeBundleProposal(compiled.value);
+        if (!parsed.ok) throw new Error(`P3 objective return parse failed: ${JSON.stringify(parsed)}`);
+        return { ...generated, proposal: parsed.proposal };
+      }
       const generatedDecision = generated as Extract<NarrativeBundleSourceResult, { ok: true; kind: "decision" }>;
       const withInvestigationSpeaker: Extract<NarrativeBundleSourceResult, { ok: true; kind: "decision" }> = context.job.actionSummary.kind !== "investigate"
         ? generatedDecision
@@ -365,7 +417,7 @@ function createP3Source(onAuthorRequest: (context: DecisionContext) => void): Na
         || context.storyState.evolution.nextLocationOrdinal !== 1
         || context.storyState.evolution.nextNpcOrdinal !== 1
         ? withInvestigationSpeaker
-        : { ...withInvestigationSpeaker, proposal: { ...withInvestigationSpeaker.proposal, worldDelta: firstDynamicDelta(worldDelta as WorldDeltaProposal) } };
+        : { ...withInvestigationSpeaker, proposal: { ...withInvestigationSpeaker.proposal, worldDelta: firstDynamicDelta(worldDelta as WorldDeltaProposal, String(context.storyState.delivery!.giverNpcId)) } };
       const withoutInitialRouteInteraction = withDelta.proposal.worldDelta === null
         ? withDelta
         : {
@@ -456,6 +508,9 @@ export async function runOfflineP3Story(input: { route: "private" | "public"; re
   const goalChangeEventIds: EventId[] = [];
   let beforeEvidence: readonly Action[] = [];
   let afterEvidence: readonly Action[] = [];
+  const revisitSourceEventIds: EventId[] = [];
+  let giverKnewBeforeTelling = false;
+  let revisitChoicesOnlyPresentNpc = false;
   const source = createP3Source((context) => {
     const evidence = investigationEvent(context);
     if (evidence === undefined || context.memoryContext === undefined) return;
@@ -514,6 +569,10 @@ export async function runOfflineP3Story(input: { route: "private" | "public"; re
     }, { repository, now: () => FIXED_NOW });
     if (!result.ok) throw new Error(`P3 action failed: ${JSON.stringify(result)}; action=${JSON.stringify(entry.action)}; battle=${JSON.stringify(current.worldState.battle)}; act=${current.storyState.currentAct}`);
     actionCount += 1;
+    const committed = await read();
+    if (committed.storyState.narrative.status === "provider_pending" && committed.storyState.narrative.job.resultBoundaryProof?.kind === "changed_revisit") {
+      revisitSourceEventIds.push(...committed.storyState.narrative.job.resultBoundaryProof.sourceEventIds);
+    }
     await ensure();
   };
   const submitFreeform = async (): Promise<void> => {
@@ -571,6 +630,19 @@ export async function runOfflineP3Story(input: { route: "private" | "public"; re
     if (input.reloadAfterInvestigation) await reopenAndCompare();
 
     if (input.route === "private") {
+      const investigationLocationId = (await read()).worldState.currentLocationId;
+      const giverId = (await read()).storyState.delivery!.giverNpcId;
+      const giverLocationId = (await read()).worldState.npcs.find((npc) => npc.id === giverId)!.locationId;
+      await choose((action) => action.type === "move" && action.locationId === giverLocationId, "return to the original giver after outside investigation");
+      const beforeTelling = await read();
+      const revisitChoices = narrativeChoiceActions(beforeTelling);
+      revisitChoicesOnlyPresentNpc = revisitChoices.length > 0 && revisitChoices.every((choice) => choice.action.type === "talk" && choice.action.npcId === giverId);
+      const giverRecord = beforeTelling.worldState.entityStore.records.find((record) => record.core.id === giverId) as NpcEntityRecord;
+      giverKnewBeforeTelling = giverRecord.knowledge.entries.some((entry) => entry.factId === FIRST_INVESTIGATION_FACT_ID) || projectObserverEvidence({ worldState: beforeTelling.worldState, storyState: beforeTelling.storyState, observerId: giverId }).events
+        .some((event) => event.payload.type === "fact_discovered" && event.payload.factId === FIRST_INVESTIGATION_FACT_ID);
+      await choose((action) => action.type === "talk" && action.interactionId?.endsWith(":p3_giver_tell") === true, "actually tell the original giver");
+      await choose((action) => action.type === "talk" && action.interactionId?.endsWith(":p3_giver_verify") === true, "cooperate with the informed original giver");
+      await choose((action) => action.type === "move" && action.locationId === investigationLocationId, "continue to the relay contact");
       await submitFreeform();
       await choose((action) => action.type === "talk" && action.interactionId?.includes("p3_tell_evidence") === true, "tell evidence");
     } else {
@@ -604,6 +676,27 @@ export async function runOfflineP3Story(input: { route: "private" | "public"; re
     const privateEvidenceLeaked = final.worldState.eventLedger.some((event) => event.payload.type === "story_interaction_resolved"
       && event.payload.operation === "share_known_fact"
       && event.payload.factIds.some((factId) => String(factId) === String(PRIVATE_OPENING_FACT_ID)));
+    const giverId = final.storyState.delivery?.giverNpcId;
+    const giverLocationId = final.worldState.npcs.find((npc) => npc.id === giverId)?.locationId;
+    const investigationLocationId = final.worldState.worldFacts.find((fact) => fact.factId === FIRST_INVESTIGATION_FACT_ID)?.locationId;
+    const orderedStages: readonly [string, (event: typeof final.worldState.eventLedger[number]) => boolean][] = [
+      ["leave", (event) => event.payload.type === "location_visited" && event.payload.locationId === investigationLocationId],
+      ["investigate", (event) => event.payload.type === "fact_discovered" && event.payload.factId === FIRST_INVESTIGATION_FACT_ID],
+      ["revisit", (event) => event.payload.type === "location_visited" && event.payload.locationId === giverLocationId],
+      ["tell", (event) => event.payload.type === "story_interaction_resolved" && event.payload.npcId === giverId && event.payload.operation === "share_known_fact"],
+      ["goal_changed", (event) => event.payload.type === "npc_goal_status_changed" && event.payload.npcId === giverId],
+      ["verify", (event) => event.payload.type === "story_interaction_resolved" && event.payload.npcId === giverId && event.payload.operation === "request_verification"],
+      ["resume", (event) => event.payload.type === "location_visited" && event.payload.locationId === investigationLocationId],
+      ["deliver", (event) => event.payload.type === "item_given"],
+    ];
+    const privateJourneyCausalOrder: string[] = [];
+    let previousSequence = -1;
+    for (const [label, match] of orderedStages) {
+      const event = final.worldState.eventLedger.find((event) => event.sequence > previousSequence && match(event));
+      if (event === undefined) break;
+      previousSequence = event.sequence;
+      privateJourneyCausalOrder.push(label);
+    }
     return {
       completed: final.worldState.ending !== null && final.storyState.narrative.status === "ready",
       actionCount,
@@ -623,6 +716,18 @@ export async function runOfflineP3Story(input: { route: "private" | "public"; re
             const source = final.worldState.eventLedger.find((entry) => entry.eventId === id);
             return source === undefined ? [] : [source.payload.type];
           }) : []),
+      privateJourneyCausalOrder,
+      revisitChoicesOnlyPresentNpc,
+      revisitSourceEventIds,
+      giverKnewBeforeTelling,
+      giverLearnedFromTelling: final.worldState.entityStore.records.some((record) => record.core.kind === "npc"
+        && record.core.id === final.storyState.delivery?.giverNpcId
+        && (record as NpcEntityRecord).knowledge.entries.some((entry) => entry.factId === FIRST_INVESTIGATION_FACT_ID
+          && entry.source.kind === "action" && entry.source.mode === "player_told"
+          && final.worldState.eventLedger.some((event) => entry.source.kind === "action" && event.eventId === entry.source.eventId
+            && event.payload.type === "story_interaction_resolved" && event.payload.operation === "share_known_fact"))),
+      giverVerifiedAfterTelling: final.worldState.eventLedger.some((event) => event.payload.type === "story_interaction_resolved"
+        && event.payload.npcId === final.storyState.delivery?.giverNpcId && event.payload.operation === "request_verification"),
       revisited: final.worldState.eventLedger.some((event) => {
         const payload = event.payload;
         return payload.type === "location_visited" && final.worldState.eventLedger.some((previous) => previous.sequence < event.sequence

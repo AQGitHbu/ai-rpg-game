@@ -16,7 +16,13 @@ describe("P3 divergent evidence and cooperation journeys", () => {
     expect(result.availableActionsAfterEvidence).not.toEqual(result.availableActionsBeforeEvidence);
     expect(result.verificationAvailableAfterInvestigation).toBe(false);
     expect(result.goalEvidenceKindsAfterFollowUps).toContain("story_interaction_resolved");
-    expect(result.revisited).toBe(false); // This journey proves reload, not a physical revisit.
+    expect(result.revisited).toBe(true);
+    expect(result.revisitSourceEventIds).toEqual(expect.arrayContaining([...result.investigationEventIds]));
+    expect(result.giverKnewBeforeTelling).toBe(false);
+    expect(result.giverLearnedFromTelling).toBe(true);
+    expect(result.giverVerifiedAfterTelling).toBe(true);
+    expect(result.revisitChoicesOnlyPresentNpc).toBe(true);
+    expect(result.privateJourneyCausalOrder).toEqual(["leave", "investigate", "revisit", "tell", "goal_changed", "verify", "resume", "deliver"]);
   }, 30_000);
 
   it("completes the public route with a witnessed investigation and a different action set", async () => {

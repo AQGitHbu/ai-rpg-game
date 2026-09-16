@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
+import type { NpcEntityRecord } from "@/game/domain/entity";
+import type { StoryState } from "@/game/domain/storyState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { ObjectiveTransition } from "@/game/domain/narrativeBeat";
 import type { CommittedNarrativeEvent } from "@/game/domain/events";
-import { asTurnId } from "@/game/domain/events";
+import { asEventId, asTurnId } from "@/game/domain/events";
 import { commitEventDrafts } from "@/game/domain/eventLedger";
 import type { StoryInteraction } from "@/game/domain/storyInteraction";
 import type { WorldState } from "@/game/domain/worldState";
@@ -402,5 +404,54 @@ describe("buildNarrativeBundleDescriptors", () => {
     expect(graph.activeStepKeys).toEqual([]);
     expect(graph.currentChoiceCandidates).toEqual([]);
     expect(graph.terminal).toEqual({ kind: "ending" });
+  });
+});
+
+
+describe("changed revisit decisions and approved objective return", () => {
+  const oldNpcId = asNpcId("npc:old");
+  const unrelatedNpcId = asNpcId("npc:unrelated");
+  function revisitedWorld() {
+    const npc = BASE_PROJECTION.npcs[0]!;
+    const initial = worldState({ quests: [quest([{ kind: "talk_to_npc", npcId: npcDyn1 }])],
+      unlockedLocationIds: [locTown, locDyn1], visitedLocationIds: [locTown, locDyn1],
+      npcs: [npc, ...[unrelatedNpcId, oldNpcId].map((id) => ({ ...npc, id, locationId: locTown,
+        memory: { ...npc.memory, npcId: id, goals: ["核验外地证据"] } }))], eventLedger: [] });
+    const records = initial.entityStore.records.map((record) => {
+      if (record.core.id !== oldNpcId || record.core.kind !== "npc") return record;
+      const npcRecord = record as NpcEntityRecord;
+      return { ...npcRecord, dynamicState: { ...npcRecord.dynamicState, goals: npcRecord.dynamicState.goals.map((goal) => ({ ...goal,
+        resolution: { completeWhen: [{ kind: "knows_fact" as const, actorId: oldNpcId, factId: factTracks }], blockWhen: [] } })) } };
+    });
+    const committed = commitEventDrafts({ ledger: [], drafts: [{ eventKey: "evidence", episodeKey: "investigation", actorIds: [PLAYER_ENTITY_ID], targetIds: [], locationId: locDyn1,
+      causeKeys: [], factIds: [factTracks], questIds: [], outcome: "success", salience: 50,
+      payload: { type: "fact_discovered", factId: factTracks, approachId: "quiet", evidenceQuality: "clean" } }],
+      source: { turnId: asTurnId("turn:evidence"), actionId: "evidence", turnNumber: 1, committedAt: "2026-09-15T00:00:00.000Z" }, entityStore: initial.entityStore });
+    if (!committed.ok) throw new Error(committed.code);
+    return { ...initial, entityStore: { ...initial.entityStore, records }, eventLedger: committed.ledger };
+  }
+  it("presents the related resident rather than the absent quest NPC or an unrelated resident", () => {
+    const ws = revisitedWorld();
+    const ss = { ...storyState(), narrative: { status: "provider_pending", mode: "offline", job: {
+      resultBoundaryProof: { kind: "changed_revisit", locationId: locTown, previousSceneEventId: asEventId("turn:old:scene"), sourceEventIds: ws.eventLedger.map((event) => event.eventId) },
+    } } } as unknown as StoryState;
+    const graph = buildNarrativeBundleDescriptors({ worldState: ws, storyState: ss, transition: transition(0) });
+    expect(graph.currentChoiceCandidates).toHaveLength(2);
+    expect(graph.currentChoiceCandidates.every((choice) => choice.action.type === "talk" && choice.action.npcId === oldNpcId)).toBe(true);
+    expect(graph.steps).toEqual([]);
+    const ordinary = buildNarrativeBundleDescriptors({ worldState: ws, storyState: storyState(), transition: transition(0) });
+    expect(ordinary.currentChoiceCandidates.every((choice) => choice.action.type === "talk" && choice.action.npcId === npcDyn1)).toBe(true);
+  });
+  it("only prepares an explicitly requested return to an adjacent visited unfinished talk target", () => {
+    const ws = revisitedWorld();
+    const options = { worldState: ws, storyState: storyState(), transition: transition(0), includeObjectiveReturn: true };
+    const graph = buildNarrativeBundleDescriptors(options);
+    expect(graph.steps.map((step) => step.trigger)).toEqual([{ kind: "move", locationId: locDyn1 }]);
+    expect(graph.steps[0]?.arrivalNpc?.id).toBe(npcDyn1);
+    expect(graph.steps[0]?.absorbedObjectiveIndexes).toEqual([]);
+    expect(buildNarrativeBundleDescriptors({ ...options, includeObjectiveReturn: false }).steps).toEqual([]);
+    expect(buildNarrativeBundleDescriptors({ ...options, worldState: { ...ws, visitedLocationIds: [locTown] } }).steps).toEqual([]);
+    const disconnected = worldState({ quests: ws.quests, visitedLocationIds: [locTown, locDyn1], locations: BASE_PROJECTION.locations.map((location) => ({ ...location, connectedLocationIds: [] })) });
+    expect(buildNarrativeBundleDescriptors({ ...options, worldState: disconnected }).steps).toEqual([]);
   });
 });

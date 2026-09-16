@@ -1219,6 +1219,7 @@ export function approveNarrativeBundle(
     worldState: descriptorWorld,
     storyState: previewStoryState,
     includeDeliveryReturn,
+    includeObjectiveReturn: proposal.continuationScenes.some((step) => step.stepKey.startsWith("move:")),
     transition: descriptorTransition,
   });
 

@@ -8,6 +8,7 @@
 
 - 测试 fixture 可创建确定性开局，覆盖观察、交谈、事实推进、移动、拾取、任务、战斗以及战斗失败恢复和成功结局；这些能力通过注入 source 与 repository 测试驱动，不是正式 UI 菜单。
 - fixture 仍经 application facade、gameplay ruleEngine、GameSessionView 和 SQLite repository；UI 不读取 domain state、seed 或持久化层。
+- `narrativeP3Journey.test.ts` 从同一批准初态验证私下与公开取证分化。私下路线经真实离场、外地调查、返回原委托人、实际告知与核验、批准返程续接和显式交付到终局；事件来源、告知前 NPC 无知、告知后的知识来源及 SQLite 重载均可检查。公开路线保留现场见证与不同合作候选，不把重载等同于回访。
 - 生产 narrative source 与 offline fixture source 是两条显式配置路径。生产 provider 失败会保留 `provider_failed` 和同一 job，不能用 deterministic 文案伪装成功。
 - 试玩不要求清理用户存档；测试使用独立 fixture 与临时 SQLite repository，避免触碰正式开发存档。
 

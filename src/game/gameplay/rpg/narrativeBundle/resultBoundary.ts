@@ -8,6 +8,7 @@ import type {
   NpcRelationshipChangedPayload,
 } from "@/game/domain/events";
 import type { StoryState } from "@/game/domain/storyState";
+import type { NpcEntityRecord } from "@/game/domain/entity";
 import type { FactId, LocationId } from "@/game/domain/worldEntity";
 import type { WorldState } from "@/game/domain/worldState";
 import type { ResultBoundaryProof } from "@/game/domain/resultBoundary";
@@ -127,7 +128,29 @@ function isLocationRelatedVisibleChange(
     );
   }
 
+  if (isFactDiscoveredEvent(event)) {
+    // A player's newly obtained evidence can motivate a return, but this only
+    // routes generation: the absent NPC still needs an actual knowledge source.
+    const factId = event.payload.factId;
+    return worldState.entityStore.records.some((record) => {
+      if (record.core.kind !== "npc" || record.core.lifecycle !== "active") return false;
+      const npc = record as NpcEntityRecord;
+      if (npc.position.locationId !== locationId) return false;
+      return npcReferencesFact(npc, factId);
+    });
+  }
   return false;
+}
+
+/** Explicit approved references only; no description or name matching. */
+export function npcReferencesFact(npc: NpcEntityRecord, factId: FactId): boolean {
+  const conditions = [
+    ...npc.dynamicState.goals.flatMap((goal) => goal.resolution === undefined
+      ? [] : [...goal.resolution.completeWhen, ...goal.resolution.blockWhen]),
+    ...(npc.cooperationDefinitions ?? []).flatMap((definition) => definition.requirements),
+  ];
+  return conditions.some((condition) => (condition.kind === "knows_fact" || condition.kind === "investigation_observed")
+    && condition.factId === factId);
 }
 
 function proveChangedRevisit(input: ResultBoundaryInput): ResultBoundaryProof | null {

@@ -1,3 +1,4 @@
+import { npcReferencesFact } from "./resultBoundary";
 import type { Action } from "@/game/domain/action";
 import type {
   NarrativeBundleTerminal,
@@ -62,6 +63,8 @@ export type BuildNarrativeBundleDescriptorsInput = {
   readonly transition: ObjectiveTransition;
   /** Explicitly requested, structurally approved return to the original giver. */
   readonly includeDeliveryReturn?: boolean;
+  /** Explicit B proposal to resume an already visited, adjacent talk objective. */
+  readonly includeObjectiveReturn?: boolean;
 };
 
 function objectiveKey(questId: QuestId, objectiveIndex: number): string {
@@ -211,6 +214,25 @@ function currentSceneChoicesFor(
   objectives: readonly QuestObjective[],
   startIndex: number,
 ): readonly PreparedChoiceCandidate[] {
+  const narrative = storyState.narrative;
+  if (narrative.status === "provider_pending" || narrative.status === "provider_failed") {
+    const job = narrative.job;
+    const focus = job.focusNpcId === undefined ? undefined : findNpc(worldState, job.focusNpcId);
+    if (focus !== undefined && focus.locationId === worldState.currentLocationId) {
+      return choicesForNpc(preparedNpcContext(worldState, focus), "current_scene");
+    }
+    const proof = job.resultBoundaryProof;
+    if (proof?.kind === "changed_revisit") {
+      const factIds = worldState.eventLedger.filter((event) => proof.sourceEventIds.includes(event.eventId))
+        .flatMap((event) => event.payload.type === "fact_discovered" ? [event.payload.factId] : []);
+      const related = worldState.npcs.find((npc) => {
+        if (npc.locationId !== worldState.currentLocationId) return false;
+        const record = npcRecord(getEntity(worldState.entityStore, npc.id));
+        return record?.core.lifecycle === "active" && factIds.some((factId) => npcReferencesFact(record, factId));
+      });
+      if (related !== undefined) return choicesForNpc(preparedNpcContext(worldState, related), "current_scene");
+    }
+  }
   let index = startIndex;
   while (index < objectives.length) {
     const objective = objectives[index];
@@ -312,6 +334,25 @@ export function buildNarrativeBundleDescriptors(
         arrivalNpc, choiceCandidates: choicesForNpc(arrivalNpc, stepKey), nextStepKeys: [] }],
         activeStepKeys: [stepKey], currentChoiceCandidates: [], terminal: { kind: "next_decision", target: { kind: "continuation_step", stepKey } } };
     }
+  }
+
+  const objective = quest.objectives[transition.after.objectiveIndex];
+  const objectiveNpc = objective?.kind === "talk_to_npc" ? findNpc(worldState, objective.npcId) : undefined;
+  const currentLocation = worldState.locations.find((location) => location.id === worldState.currentLocationId);
+  if (input.includeObjectiveReturn === true && quest.status === "active" && objectiveNpc !== undefined
+    && getEntity(worldState.entityStore, objectiveNpc.id)?.core.lifecycle === "active"
+    && objectiveNpc.locationId !== worldState.currentLocationId
+    && worldState.visitedLocationIds.includes(objectiveNpc.locationId)
+    && currentLocation?.connectedLocationIds.includes(objectiveNpc.locationId)) {
+    const arrivalNpc = preparedNpcContext(worldState, objectiveNpc);
+    const trigger: NarrativeBundleTrigger = { kind: "move", locationId: objectiveNpc.locationId };
+    const stepKey = narrativeBundleTriggerKey(trigger);
+    return { steps: [{ stepKey, objectiveKey: objectiveKey(quest.id, transition.after.objectiveIndex),
+      consumptionGroupKey: groupKeyFor(quest.id, transition.after.objectiveIndex, "move", "objective_return"),
+      trigger, absorbedObjectiveIndexes: [], authority: { questId: quest.id, objectiveIndex: transition.after.objectiveIndex,
+        allowedEntityIds: [String(objectiveNpc.locationId), String(objectiveNpc.id)], visibleFactIds: authorizedFactIdsForArrivalNpc(arrivalNpc) },
+      arrivalNpc, choiceCandidates: choicesForNpc(arrivalNpc, stepKey), nextStepKeys: [] }],
+      activeStepKeys: [stepKey], currentChoiceCandidates: [], terminal: { kind: "next_decision", target: { kind: "continuation_step", stepKey } } };
   }
 
   const descriptors: BundleStepDescriptor[] = [];
