@@ -36,6 +36,10 @@
 
 `6ff87097` 将审阅的生成契约保留在合法本场披露后、worldDelta 物化前，候选实体、权限及执行依据继续使用完整预览。正式请求回归覆盖普通换幕、幕末披露与结局准备，推进职责读取同一生成契约。返程图同时补齐 step basis 与实际抵达快照，当前场景位置不提前变化。独立限定复核通过，报告为 `artifacts/narrative-p3-closeout/contract-final-review.md`。新批次从这些具体程序修复后重新冻结，不以改稿或重抽开局替代修复。
 
+`863ea9cb` 冻结的 `p3-closeout-02` 共用前缀完成 4 次行动，成功换幕，生成/审阅契约矛盾未重现；12 次真实 HTTP 后两路均因 `P3_CAPABILITY_COVERAGE_FAILED` 阻断，路线动作仍为 0，UI 未启动。零 HTTP 严格回放复现相同结果。实际请求保留了完整调查、回访与合作设定，但作者严格字段清单遗漏 consequenceBindings，缺少目标/合作绑定 schema，调查说明与输出骨架也不一致。模型输出 newFact:null 不符合本次设定；同时程序确有能力契约遗漏，不能将失败仅归为模型发挥。独立证据见 `artifacts/narrative-p3-closeout/live-02-capability-diagnosis.md`。
+
+`21ed29fe` 补齐现有四类绑定和五类条件的作者契约；已选 NPC 仅提供 goalOrdinal/goalId/hasResolution 引用元数据，不扩大实体闭包或公开私密目标。示例经正式 parser 和绑定审批验证，220 项相关测试、类型与限定 lint 通过。最终复核进一步对齐绑定只能用当前 NPC 正式 ID、主动调查要求非空标签、已有合法未发现 scene fact 可首次绑定三处说明，66 项限定测试通过；新增正式审批正反例与实际发送请求断言。复核无遗留重要问题，最终 production build 通过，详见 `artifacts/narrative-p3-closeout/capability-final-review.md`。普通故事仍可省略绑定；没有新增操作或强制生成固定剧情。
+
 ## 最终检查与剩余边界
 
 已实现切片的最终集成审阅通过，无未解决的重要跨模块发现。生成契约修复后全量为 247 个文件通过、1 个跳过，3102 项测试通过、1 项跳过。类型检查、改动文件 lint、production build 通过；文档检查 0 错误、1 个既有篇幅提醒，diff 检查通过。本轮 P1/P2/P3 的 66 项 Node 脚本测试全部通过；此前完整 lint 和 135 项依赖边界检查通过。首次失败与修复后日志均保留在 `artifacts/narrative-p3-closeout/`，不以旧批次成绩替代新验证。

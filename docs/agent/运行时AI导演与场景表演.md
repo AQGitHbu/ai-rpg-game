@@ -36,6 +36,7 @@
 - 审阅缺陷路径相对内部候选；允许明确请求外壳的单层 `proposal.` 或 `$.proposal.` 前缀，校验实际字段后保存候选相对路径。未知字段、错误数组索引、重复包装仍拒绝，不过滤缺陷或转为通过。
 - 生产语义审阅的 `ruleBasis` 由服务端投影当前输入、真实 Action 与候选绑定、续接 step、正式物品及事实/权限。阻断缺陷必须带可存在性校验的候选 `path` 和 `evidence={basisKey,impact,detail}`；依据必须存在、影响种类须属于该依据，detail 说明具体规则后果。物品状态影响只能引用具体正式物品或绑定该物品的 take/give 步骤，普通无效果服饰、环境或风格写入 `qualityObservations`，不改变规则 verdict。无依据、空缺陷或混入非法缺陷的 revise 整体成为显式 uncertain，不过滤后冒充 pass。服务端校验依据与路径，不以此替代模型对语义冲突的判断。
 - `story:consequences` 是作者与 reviewer 共用的 rule basis，只包含当前 job 已提交 Event、活跃 Thread 和可用互动 ID；goal description、reason、证据质量及隐藏条件仍由规则/私有 deliberation 保持隔离。
+- 作者契约完整提供现有四类 consequenceBindings 与五类条件的有限格式，开局仅开放 town 合法绑定；后续绑定可放于整包顶层或 worldDelta 内，两处合计最多八条。调查、目标、交谈条件与合作仍经正式审批，示例不代表强制故事结构。已选 NPC 实体卡仅增加目标原始序号、ID、是否已有 resolution 的引用元数据，不暴露私密目标正文、状态或条件，也不扩展实体引用范围。
 - decision 的 pass 必须完整返回 executionChecks 与 progressChecks，按路径、引文、槽依据核查位置、参与者、流转和已完成前提。结构无效的 pass 允许一次同候选响应修复，沿用请求预算与取消控制，计入每 job 的 24 次 HTTP；不重写作者候选。二次仍无效为 uncertain；有效规则缺陷立即交回作者修订，不向审阅器重复求通过。无效 revise、网络失败不走该修复。结构正确不证明语义完整，仍需实跑。
 - 作者与审阅共用 narrativeProgressContract：首场说明谁受影响、委托人为何在意与完成/耽搁的后果；中幕主张给出自身利害、依据或能力边界，让玩家比较回应的理由与代价；终幕交代本次后果及未解决问题。同幕回应不强制新剧情，泛泛传言、重复引路/核验不算推进，选项不能承诺 Action 无法兑现的效果。推进不扩大权限，违反有依据的因果要求走 BROKEN_CAUSALITY。
 - 事实引用许可与披露正文分别投影：获准 NPC 互动提案里的事实 ID 存在且可用于对应提案，不要求出现在公开正文目录；该许可不授权当前台词说出秘密，也不代表行动已执行。秘密正文继续按 speaker authority 裁剪。
