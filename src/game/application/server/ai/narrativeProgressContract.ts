@@ -11,7 +11,7 @@ export const NARRATIVE_PROGRESS_CONTRACT = [
 
 export function buildNarrativeProgressRequirements(input: NarrativeCandidateReviewInput) {
   if (input.context.kind === "opening") return [{ key: "progress:opening", requirement: "concrete_stakes_and_executable_commission" }];
-  const { storyState } = input.context;
+  const storyState = input.context.generationContract?.storyState ?? input.context.storyState;
   return [{ key: "progress:response", requirement: storyState.evolution.status === "needs_next_act"
     ? "concrete_conflict_information_or_grounded_response_change" : "grounded_response_to_current_input" },
   ...("endingOutcomes" in input.proposal ? (input.proposal.endingOutcomes ?? []).map(outcome => ({

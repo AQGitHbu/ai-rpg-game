@@ -753,6 +753,10 @@ describe("generatePendingNarrativeBundle", () => {
     expect(complete).toHaveBeenCalledTimes(4);
     const firstReview = JSON.parse(requests[1]![1]!.content);
     expect(firstReview.proposal.worldDelta).toEqual(observedEnding.worldDelta);
+    expect(requests[0]!.map(message => message.content).join("\n")).toContain("endingPair");
+    expect(firstReview.context.prompt).toContain("worldDelta 绝不能为 null");
+    expect(firstReview.context.prompt).toContain("terminal.kind=ending");
+    expect(firstReview.context.prompt).not.toContain("本回合 worldDelta 必须为 null");
     expect(firstReview.proposal.endingOutcomes).toEqual(observedEnding.endingOutcomes);
     const expectedLocations = npcIds.map((npcId, index) => ({ npcId, beforeLocationId: locationIds[index], afterLocationId: locationIds[index] }));
     expect(firstReview.context.ruleBasis.find((basis: { key: string }) => basis.key === "ending:trust").value.actionPreviews[0].npcLocations).toEqual(expectedLocations);

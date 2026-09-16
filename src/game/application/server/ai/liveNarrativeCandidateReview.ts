@@ -208,9 +208,10 @@ function publicReviewContext(input: NarrativeCandidateReviewInput): unknown {
   }
   const compilation = compileDecisionNarrativeContext({
     consumer: "reviewer",
-    worldState: input.context.worldState,
-    storyState: input.context.storyState,
-    job: input.context.job,
+    worldState: input.context.generationContract?.worldState ?? input.context.worldState,
+    storyState: input.context.generationContract?.storyState ?? input.context.storyState,
+    job: input.context.generationContract === undefined ? input.context.job
+      : { ...input.context.job, objectiveTransition: input.context.generationContract.objectiveTransition },
     ...(input.context.npcOutward === undefined ? {} : { npcOutward: input.context.npcOutward }),
     ...(input.context.memoryContext === undefined ? {} : { memoryContext: input.context.memoryContext }),
     ...(input.context.maxEstimatedTokens === undefined ? {} : { maxEstimatedTokens: input.context.maxEstimatedTokens }),
@@ -221,6 +222,8 @@ function publicReviewContext(input: NarrativeCandidateReviewInput): unknown {
     executionChecks: buildNarrativeExecutionChecks(input),
     progressRequirements: buildNarrativeProgressRequirements(input),
     candidateVersion: input.context.candidateVersion,
+    // The prompt defines what this candidate must create; ruleBasis evaluates its materialized preview.
+    contractState: "prompt 的生成契约基于本场合法披露后、候选世界增量物化前的状态；worldDelta 创建的新实体以 proposal 和 ruleBasis 的候选预览及逐场权限为准，不能因它们尚未出现在生成前实体目录而判为不存在。",
     prompt: compilation.prompt,
     manifest: compilation.manifest,
   };
@@ -236,9 +239,10 @@ export function createLiveNarrativeCandidateReview(
         if (input.context.kind === "decision") {
           const compilation = compileDecisionNarrativeContext({
             consumer: "reviewer",
-            worldState: input.context.worldState,
-            storyState: input.context.storyState,
-            job: input.context.job,
+            worldState: input.context.generationContract?.worldState ?? input.context.worldState,
+            storyState: input.context.generationContract?.storyState ?? input.context.storyState,
+            job: input.context.generationContract === undefined ? input.context.job
+              : { ...input.context.job, objectiveTransition: input.context.generationContract.objectiveTransition },
             ...(input.context.npcOutward === undefined ? {} : { npcOutward: input.context.npcOutward }),
             ...(input.context.memoryContext === undefined ? {} : { memoryContext: input.context.memoryContext }),
             ...(input.context.maxEstimatedTokens === undefined ? {} : { maxEstimatedTokens: input.context.maxEstimatedTokens }),

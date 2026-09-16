@@ -17,7 +17,13 @@ import { createSqliteGameRepository } from "../server/persistence/sqliteGameRepo
 import { asGameId } from "../server/persistence/gameRepository";
 import { createNarrativeBundleSource } from "../server/ai/liveNarrativeBundleSource";
 import { generatePendingNarrativeBundle } from "../generatePendingNarrativeBundle";
+import { updateWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
+import { previewNarrativeDisclosure } from "../approveNarrativeBundle";
+import type { BundleSceneProposal } from "@/game/domain/narrativeBundle";
 import { retryNarrativeGeneration } from "../retryNarrativeGeneration";
+
+import { createLiveNarrativeCandidateReview } from "../server/ai/liveNarrativeCandidateReview";
+import { fixtureNarrativeReviewPass } from "../server/ai/testing/narrativeReviewFixture.testutil";
 
 const now = () => "2026-09-15T00:00:00.000Z";
 
@@ -60,6 +66,43 @@ function fixture(last: boolean, bindInCandidate = false, restrictedListener = fa
 }
 
 describe("B current disclosure through production source and SQLite CAS", () => {
+  it("keeps the ordinary act-change author contract after materializing its new NPC", async () => {
+    const root = mkdtempSync(join(tmpdir(), "rpg-review-contract-"));
+    const repository = createSqliteGameRepository({ clientFactory: () => createSqliteClient(join(root, "game.sqlite")), logError: () => undefined });
+    try {
+      const fixtureInput = fixture(true);
+      const pending = fixtureInput.storyState.narrative.job;
+      // Start with the preceding disclosure already settled, so this candidate has no B disclosure.
+      const settled = previewNarrativeDisclosure({ worldState: fixtureInput.worldState, storyState: fixtureInput.storyState,
+        scene: fixtureInput.draft.sceneDrafts[0]!.scene as BundleSceneProposal, transition: pending.objectiveTransition,
+        source: { actionId: pending.actionId, turnId: pending.turnId, turnNumber: pending.turnNumber }, currentEventIds: pending.domainEventIds });
+      if (!settled.ok) throw new Error("invalid fixture disclosure");
+      const storyState = { ...settled.storyState, narrative: { ...fixtureInput.storyState.narrative,
+        job: { ...pending, objectiveTransition: settled.transition } } };
+      const draft = { ...fixtureInput.draft, sceneDrafts: [{ slotKey: "current", scene: {
+        segments: [{ beatId: "atmosphere", text: "你听完了前往新驿站的指引。" }], npcLine: null, objectiveLink: null, choices: [],
+      } }, fixtureInput.draft.sceneDrafts[1]!] };
+      await repository.initializeSchema();
+      expect(await repository.createInitialGame({ gameId: asGameId("ordinary-contract"), worldState: updateWorldStateFixture(fixtureInput.worldState, { quests: settled.worldState.quests }), storyState, createdAt: now() })).toEqual({ ok: true });
+      const requests: string[] = [];
+      const aiClient = {
+        policy: () => ({ thinking: "off" as const, timeoutMs: 45000, maxTokens: 5000, jsonMode: "prompt_only" as const, maxAttempts: 1 }),
+        complete: async (_role: unknown, messages: readonly { content: string }[]) => {
+          const review = requests.length > 0;
+          requests.push(review ? JSON.parse(messages[1]!.content).context.prompt : messages.map(message => message.content).join("\n"));
+          return { ok: true as const, latencyMs: 0, content: JSON.stringify(review ? fixtureNarrativeReviewPass(messages) : draft) };
+        },
+      };
+      expect(await generatePendingNarrativeBundle({ repository, now, source: createNarrativeBundleSource({ aiClient }), reviewer: createLiveNarrativeCandidateReview({ aiClient }) })).toMatchObject({ ok: true });
+      expect(requests).toHaveLength(2);
+      for (const prompt of requests) {
+        expect(prompt).toContain("worldDelta 绝不能为 null");
+        expect(prompt).toContain("currentScene.objectiveLink 必须严格为 null");
+        expect(prompt).toContain("move:loc_dyn_1");
+        expect(prompt).not.toContain("本回合 worldDelta 必须为 null");
+      }
+    } finally { await repository.close(); rmSync(root, { recursive: true, force: true }); }
+  });
   it.each([
     { last: false, failure: "missing_slot" }, { last: true, failure: "missing_slot" },
     { last: true, failure: "missing_delta" }, { last: false, failure: "absent_audience" },
@@ -91,6 +134,24 @@ describe("B current disclosure through production source and SQLite CAS", () => 
       }
       const prompts: string[] = [];
       let reviews = 0;
+      const reviewPrompts: string[] = [];
+      const liveReviewer = createLiveNarrativeCandidateReview({ aiClient: {
+        policy: () => ({ thinking: "off", timeoutMs: 45000, maxTokens: 5000, jsonMode: "prompt_only", maxAttempts: 1 }),
+        complete: async (_role, messages) => {
+          const request = JSON.parse(messages[1]!.content);
+          reviewPrompts.push(request.context.prompt);
+          expect(request.context.progressRequirements).toContainEqual({ key: "progress:response",
+            requirement: last ? "concrete_conflict_information_or_grounded_response_change" : "grounded_response_to_current_input" });
+          expect(request.context.ruleBasis).toContainEqual(expect.objectContaining({
+            key: `permission:scene:1:line:0:${last ? "npc_dyn_1" : "npc_3"}`,
+            value: expect.objectContaining({ speakerNpcId: last ? "npc_dyn_1" : "npc_3", audienceIds: [PLAYER_ENTITY_ID] }),
+          }));
+          expect(request.context.ruleBasis).toContainEqual(expect.objectContaining({
+            key: `step:move:${last ? "loc_dyn_1" : LOC_2_ID}`,
+          }));
+          return { ok: true, latencyMs: 0, content: JSON.stringify(fixtureNarrativeReviewPass(messages)) };
+        },
+      } });
       const source = createNarrativeBundleSource({ aiClient: { policy: () => ({ thinking: "off", timeoutMs: 45000, maxTokens: 5000, jsonMode: "prompt_only", maxAttempts: 1 }), complete: async (_role, messages) => { calls++;
         prompts.push(messages[0]!.content);
         return { ok: true, latencyMs: 0, content: JSON.stringify(valid ? draft : invalidDraft) }; } } });
@@ -104,7 +165,7 @@ describe("B current disclosure through production source and SQLite CAS", () => 
           const listener = input.context.worldState.entityStore.records.find(record => record.core.id === NPC_2_ID) as NpcEntityRecord;
           expect(listener.dynamicState.goals[0]?.status).toBe("completed");
           expect(listener.knowledge.entries.some(entry => entry.factId === FACT_1_ID)).toBe(true);
-          return { ok: true, candidateVersion: input.candidateVersion, candidateHash: input.candidateHash };
+          return liveReviewer.reviewNarrativeCandidate(input);
         } },
       });
       expect(await run()).toMatchObject({ ok: false, code: "AI_RESPONSE_INVALID" });
@@ -134,6 +195,16 @@ describe("B current disclosure through production source and SQLite CAS", () => 
       expect(record.storyState.reveal?.visibleObjectiveIndex).toBe(last ? 0 : 1);
       expect(record.worldState.ending).toBeNull();
       expect(reviews).toBe(1);
+      expect(reviewPrompts).toHaveLength(1);
+      if (last) {
+        expect(reviewPrompts[0]).toContain("worldDelta 绝不能为 null");
+        expect(reviewPrompts[0]).toContain("currentScene.objectiveLink 必须严格为 null");
+        expect(reviewPrompts[0]).toContain("move:loc_dyn_1");
+        expect(reviewPrompts[0]).not.toContain("本回合 worldDelta 必须为 null");
+      } else {
+        expect(reviewPrompts[0]).toContain('"objectiveIndex":1,"mode":"progress"');
+        expect(reviewPrompts[0]).toContain("本回合 worldDelta 必须为 null");
+      }
       const completedCalls = calls;
       await run();
       expect(calls).toBe(completedCalls);

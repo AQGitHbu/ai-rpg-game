@@ -77,6 +77,12 @@ import { deriveStructuralEvolutionNeed } from "@/game/gameplay/rpg/worldEvolutio
 // ---------------------------------------------------------------------------
 
 export type ApprovedNarrativeBundle = {
+  /** Current candidate contract after legal current-scene disclosure, before delta materialization. */
+  readonly generationContract: {
+    readonly worldState: WorldState;
+    readonly storyState: StoryState;
+    readonly objectiveTransition: ObjectiveTransition;
+  };
   readonly objectiveTransition: ObjectiveTransition;
   readonly nextWorldState: WorldState;
   readonly nextStoryStatePreview: StoryState;
@@ -1458,6 +1464,7 @@ export function approveNarrativeBundle(
   return {
     ok: true,
     approved: {
+      generationContract: { worldState, storyState, objectiveTransition: transition },
       objectiveTransition: descriptorTransition,
       nextWorldState: previewWorldState,
       nextStoryStatePreview: previewStoryState,

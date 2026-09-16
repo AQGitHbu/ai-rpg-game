@@ -100,6 +100,12 @@ export type NarrativeBundleSourceContext =
     readonly worldState: WorldState;
     /** Preflight materialized state, supplied only to semantic review. */
     readonly reviewWorldState?: WorldState;
+    /** Transient pre-materialization contract; review permissions still use the candidate preview. */
+    readonly generationContract?: {
+      readonly worldState: WorldState;
+      readonly storyState: StoryState;
+      readonly objectiveTransition: PendingNarrativeJob["objectiveTransition"];
+    };
     /** Alias-resolved scenes from the same structural preflight. */
     readonly reviewScenes?: readonly (NarrativeSceneState | PreparedSceneSeedState)[];
     readonly storyState: StoryState;
