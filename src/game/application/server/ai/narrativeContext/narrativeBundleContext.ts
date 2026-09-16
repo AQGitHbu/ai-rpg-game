@@ -216,8 +216,8 @@ function focusNpcContent(worldState: WorldState, job: PendingNarrativeJob): stri
   ].join("\n");
 }
 
-function expectedBundleProjection(worldState: WorldState, storyState: StoryState, job: PendingNarrativeJob, includeDeliveryReturn = false) {
-  const draft = projectNarrativeDraft({ worldState, storyState, job, includeDeliveryReturn });
+function expectedBundleProjection(worldState: WorldState, storyState: StoryState, job: PendingNarrativeJob, includeDeliveryReturn = false, includeObjectiveReturn = false) {
+  const draft = projectNarrativeDraft({ worldState, storyState, job, includeDeliveryReturn, includeObjectiveReturn });
   const { descriptorGraph, nextActProjection } = draft;
   const expectedChoices = draft.slots[0]!.choiceCount === 0 || descriptorGraph.currentChoiceCandidates.length === 0
     ? "当前场景不允许 choices；终点步骤的 choices 必须使用下方对应候选。"
@@ -303,6 +303,10 @@ export function buildDecisionNarrativeContextBlocks(
       : `\n可选归还图：仅当本轮玩家明确要求把委托物归还委托人时，整体使用以下图替代默认图；不得把两图拼接，不得因存在此图就替玩家决定归还。归还只变更物品归属，放弃任务仍须玩家后续选择。\n- 选择本图时输出 graph="return_delivery"，其场景槽=${JSON.stringify(returnProjection.slots)}\n- 服务端终点（只读，不输出）：${JSON.stringify(returnProjection.expectedTerminal)}\n- currentScene choices: ${returnProjection.expectedChoices}\n- continuationScenes:\n${returnProjection.expectedSteps}`
     : "";
   const currentLocation = worldState.locations.find((location) => location.id === worldState.currentLocationId);
+  const objectiveReturn = expectedBundleProjection(worldState, storyState, job, false, true);
+  const optionalObjectiveReturnGraph = JSON.stringify(objectiveReturn.slots) !== JSON.stringify(projection.slots)
+    ? `\n可选原任务返程图：当前回应已结束、准备继续未完成任务时可整体替代默认图，不与其他图拼接。只准备到已访问相邻地点的目标 NPC 的移动，玩家仍须实际选择移动才发生，不自动完成任务。若仍需在当前 NPC 处告知或合作，继续默认图。${reviewing ? "" : '\n- 选择本图时输出 graph="objective_return"。'}\n- 场景槽=${JSON.stringify(objectiveReturn.slots)}\n- terminal=${JSON.stringify(objectiveReturn.expectedTerminal)}\n- currentScene choices: ${objectiveReturn.expectedChoices}\n- continuationScenes:\n${objectiveReturn.expectedSteps}`
+    : "";
   const availableInvestigationMethods = availableInvestigations({ worldState, storyState }).map((opportunity) => ({
     factId: String(opportunity.factId),
     approachId: opportunity.approachId,
@@ -556,8 +560,8 @@ export function buildDecisionNarrativeContextBlocks(
       authority: "rule", retention: "mandatory", priority: 925,
       source: { kind: "narrative_bundle_descriptors", refs: [String(job.jobId)] },
       content: reviewing
-        ? `合法编译图：currentScene 对应当前已结算回应；continuationScenes 的 stepKey 与场景必须逐一对应下列步骤。终点与 choice 数量由服务端确定，新增互动只能绑定同包 interaction:proposalKey。${choiceActionContract}\n- terminal=${JSON.stringify(projection.expectedTerminal)}\n- currentScene choices: ${projection.expectedChoices}\n- continuationScenes:\n${projection.expectedSteps}${optionalReturnGraph}`
-        : `符号引用白名单：@current.location、@current.focus_npc、@new.location、@new.npc、@new.item、@new.enemy、@new.fact、@new.quest、@ending.trust、@ending.doubt。\nsceneDrafts 必须与本节槽位投影完全一致，不得投影之外自行规划未来步骤。${choiceActionContract}\n以下是服务端重建的默认合法图，步骤 key 就是 sceneDrafts 的 slotKey；candidateId 使用已列图 ID 或同包 interaction:proposalKey，禁止其他自造 ID、遗漏、重复或继续规划未来：\n- 默认场景槽（choiceCount 是必须的选择数）：${JSON.stringify(projection.slots)}\n- 服务端终点（只读，不输出）：${JSON.stringify(projection.expectedTerminal)}\n- currentScene choices: ${projection.expectedChoices}\n- continuationScenes:\n${projection.expectedSteps}${optionalReturnGraph}`,
+        ? `合法编译图：currentScene 对应当前已结算回应；continuationScenes 的 stepKey 与场景必须逐一对应下列步骤。终点与 choice 数量由服务端确定，新增互动只能绑定同包 interaction:proposalKey。${choiceActionContract}\n- terminal=${JSON.stringify(projection.expectedTerminal)}\n- currentScene choices: ${projection.expectedChoices}\n- continuationScenes:\n${projection.expectedSteps}${optionalReturnGraph}${optionalObjectiveReturnGraph}`
+        : `符号引用白名单：@current.location、@current.focus_npc、@new.location、@new.npc、@new.item、@new.enemy、@new.fact、@new.quest、@ending.trust、@ending.doubt。\nsceneDrafts 必须与本节槽位投影完全一致，不得投影之外自行规划未来步骤。${choiceActionContract}\n以下是服务端重建的默认合法图，步骤 key 就是 sceneDrafts 的 slotKey；candidateId 使用已列图 ID 或同包 interaction:proposalKey，禁止其他自造 ID、遗漏、重复或继续规划未来：\n- 默认场景槽（choiceCount 是必须的选择数）：${JSON.stringify(projection.slots)}\n- 服务端终点（只读，不输出）：${JSON.stringify(projection.expectedTerminal)}\n- currentScene choices: ${projection.expectedChoices}\n- continuationScenes:\n${projection.expectedSteps}${optionalReturnGraph}${optionalObjectiveReturnGraph}`,
     }),
     block({
       id: "bundle:temporal-scope", slot: "legal_actions", title: "同包内容的生效时点",
@@ -593,7 +597,7 @@ export function buildDecisionNarrativeContextBlocks(
       source: { kind: "narrative_bundle_schema", refs: [] },
       content: reviewing
         ? `proposal 是服务端已编译的 NarrativeBundleProposal：{worldDelta,currentScene,continuationScenes:[{stepKey,scene}],endingOutcomes?,terminal,interactionProposals?,npcOutwardProposals?}。npcOutwardProposals 是服务端随候选携带的获准 NPC 对外方案，结构为 {npcId,response,evidenceEventIds,discloseFactIds,interactionProposals}；它不是已执行行动或披露。terminal 为 {kind:"ending"} 或 {kind:"next_decision",target:{kind:"current_scene"}} 或 {kind:"next_decision",target:{kind:"continuation_step",stepKey}}。candidateHash 绑定此完整 compiled proposal，审阅路径直接定位该对象。结构预检已完成；检查各场景正文、引用、选择与权限和合法图的语义一致性。endingOutcomes 是仅在实际规则结局匹配后发布的条件内容，审阅两项时不得当作同时发生；每项必须承接中心冲突、对应选择与后果，不能发明规则未结算的行动。\n场景保留 segments、npcLine、objectiveLink、choices，也可包含 expressions、npcDialogues、handoffAcknowledgement；这些是场景表达，不能增加规则结果。终点决策场景恰好两个 choices，其他场景 choices=[]；ending 没有续接场景。下一幕抵达场景必须有抵达 NPC 的直接对白。\n${storyInteractionPrompt(false)}\n${worldDeltaContract}\n所有玩家可见文本必须为中文。`
-        : `返回一个 JSON 对象，顶层必须有 worldDelta、sceneDrafts，可额外有 endingOutcomes、interactionProposals 和 graph。graph 省略或 default 使用默认图；只有明确选择合法归还图才填 return_delivery。不得输出 currentScene、continuationScenes 或 terminal，服务器按槽投影组装它们。${storyInteractionPrompt(false)}\n- 每个 scene={segments:[{beatId,text}],npcLine:null或{npcId,text,emotion,answeredBeatIds,usedFactIds,usedEventIds},objectiveLink:null或{questId,objectiveIndex,mode},choices:[{candidateId,label}]}。\n- sceneDrafts=[{slotKey:"current",scene:{...}},{slotKey:"精确服务端步骤key",scene:{...}}]；必须提供下列全部槽位，slotKey 不重复；对象的数组顺序不用于猜测归属。\n- 终点决策点恰好两个 choices，candidateId 复制合法图或同包 interaction:proposalKey；其余步骤 choices=[]。正式 trust/doubt 结局回合另提供 endingOutcomes=[{themeKey:"trust",choiceLabel:"...",scene:{...}},{themeKey:"doubt",choiceLabel:"...",scene:{...}}]，两结果 scene 的 choices=[]；正式退出不得提供。\n- npcLine 不能是字符串，npcId 与 text 必须由作者提供；仅 emotion、answeredBeatIds、usedFactIds、usedEventIds 可省略，编译器分别补 neutral 与 []。显式 null 或非法值不会替换；emotion 若提供只能是 neutral|warm|guarded|afraid|angry|sad。需要回答节拍或引用依据时必须提供真实数组，省略不免除审批；该默认仅适用于 npcLine，不适用于 npcDialogues。\n${worldDeltaContract}\n- nextMainQuest 回合 current 槽 choices=[]，抵达与交付槽必须使用对应场景骨架。所有玩家可见文本必须为中文。`,
+        : `返回一个 JSON 对象，顶层必须有 worldDelta、sceneDrafts，可额外有 endingOutcomes、interactionProposals 和 graph。graph 省略或 default 使用默认图；只有明确选择合法归还图才填 return_delivery；选择下方合法原任务返程图才填 objective_return。不得输出 currentScene、continuationScenes 或 terminal，服务器按槽投影组装它们。${storyInteractionPrompt(false)}\n- 每个 scene={segments:[{beatId,text}],npcLine:null或{npcId,text,emotion,answeredBeatIds,usedFactIds,usedEventIds},objectiveLink:null或{questId,objectiveIndex,mode},choices:[{candidateId,label}]}。\n- sceneDrafts=[{slotKey:"current",scene:{...}},{slotKey:"精确服务端步骤key",scene:{...}}]；必须提供下列全部槽位，slotKey 不重复；对象的数组顺序不用于猜测归属。\n- 终点决策点恰好两个 choices，candidateId 复制合法图或同包 interaction:proposalKey；其余步骤 choices=[]。正式 trust/doubt 结局回合另提供 endingOutcomes=[{themeKey:"trust",choiceLabel:"...",scene:{...}},{themeKey:"doubt",choiceLabel:"...",scene:{...}}]，两结果 scene 的 choices=[]；正式退出不得提供。\n- npcLine 不能是字符串，npcId 与 text 必须由作者提供；仅 emotion、answeredBeatIds、usedFactIds、usedEventIds 可省略，编译器分别补 neutral 与 []。显式 null 或非法值不会替换；emotion 若提供只能是 neutral|warm|guarded|afraid|angry|sad。需要回答节拍或引用依据时必须提供真实数组，省略不免除审批；该默认仅适用于 npcLine，不适用于 npcDialogues。\n${worldDeltaContract}\n- nextMainQuest 回合 current 槽 choices=[]，抵达与交付槽必须使用对应场景骨架。所有玩家可见文本必须为中文。`,
     }),
     block({
       id: "bundle:item-acquisition", slot: "output_contract", title: "物品获取方式",

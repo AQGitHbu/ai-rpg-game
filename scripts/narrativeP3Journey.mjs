@@ -86,9 +86,21 @@ function actionOperation(input, choice) {
     : undefined;
 }
 
+function interactionAlreadyResolved(input, action) {
+  const interaction = input.interactions.find((entry) => entry.id === action?.interactionId);
+  if (interaction === undefined) return false;
+  return eventLedger(input).some((event) => event.outcome === "success"
+    && event.payload?.type === "story_interaction_resolved" && event.payload.operation === interaction.operation
+    && event.payload.npcId === action.npcId
+    && (interaction.factIds ?? []).every((id) => event.payload.factIds?.includes(id)));
+}
+
 function findOperationChoice(input, operation) {
-  return input.offeredChoices.find((choice) => actionOperation(input, choice) === operation
-    && !input.performedActions.has(JSON.stringify(input.actionMap.get(choice.choiceToken))));
+  return input.offeredChoices.find((choice) => {
+    const action = input.actionMap.get(choice.choiceToken);
+    return actionOperation(input, choice) === operation && !input.performedActions.has(JSON.stringify(action))
+      && !interactionAlreadyResolved(input, action);
+  });
 }
 
 function investigationApproachForAction(input, action) {
@@ -111,7 +123,7 @@ function fallbackP3Choice(input) {
     input.performed, input.performedActions, input.state.record.storyState.delivery, input.actionCount);
   if (selected === undefined) return undefined;
   const action = input.actionMap.get(selected.choiceToken);
-  return input.performedActions.has(JSON.stringify(action)) ? undefined : selected;
+  return input.performedActions.has(JSON.stringify(action)) || interactionAlreadyResolved(input, action) ? undefined : selected;
 }
 
 export function selectNarrativeP3ProductionChoice(input) {
@@ -146,9 +158,9 @@ export function selectNarrativeP3ProductionChoice(input) {
     if (revisit !== undefined) return revisit;
   }
 
+  const share = findOperationChoice(context, "share_known_fact");
+  if (share !== undefined) return share;
   if (!hasSuccessfulOperation(context, "share_known_fact")) {
-    const share = findOperationChoice(context, "share_known_fact");
-    if (share !== undefined) return share;
     if (route === "private") {
       const introduction = findOperationChoice(context, "request_introduction");
       if (introduction !== undefined) return introduction;
@@ -156,10 +168,8 @@ export function selectNarrativeP3ProductionChoice(input) {
       if (confidentiality !== undefined) return confidentiality;
     }
   }
-  if (!hasSuccessfulOperation(context, "request_verification")) {
-    const verification = findOperationChoice(context, "request_verification");
-    if (verification !== undefined) return verification;
-  }
+  const verification = findOperationChoice(context, "request_verification");
+  if (verification !== undefined) return verification;
 
   const delivery = findOfferedStoryDelivery(input.view, input.actionMap, input.state.record.storyState.delivery);
   if (delivery !== undefined && !context.performedActions.has(JSON.stringify(input.actionMap.get(delivery.choiceToken)))) return delivery;

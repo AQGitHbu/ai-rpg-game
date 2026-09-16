@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseNarrativeBundleProposal } from "@/game/domain/narrativeBundle";
 import { createInitialWorldState } from "@/game/domain/worldState";
+import { updateWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { asGenerationId, asLocationId, asNpcId, asQuestId } from "@/game/domain/worldEntity";
@@ -112,8 +113,33 @@ describe("narrative draft projection and compilation", () => {
     expect(compileNarrativeDraft({ worldDelta: null, sceneDrafts: [{ slotKey: "current", scene: scene("正文", 0) }] }, input)).toEqual({ ok: false, code: "missing_slot", path: `$.sceneDrafts[slotKey=move:loc_dyn_${input.storyState.evolution.nextLocationOrdinal}]` });
   });
 
-  it.each(["return_delivery", "invented"])("rejects unavailable or unknown graph %s", graph => {
-    expect(compileNarrativeDraft({ graph, worldDelta: null, sceneDrafts: [{ slotKey: "current", scene: scene("正文", 2) }] }, context())).toEqual({ ok: false, code: graph === "return_delivery" ? "unavailable_graph" : "unknown_graph", path: "$.graph" });
+  it.each(["return_delivery", "objective_return", "invented"])("rejects unavailable or unknown graph %s", graph => {
+    expect(compileNarrativeDraft({ graph, worldDelta: null, sceneDrafts: [{ slotKey: "current", scene: scene("正文", 2) }] }, context())).toEqual({ ok: false, code: graph === "invented" ? "unknown_graph" : "unavailable_graph", path: "$.graph" });
+  });
+
+  it("compiles an explicitly selected return to the unfinished objective without forcing it into the default dialogue", () => {
+    const base = context();
+    const locationId = asLocationId("loc_return");
+    const npcId = asNpcId("npc_return");
+    const worldState = updateWorldStateFixture(base.worldState, {
+      locations: [{ ...base.worldState.locations[0]!, connectedLocationIds: [locationId] },
+        { id: locationId, name: "接应处", description: "已到过的地点。", kind: "main", connectedLocationIds: [asLocationId("loc_0")], npcIds: [npcId], availableItemIds: [], tags: [] }],
+      visitedLocationIds: [asLocationId("loc_0"), locationId], unlockedLocationIds: [asLocationId("loc_0"), locationId],
+      npcs: [{ id: npcId, name: "接应人", role: "接应", description: "等候证据。", locationId, isCompanion: false, met: true, tags: [],
+        memory: { npcId, knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] } }],
+      quests: [{ id: asQuestId("quest_1"), name: "交接", description: "回到接应人处。", kind: "main", stage: 1, status: "active", tags: [],
+        objectives: [{ kind: "talk_to_npc", npcId }], onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" } }],
+    });
+    const input = { ...base, worldState };
+    expect(projectNarrativeDraft(input).stepKeys).toEqual([]);
+    const currentScene = scene("你决定回去。", 0);
+    const arrival = scene("你实际抵达后。", 2);
+    const result = compileNarrativeDraft({ graph: "objective_return", worldDelta: null,
+      sceneDrafts: [{ slotKey: "current", scene: currentScene }, { slotKey: "move:loc_return", scene: arrival }] }, input);
+    expect(result).toMatchObject({ ok: true, value: { currentScene,
+      continuationScenes: [{ stepKey: "move:loc_return", scene: arrival }],
+      terminal: { kind: "next_decision", target: { kind: "continuation_step", stepKey: "move:loc_return" } } } });
+    expect(input.worldState.currentLocationId).toBe("loc_0");
   });
 });
 

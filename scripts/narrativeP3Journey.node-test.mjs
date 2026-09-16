@@ -168,6 +168,22 @@ test("private investigation cannot run before the actual strategy input and relo
   assert.equal(policy.shouldReload({ action: { type: "investigate" }, actionCount: 9, steps: [{ kind: "reload" }] }), false);
 });
 
+for (const operation of ["share_known_fact", "request_verification"]) test(`resolved ${operation} with the old NPC does not skip a different NPC`, () => {
+  const input = policyInput("private", productionView([{ choiceToken: "tell", label: "告知接应人" }]), [
+    { choiceToken: "tell", action: { type: "talk", npcId: "receiver", interactionId: "tell_receiver" } },
+  ], [
+    { outcome: "success", payload: { type: "fact_discovered", evidenceQuality: "clean" } },
+    { outcome: "success", payload: { type: "story_interaction_resolved", operation, npcId: "giver", factIds: ["evidence"] } },
+  ]);
+  input.interactions = [{ id: "tell_receiver", operation, factIds: ["evidence"] }];
+  input.performed.add(operation);
+  assert.equal(selectNarrativeP3ProductionChoice(input).choiceToken, "tell");
+  input.state.record.worldState.eventLedger.push({ outcome: "success", payload: {
+    type: "story_interaction_resolved", operation, npcId: "receiver", factIds: ["evidence"],
+  } });
+  assert.equal(selectNarrativeP3ProductionChoice(input), undefined);
+});
+
 test("private route returns with related evidence before sharing and never selects an unoffered or unrelated move", () => {
   const input = policyInput("private", productionView([
     { choiceToken: "unrelated", label: "旁路" }, { choiceToken: "return", label: "回访" },

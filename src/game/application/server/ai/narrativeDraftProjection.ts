@@ -16,6 +16,7 @@ export type NarrativeDraftContext = Readonly<{
   storyState: StoryState;
   job: Pick<PendingNarrativeJob, "objectiveTransition" | "actionSummary"> & Partial<Pick<PendingNarrativeJob, "turnId" | "actionId" | "turnNumber" | "domainEventIds">>;
   includeDeliveryReturn?: boolean;
+  includeObjectiveReturn?: boolean;
 }>;
 
 /** A continuation is displayed after this rule trigger, not before the action. */
@@ -40,6 +41,7 @@ export function projectNarrativeDraft(input: NarrativeDraftContext) {
   const descriptorGraph = buildNarrativeBundleDescriptors({
     worldState, storyState: input.storyState, transition: input.job.objectiveTransition,
     includeDeliveryReturn: input.includeDeliveryReturn,
+    includeObjectiveReturn: input.includeObjectiveReturn,
   });
   const ending = (input.storyState.evolution.status === "needs_ending_pair" && worldState.endings.length < 2)
     || (input.storyState.endingAllowed && worldState.endings.length >= 2)
@@ -94,7 +96,7 @@ export function compileNarrativeDraft(value: unknown, context: NarrativeDraftCon
   if (raw === null) return fail("invalid_draft", "$");
   const unknownKey = Object.keys(raw).find(key => !["worldDelta", "consequenceBindings", "sceneDrafts", "endingOutcomes", "interactionProposals", "graph"].includes(key));
   if (unknownKey !== undefined) return fail("unknown_field", `$.${unknownKey}`);
-  if (raw.graph !== undefined && raw.graph !== "default" && raw.graph !== "return_delivery") return fail("unknown_graph", "$.graph");
+  if (raw.graph !== undefined && (typeof raw.graph !== "string" || !["default", "return_delivery", "objective_return"].includes(raw.graph))) return fail("unknown_graph", "$.graph");
   if (!Array.isArray(raw.sceneDrafts)) return fail("invalid_slots", "$.sceneDrafts");
   const keys = new Set<string>();
   for (const [index, value] of raw.sceneDrafts.entries()) {
@@ -121,9 +123,9 @@ export function compileNarrativeDraft(value: unknown, context: NarrativeDraftCon
     context = { ...context, worldState: preview.worldState, storyState: preview.storyState,
       job: { ...context.job, objectiveTransition: preview.transition } };
   }
-  const projection = projectNarrativeDraft({ ...context, includeDeliveryReturn: raw.graph === "return_delivery" });
-  if (raw.graph === "return_delivery"
-    && JSON.stringify(projection.stepKeys) === JSON.stringify(projectNarrativeDraft({ ...context, includeDeliveryReturn: false }).stepKeys)) {
+  const projection = projectNarrativeDraft({ ...context, includeDeliveryReturn: raw.graph === "return_delivery", includeObjectiveReturn: raw.graph === "objective_return" });
+  if ((raw.graph === "return_delivery" || raw.graph === "objective_return")
+    && JSON.stringify(projection.stepKeys) === JSON.stringify(projectNarrativeDraft({ ...context, includeDeliveryReturn: false, includeObjectiveReturn: false }).stepKeys)) {
     return fail("unavailable_graph", "$.graph");
   }
   if (!Array.isArray(raw.sceneDrafts)) return fail("invalid_slots", "$.sceneDrafts");
