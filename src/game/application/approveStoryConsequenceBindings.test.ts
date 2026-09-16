@@ -27,6 +27,28 @@ function world() {
 const storyState = createInitialStoryState({ initialNarrative: { status: "idle", currentScene: null } as never, gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 1, events: 0 } });
 
 describe("approveStoryConsequenceBindings", () => {
+  it.each([NPC, "@current.focus_npc"])("uses the final approval binding symbols for an existing NPC: %s", npcRef => {
+    const result = approveStoryConsequenceBindings({ worldState: world(), storyState,
+      symbols: new Map([["@current.location", String(LOCATION)]]),
+      proposal: [{ kind: "bind_goal_resolution", npcRef, goalOrdinal: 0,
+        resolution: { completeWhen: [{ kind: "knows_fact", actorId: NPC, factId: FACT }], blockWhen: [] } }] });
+    expect(result).toMatchObject(npcRef === NPC ? { ok: true } : { ok: false, code: "unknown_goal_ref" });
+  });
+
+  it.each([true, false])("requires an existing investigation label when first binding an existing scene fact: %s", hasLabel => {
+    const initial = world();
+    const worldState = hasLabel ? initial : { ...initial, entityStore: { ...initial.entityStore,
+      records: initial.entityStore.records.map(record => record.core.kind === "fact" && "fact" in record
+        ? { ...record, fact: { ...record.fact, investigationLabel: undefined } } : record) } };
+    const result = approveStoryConsequenceBindings({ worldState, storyState, symbols: new Map(),
+      proposal: [{ kind: "bind_investigation", factRef: FACT, discoveryMode: "investigation", approaches: [
+        { approachId: "quiet", label: "独自核对", evidenceQuality: "clean", tensionDelta: 0 },
+        { approachId: "witnessed", label: "请人在场核对", evidenceQuality: "noisy", tensionDelta: 2, witnessNpcIds: [NPC] },
+      ] }] });
+    expect(result).toMatchObject(hasLabel ? { ok: true } : { ok: false, code: "invalid_binding" });
+    expect(initial.worldFacts[0]?.discoveryMode).toBe("automatic");
+  });
+
   it.each(["opening", "decision"] as const)("parses and approves the %s prompt binding examples with real entity references", mode => {
     const prompt = storyConsequenceBindingPrompt(mode);
     const line = prompt.split("\n").find(value => value.startsWith("绑定形状示例："))!;

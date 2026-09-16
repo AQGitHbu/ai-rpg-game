@@ -221,6 +221,10 @@ describe("createNarrativeBundleSource", () => {
     for (const field of ["bind_goal_resolution", "bind_npc_cooperation", "bind_talk_completion", "goalOrdinal", "npcRef", "witnessNpcIds", "allowedAudienceIds", "@current.focus_npc"])
       expect(prompt).toContain(field);
     expect(prompt).toContain("可额外有 consequenceBindings");
+    expect(prompt).toContain("绑定不支持 @current.focus_npc");
+    expect(prompt).toContain("必须已有非空 investigationLabel");
+    expect(prompt).toContain("若本包新建主动调查事实");
+    expect(prompt).not.toContain("必须创建未发现、可主动调查的事实");
     expect(prompt).toContain('"consequenceBindings":[]');
   });
 
