@@ -1,3 +1,5 @@
+import { storyConsequenceBindingPrompt } from "./server/ai/storyConsequenceBindingPrompt";
+import { isStoryConsequenceBindingsProposal } from "@/game/domain/storyConsequenceBindings";
 import { describe, expect, it } from "vitest";
 import { asFactId, asGenerationId, asLocationId, asNpcId, asQuestId } from "@/game/domain/worldEntity";
 import { createWorldStateFixture, emptyProjection } from "@/game/domain/testing/worldStateFixture.testutil";
@@ -25,6 +27,20 @@ function world() {
 const storyState = createInitialStoryState({ initialNarrative: { status: "idle", currentScene: null } as never, gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 1, events: 0 } });
 
 describe("approveStoryConsequenceBindings", () => {
+  it.each(["opening", "decision"] as const)("parses and approves the %s prompt binding examples with real entity references", mode => {
+    const prompt = storyConsequenceBindingPrompt(mode);
+    const line = prompt.split("\n").find(value => value.startsWith("绑定形状示例："))!;
+    const proposal: unknown = JSON.parse(line.slice("绑定形状示例：".length));
+    expect(isStoryConsequenceBindingsProposal(proposal)).toBe(true);
+    if (!isStoryConsequenceBindingsProposal(proposal)) throw new Error("invalid prompt example");
+    const result = approveStoryConsequenceBindings({ proposal, worldState: world(), storyState,
+      symbols: new Map<string, string>([["@new.npc", NPC], ["@new.quest", QUEST], ["@new.fact", FACT], ["public_fact", FACT]]) });
+    expect(result).toMatchObject({ ok: true });
+    expect(proposal.map(binding => binding.kind)).toEqual(mode === "opening"
+      ? ["bind_goal_resolution", "bind_talk_completion", "bind_npc_cooperation"]
+      : ["bind_goal_resolution", "bind_investigation", "bind_talk_completion", "bind_npc_cooperation"]);
+  });
+
   it.each([
     { proposal: [{ kind: "bind_goal_resolution", npcRef: NPC, goalOrdinal: 0 }] },
     { proposal: [{ kind: "bind_npc_cooperation", npcRef: NPC }] },

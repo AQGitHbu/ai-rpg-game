@@ -1,3 +1,4 @@
+import { storyConsequenceBindingPrompt } from "./storyConsequenceBindingPrompt";
 import { storyInteractionPrompt } from "./storyInteractionPrompt";
 import type { NarrativeBundleSourceContext } from "../../narrativeBundleSource";
 import { renderAiRepairFeedback } from "../../aiGenerationRetry";
@@ -89,6 +90,9 @@ ${noveltyLines}
 - opening.quest 精确包含 name、description、objective，objective 固定为 {"kind":"talk_to_opening_npc"}；名称和描述只概括眼前问题，不表示玩家已经接取或完成。
 - opening.situation 必须存在且精确包含 history、threads、npcConnection、responses；currentScene.choices 必须映射 situation.responses 或同包 interactionProposals。
 - opening.location.scale 固定为 town，初始化不能在 opening.consequenceBindings 使用 bind_investigation，也不能把 investigationApproaches 当作开局可执行调查；opening 中的 approaches 只能作为后续线索的展示字段。若故事开端要求玩家在第一幕先选择可主动调查的方法，必须由后续独立 scene 的 worldDelta.newFact 与 worldDelta.consequenceBindings 实际创建并激活：使用 factRef="@new.fact"、discoveryMode="investigation" 和恰好 2–3 个 approaches；其中至少一条 witnessNpcIds=[]，至少一条 witnessNpcIds=["@new.npc"]。仅写 opening 的 investigationApproaches 或使用 automatic 事实不满足。
+
+# 可选规则绑定
+${storyConsequenceBindingPrompt("opening")}
 
 # situation 引用与数量
 - 所有局部 key 长度 1–40，匹配 [a-z][a-z0-9_]*；history、threads、responses 各自 key 唯一。

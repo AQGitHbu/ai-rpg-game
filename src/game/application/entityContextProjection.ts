@@ -19,6 +19,8 @@ export type NarrativeEntitySummary = Readonly<{
   name: string;
   summary: string;
   locationId?: string;
+  /** Author/reviewer references only; private goal text, state and conditions stay excluded. */
+  goalBindings?: readonly Readonly<{ goalOrdinal: number; goalId: string; hasResolution: boolean }>[];
 }>;
 
 export type EntityContextProjection = Readonly<{
@@ -103,6 +105,7 @@ function summaryOf(record: EntityRecord, focusNpcId: string | undefined): Narrat
       : [];
     return {
       id: String(record.core.id), kind: record.core.kind, name: record.core.name,
+      goalBindings: record.dynamicState.goals.map((goal, goalOrdinal) => ({ goalOrdinal, goalId: goal.goalId, hasResolution: goal.resolution !== undefined })),
       summary: `角色=${record.identity.role}；${record.identity.description}；角色条件由私有判断上下文裁决${recent.length === 0 ? "" : `；最近交互=${recent.join("｜")}`}`,
       locationId: String(record.position.locationId),
     };

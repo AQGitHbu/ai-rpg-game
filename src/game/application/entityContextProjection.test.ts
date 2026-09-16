@@ -114,6 +114,24 @@ describe("buildEntityContextProjection", () => {
     initialEntityCounts: { locations: 3, npcs: 3, quests: 1, events: 0 },
   });
 
+  it("exposes only goal reference metadata for selected NPCs without private rule content", () => {
+    const next = { ...worldState, entityStore: { ...worldState.entityStore, records: worldState.entityStore.records.map(record => {
+      if (record.core.kind !== "npc" || !("dynamicState" in record)) return record;
+      return { ...record, dynamicState: { ...record.dynamicState, goals: [
+        { goalId: `private:${record.core.id}:0`, horizon: "short" as const, description: "隐私目标正文", priority: 3 as const, reason: "隐私动机", status: "blocked" as const,
+          resolution: { completeWhen: [{ kind: "knows_fact" as const, actorId: record.core.id, factId: privateFact }], blockWhen: [] } },
+        { goalId: `private:${record.core.id}:1`, horizon: "long" as const, description: "另一个秘密", priority: 2 as const, reason: "不公开", status: "active" as const },
+      ] } };
+    }) } };
+    const result = buildEntityContextProjection({ worldState: next, storyState: baseStory, job: job() });
+    expect(result.mandatory.find(entry => entry.id === focusNpc)).toMatchObject({ goalBindings: [
+      { goalOrdinal: 0, goalId: `private:${focusNpc}:0`, hasResolution: true },
+      { goalOrdinal: 1, goalId: `private:${focusNpc}:1`, hasResolution: false },
+    ] });
+    const text = JSON.stringify(result);
+    for (const hidden of ["隐私目标正文", "隐私动机", "另一个秘密", "completeWhen", '"status":"blocked"', `private:${remoteNpc}:0`]) expect(text).not.toContain(hidden);
+  });
+
   it("builds the mandatory closure from typed action, objective and beat references", () => {
     const result = buildEntityContextProjection({ worldState, storyState: baseStory, job: job() });
     expect(result.mandatory.map((entry) => entry.id)).toEqual([

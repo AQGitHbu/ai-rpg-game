@@ -1,3 +1,4 @@
+import { storyConsequenceBindingPrompt } from "./storyConsequenceBindingPrompt";
 import { describe, expect, it, vi } from "vitest";
 import type { AiMessage } from "@ai-game/ai-transport";
 import type { RpgAiClient } from "./rpgAiClient";
@@ -205,15 +206,22 @@ describe("createNarrativeBundleSource", () => {
       { candidateId: `${stepKey}_choice_1`, label: "表明身份。" },
       { candidateId: `${stepKey}_choice_2`, label: "先问来意。" },
     ] };
-    const draft = { worldDelta: null, sceneDrafts: [{ slotKey: stepKey, scene: arrival }, { slotKey: "current", scene: currentScene }] };
+    const bindingLine = storyConsequenceBindingPrompt("decision").split("\n").find(line => line.startsWith("绑定形状示例："))!;
+    const consequenceBindings = JSON.parse(bindingLine.slice("绑定形状示例：".length));
+    const draft = { worldDelta: null, consequenceBindings, sceneDrafts: [{ slotKey: stepKey, scene: arrival }, { slotKey: "current", scene: currentScene }] };
     const complete = vi.fn().mockResolvedValue({ ok: true, content: JSON.stringify(draft) });
     const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
     const context: NarrativeBundleSourceContext = { kind: "decision", worldState: makeWorldState(), storyState: makeNextActStoryState(), job: makeJob() };
     const result = await source.generate(context);
-    expect(result).toMatchObject({ ok: true, kind: "decision", proposal: { currentScene, continuationScenes: [{ stepKey, scene: arrival }], terminal: { kind: "next_decision", target: { kind: "continuation_step", stepKey } } } });
+    expect(result).toMatchObject({ ok: true, kind: "decision", proposal: { consequenceBindings, currentScene, continuationScenes: [{ stepKey, scene: arrival }], terminal: { kind: "next_decision", target: { kind: "continuation_step", stepKey } } } });
     complete.mockResolvedValue({ ok: true, content: JSON.stringify({ ...draft, sceneDrafts: [...draft.sceneDrafts, { slotKey: "invented", scene: currentScene }] }) });
     expect(await source.generate(context)).toMatchObject({ ok: false, repairReason: "invalid_schema", repairDetail: "unknown_slot at $.sceneDrafts[2].slotKey" });
     expect(complete).toHaveBeenCalledTimes(2);
+    const prompt = (complete.mock.calls[0]![1] as readonly AiMessage[])[0]!.content;
+    for (const field of ["bind_goal_resolution", "bind_npc_cooperation", "bind_talk_completion", "goalOrdinal", "npcRef", "witnessNpcIds", "allowedAudienceIds", "@current.focus_npc"])
+      expect(prompt).toContain(field);
+    expect(prompt).toContain("可额外有 consequenceBindings");
+    expect(prompt).toContain('"consequenceBindings":[]');
   });
 
   it("calls aiClient.complete with narrative_bundle role exactly once", async () => {
@@ -349,6 +357,8 @@ describe("createNarrativeBundleSource", () => {
     expect(systemPrompt).toContain("当前主线要求玩家先选择主动调查方法时");
     expect(systemPrompt).toContain("不能用 automatic 事实或仅在文字中提供 approaches 代替");
     expect(systemPrompt).not.toContain('goals":["..."]');
+    expect(systemPrompt).toContain('goalBindings=[{"goalOrdinal":0,');
+    expect(systemPrompt).toContain('"hasResolution":false');
     for (let index = 1; index <= 5; index += 1) {
       expect(systemPrompt).toContain(`evt:interact:${index}`);
     }
@@ -1338,10 +1348,12 @@ describe("createNarrativeBundleSource", () => {
       gameLength: "short",
       seed: "opening-live-source",
     });
+    const bindingLine = storyConsequenceBindingPrompt("opening").split("\n").find(line => line.startsWith("绑定形状示例："))!;
+    const consequenceBindings = JSON.parse(bindingLine.slice("绑定形状示例：".length).replaceAll("public_fact", opening.world.publicFacts[0]!.key));
     const complete = vi.fn().mockResolvedValue({
       ok: true,
       content: JSON.stringify({
-        opening,
+        opening: { ...opening, opening: { ...opening.opening, consequenceBindings } },
         currentScene: {
           segments: [{ beatId: "opening", text: "客栈里风声低沉。" }],
           npcLine: {
@@ -1371,7 +1383,7 @@ describe("createNarrativeBundleSource", () => {
       auditLink: { gameId: "game-opening", traceId: "trace-opening" },
     });
 
-    expect(result).toMatchObject({ ok: true, kind: "opening" });
+    expect(result).toMatchObject({ ok: true, kind: "opening", proposal: { opening: { opening: { consequenceBindings } } } });
     expect(complete).toHaveBeenCalledWith(
       "narrative_bundle",
       expect.any(Array),
@@ -1390,6 +1402,8 @@ describe("createNarrativeBundleSource", () => {
     expect(prompt).toContain('"scale": "town"');
     expect(prompt).toContain("situation.responses 或同包 interactionProposals");
     expect(prompt).toContain("opening.consequenceBindings");
+    for (const field of ["bind_goal_resolution", "bind_talk_completion", "bind_npc_cooperation", "goalOrdinal", "npcRef", "allowedAudienceIds"])
+      expect(prompt).toContain(field);
     expect(prompt).toContain("bind_investigation");
     expect(prompt).toContain("witnessNpcIds");
     expect(prompt).not.toContain('"consequenceBindings":[{"kind":"bind_investigation"');
