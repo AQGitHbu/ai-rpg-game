@@ -13,6 +13,7 @@
 - 总设计：[架构 Spec](../specs/2026-09-12-narrative-architecture-design.md)。必须先读 [P3 代码与范围核查](../reports/2026-09-15-narrative-p3-scope-review.md)，再读当前 Task 对应系统；本 Plan 不重新派发已完成的 P1/P2 建设任务。
 - 在 `codex/narrative-architecture` / `.worktrees/narrative-architecture` 上继续；本次四项收尾基准为 **af70f83a**。用户已授权实施及必要真实 API/UI 验收，不另建分支，不修改 main/staged，不合并，不改 `current-phase.json`。
 - 用户已确认：有后果的选择、主动调查、NPC 目标与合作优先；自由输入继续“提出策略→选项确认→规则结算”；允许调查结果和变化回访进入同一生成链。
+- 回访还允许玩家在外实际取得、被旧地点 NPC 已批准任务/合作条件明确引用的新证据作为关联来源；仅放行回应生成，不给 NPC 自动授知。继续使用最后已展示场景的事件水位和观察者可见性，不做关键词推断。
 - “质量与游戏性优先于 token、调用数和耗时。”“规则已结算结果不可被后续循环改写。”“原文永不因摘要删除。”生产失败显式重试，不以确定性剧情替代。
 - 暂缓直接自然语言行动、完整谎言/错误信念、离场 NPC 自主模拟、开放世界、组织经济、交易/装备、通用分支图和层级 Arc。P3 不增加新的互动 operation、reviewer、润色器或常驻调度器。
 - 目标的条件和状态、固定合作条款归 NPC，调查定义归 Fact，任务完成条件归 Quest；Thread 只引用这些权威对象。合作条款只存前提和效果范围，不存 permission 或 goal 状态副本；Event/History 记录实际经过。
@@ -506,7 +507,7 @@ expect(privateRoute.publicWitnessFactIds).not.toEqual(publicRoute.publicWitnessF
 ```
 
 - [x] 运行 `npx vitest run src/game/application/testing/narrativeP3Journey.test.ts --minWorkers=1 --maxWorkers=2` RED；实现双场景 fixture source 同时覆盖 opening/decision。source 可以提供确定性 AI 内容，不能 runner 写入 History、goal、Quest 或 owner 来推进。
-- [ ] 私下路线：方法前提→真实查阅→回访→实际告知→目标/合作改变→合法引荐/核验→显式交付。公开路线：真实见证→不同目标/合作可用性→已声明替代方法→显式交付。现有双路线已覆盖调查、合作分化、告知/核验、显式交付和调查后重载，尚未把实际回访接入同一完整故事。独立 SQLite 回访恢复测试不替代本项完整故事要求。
+- [x] 私下路线：方法前提→真实查阅→回访→实际告知→目标/合作改变→合法引荐/核验→显式交付。公开路线：真实见证→不同目标/合作可用性→已声明替代方法→显式交付。同源双路线已完成；私下实际 ledger 顺序与来源、告知前后知识、raw 返程编译和 SQLite 重载均有断言，详见收尾报告。
 - [x] 在条件变化后读取同一 NPC 的正式候选，证明两路至少有一项可用/不可用 Action 不同，并继续两次有效行动验证后果仍存在。不同张力数字或一句不同 label 单独不足以证明合作分化。
 - [x] 另用 Task 3 匠人材料场景跑最小“查证→告知→开放另一方法”片段：`narrativeP3CraftJourney.test.ts` 经正式绑定审批、互动安装与 `resolveTurn`，证明告知错误对象不开权限，告知窑师才开放指导试烧，重复行动不重复产生目标/发现事件。不含递送依赖；SQLite 与完整故事由本 Task 其他旅程覆盖。
 - [ ] 汇总主动退出、死锁拒绝、未选方法零影响、重复 ensure/调查、旧 token、回访故障、NPC 无来源不可反应的实际回归证据。
@@ -573,8 +574,8 @@ npm run journey:narrative:p3 -- --mode=live --protocol=artifacts/narrative-p3/p3
 - **设计审阅：** [独立审阅与修订](../reports/2026-09-15-narrative-p3-plan-review.md)记录目标引用、合作门槛、调查来源、B 后果与现场范围的核查依据；不作为实现通过证据。
 - **P3-A：** 主动调查、目标结算、有限后果绑定已落地；代码审阅修复来源匹配、追溯绑定和有限依赖死锁。另一题材的正式规则复用片段已通过；其规则验证不替代完整故事与真实调用验收。
 - **P3-B：** 结果边界、真实选项和固定记忆已接入 A/B 链；独立 SQLite 测试覆盖历史证据触发回访及失败后重开重试成功。本场 B 披露的知识事件与同候选编译/审阅前后果预览已接通，普通条件和幕末条件经正式 SQLite 链验证；不将本切片通过等同于 Task 4–6 所有记忆与故事验收项完成。
-- **P3-C：** Task 7 离线双路线证明调查、合作分化与交付，但没有同故事实际回访；另一题材片段已通过正式规则与独立复核。Task 8 已有协议/runner、零网络测试及历史 `p3-01` 登记/live/replay；两路均 `blocked/ROUTE_POLICY_UNSUPPORTED`，没有 UI 证据。代码审阅修正分叉位置与完成门槛，尚未重跑真实批次。
+- **P3-C：** Task 7 离线双路线已证明调查、同故事实际回访、告知、合作分化及交付；另一题材片段已通过正式规则与独立复核。Task 8 已有协议/runner、零网络测试及历史 `p3-01` 登记/live/replay；两路均 `blocked/ROUTE_POLICY_UNSUPPORTED`，没有 UI 证据。代码审阅修正分叉位置与完成门槛，尚未重跑真实批次。
 - **代码审阅：** [P3 规则与模块审阅修复](../reports/2026-09-15-narrative-p3-code-review.md)记录独立审阅、可复现缺陷、修复及验证边界。
-- **P3 总结论：** 已有核心规则和离线模块证据，但仍有同故事回访及真实 live/UI 验收缺口；不能宣称整个 P3 完成，也不能用严格 replay 通过替代玩法完成。
+- **P3 总结论：** 已有核心规则和离线模块证据，但仍有真实 live/UI 验收缺口；不能宣称整个 P3 完成，也不能用严格 replay 通过替代玩法完成。
 
 后续若发现缺口属于直接意图解析、错误信念、离场行为或更复杂世界系统，记录新的具体用例再与用户确认，不以“总 Spec 的 P3 曾提到”自动扩大本 Plan。

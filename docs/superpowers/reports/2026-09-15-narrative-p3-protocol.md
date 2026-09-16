@@ -4,9 +4,10 @@
 
 ## 固定范围
 
-- `plannedRoutes=2`，路线顺序固定为 `private`、`public`；初始化场景 ID 固定为 `shared-three-act-opening`，两路必须从同一次三幕开局的 ready 快照分叉。
+- `plannedRoutes=2`，路线顺序固定为 `private`、`public`；初始化场景 ID 固定为 `shared-three-act-opening`，共同前缀推进至同一事实的两种合法调查方法已展示的 ready 点，再复制为两路独立 SQLite。
 - 输入是“旧契与证人”三幕短篇：玩家沈砚，受托保管旧契；正式路线动作只能从当前 read model 暴露的 opaque choice token 选择。
-- `private` 优先 `investigate.approachId=quiet`；`public` 优先 `investigate.approachId=witnessed`。选择器只读取服务端 Action，不读取 label 猜测后果；缺少对应方法返回 `P3_CAPABILITY_COVERAGE_FAILED`，不补抽样本、不改世界状态。
+- `private` 选择无额外见证的方法；`public` 选择有明确现场 NPC 见证的方法，方法 ID 可以不同。选择器读取正式 Action 与已批准方法的见证者，不读取 label 猜测后果；缺少对应方法返回 `P3_CAPABILITY_COVERAGE_FAILED`，不补抽样本、不改世界状态。
+- 私下路线在调查前实际提出一次策略，调查后重载，并优先从已展示移动选项中选择携带该调查来源证明的回访；预测仅用于选路，验收必须记录真实成功 Action 与结果边界。回访不替代实际告知。当前测试输入明确要求原委托人批准条款引用调查证据，后续合作及交付仍须正常审批与执行。
 - 每路最多 32 次有效动作、300 次 HTTP、120 分钟；批次最多 600 次 HTTP、180 分钟；每个 job 仍最多 3 个候选和 32 次 HTTP。分母不会因开局、路线或 provider 失败缩小。
 
 ## 模式契约
