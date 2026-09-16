@@ -1,3 +1,4 @@
+import type { SceneStructuralIssue } from "@/game/domain/sceneExpression";
 import { projectEntityStore } from "@/game/domain/entity";
 import type { NarrativeBundleTerminal, NarrativeBundleTrigger } from "@/game/domain/narrativeBundle";
 import { asLocationId, asNpcId } from "@/game/domain/worldEntity";
@@ -90,7 +91,7 @@ function record(value: unknown): Record<string, unknown> | null {
 }
 
 export function compileNarrativeDraft(value: unknown, context: NarrativeDraftContext):
-  { readonly ok: true; readonly value: unknown } | { readonly ok: false; readonly code: string; readonly path: string } {
+  { readonly ok: true; readonly value: unknown } | { readonly ok: false; readonly code: string; readonly path: string; readonly allowedKeys?: readonly string[] } {
   const fail = (code: string, path: string) => ({ ok: false as const, code, path });
   const raw = record(value);
   if (raw === null) return fail("invalid_draft", "$");
@@ -110,8 +111,15 @@ export function compileNarrativeDraft(value: unknown, context: NarrativeDraftCon
   if (record(current)?.expressions !== undefined) {
     // Only validate the body here. Actual choice cardinality belongs to the
     // routing computed below, and a legal draft may already have two choices.
-    const parsed = parseNarrativeBundleProposal({ worldDelta: null, currentScene: { ...record(current), choices: [] }, continuationScenes: [], terminal: { kind: "ending" } });
-    if (!parsed.ok) return fail("invalid_current_scene", "$.sceneDrafts[slotKey=current].scene");
+    let structuralIssue: SceneStructuralIssue | undefined;
+    const parsed = parseNarrativeBundleProposal({ worldDelta: null, currentScene: { ...record(current), choices: [] }, continuationScenes: [], terminal: { kind: "ending" } }, issue => { structuralIssue ??= issue; });
+    if (!parsed.ok) {
+      if (structuralIssue !== undefined) {
+        const index = raw.sceneDrafts.findIndex(entry => record(entry)?.slotKey === "current");
+        return { ...fail("unknown_field", structuralIssue.path.replace("$.currentScene", `$.sceneDrafts[${index}].scene`)), allowedKeys: structuralIssue.allowedKeys };
+      }
+      return fail("invalid_current_scene", "$.sceneDrafts[slotKey=current].scene");
+    }
     const bindings = [...(Array.isArray(record(raw.worldDelta)?.consequenceBindings) ? record(raw.worldDelta)!.consequenceBindings as unknown[] : []), ...(Array.isArray(raw.consequenceBindings) ? raw.consequenceBindings : [])];
     if (!isStoryConsequenceBindingsProposal(bindings)) return fail("invalid_bindings", "$.consequenceBindings");
     const preview = previewNarrativeDisclosure({ scene: parsed.proposal.currentScene,

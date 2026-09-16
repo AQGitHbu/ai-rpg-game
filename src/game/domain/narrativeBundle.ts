@@ -9,7 +9,7 @@ import type {
 } from "./worldEntity";
 import type { PreparedSceneSeedState } from "./preparedContinuation";
 import { areUniqueNpcSpeechReferenceIds } from "./npcSpeechReferences";
-import { parseSceneExpressionProposal, type SceneExpressionProposal } from "./sceneExpression";
+import { parseSceneExpressionProposal, type SceneExpressionProposal, type SceneStructuralIssue } from "./sceneExpression";
 import { parseStoryInteractionProposal, type StoryInteractionProposal } from "./storyInteraction";
 import { isStoryConsequenceBindingsProposal, type StoryConsequenceBindingsProposal } from "./storyConsequenceBindings";
 
@@ -258,9 +258,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[], path?: string, onIssue?: (issue: SceneStructuralIssue) => void): boolean {
   const allowedSet = new Set(allowed);
-  return Object.keys(value).every((key) => allowedSet.has(key));
+  const unknown = Object.keys(value).find(key => !allowedSet.has(key));
+  if (unknown !== undefined && path !== undefined) onIssue?.({ path: `${path}.${unknown}`, kind: "unknown field", allowedKeys: allowed });
+  return unknown === undefined;
 }
 
 function isNonEmptyString(value: unknown): value is string {
@@ -300,16 +302,16 @@ const NARRATIVE_EMOTIONS: readonly string[] = [
   "neutral", "warm", "guarded", "afraid", "angry", "sad",
 ];
 
-function isScenePerformanceSegment(value: unknown): boolean {
+function isScenePerformanceSegment(value: unknown, path: string, onIssue?: (issue: SceneStructuralIssue) => void): boolean {
   if (!isRecord(value)) return false;
-  if (!hasOnlyKeys(value, ["beatId", "text", "referencedEntityIds"])) return false;
+  if (!hasOnlyKeys(value, ["beatId", "text", "referencedEntityIds"], path, onIssue)) return false;
   if (!isNonEmptyString(value.beatId) || !isNonEmptyString(value.text)) return false;
   return value.referencedEntityIds === undefined || isStringArray(value.referencedEntityIds);
 }
 
-function isScenePerformanceNpcLine(value: unknown): boolean {
+function isScenePerformanceNpcLine(value: unknown, path: string, onIssue?: (issue: SceneStructuralIssue) => void): boolean {
   if (!isRecord(value)) return false;
-  if (!hasOnlyKeys(value, ["npcId", "text", "emotion", "answeredBeatIds", "usedFactIds", "usedEventIds"])) return false;
+  if (!hasOnlyKeys(value, ["npcId", "text", "emotion", "answeredBeatIds", "usedFactIds", "usedEventIds"], path, onIssue)) return false;
   return isNonEmptyString(value.npcId)
     && isNonEmptyString(value.text)
     && NARRATIVE_EMOTIONS.includes(value.emotion as string)
@@ -320,9 +322,9 @@ function isScenePerformanceNpcLine(value: unknown): boolean {
     && areUniqueNpcSpeechReferenceIds(value.usedEventIds);
 }
 
-function isScenePerformanceNpcDialogue(value: unknown): boolean {
+function isScenePerformanceNpcDialogue(value: unknown, path: string, onIssue?: (issue: SceneStructuralIssue) => void): boolean {
   if (!isRecord(value)) return false;
-  if (!hasOnlyKeys(value, ["npcId", "text", "usedFactIds", "usedEventIds"])) return false;
+  if (!hasOnlyKeys(value, ["npcId", "text", "usedFactIds", "usedEventIds"], path, onIssue)) return false;
   return isNonEmptyString(value.npcId)
     && isNonEmptyString(value.text)
     && isStringArray(value.usedFactIds)
@@ -331,31 +333,31 @@ function isScenePerformanceNpcDialogue(value: unknown): boolean {
     && areUniqueNpcSpeechReferenceIds(value.usedEventIds);
 }
 
-function isScenePerformanceObjectiveLink(value: unknown): boolean {
+function isScenePerformanceObjectiveLink(value: unknown, path?: string, onIssue?: (issue: SceneStructuralIssue) => void): boolean {
   if (!isRecord(value)) return false;
-  if (!hasOnlyKeys(value, ["questId", "objectiveIndex", "mode"])) return false;
+  if (!hasOnlyKeys(value, ["questId", "objectiveIndex", "mode"], path, onIssue)) return false;
   return isNonEmptyString(value.questId)
     && Number.isInteger(value.objectiveIndex)
     && (value.objectiveIndex as number) >= 0
     && ["hint", "progress", "handoff"].includes(value.mode as string);
 }
 
-function isChoiceCandidate(value: unknown): boolean {
+function isChoiceCandidate(value: unknown, path: string, onIssue?: (issue: SceneStructuralIssue) => void): boolean {
   if (!isRecord(value)) return false;
-  if (!hasOnlyKeys(value, ["candidateId", "label"])) return false;
+  if (!hasOnlyKeys(value, ["candidateId", "label"], path, onIssue)) return false;
   return isNonEmptyString(value.candidateId) && isNonEmptyString(value.label);
 }
 
-function isBundleSceneProposal(value: unknown): value is BundleSceneProposal {
+function isBundleSceneProposal(value: unknown, path: string, onIssue?: (issue: SceneStructuralIssue) => void): value is BundleSceneProposal {
   if (!isRecord(value)) return false;
-  if (!hasOnlyKeys(value, ["expressions", "segments", "npcLine", "npcDialogues", "objectiveLink", "choices", "handoffAcknowledgement"])) return false;
-  if (value.expressions !== undefined && !parseSceneExpressionProposal(value.expressions).ok) return false;
-  if (value.segments !== undefined && (!Array.isArray(value.segments) || !value.segments.every(isScenePerformanceSegment))) return false;
+  if (!hasOnlyKeys(value, ["expressions", "segments", "npcLine", "npcDialogues", "objectiveLink", "choices", "handoffAcknowledgement"], path, onIssue)) return false;
+  if (value.expressions !== undefined && !parseSceneExpressionProposal(value.expressions, issue => onIssue?.({ ...issue, path: `${path}.${issue.path}` })).ok) return false;
+  if (value.segments !== undefined && (!Array.isArray(value.segments) || !value.segments.every((entry, index) => isScenePerformanceSegment(entry, `${path}.segments[${index}]`, onIssue)))) return false;
   if (value.expressions === undefined && value.segments === undefined) return false;
-  if (value.npcLine !== undefined && value.npcLine !== null && !isScenePerformanceNpcLine(value.npcLine)) return false;
-  if (value.npcDialogues !== undefined && (!Array.isArray(value.npcDialogues) || !value.npcDialogues.every(isScenePerformanceNpcDialogue))) return false;
-  if (value.objectiveLink !== null && !isScenePerformanceObjectiveLink(value.objectiveLink)) return false;
-  if (!Array.isArray(value.choices) || !value.choices.every(isChoiceCandidate)) return false;
+  if (value.npcLine !== undefined && value.npcLine !== null && !isScenePerformanceNpcLine(value.npcLine, `${path}.npcLine`, onIssue)) return false;
+  if (value.npcDialogues !== undefined && (!Array.isArray(value.npcDialogues) || !value.npcDialogues.every((entry, index) => isScenePerformanceNpcDialogue(entry, `${path}.npcDialogues[${index}]`, onIssue)))) return false;
+  if (value.objectiveLink !== null && !isScenePerformanceObjectiveLink(value.objectiveLink, `${path}.objectiveLink`, onIssue)) return false;
+  if (!Array.isArray(value.choices) || !value.choices.every((entry, index) => isChoiceCandidate(entry, `${path}.choices[${index}]`, onIssue))) return false;
   return value.handoffAcknowledgement === undefined || isNonEmptyString(value.handoffAcknowledgement);
 }
 
@@ -383,15 +385,15 @@ function isTerminal(value: unknown): value is NarrativeBundleTerminal {
   }
 }
 
-function isBundleStepProposal(value: unknown): value is BundleStepProposal {
+function isBundleStepProposal(value: unknown, path: string, onIssue?: (issue: SceneStructuralIssue) => void): value is BundleStepProposal {
   if (!isRecord(value)) return false;
   if (!hasOnlyKeys(value, ["stepKey", "scene"])) return false;
-  return isNonEmptyString(value.stepKey) && isBundleSceneProposal(value.scene);
+  return isNonEmptyString(value.stepKey) && isBundleSceneProposal(value.scene, `${path}.scene`, onIssue);
 }
 
 
 
-export function parseNarrativeBundleProposal(value: unknown): ParseNarrativeBundleProposalResult {
+export function parseNarrativeBundleProposal(value: unknown, onIssue?: (issue: SceneStructuralIssue) => void): ParseNarrativeBundleProposalResult {
   if (!isRecord(value)) return invalidProposal("not_object");
   if (!hasOnlyKeys(value, ["worldDelta", "interactionProposals", "consequenceBindings", "npcOutwardProposals", "currentScene", "continuationScenes", "endingOutcomes", "terminal"])) return invalidProposal("unknown_keys");
   if (value.interactionProposals !== undefined
@@ -407,8 +409,8 @@ export function parseNarrativeBundleProposal(value: unknown): ParseNarrativeBund
     return invalidProposal("consequence_bindings_invalid");
   }
   // worldDelta can be null or any object (approval validates it separately)
-  if (!isBundleSceneProposal(value.currentScene)) return invalidProposal("current_scene_invalid");
-  if (!Array.isArray(value.continuationScenes) || !value.continuationScenes.every(isBundleStepProposal)) return invalidProposal("continuation_scenes_invalid");
+  if (!isBundleSceneProposal(value.currentScene, "$.currentScene", onIssue)) return invalidProposal("current_scene_invalid");
+  if (!Array.isArray(value.continuationScenes) || !value.continuationScenes.every((entry, index) => isBundleStepProposal(entry, `$.continuationScenes[${index}]`, onIssue))) return invalidProposal("continuation_scenes_invalid");
   if (!isTerminal(value.terminal)) return invalidProposal("terminal_invalid");
 
   const continuationScenes = value.continuationScenes as readonly BundleStepProposal[];
@@ -417,11 +419,11 @@ export function parseNarrativeBundleProposal(value: unknown): ParseNarrativeBund
   const validEndingOutcomes = Array.isArray(endingOutcomes)
     && endingOutcomes.length === 2
     && new Set(endingOutcomes.map((entry) => isRecord(entry) ? entry.themeKey : null)).size === 2
-    && endingOutcomes.every((entry) => isRecord(entry)
+    && endingOutcomes.every((entry, index) => isRecord(entry)
       && hasOnlyKeys(entry, ["themeKey", "choiceLabel", "scene"])
       && (entry.themeKey === "trust" || entry.themeKey === "doubt")
       && isNonEmptyString(entry.choiceLabel)
-      && isBundleSceneProposal(entry.scene)
+      && isBundleSceneProposal(entry.scene, `$.endingOutcomes[${index}].scene`, onIssue)
       && entry.scene.choices.length === 0);
 
   // current_scene terminal must have empty continuation

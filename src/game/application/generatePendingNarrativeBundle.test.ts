@@ -266,6 +266,24 @@ describe("generatePendingNarrativeBundle", () => {
     expect(memorySummaryRepository.freezePrepared).not.toHaveBeenCalled();
   });
 
+  it("carries the exact unknown scene field and legal keys into the next actual author request", async () => {
+    const job = createPendingJob();
+    const { repo } = createInMemoryRepo({ gameId: asGameId("scene-field-repair"), worldState: createMinimalWorldState(),
+      storyState: createMinimalStoryState({ status: "provider_pending", mode: "ai", job, lastPresentedScene: null }), revision: 0, createdAt: "2026-01-01" });
+    const draft = { worldDelta: null, sceneDrafts: [{ slotKey: "current", scene: {
+      segments: [{ beatId: "atmosphere", text: "应保留的原文", kind: "narration" }], npcLine: null, objectiveLink: null,
+      choices: [],
+    } }] };
+    const complete = vi.fn(async () => ({ ok: true as const, content: JSON.stringify(draft) }));
+    await generatePendingNarrativeBundle({ repository: repo, now: () => "2026-01-01T00:00:00.000Z",
+      source: createNarrativeBundleSource({ aiClient: { complete } as unknown as RpgAiClient }) });
+    expect(complete).toHaveBeenCalledTimes(3);
+    const repair = ((complete.mock.calls[1] as unknown as readonly [unknown, readonly { content: string }[]])[1])[0]!.content;
+    expect(repair).toContain("$.sceneDrafts[0].scene.segments[0].kind");
+    expect(repair).toContain("allowed keys: beatId, text, referencedEntityIds");
+    expect(repair).toContain("应保留的原文");
+  });
+
   it("carries only the immediately rejected raw draft through actual author requests", async () => {
     const job = createPendingJob();
     const { repo, getRecord } = createInMemoryRepo({

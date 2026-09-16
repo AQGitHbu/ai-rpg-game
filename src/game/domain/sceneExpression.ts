@@ -95,15 +95,20 @@ function isStringArray(value: unknown): value is readonly string[] {
   return Array.isArray(value) && value.every(isString);
 }
 
-function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+export type SceneStructuralIssue = Readonly<{ path: string; kind: "unknown field"; allowedKeys: readonly string[] }>;
+type StructuralIssueHandler = (issue: SceneStructuralIssue) => void;
+
+function hasExactKeys(value: Record<string, unknown>, keys: readonly string[], path: string, onIssue?: StructuralIssueHandler): boolean {
   const expected = new Set(keys);
-  return Object.keys(value).length === keys.length && Object.keys(value).every((key) => expected.has(key));
+  const unknown = Object.keys(value).find(key => !expected.has(key));
+  if (unknown !== undefined) onIssue?.({ path: `${path}.${unknown}`, kind: "unknown field", allowedKeys: keys });
+  return Object.keys(value).length === keys.length && unknown === undefined;
 }
 
-function isExpression(value: unknown): value is SceneExpressionProposal {
+function isExpression(value: unknown, path: string, onIssue?: StructuralIssueHandler): value is SceneExpressionProposal {
   if (!isRecord(value) || typeof value.kind !== "string") return false;
   if (value.kind === "narration") {
-    return hasExactKeys(value, ["kind", "beatId", "text", "referencedEntityIds"])
+    return hasExactKeys(value, ["kind", "beatId", "text", "referencedEntityIds"], path, onIssue)
       && isNonEmptyString(value.beatId)
       && isNonEmptyString(value.text)
       && isStringArray(value.referencedEntityIds);
@@ -111,7 +116,7 @@ function isExpression(value: unknown): value is SceneExpressionProposal {
   if (value.kind === "npc_line") {
     if (!hasExactKeys(value, [
       "kind", "npcId", "audienceIds", "text", "emotion", "answeredBeatIds", "usedFactIds", "usedEventIds",
-    ])) return false;
+    ], path, onIssue)) return false;
     return isNonEmptyString(value.npcId)
       && isStringArray(value.audienceIds)
       && isNonEmptyString(value.text)
@@ -127,10 +132,10 @@ function isExpression(value: unknown): value is SceneExpressionProposal {
 }
 
 /** Parse the only ordered scene body. Array position is the expression order. */
-export function parseSceneExpressionProposal(value: unknown): ParseSceneExpressionResult {
+export function parseSceneExpressionProposal(value: unknown, onIssue?: StructuralIssueHandler): ParseSceneExpressionResult {
   if (!Array.isArray(value)) return { ok: false, code: "INVALID_SCENE_EXPRESSIONS", path: "expressions" };
   for (const [index, expression] of value.entries()) {
-    if (!isExpression(expression)) {
+    if (!isExpression(expression, `expressions[${index}]`, onIssue)) {
       return { ok: false, code: "INVALID_SCENE_EXPRESSIONS", path: `expressions[${index}]` };
     }
   }

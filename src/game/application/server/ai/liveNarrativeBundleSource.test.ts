@@ -228,6 +228,22 @@ describe("createNarrativeBundleSource", () => {
     expect(prompt).toContain('"consequenceBindings":[]');
   });
 
+  it.each(["current", "arrival", "expression"] as const)("maps %s scene diagnostics to the actual raw draft slot index", async target => {
+    const stepKey = `move:loc_dyn_${makeStoryState().evolution.nextLocationOrdinal}`;
+    const extraSegment = { beatId: "atmosphere", text: "原文", unexpected: true };
+    const current = { ...validBundleResponse.currentScene, choices: [],
+      ...(target === "current" ? { segments: [extraSegment] } : {}),
+      ...(target === "expression" ? { expressions: [{ kind: "narration", beatId: "atmosphere", text: "原文", referencedEntityIds: [], unexpected: true }] } : {}),
+    };
+    const arrival = { ...validBundleResponse.currentScene, ...(target === "arrival" ? { segments: [extraSegment] } : {}) };
+    const draft = { worldDelta: null, sceneDrafts: [{ slotKey: stepKey, scene: arrival }, { slotKey: "current", scene: current }] };
+    const complete = vi.fn().mockResolvedValue({ ok: true, content: JSON.stringify(draft) });
+    const result = await createNarrativeBundleSource({ aiClient: mockAiClient(complete) }).generate({ kind: "decision", worldState: makeWorldState(), storyState: makeNextActStoryState(), job: makeJob() });
+    expect(result).toMatchObject({ ok: false, rejectedDraft: draft,
+      repairDetail: `unknown_field at $.sceneDrafts[${target === "arrival" ? 0 : 1}].scene.${target === "expression" ? "expressions" : "segments"}[0].unexpected; allowed keys: ${target === "expression" ? "kind, " : ""}beatId, text, referencedEntityIds` });
+    expect(complete).toHaveBeenCalledTimes(1);
+  });
+
   it("calls aiClient.complete with narrative_bundle role exactly once", async () => {
     const complete = vi.fn().mockResolvedValue({
       ok: true,

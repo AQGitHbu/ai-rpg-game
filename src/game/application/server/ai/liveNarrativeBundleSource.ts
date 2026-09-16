@@ -536,7 +536,7 @@ export function createNarrativeBundleSource(
         if (context.kind === "decision") {
           const isDraft = !deps.allowLegacyDecisionDto || asRecord(parsed.value)?.sceneDrafts !== undefined;
           const compiled = isDraft ? compileNarrativeDraft(parsed.value, context) : null;
-          if (compiled !== null && !compiled.ok) return { ...failBundle("invalid_schema", "invalid_schema", `${compiled.code} at ${compiled.path}`), rejectedDraft: parsed.value };
+          if (compiled !== null && !compiled.ok) return { ...failBundle("invalid_schema", "invalid_schema", `${compiled.code} at ${compiled.path}${compiled.allowedKeys === undefined ? "" : `; allowed keys: ${compiled.allowedKeys.join(", ")}`}`), rejectedDraft: parsed.value };
           const normalizedBundle = compiled?.ok ? compiled.value : normalizeDecisionBundleShape(
             parsed.value,
             context.worldState,
@@ -587,13 +587,26 @@ export function createNarrativeBundleSource(
               ? "world_delta_invalid at $.worldDelta.beatSummary: expected non-empty string"
               : structuralDetail ?? "world_delta_invalid"), rejectedDraft: parsed.value };
           }
+          let sceneStructuralDetail: string | undefined;
           const proposalResult = parseNarrativeBundleProposal(normalizedRecord === null
             ? normalizedBundle
-            : { ...normalizedRecord, worldDelta: parsedWorldDelta?.proposal ?? null });
+            : { ...normalizedRecord, worldDelta: parsedWorldDelta?.proposal ?? null }, issue => {
+              let path = issue.path;
+              const drafts = asRecord(parsed.value)?.sceneDrafts;
+              if (isDraft && Array.isArray(drafts)) {
+                const continuation = /^\$\.continuationScenes\[(\d+)\]\.scene/.exec(path);
+                const steps = normalizedRecord?.continuationScenes;
+                const slotKey = path.startsWith("$.currentScene") ? "current"
+                  : continuation !== null && Array.isArray(steps) ? asRecord(steps[Number(continuation[1])])?.stepKey : undefined;
+                const index = slotKey === undefined ? -1 : drafts.findIndex(entry => asRecord(entry)?.slotKey === slotKey);
+                if (index >= 0) path = path.replace(continuation?.[0] ?? "$.currentScene", `$.sceneDrafts[${index}].scene`);
+              }
+              sceneStructuralDetail ??= `unknown_field at ${path}; allowed keys: ${issue.allowedKeys.join(", ")}`;
+            });
           if (!proposalResult.ok) {
-            const detail = proposalResult.stepKey === undefined
+            const detail = sceneStructuralDetail ?? (proposalResult.stepKey === undefined
               ? proposalResult.reason
-              : `${proposalResult.reason}（步骤 ${proposalResult.stepKey}）`;
+              : `${proposalResult.reason}（步骤 ${proposalResult.stepKey}）`);
             logger?.warn("narrative_bundle_invalid_schema", {
               code: proposalResult.code,
               reason: proposalResult.reason,

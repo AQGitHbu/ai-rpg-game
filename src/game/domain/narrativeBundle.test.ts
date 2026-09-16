@@ -65,6 +65,42 @@ function makeValidBundleState(): NarrativeBundleState {
 }
 
 describe("NarrativeBundleProposal parser", () => {
+  it.each(["current", "continuation", "ending"] as const)("reports unknown segment fields in the %s scene without accepting or changing them", location => {
+    const scene = { ...makeValidScene(), choices: [], segments: [{ beatId: "atmosphere", text: "原文", kind: "narration" }] };
+    const proposal = location === "current" ? { ...makeValidBundle(), currentScene: scene }
+      : location === "continuation" ? { ...makeValidBundle(), currentScene: { ...makeValidScene(), choices: [] }, continuationScenes: [{ stepKey: "move:loc_1", scene }], terminal: { kind: "next_decision", target: { kind: "continuation_step", stepKey: "move:loc_1" } } }
+      : { ...makeValidBundle(), currentScene: { ...makeValidScene(), choices: [] }, terminal: { kind: "ending" }, endingOutcomes: [
+        { themeKey: "trust", choiceLabel: "相信", scene }, { themeKey: "doubt", choiceLabel: "存疑", scene: { ...makeValidScene(), choices: [] } },
+      ] };
+    const before = JSON.stringify(proposal);
+    const issues: unknown[] = [];
+    expect(parseNarrativeBundleProposal(proposal, issue => issues.push(issue)).ok).toBe(false);
+    const prefix = location === "current" ? "$.currentScene" : location === "continuation" ? "$.continuationScenes[0].scene" : "$.endingOutcomes[0].scene";
+    expect(issues).toEqual([{ path: `${prefix}.segments[0].kind`, kind: "unknown field", allowedKeys: ["beatId", "text", "referencedEntityIds"] }]);
+    expect(JSON.stringify(proposal)).toBe(before);
+  });
+
+  it.each([
+    { extra: { extra: true }, path: "$.currentScene.extra", key: "segments" },
+    { extra: { npcLine: { ...makeValidScene().npcLine!, extra: true } }, path: "$.currentScene.npcLine.extra", key: "emotion" },
+    { extra: { npcDialogues: [{ npcId: "npc_2", text: "原话", usedFactIds: [], usedEventIds: [], extra: true }] }, path: "$.currentScene.npcDialogues[0].extra", key: "usedFactIds" },
+    { extra: { objectiveLink: { questId: "q", objectiveIndex: 0, mode: "progress", extra: true } }, path: "$.currentScene.objectiveLink.extra", key: "objectiveIndex" },
+    { extra: { choices: [{ candidateId: "a", label: "回应", extra: true }] }, path: "$.currentScene.choices[0].extra", key: "candidateId" },
+  ])("reports the validator's actual allowed keys for $path", ({ extra, path, key }) => {
+    const issues: unknown[] = [];
+    expect(parseNarrativeBundleProposal({ ...makeValidBundle(), currentScene: { ...makeValidScene(), ...extra } }, issue => issues.push(issue)).ok).toBe(false);
+    expect(issues).toEqual([expect.objectContaining({ path, allowedKeys: expect.arrayContaining([key]) })]);
+  });
+
+  it("reports unknown expression fields through the same strict scene parser", () => {
+    const issues: unknown[] = [];
+    const result = parseNarrativeBundleProposal({ ...makeValidBundle(), currentScene: { ...makeValidScene(), expressions: [
+      { kind: "narration", beatId: "atmosphere", text: "原文", referencedEntityIds: [], invented: true },
+    ] } }, issue => issues.push(issue));
+    expect(result.ok).toBe(false);
+    expect(issues).toEqual([{ path: "$.currentScene.expressions[0].invented", kind: "unknown field", allowedKeys: ["kind", "beatId", "text", "referencedEntityIds"] }]);
+  });
+
   it("accepts exactly one trust and doubt outcome and rejects unknown, duplicate, or choice-bearing results", () => {
     const resultScene = { ...makeValidScene(), npcLine: null, choices: [] };
     const ending = { ...makeValidBundle(), currentScene: resultScene, terminal: { kind: "ending" as const }, endingOutcomes: [
