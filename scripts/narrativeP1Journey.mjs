@@ -364,6 +364,7 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
             offeredChoices,
             delivery,
             actionCount,
+            steps,
           };
           const selected = policy.selectChoice === undefined
             ? selectProductionChoice(view, route.kind, actionMap, interactions, performed, performedActions, state.record.storyState.delivery, actionCount)

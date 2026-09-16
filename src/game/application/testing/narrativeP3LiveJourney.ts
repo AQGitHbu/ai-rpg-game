@@ -13,7 +13,7 @@ export const NARRATIVE_P3_INPUT = Object.freeze({
   characterProfile: "谨慎、守信，先核对证据再决定是否公开",
   personalityTags: ["谨慎", "守信"] as readonly string[],
   worldPremise: "渡口保存一份旧契，证人和接应人对交付条件各有记忆；查验方式会改变谁愿意继续合作。",
-  storyOpening: "我接下旧契与证人的委托。请先让我从现场提供的合法方法中选择查验方式，再根据实际证据决定是否告知、核验并完成交付。本协议要求在第一幕推进时（初始化开局保持普通 town 开场，调查必须落在随后独立 scene）实际创建一个未发现、可主动调查的事实，并用 consequenceBindings.bind_investigation（discoveryMode=investigation）激活恰好 2–3 个合法方法；其中至少一条不需要额外见证，至少一条由该 scene 的新 NPC 在场见证；仅写 investigationApproaches 或使用 automatic 事实不满足。",
+  storyOpening: "我接下旧契与证人的委托。请先让我从现场提供的合法方法中选择查验方式，再根据实际证据决定是否告知、核验并完成交付。查得证据后，我需要回访原委托人并实际告知，再按证据核验、取得合作并完成交付；原委托人的已批准目标或合作条件须明确引用这份调查证据，不能仅在对白中表示关心。本协议要求在第一幕推进时（初始化开局保持普通 town 开场，调查必须落在随后独立 scene）实际创建一个未发现、可主动调查的事实，并用 consequenceBindings.bind_investigation（discoveryMode=investigation）激活恰好 2–3 个合法方法；其中至少一条不需要额外见证，至少一条由该 scene 的新 NPC 在场见证；仅写 investigationApproaches 或使用 automatic 事实不满足。",
   narrativeStyle: "novel" as const,
   contentIntensity: "normal" as const,
 });

@@ -168,6 +168,37 @@ test("private investigation cannot run before the actual strategy input and relo
   assert.equal(policy.shouldReload({ action: { type: "investigate" }, actionCount: 9, steps: [{ kind: "reload" }] }), false);
 });
 
+test("private route returns with related evidence before sharing and never selects an unoffered or unrelated move", () => {
+  const input = policyInput("private", productionView([
+    { choiceToken: "unrelated", label: "旁路" }, { choiceToken: "return", label: "回访" },
+    { choiceToken: "share", label: "告知" },
+  ]), [
+    { choiceToken: "unrelated", action: { type: "move", locationId: "other" } },
+    { choiceToken: "return", action: { type: "move", locationId: "old" } },
+    { choiceToken: "share", action: { type: "talk", interactionId: "interaction:quiet" } },
+    { choiceToken: "hidden", action: { type: "move", locationId: "hidden" } },
+  ], [{ eventId: "discovery", outcome: "success", payload: { type: "fact_discovered", evidenceQuality: "clean" } }]);
+  input.steps = [];
+  input.proveRevisit = (_context, action) => ({ kind: "changed_revisit", locationId: action.locationId,
+    sourceEventIds: [action.locationId === "other" ? "unrelated-source" : "discovery"] });
+  input.performedActions.add(JSON.stringify({ type: "move", locationId: "old" }));
+  assert.equal(selectNarrativeP3ProductionChoice(input).choiceToken, "return");
+  input.steps.push({ ok: true, action: { type: "move", locationId: "other" }, resultBoundaryProof: {
+    kind: "changed_revisit", locationId: "other", sourceEventIds: ["unrelated-source"],
+  } });
+  assert.equal(selectNarrativeP3ProductionChoice(input).choiceToken, "return");
+  input.steps.push({ ok: true, action: { type: "move", locationId: "old" }, resultBoundaryProof: {
+    kind: "changed_revisit", locationId: "old", sourceEventIds: ["discovery"],
+  } });
+  assert.equal(selectNarrativeP3ProductionChoice(input).choiceToken, "share");
+  input.steps = [];
+  input.proveRevisit = () => null;
+  assert.equal(selectNarrativeP3ProductionChoice(input).choiceToken, "share");
+  input.route.routeId = "public";
+  input.proveRevisit = () => { throw new Error("public route must not force a private revisit"); };
+  assert.equal(selectNarrativeP3ProductionChoice(input).choiceToken, "share");
+});
+
 test("P3 production policy reports capability coverage instead of falling back to P1 policy", () => {
   const view = productionView([{ choiceToken: "witnessed", label: "请船户当面见证" }]);
   const selected = selectNarrativeP3ProductionChoice(policyInput("private", view, [

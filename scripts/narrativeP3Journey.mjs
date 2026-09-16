@@ -68,6 +68,12 @@ function eventLedger(input) {
   return input.state?.record?.worldState?.eventLedger ?? [];
 }
 
+function revisitedWithEvidence(step, evidenceId) {
+  return step.ok && step.action?.type === "move" && step.resultBoundaryProof?.kind === "changed_revisit"
+    && step.resultBoundaryProof.locationId === step.action.locationId
+    && step.resultBoundaryProof.sourceEventIds?.includes(evidenceId);
+}
+
 function hasSuccessfulOperation(input, operation) {
   return input.performed?.has(operation) === true || eventLedger(input).some((event) => event.outcome === "success"
     && event.payload?.type === "story_interaction_resolved" && event.payload.operation === operation);
@@ -127,6 +133,19 @@ export function selectNarrativeP3ProductionChoice(input) {
     return fallbackP3Choice(context);
   }
 
+  const routeEvidence = eventLedger(context).find((event) => event.outcome === "success"
+    && event.payload?.type === "fact_discovered" && event.payload.evidenceQuality !== undefined);
+  if (route === "private" && !context.steps?.some((step) => revisitedWithEvidence(step, routeEvidence?.eventId))) {
+    const revisit = choices.find((choice) => {
+      const action = context.actionMap.get(choice.choiceToken);
+      if (action?.type !== "move") return false;
+      const proof = context.proveRevisit?.(context, action);
+      return proof?.kind === "changed_revisit" && proof.locationId === action.locationId
+        && proof.sourceEventIds.includes(routeEvidence?.eventId);
+    });
+    if (revisit !== undefined) return revisit;
+  }
+
   if (!hasSuccessfulOperation(context, "share_known_fact")) {
     const share = findOperationChoice(context, "share_known_fact");
     if (share !== undefined) return share;
@@ -169,10 +188,7 @@ function p3RouteSatisfied({ route, endingState, performed = new Set(), steps = [
     && event.payload.evidenceEventIds?.includes(evidence?.eventId));
   const goalChanged = events.some((event) => event.outcome === "success" && event.payload?.type === "npc_goal_status_changed"
     && event.payload.evidenceEventIds?.some((id) => id === evidence?.eventId || id === shared?.eventId));
-  const revisited = p3RouteId(route) !== "private" || steps.some((step) => step.ok && step.action?.type === "move"
-    && step.resultBoundaryProof?.kind === "changed_revisit"
-    && step.resultBoundaryProof.locationId === step.action.locationId
-    && step.resultBoundaryProof.sourceEventIds?.includes(evidence?.eventId));
+  const revisited = p3RouteId(route) !== "private" || steps.some((step) => revisitedWithEvidence(step, evidence?.eventId));
   const strategyConfirmed = p3RouteId(route) !== "private" || (performed.has("strategy_freeform_submitted")
     && steps.some((step, index) => step.interaction?.kind === "free_text"
       && steps.slice(index + 1).some((next) => next.ok && next.action?.type === "investigate")));
@@ -237,8 +253,18 @@ export function createNarrativeP3RoutePolicy() {
 }
 
 export async function createP3ProductionRouteRunner(runtimeEnv, replaySource, protocol, policyOverrides = {}) {
+  installTsHooks();
+  const { proveResultBoundary } = await import("../src/game/gameplay/rpg/narrativeBundle/index.ts");
+  const policy = createNarrativeP3RoutePolicy();
+  const proveRevisit = ({ state }, action) => {
+    const { worldState, storyState } = state.record;
+    return proveResultBoundary({ beforeWorld: worldState, beforeStory: storyState,
+      afterWorld: { ...worldState, currentLocationId: action.locationId }, afterStory: storyState,
+      action, newEvents: [] });
+  };
   const binding = { protocolVersion: protocol.protocolVersion, protocolHash: protocol.protocolHash, inputHash: protocol.inputHash, codeFingerprint: protocol.codeFingerprint };
-  const p1Runner = await createProductionRouteRunner(runtimeEnv, undefined, replaySource, binding, undefined, { ...createNarrativeP3RoutePolicy(), ...policyOverrides });
+  const p1Runner = await createProductionRouteRunner(runtimeEnv, undefined, replaySource, binding, undefined,
+    { ...policy, selectChoice: (input) => policy.selectChoice({ ...input, proveRevisit }), ...policyOverrides });
   return async ({ mode, route, outputDirectory, signal }) => {
     const budget = {
       used: 0,
