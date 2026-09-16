@@ -40,6 +40,10 @@
 
 `21ed29fe` 补齐现有四类绑定和五类条件的作者契约；已选 NPC 仅提供 goalOrdinal/goalId/hasResolution 引用元数据，不扩大实体闭包或公开私密目标。示例经正式 parser 和绑定审批验证，220 项相关测试、类型与限定 lint 通过。最终复核进一步对齐绑定只能用当前 NPC 正式 ID、主动调查要求非空标签、已有合法未发现 scene fact 可首次绑定三处说明，66 项限定测试通过；新增正式审批正反例与实际发送请求断言。复核无遗留重要问题，最终 production build 通过，详见 `artifacts/narrative-p3-closeout/capability-final-review.md`。普通故事仍可省略绑定；没有新增操作或强制生成固定剧情。
 
+`958fc0f7` 冻结的 `p3-closeout-03` 共用前缀完成 2 次行动、10 次真实 HTTP，两路均 `P3_SHARED_PREFIX_FAILED`，未分叉或启动 UI。初始换幕候选已提供可执行调查所需的新事实与私下/现场见证两方法，但前两版在 segments 中混入不允许的 kind 字段，结构修复只收到 current_scene_invalid。第三版删去非法字段并通过结构校验，同时删除调查事实及绑定；最终语义审阅因 NPC 捏造“有人转述”的传播来源拒绝，有限候选耗尽。零 HTTP 严格回放复现同样 blocked。字段诊断不精确与独立事实来源违规必须分别记录，不能将终败全部归为结构错误，也不能以放松来源权限换取通过。
+
+结构诊断沿原解析器返回未知字段路径及允许字段，并按 slotKey 映回实际 raw sceneDrafts 位置；正式修复请求已验证接收该信息。217 项相关测试、类型、限定 lint 与 production build 通过；独立复核见 `artifacts/narrative-p3-closeout/schema-diagnostic-final-review.md`。不剥离字段、不改写内容、不增加重试，不改变审批接受范围；该修复不保证模型满足独立的语义规则。
+
 ## 最终检查与剩余边界
 
 已实现切片的最终集成审阅通过，无未解决的重要跨模块发现。生成契约修复后全量为 247 个文件通过、1 个跳过，3102 项测试通过、1 项跳过。类型检查、改动文件 lint、production build 通过；文档检查 0 错误、1 个既有篇幅提醒，diff 检查通过。本轮 P1/P2/P3 的 66 项 Node 脚本测试全部通过；此前完整 lint 和 135 项依赖边界检查通过。首次失败与修复后日志均保留在 `artifacts/narrative-p3-closeout/`，不以旧批次成绩替代新验证。

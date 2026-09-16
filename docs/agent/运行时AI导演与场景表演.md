@@ -34,6 +34,7 @@
 - 审阅的生成要求与推进职责使用合法本场披露后、候选 worldDelta 物化前的临时 `generationContract`，防止把本候选新建实体误当成生成前既存实体，或将换幕要求误降为普通回应。候选实体、逐场说话权限与执行依据仍使用物化预览；该契约不写入存档。默认、归还与未完成目标返程图均提供正式步骤依据，抵达状态只属于实际移动后的续接场景。
 - 世界增量 schema 按当前结构演化需求提供；无演化的普通对话只允许 `worldDelta=null`，不要求 beatSummary，其结构修复提示也必须要求 null，不能反向要求补摘要。时序块仅在有演化时将摘要列为当前事实字段。
 - 审阅缺陷路径相对内部候选；允许明确请求外壳的单层 `proposal.` 或 `$.proposal.` 前缀，校验实际字段后保存候选相对路径。未知字段、错误数组索引、重复包装仍拒绝，不过滤缺陷或转为通过。
+- 场景结构中的未知字段由原严格解析器报告具体路径与允许字段；作者修复请求按 slotKey 映回原始 sceneDrafts 数组位置，终局保持 endingOutcomes 路径。该诊断不删除字段、不修改正文、不放宽解析，也不增加候选或 HTTP 次数。
 - 生产语义审阅的 `ruleBasis` 由服务端投影当前输入、真实 Action 与候选绑定、续接 step、正式物品及事实/权限。阻断缺陷必须带可存在性校验的候选 `path` 和 `evidence={basisKey,impact,detail}`；依据必须存在、影响种类须属于该依据，detail 说明具体规则后果。物品状态影响只能引用具体正式物品或绑定该物品的 take/give 步骤，普通无效果服饰、环境或风格写入 `qualityObservations`，不改变规则 verdict。无依据、空缺陷或混入非法缺陷的 revise 整体成为显式 uncertain，不过滤后冒充 pass。服务端校验依据与路径，不以此替代模型对语义冲突的判断。
 - `story:consequences` 是作者与 reviewer 共用的 rule basis，只包含当前 job 已提交 Event、活跃 Thread 和可用互动 ID；goal description、reason、证据质量及隐藏条件仍由规则/私有 deliberation 保持隔离。
 - 作者契约完整提供现有四类 consequenceBindings 与五类条件的有限格式，开局仅开放 town 合法绑定；后续绑定可放于整包顶层或 worldDelta 内，两处合计最多八条。调查、目标、交谈条件与合作仍经正式审批，示例不代表强制故事结构。已选 NPC 实体卡仅增加目标原始序号、ID、是否已有 resolution 的引用元数据，不暴露私密目标正文、状态或条件，也不扩展实体引用范围。
