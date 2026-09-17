@@ -17,6 +17,7 @@
 - [P3 Plan 独立审阅](reports/2026-09-15-narrative-p3-plan-review.md)：目标引用、合作门槛、调查来源、B 后果推进和现场范围的缺口及对应修订。
 - [P3 规则与模块代码审阅](reports/2026-09-15-narrative-p3-code-review.md)：调查来源、绑定与依赖、受控回访、恢复及 runner 的缺陷修复，区分已验证模块和未完成的 P3 能力。
 - [P3 四项收尾](reports/2026-09-16-narrative-p3-closeout.md)：B 披露后果、同故事回访、另一题材复用及同源 live/UI 的实际实施与验收证据。
+- [P3 正确性修复 Spec](specs/2026-09-17-narrative-p3-correctness-remediation-spec.md) 与 [实施 Plan](plans/2026-09-17-narrative-p3-correctness-remediation.md)：目标绑定、历史审阅、合作闭环与完整验收；依据见 [本地复核报告](reports/2026-09-17-narrative-p3-remediation-review.md)。
 - [P2 Plan 独立审阅](reports/2026-09-14-narrative-p2-plan-review.md)：固定记忆恢复、租约隔离和 NPC 私密传递的规划问题及修订依据。
 - [P2 准入缺口修复 Plan](plans/2026-09-14-narrative-p2-readiness-fixes.md)：组织实现核查后的 R1–R6 修复；对应 [离线验收报告](reports/2026-09-14-narrative-p2-readiness-fixes.md) 与 [验证协议](reports/2026-09-14-narrative-p2-protocol.md)。
 - [P2 真实 API 与剧情质量验收](reports/2026-09-14-narrative-p2-acceptance.md)：冻结批次的通关、严格回放、记忆覆盖与全文质量证据，区分实际执行和未覆盖项目。
