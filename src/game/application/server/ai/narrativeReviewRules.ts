@@ -77,11 +77,16 @@ export function buildNarrativeReviewRules(input: NarrativeCandidateReviewInput):
     }
   }
   if (projection.nextActProjection !== null) {
-    const { locationId, npcId } = projection.nextActProjection;
-    add(`step:move:${locationId}`, "step", ["step_order"], { stepKey: `move:${locationId}`, currentLocationId: worldState.currentLocationId, locationId, npcId });
-    for (const [index, dialogueAct] of ["support", "challenge"].entries()) {
-      const candidateId = `move:${locationId}_choice_${index + 1}`;
-      add(`action:${candidateId}`, "action", ["action_binding", "interaction_effect"], { candidateId, action: { type: "talk", npcId, dialogueAct } });
+    for (const [stepIndex, stepKey] of projection.stepKeys.entries()) {
+      const npcId = projection.nextActStepNpcIds[stepIndex] ?? projection.nextActProjection.npcId;
+      const locationId = stepKey.startsWith("move:") ? stepKey.slice("move:".length) : projection.nextActProjection.locationId;
+      add(`step:${stepKey}`, "step", ["step_order"], { stepKey, currentLocationId: worldState.currentLocationId, locationId, npcId });
+      if (stepIndex === projection.stepKeys.length - 1) {
+        for (const [index, dialogueAct] of ["support", "challenge"].entries()) {
+          const candidateId = `${stepKey}_choice_${index + 1}`;
+          add(`action:${candidateId}`, "action", ["action_binding", "interaction_effect"], { candidateId, action: { type: "talk", npcId, dialogueAct } });
+        }
+      }
     }
   }
   const closure = buildEntityContextProjection({ worldState, storyState, job });
@@ -210,6 +215,24 @@ export function canonicalCandidatePath(candidate: unknown, path: string): string
     current = (current as Record<string, unknown>)[key];
   }
   return normalized;
+}
+
+/**
+ * Opening review receives an envelope whose candidate is
+ * `{ opening: OpeningGenerationCandidate }`. The candidate itself also has
+ * an `opening` section, so the NPC path is `opening.opening.npc.*`.
+ * Reviewers occasionally omit that inner section and return
+ * `proposal.opening.npc.*`; accept only this one unambiguous structural alias,
+ * then return the real candidate path for repair feedback.
+ */
+export function canonicalOpeningCandidatePath(candidate: unknown, path: string): string | null {
+  const direct = canonicalCandidatePath(candidate, path);
+  if (direct !== null) return direct;
+  const normalized = path.startsWith("$.") ? path.slice(2) : path;
+  const withoutEnvelope = normalized.startsWith("proposal.")
+    ? normalized.slice("proposal.".length) : normalized;
+  if (!withoutEnvelope.startsWith("opening.") || withoutEnvelope.startsWith("opening.opening.")) return null;
+  return canonicalCandidatePath(candidate, `opening.opening.${withoutEnvelope.slice("opening.".length)}`);
 }
 
 /** Accept only concrete object/array paths, never selectors or guessed fields. */

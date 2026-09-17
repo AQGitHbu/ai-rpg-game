@@ -26,6 +26,7 @@ import type { PreparedChoiceCandidate, PreparedArrivalNpcContext } from "@/game/
 import { getEntity, type EntityRecord, type NpcEntityRecord } from "@/game/domain/entity";
 import { evaluateStoryCondition } from "@/game/gameplay/rpg/storyInteraction";
 import { availableInvestigations } from "@/game/gameplay/rpg/investigation";
+import { isStoryDeliveryComplete } from "@/game/gameplay/rpg/storyDelivery";
 
 export type { PreparedChoiceCandidate, PreparedArrivalNpcContext };
 
@@ -159,16 +160,43 @@ function authorizedFactIdsForArrivalNpc(
   return [...ids].map((id) => id as FactId);
 }
 
+export function isP3EvidenceClosureContract(worldState: WorldState): boolean {
+  const storyOpening = worldState.generation.setup?.storyOpening;
+  return typeof storyOpening === "string"
+    && storyOpening.includes("回访原委托人")
+    && storyOpening.includes("实际告知")
+    && storyOpening.includes("调查证据");
+}
+
 function deliveryItemForFinalAct(
   worldState: WorldState,
   storyState: StoryState,
   npcId: NpcId,
 ): ItemId | undefined {
+  // A delivery endpoint must not leap over a real investigation closure. The
+  // player story contract requires telling and verifying with the original
+  // giver before the final recipient can receive the item.
+  if (hasPendingDeliveryEvidenceClosure(worldState, storyState)) return undefined;
   if (storyState.delivery?.recipientNpcId !== npcId) return undefined;
   if (storyState.currentAct < storyState.targetActs || storyState.contract.delivery === undefined) return undefined;
   const item = worldState.items.find((candidate) =>
     worldState.inventory.includes(candidate.id) && candidate.id === storyState.delivery?.itemId);
   return item?.id ?? undefined;
+}
+
+export function hasPendingDeliveryEvidenceClosure(worldState: WorldState, storyState: StoryState): boolean {
+  if (!isP3EvidenceClosureContract(worldState)) return false;
+  const delivery = storyState.delivery;
+  if (delivery === undefined || isStoryDeliveryComplete(worldState, storyState)) return false;
+  const evidenceFactIds = new Set(worldState.eventLedger.flatMap((event) => event.outcome === "success"
+    && event.payload.type === "fact_discovered" && event.payload.evidenceQuality !== undefined
+    ? [String(event.payload.factId)] : []));
+  if (evidenceFactIds.size === 0) return false;
+  const giverId = String(delivery.giverNpcId);
+  const hasOperation = (operation: "share_known_fact" | "request_verification") => worldState.eventLedger.some((event) => event.outcome === "success"
+    && event.payload.type === "story_interaction_resolved" && event.payload.npcId === giverId
+    && event.payload.operation === operation && event.payload.factIds.some((factId) => evidenceFactIds.has(String(factId))));
+  return !hasOperation("share_known_fact") || !hasOperation("request_verification");
 }
 
 function choicesForNpc(npc: PreparedArrivalNpcContext | undefined, stepKey: string): readonly PreparedChoiceCandidate[] {
@@ -218,7 +246,12 @@ function currentSceneChoicesFor(
   if (narrative.status === "provider_pending" || narrative.status === "provider_failed") {
     const job = narrative.job;
     const focus = job.focusNpcId === undefined ? undefined : findNpc(worldState, job.focusNpcId);
-    if (focus !== undefined && focus.locationId === worldState.currentLocationId) {
+    // During the P3 evidence contract, focus NPC choices are only a valid
+    // continuation while the giver still needs the share/verify closure.
+    // Once closure is complete, route back through the objective projection;
+    // otherwise a stale provider focus can mask the real next target.
+    if (focus !== undefined && focus.locationId === worldState.currentLocationId
+      && (!isP3EvidenceClosureContract(worldState) || hasPendingDeliveryEvidenceClosure(worldState, storyState))) {
       return choicesForNpc(preparedNpcContext(worldState, focus), "current_scene");
     }
     const proof = job.resultBoundaryProof;
@@ -339,18 +372,35 @@ export function buildNarrativeBundleDescriptors(
   const objective = quest.objectives[transition.after.objectiveIndex];
   const objectiveNpc = objective?.kind === "talk_to_npc" ? findNpc(worldState, objective.npcId) : undefined;
   const currentLocation = worldState.locations.find((location) => location.id === worldState.currentLocationId);
-  if (input.includeObjectiveReturn === true && quest.status === "active" && objectiveNpc !== undefined
-    && getEntity(worldState.entityStore, objectiveNpc.id)?.core.lifecycle === "active"
-    && objectiveNpc.locationId !== worldState.currentLocationId
-    && worldState.visitedLocationIds.includes(objectiveNpc.locationId)
-    && currentLocation?.connectedLocationIds.includes(objectiveNpc.locationId)) {
-    const arrivalNpc = preparedNpcContext(worldState, objectiveNpc);
-    const trigger: NarrativeBundleTrigger = { kind: "move", locationId: objectiveNpc.locationId };
+  const closureGiver = storyState.delivery === undefined
+    ? undefined
+    : findNpc(worldState, storyState.delivery.giverNpcId);
+  if (hasPendingDeliveryEvidenceClosure(worldState, storyState)
+    && closureGiver !== undefined
+    && closureGiver.locationId === worldState.currentLocationId
+    && getEntity(worldState.entityStore, closureGiver.id)?.core.lifecycle === "active") {
+    const arrivalNpc = preparedNpcContext(worldState, closureGiver);
+    return {
+      steps: [],
+      activeStepKeys: [],
+      currentChoiceCandidates: choicesForNpc(arrivalNpc, "current_scene"),
+      terminal: { kind: "next_decision", target: { kind: "current_scene" } },
+    };
+  }
+  const returnNpc = hasPendingDeliveryEvidenceClosure(worldState, storyState) ? closureGiver : objectiveNpc;
+  const shouldPrepareObjectiveReturn = input.includeObjectiveReturn === true || hasPendingDeliveryEvidenceClosure(worldState, storyState);
+  if (shouldPrepareObjectiveReturn && quest.status === "active" && returnNpc !== undefined
+    && getEntity(worldState.entityStore, returnNpc.id)?.core.lifecycle === "active"
+    && returnNpc.locationId !== worldState.currentLocationId
+    && worldState.visitedLocationIds.includes(returnNpc.locationId)
+    && currentLocation?.connectedLocationIds.includes(returnNpc.locationId)) {
+    const arrivalNpc = preparedNpcContext(worldState, returnNpc);
+    const trigger: NarrativeBundleTrigger = { kind: "move", locationId: returnNpc.locationId };
     const stepKey = narrativeBundleTriggerKey(trigger);
     return { steps: [{ stepKey, objectiveKey: objectiveKey(quest.id, transition.after.objectiveIndex),
       consumptionGroupKey: groupKeyFor(quest.id, transition.after.objectiveIndex, "move", "objective_return"),
       trigger, absorbedObjectiveIndexes: [], authority: { questId: quest.id, objectiveIndex: transition.after.objectiveIndex,
-        allowedEntityIds: [String(objectiveNpc.locationId), String(objectiveNpc.id)], visibleFactIds: authorizedFactIdsForArrivalNpc(arrivalNpc) },
+        allowedEntityIds: [String(returnNpc.locationId), String(returnNpc.id)], visibleFactIds: authorizedFactIdsForArrivalNpc(arrivalNpc) },
       arrivalNpc, choiceCandidates: choicesForNpc(arrivalNpc, stepKey), nextStepKeys: [] }],
       activeStepKeys: [stepKey], currentChoiceCandidates: [], terminal: { kind: "next_decision", target: { kind: "continuation_step", stepKey } } };
   }

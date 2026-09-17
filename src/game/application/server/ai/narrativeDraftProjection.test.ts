@@ -40,6 +40,16 @@ describe("narrative draft projection and compilation", () => {
     expect(result).toMatchObject({ ok: true, value: { consequenceBindings } });
     if (result.ok) expect(parseNarrativeBundleProposal(result.value).ok).toBe(true);
   });
+
+  it("drops an invalid legacy objective completion mode before strict bundle parsing", () => {
+    const current = {
+      ...scene("交付已结算。", 2),
+      objectiveLink: { questId: "quest_1", objectiveIndex: 0, mode: "complete" },
+    };
+    const result = compileNarrativeDraft({ worldDelta: null, sceneDrafts: [{ slotKey: "current", scene: current }] }, context());
+    expect(result).toMatchObject({ ok: true, value: { currentScene: { objectiveLink: null } } });
+    if (result.ok) expect(parseNarrativeBundleProposal(result.value).ok).toBe(true);
+  });
   it.each(["@current.location", "小镇", "loc_explicit"])("resolves only the explicit current-location symbol: %s", connectFromLocationId => {
     const input = context();
     const worldDelta = { newLocation: { name: "原名", description: "原文。", connectFromLocationId } };

@@ -146,9 +146,9 @@ const BASE_PROJECTION: EntityCompatibilityProjection = {
   factions: [],
 };
 
-function buildWorld(overrides: WorldStateFixtureOverrides = {}): WorldState {
+function buildWorld(overrides: WorldStateFixtureOverrides = {}, generation: GenerationMetadata = GENERATION): WorldState {
   return createWorldStateFixtureWith(
-    { generation: GENERATION, base: BASE_PROJECTION },
+    { generation, base: BASE_PROJECTION },
     { eventLedger: [{ type: "game_initialized", generation: GENERATION  as unknown as CommittedNarrativeEvent} as unknown as CommittedNarrativeEvent], ...overrides },
   );
 }
@@ -255,6 +255,31 @@ function baseInput(overrides: Partial<ApproveNarrativeBundleInput> = {}): Approv
     ...overrides,
   };
 }
+
+it("rejects a P3 story that advances past the opening without an investigation fact", () => {
+  const p3World = buildWorld({}, {
+    ...GENERATION,
+    setup: {
+      characterName: "侠客",
+      characterIdentity: "旅人",
+      personalityTags: [],
+      worldPremise: "渡口保存一份旧契，查验方式会改变合作。",
+      storyOpening: "请先选择主动调查方法，并用 bind_investigation 实际创建可调查事实。",
+      narrativeStyle: "concise",
+      contentIntensity: "normal",
+    },
+  });
+  const advancedStory = { ...storyState(), currentAct: 2 };
+  expect(approveNarrativeBundle(baseInput({
+    worldState: p3World,
+    storyState: advancedStory,
+    proposal: currentSceneProposal(),
+  }))).toEqual({
+    ok: false,
+    code: "world_delta_rejected",
+    detail: "p3_investigation_required:bind_investigation_on_scene_fact",
+  });
+});
 
 /**
  * 幕边界前的世界：主线已收束、地点尚未扩张。
@@ -574,6 +599,18 @@ describe("approveNarrativeBundle", () => {
     expect(rules.find(entry => entry.key === `permission:scene:1:line:0:${npcDyn1}`)).toMatchObject({
       value: { speakerNpcId: npcDyn1, allowedByAudience: [{ targetId: PLAYER_ENTITY_ID }] },
     });
+
+    const legacyAliasProposal: NarrativeBundleProposal = {
+      ...fixture.proposal,
+      continuationScenes: [{ ...fixture.proposal.continuationScenes[0]!, scene: {
+        ...fixture.proposal.continuationScenes[0]!.scene,
+        npcLine: { ...fixture.proposal.continuationScenes[0]!.scene.npcLine!, npcId: "@new.npc" },
+      } }],
+    };
+    const legacyAliasApproval = approveNarrativeBundle({ ...approvalInput, proposal: legacyAliasProposal });
+    expect(legacyAliasApproval.ok).toBe(true);
+    if (!legacyAliasApproval.ok) return;
+    expect(legacyAliasApproval.approved.bundle.steps[0]?.scene.npcLine).toMatchObject({ npcId: npcDyn1 });
   });
 
   it("does not let a same-place NPC infer a private disclosure it did not hear", () => {

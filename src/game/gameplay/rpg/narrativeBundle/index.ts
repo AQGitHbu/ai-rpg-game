@@ -1,5 +1,7 @@
 export {
   buildNarrativeBundleDescriptors,
+  hasPendingDeliveryEvidenceClosure,
+  isP3EvidenceClosureContract,
   narrativeBundleTriggerKey,
   type BundleDescriptorGraph,
   type BundleStepDescriptor,

@@ -75,7 +75,7 @@ test("P3 strategy input is offered once and cannot pass route acceptance without
   const view = productionView([]);
   view.narrative.npcDialogues = [{ npcId: "keeper", freeInputEnabled: true }];
   const request = { route: { routeId: "private" }, view, performed: new Set() };
-  assert.deepEqual(policy.selectInteraction(request), { kind: "free_text", targetNpcId: "keeper", text: "先查看原始记录，再决定怎么交付。" });
+  assert.deepEqual(policy.selectInteraction(request), { kind: "free_text", targetNpcId: "keeper", text: "我先按现场提供的方法查验，再决定怎么交付。" });
   request.performed.add("strategy_freeform_submitted");
   assert.equal(policy.selectInteraction(request), undefined);
   const event = (payload, sequence) => ({ eventId: `event:${sequence}`, outcome: "success", payload, sequence });
@@ -156,16 +156,130 @@ test("P3 production policy selects the approved investigation approach and follo
   assert.equal(createNarrativeP3RoutePolicy().noChoiceFailureCode, "P3_CAPABILITY_COVERAGE_FAILED");
 });
 
-test("private investigation cannot run before the actual strategy input and reload follows investigation", () => {
+test("private investigation waits for strategy only when a free-input affordance exists", () => {
   const input = policyInput("private", productionView([{ choiceToken: "quiet", label: "查验" }]), [
     { choiceToken: "quiet", action: { type: "investigate", approachId: "quiet" } },
   ]);
   input.performed.clear();
+  assert.equal(selectNarrativeP3ProductionChoice(input).choiceToken, "quiet");
+  input.view.narrative.npcDialogues = [{ npcId: "keeper", freeInputEnabled: true }];
   assert.equal(selectNarrativeP3ProductionChoice(input), undefined);
   const policy = createNarrativeP3RoutePolicy();
   assert.equal(policy.shouldReload({ action: { type: "talk" }, actionCount: 4, steps: [] }), false);
   assert.equal(policy.shouldReload({ action: { type: "investigate" }, actionCount: 7, steps: [] }), true);
   assert.equal(policy.shouldReload({ action: { type: "investigate" }, actionCount: 9, steps: [{ kind: "reload" }] }), false);
+});
+
+test("P3 fallback skips a repeated dialogue action when another offered action remains", () => {
+  const input = policyInput("private", productionView([
+    { choiceToken: "support", label: "先按老规矩办" },
+    { choiceToken: "challenge", label: "再问清凭据" },
+  ]), [
+    { choiceToken: "travel", action: { type: "move", locationId: "town" } },
+    { choiceToken: "support", action: { type: "talk", npcId: "keeper", dialogueAct: "support" } },
+    { choiceToken: "challenge", action: { type: "talk", npcId: "keeper", dialogueAct: "challenge" } },
+  ]);
+  input.view.worldMap.locations = [{ travelChoice: { choiceToken: "travel", label: "返回镇上" } }];
+  input.performedActions.add(JSON.stringify(input.actionMap.get("support")));
+  assert.equal(selectNarrativeP3ProductionChoice(input).choiceToken, "challenge");
+});
+
+test("P3 fallback prefers a location dialogue entry over global travel", () => {
+  const view = productionView([]);
+  view.worldMap.locations = [{ travelChoice: { choiceToken: "travel", label: "返回镇上" } }];
+  view.currentLocation.npcs = [{ talkChoice: { choiceToken: "talk", label: "与证人交谈" } }];
+  const input = policyInput("private", view, [
+    { choiceToken: "travel", action: { type: "move", locationId: "town" } },
+    { choiceToken: "talk", action: { type: "talk", npcId: "witness", dialogueAct: "ask" } },
+  ]);
+  assert.equal(selectNarrativeP3ProductionChoice(input).choiceToken, "talk");
+});
+
+test("P3 fallback can consume a fresh-token dialogue when semantics repeat", () => {
+  const input = policyInput("private", productionView([
+    { choiceToken: "support", label: "再次确认" },
+    { choiceToken: "challenge", label: "继续追问" },
+  ]), [
+    { choiceToken: "support", action: { type: "talk", npcId: "keeper", dialogueAct: "support" } },
+    { choiceToken: "challenge", action: { type: "talk", npcId: "keeper", dialogueAct: "challenge" } },
+  ]);
+  input.performedActions.add(JSON.stringify(input.actionMap.get("support")));
+  input.performedActions.add(JSON.stringify(input.actionMap.get("challenge")));
+  assert.equal(selectNarrativeP3ProductionChoice(input).choiceToken, "support");
+});
+
+test("P3 returns to the story town before repeating witness dialogue after investigation", () => {
+  const view = productionView([
+    { choiceToken: "talk", label: "继续追问" },
+    { choiceToken: "town", label: "返回青渡口" },
+  ]);
+  view.worldMap.locations = [{ travelChoice: { choiceToken: "town", label: "返回青渡口" } }];
+  const input = policyInput("public", view, [
+    { choiceToken: "talk", action: { type: "talk", npcId: "witness", dialogueAct: "challenge" } },
+    { choiceToken: "town", action: { type: "move", locationId: "town" } },
+  ], [{ outcome: "success", payload: { type: "fact_discovered", evidenceQuality: "noisy" } }]);
+  input.state.record.worldState.entityStore = { records: [{
+    core: { kind: "location", id: "town" },
+    location: { scale: "town" },
+  }] };
+  assert.equal(selectNarrativeP3ProductionChoice(input).choiceToken, "town");
+});
+
+test("P3 returns through the first offered hop when the story town is multiple moves away", () => {
+  const view = productionView([
+    { choiceToken: "talk", label: "继续追问" },
+    { choiceToken: "middle", label: "沿旧路回镇" },
+  ]);
+  const input = policyInput("public", view, [
+    { choiceToken: "talk", action: { type: "talk", npcId: "witness", dialogueAct: "challenge" } },
+    { choiceToken: "middle", action: { type: "move", locationId: "middle" } },
+  ], [{ outcome: "success", payload: { type: "fact_discovered", evidenceQuality: "noisy" } }]);
+  input.state.record.worldState.currentLocationId = "deep";
+  input.state.record.worldState.entityStore = { records: [
+    { core: { kind: "location", id: "town" }, location: { scale: "town", connectedLocationIds: ["middle"] } },
+    { core: { kind: "location", id: "middle" }, location: { scale: "scene", connectedLocationIds: ["town", "deep"] } },
+    { core: { kind: "location", id: "deep" }, location: { scale: "scene", connectedLocationIds: ["middle"] } },
+  ] };
+  input.proveRevisit = (_context, action) => ({ kind: "changed_revisit", locationId: action.locationId, sourceEventIds: ["discovery"] });
+  assert.equal(selectNarrativeP3ProductionChoice(input).choiceToken, "middle");
+});
+
+test("P3 does not deliver the item before evidence verification", () => {
+  const view = productionView([
+    { choiceToken: "give", label: "交付旧契" },
+    { choiceToken: "town", label: "返回青渡口" },
+  ]);
+  view.worldMap.locations = [{ travelChoice: { choiceToken: "town", label: "返回青渡口" } }];
+  const input = policyInput("public", view, [
+    { choiceToken: "give", action: { type: "give_item", itemId: "item", npcId: "receiver" } },
+    { choiceToken: "town", action: { type: "move", locationId: "town" } },
+  ], [
+    { outcome: "success", payload: { type: "fact_discovered", evidenceQuality: "noisy" } },
+  ]);
+  input.state.record.worldState.entityStore = { records: [{
+    core: { kind: "location", id: "town" },
+    location: { scale: "town" },
+  }] };
+  input.state.record.storyState.delivery = { itemId: "item", recipientNpcId: "receiver" };
+  assert.equal(selectNarrativeP3ProductionChoice(input).choiceToken, "town");
+  input.state.record.worldState.eventLedger.push({ outcome: "success", payload: {
+    type: "story_interaction_resolved", operation: "request_verification", factIds: ["evidence"],
+  } });
+  input.offeredChoices = [{ choiceToken: "give", label: "交付旧契" }];
+  assert.equal(selectNarrativeP3ProductionChoice(input).choiceToken, "give");
+});
+
+test("P3 does not submit an unprepared travel after evidence", () => {
+  const view = productionView([
+    { choiceToken: "talk", label: "继续询问" },
+    { choiceToken: "town", label: "返回青渡口" },
+  ]);
+  const input = policyInput("public", view, [
+    { choiceToken: "talk", action: { type: "talk", npcId: "witness", dialogueAct: "ask" } },
+    { choiceToken: "town", action: { type: "move", locationId: "town" } },
+  ], [{ outcome: "success", payload: { type: "fact_discovered", evidenceQuality: "clean" } }]);
+  input.proveRevisit = () => null;
+  assert.equal(selectNarrativeP3ProductionChoice(input).choiceToken, "talk");
 });
 
 for (const operation of ["share_known_fact", "request_verification"]) test(`resolved ${operation} with the old NPC does not skip a different NPC`, () => {

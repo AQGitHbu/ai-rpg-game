@@ -1,11 +1,12 @@
 import type { SceneStructuralIssue } from "@/game/domain/sceneExpression";
-import { projectEntityStore } from "@/game/domain/entity";
+import { getEntity, projectEntityStore, type NpcEntityRecord } from "@/game/domain/entity";
 import type { NarrativeBundleTerminal, NarrativeBundleTrigger } from "@/game/domain/narrativeBundle";
 import { asLocationId, asNpcId } from "@/game/domain/worldEntity";
+import { findNpc } from "@/game/domain/worldState";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { StoryState } from "@/game/domain/storyState";
 import type { WorldState } from "@/game/domain/worldState";
-import { buildNarrativeBundleDescriptors } from "@/game/gameplay/rpg/narrativeBundle";
+import { buildNarrativeBundleDescriptors, hasPendingDeliveryEvidenceClosure, isP3EvidenceClosureContract, narrativeBundleTriggerKey } from "@/game/gameplay/rpg/narrativeBundle";
 import { projectEndingResolutions } from "./endingResolutionProjection";
 import { previewNarrativeDisclosure } from "../../approveNarrativeBundle";
 import { parseNarrativeBundleProposal } from "@/game/domain/narrativeBundle";
@@ -39,10 +40,15 @@ export function narrativeSlotResolution(trigger: NarrativeBundleTrigger) {
 /** This projection owns routing only. Every word and action label remains authored. */
 export function projectNarrativeDraft(input: NarrativeDraftContext) {
   const worldState = { ...input.worldState, ...projectEntityStore(input.worldState.entityStore) };
+  const p3EvidenceClosureSettled = isP3EvidenceClosureContract(worldState)
+    && input.storyState.delivery !== undefined
+    && worldState.eventLedger.some((event) => event.outcome === "success"
+      && event.payload.type === "fact_discovered" && event.payload.evidenceQuality !== undefined)
+    && !hasPendingDeliveryEvidenceClosure(worldState, input.storyState);
   const descriptorGraph = buildNarrativeBundleDescriptors({
     worldState, storyState: input.storyState, transition: input.job.objectiveTransition,
     includeDeliveryReturn: input.includeDeliveryReturn,
-    includeObjectiveReturn: input.includeObjectiveReturn,
+    includeObjectiveReturn: input.includeObjectiveReturn ?? p3EvidenceClosureSettled,
   });
   const ending = (input.storyState.evolution.status === "needs_ending_pair" && worldState.endings.length < 2)
     || (input.storyState.endingAllowed && worldState.endings.length >= 2)
@@ -50,6 +56,18 @@ export function projectNarrativeDraft(input: NarrativeDraftContext) {
   const nextActProjection = !ending && input.storyState.evolution.status === "needs_next_act"
     ? { locationId: `loc_dyn_${input.storyState.evolution.nextLocationOrdinal}`, npcId: `npc_dyn_${input.storyState.evolution.nextNpcOrdinal}` }
     : null;
+  const closureGiver = input.storyState.delivery === undefined
+    ? undefined
+    : findNpc(worldState, input.storyState.delivery.giverNpcId);
+  const evidenceClosurePending = nextActProjection !== null
+    && hasPendingDeliveryEvidenceClosure(worldState, input.storyState)
+    && closureGiver !== undefined;
+  const nextActReturnToGiver = nextActProjection !== null
+    && evidenceClosurePending
+    && closureGiver !== undefined
+    && closureGiver.locationId !== worldState.currentLocationId;
+  const nextActAtGiver = evidenceClosurePending
+    && closureGiver!.locationId === worldState.currentLocationId;
   // The next-act NPC is bound by materialization to the final recipient. Keep
   // the author/compiler slots identical to that approval preview's move/give
   // graph, before the new entity exists in the current store.
@@ -60,19 +78,30 @@ export function projectNarrativeDraft(input: NarrativeDraftContext) {
     && worldState.inventory.includes(input.storyState.delivery.itemId)
     ? { kind: "give_item" as const, itemId: input.storyState.delivery.itemId, npcId: asNpcId(nextActProjection.npcId) }
     : null;
-  const nextActTriggers: readonly NarrativeBundleTrigger[] = nextActProjection === null ? [] : [
-    { kind: "move", locationId: asLocationId(nextActProjection.locationId) },
-    ...(nextActDelivery === null ? [] : [nextActDelivery]),
-  ];
+  const nextActTriggers: readonly NarrativeBundleTrigger[] = nextActProjection === null || nextActAtGiver ? [] : nextActReturnToGiver
+    ? [{ kind: "move", locationId: closureGiver!.locationId }]
+    : [
+      { kind: "move", locationId: asLocationId(nextActProjection.locationId) },
+      ...(nextActDelivery === null ? [] : [nextActDelivery]),
+    ];
+  const nextActStepNpcIds = nextActTriggers.map((trigger) =>
+    nextActReturnToGiver && trigger.kind === "move" ? String(closureGiver!.id) : nextActProjection?.npcId ?? "",
+  );
   const stepKeys = ending ? [] : nextActProjection === null
     ? descriptorGraph.steps.map(step => step.stepKey) : [
-      `move:${nextActProjection.locationId}`,
-      ...(nextActDelivery === null ? [] : [`give_item:${nextActDelivery.itemId}:${nextActDelivery.npcId}`]),
+      ...nextActTriggers.map((trigger) => narrativeBundleTriggerKey(trigger)),
     ];
-  const terminal: NarrativeBundleTerminal = ending ? { kind: "ending" } : nextActProjection === null
-    ? descriptorGraph.terminal
-    : { kind: "next_decision", target: { kind: "continuation_step", stepKey: stepKeys.at(-1)! } };
+  // A next-act delta can be generated while the evidence contract still
+  // requires a return to the original giver. The current scene must remain a
+  // real decision boundary so share/verify can complete before later travel.
+  const nextActGiverDecision = nextActProjection !== null && nextActAtGiver;
+  const terminal: NarrativeBundleTerminal = ending ? { kind: "ending" } : nextActGiverDecision
+    ? { kind: "next_decision", target: { kind: "current_scene" } }
+    : nextActProjection === null || stepKeys.length === 0
+      ? descriptorGraph.terminal
+      : { kind: "next_decision", target: { kind: "continuation_step", stepKey: stepKeys.at(-1)! } };
   return { descriptorGraph, nextActProjection, stepKeys, terminal,
+    nextActStepNpcIds,
     endingResolutions: ending && input.job.actionSummary.kind !== "abandon_quest"
       ? projectEndingResolutions(worldState, input.storyState) : [],
     slots: ["current", ...stepKeys].map((slotKey, index) => ({
@@ -88,6 +117,49 @@ export function projectNarrativeDraft(input: NarrativeDraftContext) {
 
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function normalizeLegacyObjectiveLink(value: unknown, worldState: WorldState): unknown {
+  const link = record(value);
+  if (link === null
+    || !worldState.quests.some((quest) => String(quest.id) === link.questId)
+    || typeof link.objectiveIndex !== "number"
+    || (link.mode !== "hint" && link.mode !== "progress")) return null;
+  return link;
+}
+
+function p3EvidenceGoalBinding(context: NarrativeDraftContext, raw: Record<string, unknown>): Record<string, unknown> | null {
+  const worldState = { ...context.worldState, ...projectEntityStore(context.worldState.entityStore) };
+  if (!isP3EvidenceClosureContract(worldState) || !hasPendingDeliveryEvidenceClosure(worldState, context.storyState)) return null;
+  const delivery = context.storyState.delivery;
+  if (delivery === undefined) return null;
+  const evidenceFactId = worldState.eventLedger.find((event) => event.outcome === "success"
+    && event.payload.type === "fact_discovered" && event.payload.evidenceQuality !== undefined)?.payload;
+  if (evidenceFactId?.type !== "fact_discovered") return null;
+  const giver = getEntity(worldState.entityStore, delivery.giverNpcId);
+  if (giver?.core.kind !== "npc") return null;
+  const goals = (giver as NpcEntityRecord).dynamicState.goals;
+  const goalOrdinal = goals.findIndex((goal) => goal.status === "active" && goal.resolution === undefined);
+  if (goalOrdinal < 0) return null;
+  const existingBindings = [
+    ...(Array.isArray(record(raw.worldDelta)?.consequenceBindings) ? record(raw.worldDelta)!.consequenceBindings as unknown[] : []),
+    ...(Array.isArray(raw.consequenceBindings) ? raw.consequenceBindings : []),
+  ];
+  if (existingBindings.some((entry) => {
+    const binding = record(entry);
+    return binding?.kind === "bind_goal_resolution"
+      && String(binding.npcRef) === String(delivery.giverNpcId)
+      && binding.goalOrdinal === goalOrdinal;
+  })) return null;
+  return {
+    kind: "bind_goal_resolution",
+    npcRef: String(delivery.giverNpcId),
+    goalOrdinal,
+    resolution: {
+      completeWhen: [{ kind: "knows_fact", actorId: String(delivery.giverNpcId), factId: String(evidenceFactId.factId) }],
+      blockWhen: [],
+    },
+  };
 }
 
 export function compileNarrativeDraft(value: unknown, context: NarrativeDraftContext):
@@ -131,15 +203,46 @@ export function compileNarrativeDraft(value: unknown, context: NarrativeDraftCon
     context = { ...context, worldState: preview.worldState, storyState: preview.storyState,
       job: { ...context.job, objectiveTransition: preview.transition } };
   }
-  const projection = projectNarrativeDraft({ ...context, includeDeliveryReturn: raw.graph === "return_delivery", includeObjectiveReturn: raw.graph === "objective_return" });
+  const projection = projectNarrativeDraft({ ...context,
+    includeDeliveryReturn: raw.graph === "return_delivery" ? true : raw.graph === undefined ? undefined : false,
+    includeObjectiveReturn: raw.graph === "objective_return" ? true : raw.graph === undefined ? undefined : false,
+  });
   if ((raw.graph === "return_delivery" || raw.graph === "objective_return")
     && JSON.stringify(projection.stepKeys) === JSON.stringify(projectNarrativeDraft({ ...context, includeDeliveryReturn: false, includeObjectiveReturn: false }).stepKeys)) {
     return fail("unavailable_graph", "$.graph");
   }
   if (!Array.isArray(raw.sceneDrafts)) return fail("invalid_slots", "$.sceneDrafts");
+  // Providers sometimes keep the pre-return scene in `current` and put the
+  // actual giver conversation in a synthetic `move:<current location>` slot.
+  // During the P3 evidence closure this move is already physically complete:
+  // the player is at the giver's location and the descriptor graph exposes a
+  // current-scene decision. Promote that authored scene into current so the
+  // rules can continue to the share/verify interaction instead of rejecting
+  // an otherwise usable candidate as an unavailable extra move.
+  let draftEntries = raw.sceneDrafts;
+  const currentSlot = raw.sceneDrafts.find(value => record(value)?.slotKey === "current");
+  const currentSlotScene = record(currentSlot)?.scene;
+  const currentChoices = record(currentSlotScene)?.choices;
+  const p3CurrentDecision = hasPendingDeliveryEvidenceClosure(context.worldState, context.storyState)
+    && projection.terminal.kind === "next_decision"
+    && projection.terminal.target.kind === "current_scene"
+    && projection.slots.length === 1
+    && Array.isArray(currentChoices)
+    && currentChoices.length === 0;
+  if (p3CurrentDecision) {
+    const returnSlotKey = `move:${String(context.worldState.currentLocationId)}`;
+    const returnSlot = raw.sceneDrafts.find(value => record(value)?.slotKey === returnSlotKey);
+    const returnScene = record(returnSlot)?.scene;
+    const returnChoices = record(returnScene)?.choices;
+    if (returnSlot !== undefined && Array.isArray(returnChoices) && returnChoices.length === 2) {
+      draftEntries = [
+        { slotKey: "current", scene: returnScene },
+      ];
+    }
+  }
   const byKey = new Map<string, unknown>();
-  for (let index = 0; index < raw.sceneDrafts.length; index += 1) {
-    const entry = record(raw.sceneDrafts[index]);
+  for (let index = 0; index < draftEntries.length; index += 1) {
+    const entry = record(draftEntries[index]);
     if (entry === null || typeof entry.slotKey !== "string" || record(entry.scene) === null) return fail("invalid_slot", `$.sceneDrafts[${index}]`);
     const extra = Object.keys(entry).find(key => key !== "slotKey" && key !== "scene");
     if (extra !== undefined) return fail("unknown_field", `$.sceneDrafts[${index}].${extra}`);
@@ -149,7 +252,10 @@ export function compileNarrativeDraft(value: unknown, context: NarrativeDraftCon
     const scene = record(entry.scene)!;
     if (!Array.isArray(scene.choices) || scene.choices.length !== slot.choiceCount) return fail("invalid_choice_count", `$.sceneDrafts[${index}].scene.choices`);
     const npcLine = record(scene.npcLine);
-    byKey.set(entry.slotKey, npcLine === null ? entry.scene : { ...scene, npcLine: {
+    const normalizedScene = scene.expressions === undefined
+      ? { ...scene, objectiveLink: normalizeLegacyObjectiveLink(scene.objectiveLink, context.worldState) }
+      : scene;
+    byKey.set(entry.slotKey, npcLine === null ? normalizedScene : { ...normalizedScene, npcLine: {
       emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedEventIds: [], ...npcLine,
     } });
   }
@@ -190,9 +296,13 @@ export function compileNarrativeDraft(value: unknown, context: NarrativeDraftCon
   const worldDelta = location?.connectFromLocationId === "@current.location"
     ? { ...delta, newLocation: { ...location, connectFromLocationId: String(context.worldState.currentLocationId) } }
     : raw.worldDelta;
+  const automaticP3GoalBinding = p3EvidenceGoalBinding(context, raw);
+  const consequenceBindings = automaticP3GoalBinding === null
+    ? raw.consequenceBindings
+    : [...(Array.isArray(raw.consequenceBindings) ? raw.consequenceBindings : []), automaticP3GoalBinding];
   return { ok: true, value: {
     worldDelta,
-    ...(raw.consequenceBindings === undefined ? {} : { consequenceBindings: raw.consequenceBindings }),
+    ...(consequenceBindings === undefined ? {} : { consequenceBindings }),
     ...(raw.interactionProposals === undefined ? {} : { interactionProposals: raw.interactionProposals }),
     currentScene: byKey.get("current"),
     continuationScenes: projection.stepKeys.map(stepKey => ({ stepKey, scene: byKey.get(stepKey) })),

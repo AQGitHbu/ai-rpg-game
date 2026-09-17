@@ -353,6 +353,27 @@ describe("live narrative candidate reviewer", () => {
     expect(body.context.prompt).toContain("仅写 talk 文案不产生这些规则后果");
     expect(body.context.prompt).toContain("许诺本身不会引荐");
   });
+
+  it("turns semantic candidate defects into actionable author repair constraints", () => {
+    const prompt = compileDecisionNarrativeContext({
+      worldState: makeWorldState(),
+      storyState: makeStoryState(),
+      job: makeJob(),
+      contentRepair: {
+        attempt: 3,
+        reason: "approval_rejected",
+        detail: "BROKEN_CAUSALITY:currentScene.segments[2].text:future | UNSUPPORTED_FACT:worldDelta.beatSummary:propagation | DISCLOSURE:continuationScenes[0].scene.choices[1].label:hidden result",
+      },
+    }).prompt;
+
+    expect(prompt).toContain("上一轮有 BROKEN_CAUSALITY");
+    expect(prompt).toContain("上一轮有 UNSUPPORTED_FACT");
+    expect(prompt).toContain("上一轮有 DISCLOSURE");
+    expect(prompt).toContain("抵达、见面和该移动后的 settledOutcome 只能写在对应 continuationScenes");
+    expect(prompt).toContain("beatSummary 只能用当前 job/action 已提交事件");
+    expect(prompt).toContain("continuation 场景的 choice label 只能表达玩家下一步要执行的意图");
+  });
+
   it("projects actual compiler IDs and secret-directory visibility for an opening candidate", async () => {
     // Provider output only, copied from p1-07/S2-public version 1. The observed
     // reviewer incorrectly rejected private facts merely for being in this
@@ -487,6 +508,29 @@ describe("live narrative candidate reviewer", () => {
     const result = await reviewer.reviewNarrativeCandidate({ context: reviewContext, proposal, candidateVersion: 1, candidateHash: hashNarrativeCandidate(proposal) });
     expect(result).toMatchObject({ ok: false, defects: defects.map(defect => ({ ...defect, path: "currentScene.npcLine.text" })) });
     expect(result).not.toHaveProperty("failure");
+  });
+
+  it("canonicalizes the fixed nested opening NPC path used by the production proposal envelope", async () => {
+    const complete = vi.fn().mockResolvedValue({ ok: true, content: JSON.stringify({ verdict: "revise", defects: [{
+      scope: "proposal",
+      code: "ACTION_MISMATCH",
+      path: "proposal.opening.npc.description",
+      reason: "开局 NPC 被提前写成最终接应人。",
+      evidence: { basisKey: "opening:contract", impact: "action_binding", detail: "候选提前绑定了交付对象。" },
+    }] }) });
+    const proposal = observedOpening as never;
+    const result = await createLiveNarrativeCandidateReview({ aiClient: client(complete) }).reviewNarrativeCandidate({
+      context: reviewContext,
+      proposal,
+      candidateVersion: 1,
+      candidateHash: hashNarrativeCandidate(proposal),
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      defects: [{ path: "opening.opening.npc.description", code: "ACTION_MISMATCH" }],
+    });
+    const messages = complete.mock.calls[0]![1] as readonly AiMessage[];
+    expect(messages[0]?.content).toContain("proposal.opening.opening.npc");
   });
 
   it.each(["proposal.proposal.currentScene.segments[0].text", "context.proposal.currentScene.segments[0].text",

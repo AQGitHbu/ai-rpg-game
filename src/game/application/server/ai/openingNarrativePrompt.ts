@@ -90,9 +90,12 @@ ${noveltyLines}
 - opening.quest 精确包含 name、description、objective，objective 固定为 {"kind":"talk_to_opening_npc"}；名称和描述只概括眼前问题，不表示玩家已经接取或完成。
 - opening.situation 必须存在且精确包含 history、threads、npcConnection、responses；currentScene.choices 必须映射 situation.responses 或同包 interactionProposals。
 - opening.location.scale 固定为 town，初始化不能在 opening.consequenceBindings 使用 bind_investigation，也不能把 investigationApproaches 当作开局可执行调查；opening 中的 approaches 只能作为后续线索的展示字段。若故事开端要求玩家在第一幕先选择可主动调查的方法，必须由后续独立 scene 的 worldDelta.newFact 与 worldDelta.consequenceBindings 实际创建并激活：使用 factRef="@new.fact"、discoveryMode="investigation" 和恰好 2–3 个 approaches；其中至少一条 witnessNpcIds=[]，至少一条 witnessNpcIds=["@new.npc"]。仅写 opening 的 investigationApproaches 或使用 automatic 事实不满足。
+- 开场的 publicFacts、prologue 或 currentScene 必须让玩家首屏知道具体利害：谁会因交付错误或拖延受影响、委托人为什么在意、完成或耽搁会产生什么可执行后果；只有“受托”“遵守规矩”“有人各执一词”而没有受影响的人与后果，属于不完整开场，不能提交。
 
 # 可选规则绑定
 ${storyConsequenceBindingPrompt("opening")}
+
+开场 consequenceBindings 是可选的规则安装，不是凑字段的剧情装饰。只有在每个 factId 都同时存在于 publicFacts 且属于 opening.npc.knownFactKeys、每个 goalOrdinal 都对应真实 goals、每个 allowedAudienceIds/condition 都满足契约时才提交；任一引用或 NPC 知识不确定就省略整个 opening.consequenceBindings。若故事开端要求后续独立 scene 才创建调查事实，opening.consequenceBindings 应保持为空，调查与后续目标绑定放在该 scene 的 worldDelta 中。
 
 # situation 引用与数量
 - 所有局部 key 长度 1–40，匹配 [a-z][a-z0-9_]*；history、threads、responses 各自 key 唯一。

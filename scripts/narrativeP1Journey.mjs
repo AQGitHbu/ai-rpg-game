@@ -404,6 +404,8 @@ export async function createProductionRouteRunner(runtimeEnv, adapters, replaySo
           return routeResult({ completed: false, actionCount, failureCode: "ROUTE_ACTION_NOT_SETTLED" });
         }
         actionCount += 1;
+        const derivedResultBoundaryProof = policy.resultBoundaryProof?.({ before: state, after: settled, action: selectedAction, actionId: command.actionId });
+        if (derivedResultBoundaryProof !== undefined) steps[steps.length - 1].resultBoundaryProof = derivedResultBoundaryProof;
         if (settled.record.storyState.narrative?.status === "provider_pending"
           && settled.record.storyState.narrative.job.resultBoundaryProof !== undefined) {
           steps[steps.length - 1].resultBoundaryProof = settled.record.storyState.narrative.job.resultBoundaryProof;

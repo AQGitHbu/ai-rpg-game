@@ -325,6 +325,15 @@ function compileInteractionProposals(input: {
     if (proposal.operation === "request_verification" && evidenceEventIds.length === 0) {
       return { ok: false, detail: "verification_requires_evidence" };
     }
+    if (proposal.operation === "share_known_fact" && p3EvidenceBoundShareRequired(worldState)) {
+      const hasFactDiscoveryEvidence = evidenceEventIds.some((eventId) => worldState.eventLedger.some((event) =>
+        String(event.eventId) === String(eventId)
+        && event.outcome === "success"
+        && event.payload.type === "fact_discovered"
+        && "factId" in event.payload
+        && factIds.some((factId) => String((event.payload as { readonly factId: unknown }).factId) === String(factId))));
+      if (!hasFactDiscoveryEvidence) return { ok: false, detail: "p3_share_requires_evidence" };
+    }
     const npcRecord = getEntity(worldState.entityStore, npcId);
     if (npcRecord?.core.kind !== "npc") return { ok: false, detail: `npc:${npcId}` };
     const npc = npcRecord as NpcEntityRecord;
@@ -361,8 +370,26 @@ function compileInteractionProposals(input: {
       audienceIds,
       evidenceEventIds: evidenceEventIds as import("@/game/domain/events").EventId[],
     };
-    interactions.push(interaction);
-    mutations.push({ kind: "install_story_interaction", npcId: interaction.npcId, interaction });
+    // A provider may repeat an unconsumed interaction on a later narrative
+    // job. Re-installing it under the new job id creates two graph choices
+    // for one operation and makes an otherwise valid candidate impossible to
+    // bind. Reuse an existing semantically identical interaction instead.
+    const existing = npc.interactions?.find((entry) => entry.operation === interaction.operation
+      && String(entry.npcId) === String(interaction.npcId)
+      && JSON.stringify(entry.condition) === JSON.stringify(interaction.condition)
+      && JSON.stringify(entry.factIds) === JSON.stringify(interaction.factIds)
+      && JSON.stringify(entry.goalIds) === JSON.stringify(interaction.goalIds)
+      && entry.promiseId === interaction.promiseId
+      && JSON.stringify(entry.audienceIds) === JSON.stringify(interaction.audienceIds)
+      && (interaction.operation === "share_known_fact"
+        || JSON.stringify(entry.evidenceEventIds) === JSON.stringify(interaction.evidenceEventIds))
+      && JSON.stringify(entry.confidentiality) === JSON.stringify(interaction.confidentiality));
+    if (existing === undefined) {
+      interactions.push(interaction);
+      mutations.push({ kind: "install_story_interaction", npcId: interaction.npcId, interaction });
+    } else {
+      interactions.push(existing);
+    }
   }
   return { ok: true, interactions, mutations };
 }
@@ -394,8 +421,57 @@ function resolveSceneExpressions(
   approvedDelta: ApprovedWorldDelta | undefined,
   focusNpcId: string | undefined,
 ): BundleSceneProposal | null {
-  if (scene.expressions === undefined) return scene;
   const bindings = sceneSymbolBindings(worldState, approvedDelta, focusNpcId);
+  const resolveRequired = (raw: string): string | null => resolveSceneReference(raw, bindings);
+  const resolveList = (values: readonly string[]): readonly string[] | null => {
+    const resolved = values.map(resolveRequired);
+    return resolved.some((value) => value === null) ? null : resolved as string[];
+  };
+  const resolveLegacyScene = (): BundleSceneProposal | null => {
+    const segments = scene.segments?.map((segment) => {
+      if (segment.referencedEntityIds === undefined) return segment;
+      const referencedEntityIds = resolveList(segment.referencedEntityIds);
+      return referencedEntityIds === null ? null : { ...segment, referencedEntityIds };
+    });
+    if (segments?.some((segment) => segment === null)) return null;
+    const npcLine = scene.npcLine === undefined || scene.npcLine === null
+      ? scene.npcLine
+      : (() => {
+          const npcId = resolveRequired(scene.npcLine!.npcId);
+          const usedFactIds = resolveList(scene.npcLine!.usedFactIds);
+          const usedEventIds = resolveList(scene.npcLine!.usedEventIds);
+          return npcId === null || usedFactIds === null || usedEventIds === null ? null : {
+            ...scene.npcLine!, npcId, usedFactIds, usedEventIds,
+          };
+        })();
+    if (scene.npcLine !== undefined && scene.npcLine !== null && npcLine === null) return null;
+    const npcDialogues = scene.npcDialogues?.map((dialogue) => {
+      const npcId = resolveRequired(dialogue.npcId);
+      const usedFactIds = resolveList(dialogue.usedFactIds);
+      const usedEventIds = resolveList(dialogue.usedEventIds);
+      return npcId === null || usedFactIds === null || usedEventIds === null ? null : {
+        ...dialogue, npcId, usedFactIds, usedEventIds,
+      };
+    });
+    if (npcDialogues?.some((dialogue) => dialogue === null)) return null;
+    const objectiveLink = scene.objectiveLink === null
+      ? null
+      : (() => {
+          const questId = resolveRequired(scene.objectiveLink!.questId);
+          return questId === null ? null : { ...scene.objectiveLink!, questId };
+        })();
+    if (scene.objectiveLink !== null && objectiveLink === null) return null;
+    return {
+      ...scene,
+      ...(segments === undefined ? {} : { segments: segments as BundleSceneProposal["segments"] }),
+      ...(scene.npcLine === undefined ? {} : { npcLine }),
+      ...(npcDialogues === undefined ? {} : { npcDialogues: npcDialogues as BundleSceneProposal["npcDialogues"] }),
+      objectiveLink,
+    };
+  };
+  const resolvedLegacyScene = resolveLegacyScene();
+  if (resolvedLegacyScene === null) return null;
+  if (scene.expressions === undefined) return resolvedLegacyScene;
   const resolved = [] as SceneExpressionProposal[];
   for (const expression of scene.expressions) {
     if (expression.kind === "narration") {
@@ -438,7 +514,36 @@ function resolveSceneExpressions(
       usedEventIds: eventIds as string[],
     });
   }
-  return { ...scene, expressions: resolved };
+  return { ...resolvedLegacyScene, expressions: resolved };
+}
+
+/**
+ * A story-opening capability request is data, not prose decoration.  Once the
+ * story has advanced past the opening act, a bundle must leave behind an
+ * explicit investigation fact before it can keep advancing the main route.
+ * This prevents a provider from accepting the P3 opening contract and then
+ * silently taking the delivery graph through ordinary talk/travel only.
+ */
+function p3InvestigationRequired(worldState: WorldState, storyState: StoryState): boolean {
+  const storyOpening = worldState.generation.setup?.storyOpening ?? "";
+  const requestsInvestigation = /主动调查|bind_investigation|discoveryMode\s*[=:：]\s*investigation/u.test(storyOpening);
+  if (!requestsInvestigation || storyState.currentAct < 2) return false;
+  return !worldState.worldFacts.some((fact) => fact.discoveryMode === "investigation");
+}
+
+function p3EvidenceBoundShareRequired(worldState: WorldState): boolean {
+  return /主动调查|bind_investigation|discoveryMode\s*[=:：]\s*investigation/u.test(
+    worldState.generation.setup?.storyOpening ?? "",
+  );
+}
+
+function hasApprovedInvestigationFact(worldState: WorldState): boolean {
+  return worldState.worldFacts.some((fact) => fact.discoveryMode === "investigation"
+    && typeof fact.investigationLabel === "string"
+    && fact.investigationLabel.trim() !== ""
+    && Array.isArray(fact.investigationApproaches)
+    && fact.investigationApproaches.length >= 2
+    && fact.investigationApproaches.length <= 3);
 }
 
 function approvedExpressions(
@@ -597,15 +702,14 @@ function buildStepState(
     return "bundle_unknown_step";
   }
   const sceneLocationId = bundleSceneLocationId(descriptor.trigger, worldState);
-  if (validateBundleSceneNpcSpeech(
+  const speechRejection = validateBundleSceneNpcSpeech(
     proposal.scene,
     worldState,
     descriptor.arrivalNpc?.id,
     presentNpcIdsAtLocation(worldState, sceneLocationId),
     currentEventIds,
-  ) !== null) {
-    return "bundle_invalid_scene";
-  }
+  );
+  if (speechRejection !== null) return speechRejection.code;
 
   const parts = normalizedSceneParts(proposal.scene);
   const event = eventForTrigger(descriptor.trigger);
@@ -656,9 +760,7 @@ function buildStepState(
     if (label === undefined) return null;
     return { label, action: candidate.action };
   });
-  if (choiceSeeds.some((seed) => seed === null)) {
-    return "bundle_invalid_scene";
-  }
+  if (choiceSeeds.some((seed) => seed === null)) return "bundle_invalid_scene";
 
   const scene: PreparedSceneSeedState = {
     segments: parts.segments.map((s, index) => ({
@@ -720,13 +822,36 @@ function resolveInteractionChoiceAliases(
   candidates: readonly BundleStepDescriptor["choiceCandidates"][number][],
   jobId: NarrativeJobId,
 ): BundleSceneProposal {
-  return { ...scene, choices: scene.choices.map((choice) => {
-    if (!choice.candidateId.startsWith("interaction:")) return choice;
-    const interactionId = `interaction:${String(jobId)}:${choice.candidateId.slice("interaction:".length)}`;
-    const candidate = candidates.find((candidate) => candidate.action.type === "talk"
-      && candidate.action.interactionId === interactionId);
-    return candidate === undefined ? choice : { ...choice, candidateId: candidate.candidateId };
-  }) };
+  const genericCandidates = candidates.filter((candidate) => candidate.action.type === "talk"
+    && candidate.action.interactionId === undefined);
+  const resolved: Array<BundleSceneProposal["choices"][number]> = [];
+  for (const choice of scene.choices) {
+    if (choice.candidateId.startsWith("interaction:")) {
+      const interactionId = `interaction:${String(jobId)}:${choice.candidateId.slice("interaction:".length)}`;
+      const candidate = candidates.find((candidate) => candidate.action.type === "talk"
+        && candidate.action.interactionId === interactionId);
+      const soleInteraction = candidates.filter((candidate) => candidate.action.type === "talk"
+        && candidate.action.interactionId !== undefined);
+      resolved.push(candidate === undefined && soleInteraction.length === 1
+        ? { ...choice, candidateId: soleInteraction[0]!.candidateId }
+        : candidate === undefined ? choice : { ...choice, candidateId: candidate.candidateId });
+      continue;
+    }
+    // Older live candidates used current_scene_choice_1 or talk:<npc> for
+    // the non-operation branch. When there is exactly one unconsumed
+    // interaction, bind either spelling to the sole generic dialogue
+    // candidate; never infer an operation from a label.
+    if ((choice.candidateId === "current_scene_choice_1"
+      || choice.candidateId === "current_scene_choice_2"
+      || choice.candidateId.startsWith("talk:"))
+      && genericCandidates.length === 1
+      && !resolved.some((entry) => entry.candidateId === genericCandidates[0]!.candidateId)) {
+      resolved.push({ ...choice, candidateId: genericCandidates[0]!.candidateId });
+      continue;
+    }
+    resolved.push(choice);
+  }
+  return { ...scene, choices: resolved };
 }
 
 function hasExactChoiceCandidates(
@@ -1155,6 +1280,14 @@ export function approveNarrativeBundle(
   }
   previewWorldState = consequenceBindings.worldState;
   previewStoryState = consequenceBindings.storyState;
+
+  if (p3InvestigationRequired(worldState, storyState) && !hasApprovedInvestigationFact(previewWorldState)) {
+    return {
+      ok: false,
+      code: "world_delta_rejected",
+      detail: "p3_investigation_required:bind_investigation_on_scene_fact",
+    };
+  }
 
   // Interaction definitions are compiled against the candidate preview, then
   // installed through the same atomic entity mutation language as all runtime

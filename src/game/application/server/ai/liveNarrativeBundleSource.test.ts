@@ -765,6 +765,8 @@ describe("createNarrativeBundleSource", () => {
     const prompt = (complete.mock.calls[0]![1] as readonly AiMessage[])[0]!.content as string;
     expect(prompt).not.toContain("P3 首幕调查");
     expect(prompt).toContain(worldState.generation.setup!.storyOpening);
+    expect(prompt).toContain("本局玩家故事开端（不可降级的玩法要求）");
+    expect(prompt).toContain("不能用 automatic 事实替代");
   });
 
   it("把已占用实体名称交给 provider，新实体撞名会让整包被服务端拒绝", async () => {

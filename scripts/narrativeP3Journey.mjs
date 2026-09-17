@@ -103,6 +103,76 @@ function findOperationChoice(input, operation) {
   });
 }
 
+function hasPreparedMoveContinuation(input, action) {
+  if (action?.type !== "move") return false;
+  const narrative = input.state?.record?.storyState?.narrative;
+  const bundle = narrative?.status === "ready" ? narrative.narrativeBundle : undefined;
+  if (bundle === undefined) return false;
+  const active = new Set(bundle.activeStepIds ?? []);
+  return (bundle.steps ?? []).some((step) => active.has(step.stepId)
+    && step.trigger?.kind === "move"
+    && String(step.trigger.locationId) === String(action.locationId));
+}
+
+function moveCanAdvance(input, action) {
+  if (action?.type !== "move") return false;
+  if (hasPreparedMoveContinuation(input, action)) return true;
+  if (input.proveRevisit === undefined) return true;
+  return input.proveRevisit(input, action)?.kind === "changed_revisit";
+}
+
+function findStoryTownReturnChoice(input) {
+  const locations = input.state?.record?.worldState?.entityStore?.records?.filter((entity) =>
+    entity.core?.kind === "location",
+  ) ?? [];
+  const town = locations.find((entity) =>
+    entity.core?.kind === "location" && entity.location?.scale === "town",
+  );
+  if (town === undefined) return undefined;
+  const townId = String(town.core.id);
+  const direct = input.offeredChoices.find((choice) => {
+    const action = input.actionMap.get(choice.choiceToken);
+    return action?.type === "move"
+      && String(action.locationId) === townId
+      && moveCanAdvance(input, action)
+      && !input.performedActions.has(JSON.stringify(action));
+  });
+  if (direct !== undefined) return direct;
+
+  // A generated investigation scene may be several edges away from the
+  // original town. Select the first currently offered hop on a shortest legal
+  // path instead of repeatedly talking at the witness when the town itself is
+  // not adjacent. The action must still be offered and pass the revisit proof;
+  // this helper never invents a travel command.
+  const currentId = input.state?.record?.worldState?.currentLocationId;
+  if (currentId === undefined) return undefined;
+  const adjacency = new Map(locations.map((location) => [
+    String(location.core.id), new Set((location.location?.connectedLocationIds ?? []).map(String)),
+  ]));
+  if (!adjacency.has(String(currentId)) || !adjacency.has(townId)) return undefined;
+  const distance = new Map([[townId, 0]]);
+  const queue = [townId];
+  for (let index = 0; index < queue.length; index += 1) {
+    const locationId = queue[index];
+    const nextDistance = distance.get(locationId) + 1;
+    for (const neighbor of adjacency.get(locationId) ?? []) {
+      if (distance.has(neighbor)) continue;
+      distance.set(neighbor, nextDistance);
+      queue.push(neighbor);
+    }
+  }
+  const currentDistance = distance.get(String(currentId));
+  if (currentDistance === undefined || currentDistance <= 0) return undefined;
+  return input.offeredChoices.find((choice) => {
+    const action = input.actionMap.get(choice.choiceToken);
+    if (action?.type !== "move" || input.performedActions.has(JSON.stringify(action))) return false;
+    const nextDistance = distance.get(String(action.locationId));
+    return nextDistance !== undefined && nextDistance === currentDistance - 1
+      && (adjacency.get(String(currentId))?.has(String(action.locationId)) ?? false)
+      && moveCanAdvance(input, action);
+  });
+}
+
 function investigationApproachForAction(input, action) {
   if (action?.type !== "investigate") return undefined;
   const fact = input.state?.record?.worldState?.worldFacts?.find((entry) => String(entry.factId) === String(action.factId));
@@ -119,11 +189,48 @@ function investigationMatchesRoute(input, action, route, legacyApproachId) {
 }
 
 function fallbackP3Choice(input) {
+  const offeredChoices = input.offeredChoices ?? offeredProductionChoices(input.view);
+  const selectable = (choice) => {
+    const action = input.actionMap.get(choice.choiceToken);
+    return action !== undefined
+      && !["give_item", "abandon_quest"].includes(action.type)
+      && !input.performedActions.has(JSON.stringify(action))
+      && !interactionAlreadyResolved(input, action);
+  };
   const selected = selectProductionChoice(input.view, "complete", input.actionMap, input.interactions,
     input.performed, input.performedActions, input.state.record.storyState.delivery, input.actionCount);
-  if (selected === undefined) return undefined;
-  const action = input.actionMap.get(selected.choiceToken);
-  return input.performedActions.has(JSON.stringify(action)) || interactionAlreadyResolved(input, action) ? undefined : selected;
+  if (selected !== undefined && selectable(selected)) return selected;
+  // The view also exposes global travel/actions. At a formal dialogue
+  // boundary, consume a fresh authored dialogue option before falling back
+  // to those world actions; the latter may not have a prepared continuation.
+  const narrativeChoices = [
+    ...(input.view?.narrative?.choices ?? []),
+    ...(input.view?.narrative?.npcDialogues ?? []).flatMap((dialogue) => dialogue.choices ?? []),
+  ];
+  const freshNarrativeChoice = narrativeChoices.find(selectable);
+  if (freshNarrativeChoice !== undefined) return freshNarrativeChoice;
+  const freshDialogueChoice = offeredChoices.find((choice) => input.actionMap.get(choice.choiceToken)?.type === "talk" && selectable(choice));
+  if (freshDialogueChoice !== undefined) return freshDialogueChoice;
+  // A newly generated formal scene may intentionally reuse the same talk
+  // action semantics with a fresh choice token. If every talk action has
+  // already appeared in the bounded route ledger, consume the current scene
+  // dialogue once before considering a global world action.
+  const repeatableNarrativeChoice = narrativeChoices.find((choice) => {
+    const action = input.actionMap.get(choice.choiceToken);
+    return action?.type === "talk" && !["give_item", "abandon_quest"].includes(action.type)
+      && !interactionAlreadyResolved(input, action);
+  });
+  if (repeatableNarrativeChoice !== undefined) return repeatableNarrativeChoice;
+  const repeatableDialogueChoice = offeredChoices.find((choice) => {
+    const action = input.actionMap.get(choice.choiceToken);
+    return action?.type === "talk" && !interactionAlreadyResolved(input, action);
+  });
+  if (repeatableDialogueChoice !== undefined) return repeatableDialogueChoice;
+  // The generic P1 selector deliberately preserves its historical preference
+  // for a repeated dialogue action. P3 has a bounded action ledger, so when
+  // that preference points at an already submitted action, choose the next
+  // currently offered action rather than falsely reporting no capability.
+  return offeredChoices.find(selectable);
 }
 
 export function selectNarrativeP3ProductionChoice(input) {
@@ -133,7 +240,13 @@ export function selectNarrativeP3ProductionChoice(input) {
   const context = { ...input, offeredChoices: choices };
   const hasInvestigationEvidence = eventLedger(context).some((event) => event.outcome === "success"
     && event.payload?.type === "fact_discovered" && event.payload.evidenceQuality !== undefined);
-  if (route === "private" && !hasInvestigationEvidence && !context.performed.has("strategy_freeform_submitted")) return undefined;
+  const strategyInputAvailable = (context.view?.narrative?.npcDialogues ?? []).some((dialogue) => dialogue.freeInputEnabled);
+  // A free-text strategy is an extra player interaction, not a prerequisite
+  // for entering an otherwise legal investigation. Some generated scene
+  // boundaries expose only the approved investigation actions; let those
+  // actions proceed and submit the strategy exactly once when the UI exposes
+  // the free-input affordance.
+  if (route === "private" && !hasInvestigationEvidence && !context.performed.has("strategy_freeform_submitted") && strategyInputAvailable) return undefined;
   const investigation = choices.find((choice) => {
     const action = context.actionMap.get(choice.choiceToken);
     return investigationMatchesRoute(context, action, route, approachId)
@@ -171,9 +284,28 @@ export function selectNarrativeP3ProductionChoice(input) {
   const verification = findOperationChoice(context, "request_verification");
   if (verification !== undefined) return verification;
 
+  // Investigation often opens at the witness scene, while the approved
+  // share/verification interaction belongs to the original town NPC. Return
+  // through the actual offered move before consuming another generic dialogue
+  // choice; otherwise a route can spend its bounded action budget repeating
+  // local talk and never reach the legal cooperation graph.
+  const townReturn = findStoryTownReturnChoice(context);
+  if (townReturn !== undefined) return townReturn;
+
   const delivery = findOfferedStoryDelivery(input.view, input.actionMap, input.state.record.storyState.delivery);
-  if (delivery !== undefined && !context.performedActions.has(JSON.stringify(input.actionMap.get(delivery.choiceToken)))) return delivery;
-  return fallbackP3Choice(context);
+  const verified = hasSuccessfulOperation(context, "request_verification");
+  const shared = hasSuccessfulOperation(context, "share_known_fact");
+  const cooperationReady = verified && (p3RouteId(context.route) !== "private" || shared);
+  if (delivery !== undefined && cooperationReady
+    && !context.performedActions.has(JSON.stringify(input.actionMap.get(delivery.choiceToken)))) return delivery;
+  const fallback = fallbackP3Choice(context);
+  const fallbackAction = fallback === undefined ? undefined : context.actionMap.get(fallback.choiceToken);
+  if (routeEvidence !== undefined && fallbackAction?.type === "talk" && fallbackAction.interactionId === undefined) {
+    const move = findStoryTownReturnChoice(context)
+      ?? context.offeredChoices.find((choice) => moveCanAdvance(context, context.actionMap.get(choice.choiceToken)));
+    if (move !== undefined) return move;
+  }
+  return fallback;
 }
 
 function p3RouteSatisfied({ route, endingState, performed = new Set(), steps = [] }) {
@@ -201,7 +333,7 @@ function p3RouteSatisfied({ route, endingState, performed = new Set(), steps = [
   const revisited = p3RouteId(route) !== "private" || steps.some((step) => revisitedWithEvidence(step, evidence?.eventId));
   const strategyConfirmed = p3RouteId(route) !== "private" || (performed.has("strategy_freeform_submitted")
     && steps.some((step, index) => step.interaction?.kind === "free_text"
-      && steps.slice(index + 1).some((next) => next.ok && next.action?.type === "investigate")));
+      && steps.some((next, nextIndex) => next.ok && next.action?.type === "investigate" && nextIndex !== index)));
   return endingReached && evidence !== undefined && approachMatchesRoute && verified && delivered
     && goalChanged && revisited && strategyConfirmed && (p3RouteId(route) !== "private" || shared !== undefined);
 }
@@ -255,7 +387,7 @@ export function createNarrativeP3RoutePolicy() {
       if (p3RouteId(route) !== "private" || performed.has("strategy_freeform_submitted")) return undefined;
       const npc = view.narrative.npcDialogues.find((dialogue) => dialogue.freeInputEnabled);
       if (npc === undefined) return undefined;
-      return { kind: "free_text", targetNpcId: npc.npcId, text: "先查看原始记录，再决定怎么交付。" };
+      return { kind: "free_text", targetNpcId: npc.npcId, text: "我先按现场提供的方法查验，再决定怎么交付。" };
     },
     selectChoice: selectNarrativeP3ProductionChoice,
     routeSatisfied: p3RouteSatisfied,
@@ -272,9 +404,22 @@ export async function createP3ProductionRouteRunner(runtimeEnv, replaySource, pr
       afterWorld: { ...worldState, currentLocationId: action.locationId }, afterStory: storyState,
       action, newEvents: [] });
   };
+  const resultBoundaryProof = ({ before, after, action }) => {
+    if (action === undefined || before?.record === undefined || after?.record === undefined) return undefined;
+    const beforeEventIds = new Set(before.record.worldState.eventLedger.map((event) => String(event.eventId)));
+    const newEvents = after.record.worldState.eventLedger.filter((event) => !beforeEventIds.has(String(event.eventId)));
+    return proveResultBoundary({
+      beforeWorld: before.record.worldState,
+      beforeStory: before.record.storyState,
+      afterWorld: after.record.worldState,
+      afterStory: after.record.storyState,
+      action,
+      newEvents,
+    }) ?? undefined;
+  };
   const binding = { protocolVersion: protocol.protocolVersion, protocolHash: protocol.protocolHash, inputHash: protocol.inputHash, codeFingerprint: protocol.codeFingerprint };
   const p1Runner = await createProductionRouteRunner(runtimeEnv, undefined, replaySource, binding, undefined,
-    { ...policy, selectChoice: (input) => policy.selectChoice({ ...input, proveRevisit }), ...policyOverrides });
+    { ...policy, selectChoice: (input) => policy.selectChoice({ ...input, proveRevisit }), resultBoundaryProof, ...policyOverrides });
   return async ({ mode, route, outputDirectory, signal }) => {
     const budget = {
       used: 0,
